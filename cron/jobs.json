@@ -1428,15 +1428,15 @@
       "schedule_display": "every 5m",
       "repeat": {
         "times": null,
-        "completed": 886
+        "completed": 887
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-13T06:23:04.677037+01:00",
-      "next_run_at": "2026-06-16T19:23:44.808531+01:00",
-      "last_run_at": "2026-06-16T19:18:44.808531+01:00",
+      "next_run_at": "2026-06-16T19:29:21.503742+01:00",
+      "last_run_at": "2026-06-16T19:24:21.503742+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -1542,15 +1542,15 @@
       "schedule_display": "*/12 * * * *",
       "repeat": {
         "times": null,
-        "completed": 98
+        "completed": 99
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-15T22:21:27.009320+01:00",
-      "next_run_at": "2026-06-16T19:24:00+01:00",
-      "last_run_at": "2026-06-16T19:12:44.519974+01:00",
+      "next_run_at": "2026-06-16T19:36:00+01:00",
+      "last_run_at": "2026-06-16T19:24:21.794718+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -1559,7 +1559,44 @@
       "enabled_toolsets": null,
       "workdir": null,
       "profile": "elon"
+    },
+    {
+      "id": "47332a0ff293",
+      "name": "dgx-health-watch",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "dgx-health-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-16T19:24:32.172940+01:00",
+      "next_run_at": "2026-06-16T19:34:32.172961+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ],
-  "updated_at": "2026-06-16T19:20:44.787877+01:00"
+  "updated_at": "2026-06-16T19:24:32.173341+01:00"
 }
