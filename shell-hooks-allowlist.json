@@ -1,0 +1,70 @@
+{
+  "approvals": [
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/inject-guardrails.sh",
+      "event": "pre_llm_call",
+      "script_mtime_at_approval": "2026-06-11T16:17:35.820297Z"
+    },
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/inject-call-snapshot.sh",
+      "event": "pre_llm_call",
+      "script_mtime_at_approval": "2026-06-11T16:40:50.141664Z"
+    },
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-unconfigured-web-tools.sh",
+      "event": "pre_tool_call",
+      "script_mtime_at_approval": "2026-06-11T20:37:04.737546Z"
+    },
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/catch-silent-exit.sh",
+      "event": "subagent_stop",
+      "script_mtime_at_approval": "2026-06-11T15:49:04.799771Z"
+    },
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/log-session.sh",
+      "event": "subagent_stop",
+      "script_mtime_at_approval": "2026-06-11T16:35:42.576238Z"
+    },
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/log-session.sh",
+      "event": "on_session_start",
+      "script_mtime_at_approval": "2026-06-11T16:35:42.576238Z"
+    },
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/log-session.sh",
+      "event": "on_session_end",
+      "script_mtime_at_approval": "2026-06-11T16:35:42.576238Z"
+    },
+    {
+      "approved_at": "2026-06-12T05:21:32.449363Z",
+      "command": "/home/frank/.hermes/agent-hooks/alert-api-errors.sh",
+      "event": "api_request_error",
+      "script_mtime_at_approval": "2026-06-12T05:21:32.449363Z"
+    },
+    {
+      "approved_at": "2026-06-11T22:10:45.279952Z",
+      "command": "/home/frank/.hermes/agent-hooks/autoformat.sh",
+      "event": "post_tool_call",
+      "script_mtime_at_approval": "2026-06-11T16:09:46.807237Z"
+    },
+    {
+      "approved_at": "2026-06-12T16:07:50.956083Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-critical-tools.sh",
+      "event": "pre_tool_call",
+      "script_mtime_at_approval": "2026-06-12T16:06:33.109754Z"
+    },
+    {
+      "approved_at": "2026-06-15T21:33:53.565545Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-kanban-complete.sh",
+      "event": "pre_tool_call",
+      "script_mtime_at_approval": "2026-06-15T18:02:15.550392Z"
+    }
+  ]
+}

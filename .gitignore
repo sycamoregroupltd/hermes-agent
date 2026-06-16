@@ -1,0 +1,25 @@
+# === Hermes config repo: DEFAULT-DENY ===
+# Ignore everything at the root...
+/*
+# ...then re-include ONLY non-secret config worth versioning.
+!/.gitignore
+!/config.yaml
+!/profile.yaml
+!/profile.yaml
+!/SOUL.md
+!/shell-hooks-allowlist.json
+!/context_length_cache.yaml
+# cron: descend into dir, but track only the job definitions
+!/cron/
+/cron/*
+!/cron/jobs.json
+# NEVER track (belt-and-suspenders against future allowlist edits):
+auth.json
+auth.json.*
+.env
+.env.*
+*.db
+*.db-*
+*.bak
+*.bak-*
+*.bak.*
