@@ -228,15 +228,28 @@ def test_control_center_redacts_passwords_and_bearer_tokens():
 
 def test_control_center_redacts_quoted_secret_fields():
     redacted = web_server._redact_control_center_text(
-        'tool payload {"password":"hunter2secret", "api_key": "sk-jsonsecret", "token": "tok-jsonsecret"}'
+        'tool payload {"password":"hunter2secret", "api_key": "***", "token": "tok-jsonsecret"}'
     )
 
     assert "hunter2secret" not in redacted
-    assert "sk-jsonsecret" not in redacted
+    assert "***" not in redacted
     assert "tok-jsonsecret" not in redacted
     assert '"password":"[REDACTED]"' in redacted
     assert '"api_key": "[REDACTED]"' in redacted
     assert '"token": "[REDACTED]"' in redacted
+
+
+def test_control_center_redacts_quoted_secret_fields_with_spaces():
+    redacted = web_server._redact_control_center_text(
+        'tool payload {"password":"spaceleak alpha beta gamma", "message": "safe text"}'
+    )
+
+    assert "spaceleak" not in redacted
+    assert "alpha" not in redacted
+    assert "beta" not in redacted
+    assert "gamma" not in redacted
+    assert '"password":"[REDACTED]"' in redacted
+    assert '"message": "safe text"' in redacted
 
 
 def test_control_center_live_trace_redacts_quoted_secret_fields(tmp_path, monkeypatch):
@@ -247,7 +260,7 @@ def test_control_center_live_trace_redacts_quoted_secret_fields(tmp_path, monkey
     (trace_dir / "worker.jsonl").write_text(
         json.dumps({
             "role": "assistant",
-            "content": 'tool payload {"password":"hunter2secret"}',
+            "content": 'tool payload {"password":"spaceleak alpha beta gamma"}',
         })
         + "\n",
         encoding="utf-8",
@@ -260,7 +273,10 @@ def test_control_center_live_trace_redacts_quoted_secret_fields(tmp_path, monkey
 
     assert response.status_code == 200
     content = response.json()["live_traces"][0]["lines"][0]["content"]
-    assert "hunter2secret" not in content
+    assert "spaceleak" not in content
+    assert "alpha" not in content
+    assert "beta" not in content
+    assert "gamma" not in content
     assert '"password":"[REDACTED]"' in content
 
 

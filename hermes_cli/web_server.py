@@ -6989,8 +6989,13 @@ _CONTROL_CENTER_IN_FLIGHT = ("running", "ready", "blocked")
 _SECRETISH_RE = re.compile(
     r"(?i)(?:sk|xai|ghp|gho|github_pat|hf|hf_|tok|token|key)[-_A-Za-z0-9.]{4,}"
 )
+_CONTROL_CENTER_SECRET_KEY_PATTERN = (
+    r"[A-Z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd)[A-Z0-9_.-]*"
+)
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)(?P<prefix>(?P<key_quote>[\"']?)(?P<key>[A-Z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd)[A-Z0-9_.-]*)(?P=key_quote)\s*[:=]\s*)(?P<value_quote>[\"']?)(?P<value>[^\"'\s,;)}\]]+)(?P=value_quote)"
+    r"(?i)(?P<prefix>(?P<key_quote>[\"']?)(?P<key>"
+    + _CONTROL_CENTER_SECRET_KEY_PATTERN
+    + r")(?P=key_quote)\s*[:=]\s*)(?:\"(?P<double_value>(?:\\.|[^\"\\])*)\"|'(?P<single_value>(?:\\.|[^'\\])*)'|(?P<plain_value>[^\"'\s,;)}\]]+))"
 )
 _BEARER_SECRET_RE = re.compile(r"(?i)\bBearer\s+([A-Za-z0-9._~+/=-]{8,})")
 
@@ -7012,11 +7017,15 @@ def _control_center_root() -> Path:
 
 
 def _redact_control_center_text(value: Any, limit: int = 600) -> str:
+    def _redact_secret_assignment(match: re.Match[str]) -> str:
+        if match.group("double_value") is not None:
+            return f"{match.group('prefix')}\"[REDACTED]\""
+        if match.group("single_value") is not None:
+            return f"{match.group('prefix')}'[REDACTED]'"
+        return f"{match.group('prefix')}[REDACTED]"
+
     text = str(value or "")
-    text = _SECRET_ASSIGNMENT_RE.sub(
-        lambda match: f"{match.group('prefix')}{match.group('value_quote')}[REDACTED]{match.group('value_quote')}",
-        text,
-    )
+    text = _SECRET_ASSIGNMENT_RE.sub(_redact_secret_assignment, text)
     text = _BEARER_SECRET_RE.sub("Bearer [REDACTED]", text)
     text = _SECRETISH_RE.sub("[REDACTED]", text)
     return text[:limit]
