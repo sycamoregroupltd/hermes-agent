@@ -25,6 +25,7 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -6981,6 +6982,197 @@ def _find_cron_job_profile(job_id: str) -> Optional[str]:
         if any(j.get("id") == job_id or j.get("name") == job_id for j in jobs):
             return name
     return None
+
+
+_CONTROL_CENTER_BOARDS = ("jarvis-os", "sycode-ai", "sycode-trading", "upero")
+_CONTROL_CENTER_IN_FLIGHT = ("running", "ready", "blocked")
+_SECRETISH_RE = re.compile(
+    r"(?i)(?:sk|xai|ghp|gho|github_pat|hf|hf_|tok|token|key)[-_A-Za-z0-9.]{4,}"
+)
+
+
+def _control_center_home() -> Path:
+    return Path(get_hermes_home()).expanduser()
+
+
+def _redact_control_center_text(value: Any, limit: int = 600) -> str:
+    text = str(value or "")
+    text = _SECRETISH_RE.sub("[REDACTED]", text)
+    return text[:limit]
+
+
+def _safe_sql_rows(db_path: Path, query: str, params: Tuple[Any, ...] = ()) -> List[Dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute(query, params).fetchall()]
+    except Exception:
+        _log.exception("Failed to read control-center SQLite source %s", db_path)
+        return []
+
+
+def _control_center_board(slug: str) -> Dict[str, Any]:
+    db_path = _control_center_home() / "kanban" / "boards" / slug / "kanban.db"
+    status_rows = _safe_sql_rows(
+        db_path,
+        "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status ORDER BY status",
+    )
+    counts = {str(row.get("status") or "unknown"): int(row.get("count") or 0) for row in status_rows}
+    placeholders = ",".join("?" for _ in _CONTROL_CENTER_IN_FLIGHT)
+    in_flight = _safe_sql_rows(
+        db_path,
+        f"""
+        SELECT id, title, assignee, status, priority, started_at,
+               last_heartbeat_at, current_run_id, session_id
+          FROM tasks
+         WHERE status IN ({placeholders})
+         ORDER BY COALESCE(priority, 0) DESC, COALESCE(started_at, created_at, 0) ASC
+         LIMIT 12
+        """,
+        tuple(_CONTROL_CENTER_IN_FLIGHT),
+    )
+    return {
+        "slug": slug,
+        "db_path": str(db_path),
+        "available": db_path.exists(),
+        "counts": counts,
+        "in_flight": [
+            {
+                "id": row.get("id"),
+                "title": _redact_control_center_text(row.get("title"), 160),
+                "assignee": row.get("assignee"),
+                "status": row.get("status"),
+                "priority": row.get("priority"),
+                "started_at": row.get("started_at"),
+                "last_heartbeat_at": row.get("last_heartbeat_at"),
+                "current_run_id": row.get("current_run_id"),
+                "session_id": row.get("session_id"),
+            }
+            for row in in_flight
+        ],
+    }
+
+
+def _control_center_cron_jobs() -> List[Dict[str, Any]]:
+    profiles = [str(p.get("name") or "") for p in _cron_profile_dicts()]
+    if not profiles:
+        profiles = ["default"]
+    jobs: List[Dict[str, Any]] = []
+    seen: set[Tuple[str, str]] = set()
+    for profile in profiles:
+        if not profile:
+            continue
+        try:
+            profile_jobs = _call_cron_for_profile(profile, "list_jobs", True)
+        except Exception:
+            _log.exception("Failed to read cron jobs for control center profile %s", profile)
+            continue
+        if isinstance(profile_jobs, dict):
+            profile_jobs = [profile_jobs]
+        for job in profile_jobs:
+            if not isinstance(job, dict):
+                continue
+            job_id = str(job.get("id") or job.get("job_id") or job.get("name") or "")
+            key = (str(job.get("profile") or profile), job_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            jobs.append(
+                {
+                    "id": job_id,
+                    "name": _redact_control_center_text(job.get("name") or job_id, 120),
+                    "profile": job.get("profile") or job.get("profile_name") or profile,
+                    "schedule": job.get("schedule_display") or job.get("schedule") or "?",
+                    "last_status": job.get("last_status"),
+                    "last_run_at": job.get("last_run_at"),
+                    "next_run_at": job.get("next_run_at"),
+                    "enabled": bool(job.get("enabled", True)),
+                }
+            )
+    jobs.sort(key=lambda j: (str(j.get("profile") or ""), str(j.get("name") or "")))
+    return jobs
+
+
+def _control_center_dgx_health(cron_jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    for job in cron_jobs:
+        haystack = f"{job.get('id', '')} {job.get('name', '')}".lower()
+        if "dgx-health-watch" in haystack or "dgx health" in haystack:
+            return {
+                "source": "cron",
+                "job_id": job.get("id"),
+                "name": job.get("name"),
+                "profile": job.get("profile"),
+                "last_status": job.get("last_status") or "unknown",
+                "last_run_at": job.get("last_run_at"),
+                "next_run_at": job.get("next_run_at"),
+            }
+    return {"source": "cron", "last_status": "unknown", "message": "dgx-health-watch cron job not found"}
+
+
+def _control_center_voice_state() -> Dict[str, Any]:
+    home = _control_center_home()
+    voice_home = home / "profiles" / "jarvis-voice"
+    response_store = voice_home / "response_store.db"
+    if response_store.exists():
+        return {"state": "ready", "source": str(response_store)}
+    if voice_home.exists():
+        return {"state": "degraded", "source": str(voice_home), "message": "response_store.db not found"}
+    return {"state": "unknown", "source": str(voice_home), "message": "jarvis-voice profile not found"}
+
+
+def _tail_jsonl(path: Path, limit: int = 20) -> List[Dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+    except Exception:
+        _log.exception("Failed to tail control-center trace %s", path)
+        return []
+    result: List[Dict[str, Any]] = []
+    for raw in lines:
+        if not raw.strip():
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {"content": raw}
+        content = payload.get("content") or payload.get("text") or payload.get("message") or raw
+        result.append(
+            {
+                "ts": payload.get("ts") or payload.get("timestamp") or payload.get("created_at"),
+                "role": payload.get("role") or payload.get("source"),
+                "content": _redact_control_center_text(content),
+            }
+        )
+    return result
+
+
+def _control_center_live_traces() -> List[Dict[str, Any]]:
+    home = _control_center_home()
+    candidates: List[Path] = []
+    for root in (home / "sessions", *(home / "profiles").glob("*/sessions")):
+        if root.exists():
+            candidates.extend(root.glob("*.jsonl"))
+    candidates = sorted(candidates, key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)[:6]
+    traces: List[Dict[str, Any]] = []
+    for path in candidates:
+        lines = _tail_jsonl(path)
+        if lines:
+            traces.append({"path": str(path), "updated_at": path.stat().st_mtime, "lines": lines})
+    return traces
+
+
+@app.get("/api/control-center")
+async def get_control_center():
+    cron_jobs = _control_center_cron_jobs()
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "boards": [_control_center_board(slug) for slug in _CONTROL_CENTER_BOARDS],
+        "cron_jobs": cron_jobs,
+        "dgx_health": _control_center_dgx_health(cron_jobs),
+        "voice_escalation": _control_center_voice_state(),
+        "live_traces": _control_center_live_traces(),
+    }
 
 
 @app.get("/api/cron/jobs")
