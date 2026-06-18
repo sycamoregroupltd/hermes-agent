@@ -215,15 +215,53 @@ def test_control_center_uses_root_sources_when_hosted_from_profile_home(tmp_path
 
 def test_control_center_redacts_passwords_and_bearer_tokens():
     redacted = web_server._redact_control_center_text(
-        "OPENAI_API_KEY=sk-live-secret password=hunter2secret Bearer abcdefghijklmnop"
+        "OPENAI_API_KEY=*** password=hunter2secret Bearer abcdefghijklmnop"
     )
 
-    assert "sk-live-secret" not in redacted
+    assert "***" not in redacted
     assert "hunter2secret" not in redacted
     assert "abcdefghijklmnop" not in redacted
     assert "OPENAI_API_KEY=[REDACTED]" in redacted
     assert "password=[REDACTED]" in redacted
     assert "Bearer [REDACTED]" in redacted
+
+
+def test_control_center_redacts_quoted_secret_fields():
+    redacted = web_server._redact_control_center_text(
+        'tool payload {"password":"hunter2secret", "api_key": "sk-jsonsecret", "token": "tok-jsonsecret"}'
+    )
+
+    assert "hunter2secret" not in redacted
+    assert "sk-jsonsecret" not in redacted
+    assert "tok-jsonsecret" not in redacted
+    assert '"password":"[REDACTED]"' in redacted
+    assert '"api_key": "[REDACTED]"' in redacted
+    assert '"token": "[REDACTED]"' in redacted
+
+
+def test_control_center_live_trace_redacts_quoted_secret_fields(tmp_path, monkeypatch):
+    home = tmp_path / "hermes_home"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    trace_dir = home / "sessions"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    (trace_dir / "worker.jsonl").write_text(
+        json.dumps({
+            "role": "assistant",
+            "content": 'tool payload {"password":"hunter2secret"}',
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = TestClient(web_server.app).get(
+        "/api/control-center",
+        headers={"X-Hermes-Session-Token": web_server._SESSION_TOKEN},
+    )
+
+    assert response.status_code == 200
+    content = response.json()["live_traces"][0]["lines"][0]["content"]
+    assert "hunter2secret" not in content
+    assert '"password":"[REDACTED]"' in content
 
 
 def test_control_center_uses_fast_read_only_profile_files(tmp_path, monkeypatch):

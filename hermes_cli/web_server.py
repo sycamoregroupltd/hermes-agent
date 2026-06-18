@@ -6990,7 +6990,7 @@ _SECRETISH_RE = re.compile(
     r"(?i)(?:sk|xai|ghp|gho|github_pat|hf|hf_|tok|token|key)[-_A-Za-z0-9.]{4,}"
 )
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b((?:[A-Z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd)[A-Z0-9_.-]*))\s*[:=]\s*([^\s,;)}\]]+)"
+    r"(?i)(?P<prefix>(?P<key_quote>[\"']?)(?P<key>[A-Z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd)[A-Z0-9_.-]*)(?P=key_quote)\s*[:=]\s*)(?P<value_quote>[\"']?)(?P<value>[^\"'\s,;)}\]]+)(?P=value_quote)"
 )
 _BEARER_SECRET_RE = re.compile(r"(?i)\bBearer\s+([A-Za-z0-9._~+/=-]{8,})")
 
@@ -7013,7 +7013,10 @@ def _control_center_root() -> Path:
 
 def _redact_control_center_text(value: Any, limit: int = 600) -> str:
     text = str(value or "")
-    text = _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[REDACTED]", text)
+    text = _SECRET_ASSIGNMENT_RE.sub(
+        lambda match: f"{match.group('prefix')}{match.group('value_quote')}[REDACTED]{match.group('value_quote')}",
+        text,
+    )
     text = _BEARER_SECRET_RE.sub("Bearer [REDACTED]", text)
     text = _SECRETISH_RE.sub("[REDACTED]", text)
     return text[:limit]
