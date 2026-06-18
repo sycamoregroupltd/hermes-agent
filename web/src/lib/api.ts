@@ -310,6 +310,7 @@ function appendProfileParam(url: string, profile?: string): string {
 
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
+  getControlCenter: () => fetchJSON<ControlCenterResponse>("/api/control-center"),
   /**
    * Identity probe for the dashboard auth gate (Phase 7).
    *
@@ -1499,6 +1500,75 @@ export interface SystemStats {
   memory?: { total: number; available: number; used: number; percent: number };
   disk?: { total: number; used: number; free: number; percent: number };
   process?: { pid: number; rss: number; create_time: number; num_threads: number };
+}
+
+export interface ControlCenterTask {
+  id: string;
+  title: string;
+  assignee: string | null;
+  status: string;
+  priority: number | null;
+  started_at: number | null;
+  last_heartbeat_at: number | null;
+  current_run_id: number | null;
+  session_id: string | null;
+}
+
+export interface ControlCenterBoard {
+  slug: string;
+  db_path: string;
+  available: boolean;
+  counts: Record<string, number>;
+  in_flight: ControlCenterTask[];
+}
+
+export interface ControlCenterCronJob {
+  id: string;
+  name: string;
+  profile: string;
+  schedule: string;
+  last_status: string | null;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  enabled: boolean;
+}
+
+export interface ControlCenterHealth {
+  source: string;
+  job_id?: string | null;
+  name?: string | null;
+  profile?: string | null;
+  last_status: string;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  message?: string;
+}
+
+export interface ControlCenterVoiceState {
+  state: string;
+  source?: string;
+  message?: string;
+}
+
+export interface ControlCenterTraceLine {
+  ts: string | number | null;
+  role: string | null;
+  content: string;
+}
+
+export interface ControlCenterTrace {
+  path: string;
+  updated_at: number;
+  lines: ControlCenterTraceLine[];
+}
+
+export interface ControlCenterResponse {
+  generated_at: string;
+  boards: ControlCenterBoard[];
+  cron_jobs: ControlCenterCronJob[];
+  dgx_health: ControlCenterHealth;
+  voice_escalation: ControlCenterVoiceState;
+  live_traces: ControlCenterTrace[];
 }
 
 export interface CuratorStatus {

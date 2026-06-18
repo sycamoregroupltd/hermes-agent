@@ -33,6 +33,7 @@ import {
   Globe,
   Heart,
   KeyRound,
+  LayoutDashboard,
   Menu,
   MessageSquare,
   Package,
@@ -81,6 +82,7 @@ import LogsPage from "@/pages/LogsPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
 import ModelsPage from "@/pages/ModelsPage";
 import CronPage from "@/pages/CronPage";
+import ControlCenterPage from "@/pages/ControlCenterPage";
 import ProfilesPage from "@/pages/ProfilesPage";
 import ProfileBuilderPage from "@/pages/ProfileBuilderPage";
 import SkillsPage from "@/pages/SkillsPage";
@@ -135,6 +137,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/sessions": SessionsPage,
   "/files": FilesPage,
   "/analytics": AnalyticsPage,
+  "/control-center": ControlCenterPage,
   "/models": ModelsPage,
   "/logs": LogsPage,
   "/cron": CronPage,
@@ -173,6 +176,11 @@ const BUILTIN_NAV_REST: NavItem[] = [
     labelKey: "analytics",
     label: "Analytics",
     icon: BarChart3,
+  },
+  {
+    path: "/control-center",
+    label: "Control Center",
+    icon: LayoutDashboard,
   },
   {
     path: "/models",
