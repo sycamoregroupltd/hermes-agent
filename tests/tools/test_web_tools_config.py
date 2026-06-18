@@ -391,6 +391,35 @@ class TestBackendSelection:
              patch("tools.web_tools._ddgs_package_importable", return_value=False):
             assert _get_backend() == "firecrawl"
 
+    def test_search_falls_back_to_xai_when_default_firecrawl_unavailable(self):
+        """No shared backend + no Firecrawl config → web_search can use xAI auth.
+
+        ``_get_backend()`` intentionally keeps returning ``firecrawl`` for
+        backward compatibility, but the search capability must not surface the
+        Firecrawl credential error when xAI's native web-search path is ready.
+        """
+        from tools.web_tools import _get_extract_backend, _get_search_backend
+
+        def available(backend):
+            return backend == "xai"
+
+        with patch("tools.web_tools._load_web_config", return_value={}), \
+             patch("tools.web_tools._is_backend_available", side_effect=available):
+            assert _get_search_backend() == "xai"
+            assert _get_extract_backend() == "firecrawl"
+
+    def test_search_falls_back_to_xai_when_configured_firecrawl_unavailable(self):
+        """Explicit shared Firecrawl still falls back for search only."""
+        from tools.web_tools import _get_extract_backend, _get_search_backend
+
+        def available(backend):
+            return backend == "xai"
+
+        with patch("tools.web_tools._load_web_config", return_value={"backend": "firecrawl"}), \
+             patch("tools.web_tools._is_backend_available", side_effect=available):
+            assert _get_search_backend() == "xai"
+            assert _get_extract_backend() == "firecrawl"
+
     def test_invalid_config_falls_through_to_fallback(self):
         """web.backend=invalid → ignored, uses key-based fallback."""
         from tools.web_tools import _get_backend
@@ -703,6 +732,18 @@ class TestCheckWebApiKey:
                 with patch.dict(os.environ, {"FIRECRAWL_GATEWAY_URL": "http://127.0.0.1:3002"}, clear=False):
                     from tools.web_tools import check_web_api_key
                     assert check_web_api_key() is True
+
+    def test_configured_firecrawl_backend_accepts_xai_search_fallback(self):
+        """A Firecrawl extract config should not hide web_search when xAI is ready."""
+        import tools.web_tools
+
+        def available(backend):
+            return backend == "xai"
+
+        with patch("tools.web_tools._load_web_config", return_value={"backend": "firecrawl"}), \
+             patch.object(tools.web_tools, "_is_backend_available", side_effect=available):
+            from tools.web_tools import check_web_api_key
+            assert check_web_api_key() is True
 
 
 def test_web_requires_env_includes_exa_key():

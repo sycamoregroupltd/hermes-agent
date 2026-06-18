@@ -100,6 +100,40 @@ class TestXAIProviderIsAvailable:
         from plugins.web.xai.provider import XAIWebSearchProvider
         assert XAIWebSearchProvider().is_available() is True
 
+    def test_available_via_credential_pool_auth_store(self, monkeypatch, tmp_path):
+        """Migrated auth stores may only expose xAI via credential_pool entries."""
+        monkeypatch.delenv("XAI_API_KEY", raising=False)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        auth_path = tmp_path / "auth.json"
+        auth_path.write_text(json.dumps({
+            "version": 1,
+            "providers": {"xai-oauth": {"tokens": {"access_token": ""}}},
+            "credential_pool": {
+                "xai-oauth": [
+                    {"id": "supergrok", "auth_type": "oauth", "access_token": "pool-access-token"},
+                ],
+            },
+        }))
+
+        from plugins.web.xai.provider import XAIWebSearchProvider
+        assert XAIWebSearchProvider().is_available() is True
+
+    def test_available_via_manual_xai_pool_api_key(self, monkeypatch, tmp_path):
+        """Manual xAI API-key fallbacks can live under the xai-oauth pool."""
+        monkeypatch.delenv("XAI_API_KEY", raising=False)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "auth.json").write_text(json.dumps({
+            "version": 1,
+            "credential_pool": {
+                "xai-oauth": [
+                    {"id": "xai-apikey-fallback", "auth_type": "api_key", "api_key": "xai-key"},
+                ],
+            },
+        }))
+
+        from plugins.web.xai.provider import XAIWebSearchProvider
+        assert XAIWebSearchProvider().is_available() is True
+
     def test_unavailable_when_no_env_and_no_auth_store(self, monkeypatch, tmp_path):
         monkeypatch.delenv("XAI_API_KEY", raising=False)
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))

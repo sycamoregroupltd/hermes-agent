@@ -22,6 +22,11 @@ def has_xai_credentials() -> bool:
     1. ``XAI_API_KEY`` env var (cheapest; covers explicit-key users).
     2. ``~/.hermes/auth.json`` has a non-empty ``providers.xai-oauth.tokens.access_token``
        (single file read, no expiry check, no refresh).
+    3. ``~/.hermes/auth.json`` has a non-empty ``credential_pool.xai-oauth``
+       entry with either ``access_token`` or ``api_key``. This mirrors
+       ``resolve_runtime_provider(requested="xai-oauth")`` without taking
+       the provider lock or refreshing tokens, and covers profile auth stores
+       that have already migrated away from the providers singleton.
 
     Returns False on any exception so a corrupted auth store can't block
     other availability scans. Truthful refresh + expiry handling happens
@@ -40,7 +45,17 @@ def has_xai_credentials() -> bool:
         xai_state = providers.get("xai-oauth") if isinstance(providers, dict) else None
         tokens = xai_state.get("tokens") if isinstance(xai_state, dict) else None
         access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
-        return bool(str(access_token or "").strip())
+        if str(access_token or "").strip():
+            return True
+        pool = store.get("credential_pool") if isinstance(store, dict) else None
+        entries = pool.get("xai-oauth") if isinstance(pool, dict) else None
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("access_token") or entry.get("api_key") or "").strip():
+                    return True
+        return False
     except Exception:
         return False
 

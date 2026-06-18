@@ -185,7 +185,10 @@ def _get_search_backend() -> str:
     3. Auto-detect from env vars
 
     This enables using different providers for search vs extract
-    (e.g. SearXNG for search + Firecrawl for extract).
+    (e.g. SearXNG for search + Firecrawl for extract). If the shared
+    backend is Firecrawl but Firecrawl is currently unavailable, search may
+    fall back to xAI's native web-search path when xAI credentials already
+    exist; extract still keeps the Firecrawl error because xAI is search-only.
     """
     return _get_capability_backend("search")
 
@@ -206,12 +209,25 @@ def _get_capability_backend(capability: str) -> str:
 
     Reads ``web.{capability}_backend`` from config; if set and available,
     uses it. Otherwise falls through to the shared ``_get_backend()``.
+
+    Search has one extra compatibility fallback: managed/legacy setups often
+    leave ``web.backend`` blank (which historically defaulted to Firecrawl) or
+    explicitly set it to ``firecrawl`` for extract support. When Firecrawl is
+    not configured and xAI auth is already present, route ``web_search`` to
+    xAI instead of selecting Firecrawl and returning the misleading
+    "no FIRECRAWL_API_KEY" error. Do not apply this to ``web_extract`` — xAI
+    has no extract capability, so the Firecrawl configuration error is still
+    the correct outcome there.
     """
     cfg = _load_web_config()
     specific = (cfg.get(f"{capability}_backend") or "").lower().strip()
     if specific and _is_backend_available(specific):
         return specific
-    return _get_backend()
+    shared = _get_backend()
+    if capability == "search" and shared == "firecrawl" and not _is_backend_available("firecrawl"):
+        if _is_backend_available("xai"):
+            return "xai"
+    return shared
 
 
 def _is_backend_available(backend: str) -> bool:
@@ -1186,6 +1202,8 @@ def check_web_api_key() -> bool:
     """Check whether the configured web backend is available."""
     configured = _load_web_config().get("backend", "").lower().strip()
     if configured in {"exa", "parallel", "firecrawl", "tavily", "searxng", "brave-free", "ddgs", "xai"}:
+        if configured == "firecrawl" and not _is_backend_available("firecrawl"):
+            return _is_backend_available("xai")
         return _is_backend_available(configured)
     return any(
         _is_backend_available(backend)
