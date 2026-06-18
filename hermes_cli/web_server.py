@@ -6990,7 +6990,7 @@ _SECRETISH_RE = re.compile(
     r"(?i)(?:sk|xai|ghp|gho|github_pat|hf|hf_|tok|token|key)[-_A-Za-z0-9.]{4,}"
 )
 _CONTROL_CENTER_SECRET_KEY_PATTERN = (
-    r"[A-Z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd)[A-Z0-9_.-]*"
+    r"[A-Z0-9_.-]*(?:api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passphrase|credential|passwd|pwd)[A-Z0-9_.-]*"
 )
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)(?P<prefix>(?P<key_quote>[\"']?)(?P<key>"

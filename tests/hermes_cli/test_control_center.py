@@ -264,6 +264,35 @@ def test_control_center_redacts_unquoted_secret_fields_with_spaces():
     assert "password: [REDACTED]\nnext safe" in redacted
 
 
+def test_control_center_redacts_common_spaced_secret_field_names():
+    redacted = web_server._redact_control_center_text(
+        "passphrase: phraseleak alpha beta gamma\n"
+        "credential: credleak delta epsilon zeta\n"
+        "private_key: privleak eta theta iota\n"
+        "safe: public words preserved"
+    )
+
+    for marker in (
+        "phraseleak",
+        "credleak",
+        "privleak",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+        "zeta",
+        "eta",
+        "theta",
+        "iota",
+    ):
+        assert marker not in redacted
+    assert "passphrase: [REDACTED]\n" in redacted
+    assert "credential: [REDACTED]\n" in redacted
+    assert "private_key: [REDACTED]\n" in redacted
+    assert "safe: public words preserved" in redacted
+
+
 def test_control_center_live_trace_redacts_quoted_secret_fields(tmp_path, monkeypatch):
     home = tmp_path / "hermes_home"
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -318,6 +347,53 @@ def test_control_center_live_trace_redacts_unquoted_secret_fields_with_spaces(tm
     assert "beta" not in content
     assert "gamma" not in content
     assert "password: [REDACTED]\nnext safe" in content
+
+
+def test_control_center_live_trace_redacts_common_spaced_secret_field_names(tmp_path, monkeypatch):
+    home = tmp_path / "hermes_home"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    trace_dir = home / "sessions"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    (trace_dir / "worker.jsonl").write_text(
+        json.dumps({
+            "role": "assistant",
+            "content": (
+                "passphrase: phraseleak alpha beta gamma\n"
+                "credential: credleak delta epsilon zeta\n"
+                "private_key: privleak eta theta iota\n"
+                "safe: public words preserved"
+            ),
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = TestClient(web_server.app).get(
+        "/api/control-center",
+        headers={"X-Hermes-Session-Token": web_server._SESSION_TOKEN},
+    )
+
+    assert response.status_code == 200
+    content = response.json()["live_traces"][0]["lines"][0]["content"]
+    for marker in (
+        "phraseleak",
+        "credleak",
+        "privleak",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+        "zeta",
+        "eta",
+        "theta",
+        "iota",
+    ):
+        assert marker not in content
+    assert "passphrase: [REDACTED]\n" in content
+    assert "credential: [REDACTED]\n" in content
+    assert "private_key: [REDACTED]\n" in content
+    assert "safe: public words preserved" in content
 
 
 def test_control_center_uses_fast_read_only_profile_files(tmp_path, monkeypatch):
