@@ -7055,6 +7055,74 @@ def _control_center_board(slug: str) -> Dict[str, Any]:
     }
 
 
+def _control_center_profile_dicts() -> List[Dict[str, Any]]:
+    """Fast local profile scan for Mission Control read-only aggregation.
+
+    Avoid profiles.list_profiles(): it probes every profile gateway and can turn
+    the read-only control-center refresh into a multi-minute request on DGX.
+    """
+
+    def _read_yaml(path: Path) -> Dict[str, Any]:
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _model_provider(root: Path) -> Tuple[Optional[str], Optional[str]]:
+        config = _read_yaml(root / "config.yaml")
+        model_cfg = config.get("model")
+        if isinstance(model_cfg, dict):
+            model = model_cfg.get("model") or model_cfg.get("name")
+            provider = model_cfg.get("provider")
+            return (str(model) if model else None, str(provider) if provider else None)
+        if isinstance(model_cfg, str):
+            return model_cfg, None
+        return None, None
+
+    def _skill_count(root: Path) -> int:
+        skills_dir = root / "skills"
+        if not skills_dir.is_dir():
+            return 0
+        try:
+            return sum(1 for path in skills_dir.rglob("SKILL.md") if path.is_file())
+        except Exception:
+            return 0
+
+    def _profile_record(name: str, root: Path, is_default: bool) -> Dict[str, Any]:
+        model, provider = _model_provider(root)
+        meta = _read_yaml(root / "profile.yaml")
+        return {
+            "name": name,
+            "path": str(root),
+            "is_default": is_default,
+            "model": model,
+            "provider": provider,
+            "has_env": (root / ".env").exists(),
+            "skill_count": _skill_count(root),
+            "gateway_running": False,
+            "description": str(meta.get("description") or ""),
+            "description_auto": bool(meta.get("description_auto", False)),
+            "has_alias": False,
+        }
+
+    home = _control_center_home()
+    profiles: List[Dict[str, Any]] = []
+    if home.parent.name == "profiles":
+        default_home = home.parent.parent
+        profiles_dir = home.parent
+    else:
+        default_home = home
+        profiles_dir = home / "profiles"
+    if default_home.exists():
+        profiles.append(_profile_record("default", default_home, True))
+    if profiles_dir.is_dir():
+        for entry in sorted(profiles_dir.iterdir()):
+            if entry.is_dir() and entry.name != "default":
+                profiles.append(_profile_record(entry.name, entry, False))
+    return profiles
+
+
 def _control_center_cron_roots() -> List[Tuple[str, Path]]:
     """Return likely HERMES_HOME roots without invoking profile registries.
 
@@ -7111,7 +7179,7 @@ def _control_center_cron_jobs_from_files() -> List[Dict[str, Any]]:
 def _control_center_cron_jobs() -> List[Dict[str, Any]]:
     raw_jobs: List[Dict[str, Any]] = _control_center_cron_jobs_from_files()
     if not raw_jobs:
-        profiles = [str(p.get("name") or "") for p in _cron_profile_dicts()]
+        profiles = [str(p.get("name") or "") for p in _control_center_profile_dicts()]
         if not profiles:
             profiles = ["default"]
         for profile in profiles:
@@ -7157,7 +7225,7 @@ def _control_center_cron_jobs() -> List[Dict[str, Any]]:
 def _control_center_profiles() -> List[Dict[str, Any]]:
     """Return read-only profile summaries safe for Mission Control."""
     profiles: List[Dict[str, Any]] = []
-    for profile in _cron_profile_dicts():
+    for profile in _control_center_profile_dicts():
         name = str(profile.get("name") or "")
         if not name:
             continue

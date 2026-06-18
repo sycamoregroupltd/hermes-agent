@@ -173,3 +173,66 @@ def test_control_center_summary_is_read_only_and_aggregates_core_boards(
     assert body["live_traces"][0]["lines"][0]["content"] == "working with [REDACTED]"
     assert "prompt" not in body["cron_jobs"][0]
     assert "body" not in body["boards"][0]["in_flight"][0]
+
+
+def test_control_center_uses_fast_read_only_profile_files(tmp_path, monkeypatch):
+    home = tmp_path / "hermes_home"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    (home / "profiles" / "jarvis" / "cron").mkdir(parents=True)
+    (home / "profiles" / "jarvis" / "config.yaml").write_text(
+        "model:\n  provider: xai\n  model: grok-test\n",
+        encoding="utf-8",
+    )
+    (home / "profiles" / "jarvis" / ".env").write_text("XAI_API_KEY=secret\n", encoding="utf-8")
+    (home / "profiles" / "jarvis" / "profile.yaml").write_text(
+        "description: Jarvis PM lane\ndescription_auto: true\n",
+        encoding="utf-8",
+    )
+    (home / "profiles" / "jarvis" / "skills" / "example").mkdir(parents=True)
+    (home / "profiles" / "jarvis" / "skills" / "example" / "SKILL.md").write_text("---\nname: example\n---\n", encoding="utf-8")
+    (home / "profiles" / "jarvis" / "cron" / "jobs.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "health",
+                    "name": "dgx-health-watch",
+                    "schedule": "every 5m",
+                    "last_status": "success",
+                    "last_run_at": "2026-06-18T10:00:00Z",
+                    "next_run_at": "2026-06-18T10:05:00Z",
+                    "enabled": True,
+                    "prompt": "do not expose this",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        web_server,
+        "_cron_profile_dicts",
+        lambda: (_ for _ in ()).throw(AssertionError("slow profile registry should not be used")),
+    )
+
+    response = TestClient(web_server.app).get(
+        "/api/control-center",
+        headers={"X-Hermes-Session-Token": web_server._SESSION_TOKEN},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cron_jobs"][0]["profile"] == "jarvis"
+    assert "prompt" not in body["cron_jobs"][0]
+    profiles = {profile["name"]: profile for profile in body["profiles"]}
+    assert profiles["jarvis"] == {
+        "name": "jarvis",
+        "path": str(home / "profiles" / "jarvis"),
+        "is_default": False,
+        "model": "grok-test",
+        "provider": "xai",
+        "has_env": True,
+        "skill_count": 1,
+        "gateway_running": False,
+        "description": "Jarvis PM lane",
+        "description_auto": True,
+        "has_alias": False,
+    }
