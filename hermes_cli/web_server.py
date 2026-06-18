@@ -6989,14 +6989,32 @@ _CONTROL_CENTER_IN_FLIGHT = ("running", "ready", "blocked")
 _SECRETISH_RE = re.compile(
     r"(?i)(?:sk|xai|ghp|gho|github_pat|hf|hf_|tok|token|key)[-_A-Za-z0-9.]{4,}"
 )
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b((?:[A-Z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd)[A-Z0-9_.-]*))\s*[:=]\s*([^\s,;)}\]]+)"
+)
+_BEARER_SECRET_RE = re.compile(r"(?i)\bBearer\s+([A-Za-z0-9._~+/=-]{8,})")
 
 
 def _control_center_home() -> Path:
     return Path(get_hermes_home()).expanduser()
 
 
+def _control_center_root() -> Path:
+    home = _control_center_home()
+    if home.parent.name == "profiles":
+        return home.parent.parent
+    try:
+        from hermes_constants import get_default_hermes_root
+
+        return get_default_hermes_root().expanduser()
+    except Exception:
+        return home
+
+
 def _redact_control_center_text(value: Any, limit: int = 600) -> str:
     text = str(value or "")
+    text = _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[REDACTED]", text)
+    text = _BEARER_SECRET_RE.sub("Bearer [REDACTED]", text)
     text = _SECRETISH_RE.sub("[REDACTED]", text)
     return text[:limit]
 
@@ -7014,7 +7032,7 @@ def _safe_sql_rows(db_path: Path, query: str, params: Tuple[Any, ...] = ()) -> L
 
 
 def _control_center_board(slug: str) -> Dict[str, Any]:
-    db_path = _control_center_home() / "kanban" / "boards" / slug / "kanban.db"
+    db_path = _control_center_root() / "kanban" / "boards" / slug / "kanban.db"
     status_rows = _safe_sql_rows(
         db_path,
         "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status ORDER BY status",
@@ -7265,8 +7283,8 @@ def _control_center_dgx_health(cron_jobs: List[Dict[str, Any]]) -> Dict[str, Any
 
 
 def _control_center_voice_state() -> Dict[str, Any]:
-    home = _control_center_home()
-    voice_home = home / "profiles" / "jarvis-voice"
+    root = _control_center_root()
+    voice_home = root / "profiles" / "jarvis-voice"
     response_store = voice_home / "response_store.db"
     if response_store.exists():
         return {"state": "ready", "source": str(response_store)}
@@ -7301,11 +7319,11 @@ def _tail_jsonl(path: Path, limit: int = 20) -> List[Dict[str, Any]]:
 
 
 def _control_center_live_traces() -> List[Dict[str, Any]]:
-    home = _control_center_home()
+    root = _control_center_root()
     candidates: List[Path] = []
-    for root in (home / "sessions", *(home / "profiles").glob("*/sessions")):
-        if root.exists():
-            candidates.extend(root.glob("*.jsonl"))
+    for sessions_root in (root / "sessions", *(root / "profiles").glob("*/sessions")):
+        if sessions_root.exists():
+            candidates.extend(sessions_root.glob("*.jsonl"))
     candidates = sorted(candidates, key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)[:6]
     traces: List[Dict[str, Any]] = []
     for path in candidates:

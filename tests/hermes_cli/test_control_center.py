@@ -175,6 +175,57 @@ def test_control_center_summary_is_read_only_and_aggregates_core_boards(
     assert "body" not in body["boards"][0]["in_flight"][0]
 
 
+def test_control_center_uses_root_sources_when_hosted_from_profile_home(tmp_path, monkeypatch):
+    home = tmp_path / "hermes_home"
+    jarvis_home = home / "profiles" / "jarvis"
+    monkeypatch.setenv("HERMES_HOME", str(jarvis_home))
+    now = int(time.time())
+
+    board_db = home / "kanban" / "boards" / "jarvis-os" / "kanban.db"
+    _init_board_db(board_db)
+    with sqlite3.connect(board_db) as conn:
+        conn.execute(
+            "INSERT INTO tasks (id, title, assignee, status, priority, created_at, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("t_rooted", "rooted board task", "builder", "running", 5, now - 60, now - 30),
+        )
+
+    (home / "profiles" / "jarvis-voice").mkdir(parents=True)
+    (home / "profiles" / "jarvis-voice" / "response_store.db").write_text("", encoding="utf-8")
+    (home / "sessions").mkdir(parents=True)
+    (home / "sessions" / "worker.jsonl").write_text(
+        json.dumps({"role": "assistant", "content": "root trace line"}) + "\n",
+        encoding="utf-8",
+    )
+
+    response = TestClient(web_server.app).get(
+        "/api/control-center",
+        headers={"X-Hermes-Session-Token": web_server._SESSION_TOKEN},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    boards = {board["slug"]: board for board in body["boards"]}
+    assert boards["jarvis-os"]["available"] is True
+    assert boards["jarvis-os"]["counts"]["running"] == 1
+    assert boards["jarvis-os"]["in_flight"][0]["id"] == "t_rooted"
+    assert body["voice_escalation"]["state"] == "ready"
+    assert body["voice_escalation"]["source"] == str(home / "profiles" / "jarvis-voice" / "response_store.db")
+    assert body["live_traces"][0]["path"] == str(home / "sessions" / "worker.jsonl")
+
+
+def test_control_center_redacts_passwords_and_bearer_tokens():
+    redacted = web_server._redact_control_center_text(
+        "OPENAI_API_KEY=sk-live-secret password=hunter2secret Bearer abcdefghijklmnop"
+    )
+
+    assert "sk-live-secret" not in redacted
+    assert "hunter2secret" not in redacted
+    assert "abcdefghijklmnop" not in redacted
+    assert "OPENAI_API_KEY=[REDACTED]" in redacted
+    assert "password=[REDACTED]" in redacted
+    assert "Bearer [REDACTED]" in redacted
+
+
 def test_control_center_uses_fast_read_only_profile_files(tmp_path, monkeypatch):
     home = tmp_path / "hermes_home"
     monkeypatch.setenv("HERMES_HOME", str(home))
