@@ -130,6 +130,10 @@ def test_control_center_summary_is_read_only_and_aggregates_core_boards(
         "upero",
     ]
     assert body["boards"][0]["counts"]["running"] == 1
+    assert body["status"]["version"]
+    assert body["profiles"]
+    assert body["profiles"][0]["name"] == "default"
+    assert set(body["profiles"][0]).issuperset({"name", "path", "is_default", "model", "provider", "has_env", "skill_count", "gateway_running"})
     assert body["boards"][0]["counts"]["ready"] == 1
     assert body["boards"][0]["in_flight"][0] == {
         "id": "t_jarvis-os",

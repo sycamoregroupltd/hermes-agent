@@ -7055,44 +7055,129 @@ def _control_center_board(slug: str) -> Dict[str, Any]:
     }
 
 
-def _control_center_cron_jobs() -> List[Dict[str, Any]]:
-    profiles = [str(p.get("name") or "") for p in _cron_profile_dicts()]
-    if not profiles:
-        profiles = ["default"]
+def _control_center_cron_roots() -> List[Tuple[str, Path]]:
+    """Return likely HERMES_HOME roots without invoking profile registries.
+
+    The control center is a read-only observability page and must remain cheap:
+    scanning cron/jobs.json directly avoids retargeting cron module globals for
+    every profile on every refresh.
+    """
+    home = _control_center_home()
+    roots: List[Tuple[str, Path]] = [("current", home)]
+    if home.parent.name == "profiles":
+        default_home = home.parent.parent
+        roots.append(("default", default_home))
+        profiles_dir = home.parent
+    else:
+        profiles_dir = home / "profiles"
+    if profiles_dir.exists():
+        for profile_home in sorted(profiles_dir.iterdir()):
+            if profile_home.is_dir():
+                roots.append((profile_home.name, profile_home))
+    seen: set[Path] = set()
+    unique: List[Tuple[str, Path]] = []
+    for profile, root in roots:
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append((profile, root))
+    return unique
+
+
+def _control_center_cron_jobs_from_files() -> List[Dict[str, Any]]:
     jobs: List[Dict[str, Any]] = []
-    seen: set[Tuple[str, str]] = set()
-    for profile in profiles:
-        if not profile:
+    for profile, root in _control_center_cron_roots():
+        jobs_file = root / "cron" / "jobs.json"
+        if not jobs_file.exists():
             continue
         try:
-            profile_jobs = _call_cron_for_profile(profile, "list_jobs", True)
+            payload = json.loads(jobs_file.read_text(encoding="utf-8"))
         except Exception:
-            _log.exception("Failed to read cron jobs for control center profile %s", profile)
+            _log.exception("Failed to read control-center cron jobs file %s", jobs_file)
             continue
-        if isinstance(profile_jobs, dict):
-            profile_jobs = [profile_jobs]
-        for job in profile_jobs:
-            if not isinstance(job, dict):
+        raw_jobs = payload.values() if isinstance(payload, dict) else payload
+        if not isinstance(raw_jobs, list) and not hasattr(raw_jobs, "__iter__"):
+            continue
+        for raw_job in raw_jobs:
+            if not isinstance(raw_job, dict):
                 continue
-            job_id = str(job.get("id") or job.get("job_id") or job.get("name") or "")
-            key = (str(job.get("profile") or profile), job_id)
-            if key in seen:
+            job = dict(raw_job)
+            job.setdefault("profile", profile)
+            jobs.append(job)
+    return jobs
+
+
+def _control_center_cron_jobs() -> List[Dict[str, Any]]:
+    raw_jobs: List[Dict[str, Any]] = _control_center_cron_jobs_from_files()
+    if not raw_jobs:
+        profiles = [str(p.get("name") or "") for p in _cron_profile_dicts()]
+        if not profiles:
+            profiles = ["default"]
+        for profile in profiles:
+            if not profile:
                 continue
-            seen.add(key)
-            jobs.append(
-                {
-                    "id": job_id,
-                    "name": _redact_control_center_text(job.get("name") or job_id, 120),
-                    "profile": job.get("profile") or job.get("profile_name") or profile,
-                    "schedule": job.get("schedule_display") or job.get("schedule") or "?",
-                    "last_status": job.get("last_status"),
-                    "last_run_at": job.get("last_run_at"),
-                    "next_run_at": job.get("next_run_at"),
-                    "enabled": bool(job.get("enabled", True)),
-                }
-            )
+            try:
+                profile_jobs = _call_cron_for_profile(profile, "list_jobs", True)
+            except Exception:
+                _log.exception("Failed to read cron jobs for control center profile %s", profile)
+                continue
+            if isinstance(profile_jobs, dict):
+                profile_jobs = [profile_jobs]
+            for job in profile_jobs:
+                if not isinstance(job, dict):
+                    continue
+                job = dict(job)
+                job.setdefault("profile", profile)
+                raw_jobs.append(job)
+    jobs: List[Dict[str, Any]] = []
+    seen: set[Tuple[str, str]] = set()
+    for job in raw_jobs:
+        job_id = str(job.get("id") or job.get("job_id") or job.get("name") or "")
+        key = (str(job.get("profile") or job.get("profile_name") or ""), job_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        jobs.append(
+            {
+                "id": job_id,
+                "name": _redact_control_center_text(job.get("name") or job_id, 120),
+                "profile": job.get("profile") or job.get("profile_name") or "current",
+                "schedule": job.get("schedule_display") or job.get("schedule") or "?",
+                "last_status": job.get("last_status"),
+                "last_run_at": job.get("last_run_at"),
+                "next_run_at": job.get("next_run_at"),
+                "enabled": bool(job.get("enabled", True)),
+            }
+        )
     jobs.sort(key=lambda j: (str(j.get("profile") or ""), str(j.get("name") or "")))
     return jobs
+
+
+def _control_center_profiles() -> List[Dict[str, Any]]:
+    """Return read-only profile summaries safe for Mission Control."""
+    profiles: List[Dict[str, Any]] = []
+    for profile in _cron_profile_dicts():
+        name = str(profile.get("name") or "")
+        if not name:
+            continue
+        profiles.append(
+            {
+                "name": name,
+                "path": str(profile.get("path") or ""),
+                "is_default": bool(profile.get("is_default", False)),
+                "model": _redact_control_center_text(profile.get("model"), 160) if profile.get("model") else None,
+                "provider": _redact_control_center_text(profile.get("provider"), 120) if profile.get("provider") else None,
+                "has_env": bool(profile.get("has_env", False)),
+                "skill_count": int(profile.get("skill_count") or 0),
+                "gateway_running": bool(profile.get("gateway_running", False)),
+                "description": _redact_control_center_text(profile.get("description"), 240),
+                "description_auto": bool(profile.get("description_auto", False)),
+                "has_alias": bool(profile.get("has_alias", False)),
+            }
+        )
+    profiles.sort(key=lambda p: (not bool(p.get("is_default")), str(p.get("name") or "")))
+    return profiles
 
 
 def _control_center_dgx_health(cron_jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -7165,8 +7250,11 @@ def _control_center_live_traces() -> List[Dict[str, Any]]:
 @app.get("/api/control-center")
 async def get_control_center():
     cron_jobs = _control_center_cron_jobs()
+    profiles = _control_center_profiles()
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": await get_status(),
+        "profiles": profiles,
         "boards": [_control_center_board(slug) for slug in _CONTROL_CENTER_BOARDS],
         "cron_jobs": cron_jobs,
         "dgx_health": _control_center_dgx_health(cron_jobs),

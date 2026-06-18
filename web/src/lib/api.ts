@@ -1533,6 +1533,20 @@ export interface ControlCenterCronJob {
   enabled: boolean;
 }
 
+export interface ControlCenterProfile {
+  name: string;
+  path: string;
+  is_default: boolean;
+  model: string | null;
+  provider: string | null;
+  has_env: boolean;
+  skill_count: number;
+  gateway_running: boolean;
+  description: string;
+  description_auto: boolean;
+  has_alias: boolean;
+}
+
 export interface ControlCenterHealth {
   source: string;
   job_id?: string | null;
@@ -1564,6 +1578,8 @@ export interface ControlCenterTrace {
 
 export interface ControlCenterResponse {
   generated_at: string;
+  status: StatusResponse;
+  profiles: ControlCenterProfile[];
   boards: ControlCenterBoard[];
   cron_jobs: ControlCenterCronJob[];
   dgx_health: ControlCenterHealth;

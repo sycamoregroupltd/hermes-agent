@@ -10,6 +10,7 @@ import {
   Server,
   Smartphone,
   TerminalSquare,
+  Users,
   Zap,
 } from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
@@ -111,7 +112,7 @@ export default function ControlCenterPage() {
 
       {error ? <EmptyState>Control Center refresh failed: {error}</EmptyState> : null}
 
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card className="md:col-span-1">
           <CardContent className="p-5">
             <div className="mb-3 flex items-center gap-2">
@@ -146,6 +147,53 @@ export default function ControlCenterPage() {
               {data?.boards.reduce((total, board) => total + (board.counts.running || 0), 0) ?? 0}
             </div>
             <p className="mt-2 text-sm text-muted-foreground">Running kanban workers across the four core boards.</p>
+          </CardContent>
+        </Card>
+        <Card className="md:col-span-1">
+          <CardContent className="p-5">
+            <div className="mb-3 flex items-center gap-2">
+              <Activity className="h-5 w-5 text-primary" />
+              <h3 className="font-semibold">Dashboard Status</h3>
+            </div>
+            <Badge tone={data?.status.gateway_running ? "success" : "warning"}>
+              {data?.status.gateway_state || (data?.status.gateway_running ? "running" : "stopped")}
+            </Badge>
+            <dl className="mt-4 space-y-2 text-sm">
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Version</dt><dd>{data?.status.version || "—"}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Sessions</dt><dd>{data?.status.active_sessions ?? 0}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Auth</dt><dd>{data?.status.auth_required ? "gated" : "loopback"}</dd></div>
+            </dl>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-3">
+          <CardContent className="p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              <h3 className="font-semibold">Profiles</h3>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {data?.profiles.slice(0, 12).map((profile) => (
+                <div key={profile.name} className="rounded-xl border border-border/70 bg-background/50 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={profile.gateway_running ? "success" : "secondary"}>{profile.gateway_running ? "gateway" : "idle"}</Badge>
+                    {profile.is_default ? <Badge tone="warning">default</Badge> : null}
+                    <span className="font-medium">{profile.name}</span>
+                  </div>
+                  <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                    {profile.description || `${profile.provider || "provider ?"} · ${profile.model || "model ?"}`}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>{profile.skill_count} skills</span>
+                    <span>{profile.has_env ? ".env present" : "no .env"}</span>
+                    <span>{profile.has_alias ? "alias" : "no alias"}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {!data?.profiles.length ? <EmptyState>No profiles found under the local Hermes home.</EmptyState> : null}
           </CardContent>
         </Card>
       </section>
