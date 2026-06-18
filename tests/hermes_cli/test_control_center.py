@@ -252,6 +252,18 @@ def test_control_center_redacts_quoted_secret_fields_with_spaces():
     assert '"message": "safe text"' in redacted
 
 
+def test_control_center_redacts_unquoted_secret_fields_with_spaces():
+    redacted = web_server._redact_control_center_text(
+        "log line password: unquotedspace alpha beta gamma\nnext safe"
+    )
+
+    assert "unquotedspace" not in redacted
+    assert "alpha" not in redacted
+    assert "beta" not in redacted
+    assert "gamma" not in redacted
+    assert "password: [REDACTED]\nnext safe" in redacted
+
+
 def test_control_center_live_trace_redacts_quoted_secret_fields(tmp_path, monkeypatch):
     home = tmp_path / "hermes_home"
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -278,6 +290,34 @@ def test_control_center_live_trace_redacts_quoted_secret_fields(tmp_path, monkey
     assert "beta" not in content
     assert "gamma" not in content
     assert '"password":"[REDACTED]"' in content
+
+
+def test_control_center_live_trace_redacts_unquoted_secret_fields_with_spaces(tmp_path, monkeypatch):
+    home = tmp_path / "hermes_home"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    trace_dir = home / "sessions"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    (trace_dir / "worker.jsonl").write_text(
+        json.dumps({
+            "role": "assistant",
+            "content": "log line password: unquotedspace alpha beta gamma\nnext safe",
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    response = TestClient(web_server.app).get(
+        "/api/control-center",
+        headers={"X-Hermes-Session-Token": web_server._SESSION_TOKEN},
+    )
+
+    assert response.status_code == 200
+    content = response.json()["live_traces"][0]["lines"][0]["content"]
+    assert "unquotedspace" not in content
+    assert "alpha" not in content
+    assert "beta" not in content
+    assert "gamma" not in content
+    assert "password: [REDACTED]\nnext safe" in content
 
 
 def test_control_center_uses_fast_read_only_profile_files(tmp_path, monkeypatch):

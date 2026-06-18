@@ -6995,7 +6995,9 @@ _CONTROL_CENTER_SECRET_KEY_PATTERN = (
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)(?P<prefix>(?P<key_quote>[\"']?)(?P<key>"
     + _CONTROL_CENTER_SECRET_KEY_PATTERN
-    + r")(?P=key_quote)\s*[:=]\s*)(?:\"(?P<double_value>(?:\\.|[^\"\\])*)\"|'(?P<single_value>(?:\\.|[^'\\])*)'|(?P<plain_value>[^\"'\s,;)}\]]+))"
+    + r")(?P=key_quote)\s*[:=]\s*)(?:\"(?P<double_value>(?:\\.|[^\"\\])*)\"|'(?P<single_value>(?:\\.|[^'\\])*)'|(?P<plain_value>(?:(?!\s+(?:Bearer\b|[\"']?"
+    + _CONTROL_CENTER_SECRET_KEY_PATTERN
+    + r"[\"']?\s*[:=])|\r?\n).)+))"
 )
 _BEARER_SECRET_RE = re.compile(r"(?i)\bBearer\s+([A-Za-z0-9._~+/=-]{8,})")
 
