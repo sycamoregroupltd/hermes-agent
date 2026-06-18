@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
   Bot,
@@ -51,7 +51,7 @@ function StatPill({ label, value }: { label: string; value: number }) {
   );
 }
 
-function EmptyState({ children }: { children: string }) {
+function EmptyState({ children }: { children: ReactNode }) {
   return <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">{children}</p>;
 }
 
