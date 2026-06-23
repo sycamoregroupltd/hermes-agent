@@ -87,25 +87,33 @@
   }
 
   // Order matches BOARD_COLUMNS in plugin_api.py.
-  const COLUMN_ORDER = ["triage", "todo", "ready", "running", "blocked", "done"];
+  const COLUMN_ORDER = ["triage", "todo", "scheduled", "ready", "running", "awaiting_sub_agents", "blocked", "blocked_by_agent_error", "review", "done"];
   // English fallback dictionaries — used when the i18n catalog is missing
   // a key, and as defaults for the get*() helpers below so callers running
   // outside any React component (where there's no `t`) still get sane text.
   const FALLBACK_COLUMN_LABEL = {
     triage: "Triage",
     todo: "Todo",
+    scheduled: "Scheduled",
     ready: "Ready",
     running: "In Progress",
+    awaiting_sub_agents: "Awaiting Sub-Agents",
     blocked: "Blocked",
+    blocked_by_agent_error: "Agent Error",
+    review: "Review",
     done: "Done",
     archived: "Archived",
   };
   const FALLBACK_COLUMN_HELP = {
     triage: "Raw ideas — a specifier will flesh out the spec",
     todo: "Waiting on dependencies or unassigned",
+    scheduled: "Time-based follow-up; will auto-promote at the scheduled time",
     ready: "Dependencies satisfied; assign a profile to dispatch",
     running: "Claimed by a worker — in-flight",
+    awaiting_sub_agents: "Orchestrator waiting for child sub-tasks to complete",
     blocked: "Worker asked for human input",
+    blocked_by_agent_error: "Auto-blocked by circuit breaker after repeated failures",
+    review: "Under review — a guardian or reviewer is evaluating the output",
     done: "Completed",
     archived: "Archived",
   };
@@ -113,6 +121,7 @@
     done: "Mark this task as done? The worker's claim is released and dependent children become ready.",
     archived: "Archive this task? It disappears from the default board view.",
     blocked: "Mark this task as blocked? The worker's claim is released.",
+    blocked_by_agent_error: "Mark this task as agent-error blocked? The worker's claim is released.",
   };
   const FALLBACK_DIAGNOSTIC_EVENT_LABELS = {
     completion_blocked_hallucination: "⚠ Completion blocked — phantom card ids",
@@ -132,6 +141,7 @@
     done: "confirmDone",
     archived: "confirmArchive",
     blocked: "confirmBlocked",
+    blocked_by_agent_error: "confirmBlockedByAgentError",
   };
 
   function getColumnLabel(t, status) {
@@ -154,9 +164,13 @@
   const COLUMN_DOT = {
     triage: "hermes-kanban-dot-triage",
     todo: "hermes-kanban-dot-todo",
+    scheduled: "hermes-kanban-dot-scheduled",
     ready: "hermes-kanban-dot-ready",
     running: "hermes-kanban-dot-running",
+    awaiting_sub_agents: "hermes-kanban-dot-awaiting-sub-agents",
     blocked: "hermes-kanban-dot-blocked",
+    blocked_by_agent_error: "hermes-kanban-dot-blocked-by-agent-error",
+    review: "hermes-kanban-dot-review",
     done: "hermes-kanban-dot-done",
     archived: "hermes-kanban-dot-archived",
   };
@@ -2420,7 +2434,10 @@
     ready:   { amber: 1 * 60 * 60,   red: 24 * 60 * 60 },
     running: { amber: 10 * 60,       red: 60 * 60 },
     blocked: { amber: 1 * 60 * 60,   red: 24 * 60 * 60 },
+    blocked_by_agent_error: { amber: 10 * 60, red: 60 * 60 },
+    awaiting_sub_agents: { amber: 30 * 60, red: 4 * 60 * 60 },
     todo:    { amber: 7 * 24 * 60 * 60, red: 30 * 24 * 60 * 60 },
+    review:  { amber: 1 * 60 * 60,   red: 24 * 60 * 60 },
   };
 
   function stalenessClass(task) {
@@ -2558,6 +2575,16 @@
                   title: `${progress.done} of ${progress.total} child tasks done`,
                 }, `${progress.done}/${progress.total}`)
               : null,
+            t.total_tokens != null
+              ? h("span", {
+                  className: "hermes-kanban-cost-badge",
+                  title: `Tokens: ${t.input_tokens || 0} in / ${t.output_tokens || 0} out / ${t.total_tokens} total. Est. cost: $${(t.estimated_cost || 0).toFixed(4)}`,
+                }, `⚡${t.total_tokens >= 1000 ? (t.total_tokens / 1000).toFixed(1) + "k" : t.total_tokens}`)
+              : null,
+            t.task_type && t.task_type !== "agent_sub_task"
+              ? h(Badge, { variant: "outline", className: "hermes-kanban-tag",
+                           title: `Task type: ${t.task_type}` }, t.task_type.replace(/_/g, " "))
+              : null,
             needsAssignee
               ? h(Badge, {
                   variant: "outline",
@@ -2582,9 +2609,9 @@
                             title: `${t.comment_count} comment${t.comment_count === 1 ? "" : "s"} on this task` }, "💬 ", t.comment_count)
               : null,
             t.link_counts && (t.link_counts.parents + t.link_counts.children) > 0
-              ? h("span", { className: "hermes-kanban-count",
+              ? h("span", { className: "hermes-kanban-count hermes-kanban-nesting",
                             title: `${t.link_counts.parents} parent${t.link_counts.parents === 1 ? "" : "s"}, ${t.link_counts.children} child${t.link_counts.children === 1 ? "" : "ren"}. Children stay blocked until their parent is done.` },
-                  "↔ ", t.link_counts.parents + t.link_counts.children)
+                  t.link_counts.parents > 0 ? "↑" : "", t.link_counts.parents || "", t.link_counts.parents > 0 && t.link_counts.children > 0 ? " " : "", t.link_counts.children > 0 ? "↓" : "", t.link_counts.children || "")
               : null,
             h("span", { className: "hermes-kanban-ago",
                         title: t.created_at ? `Created ${t.created_at}` : "" },

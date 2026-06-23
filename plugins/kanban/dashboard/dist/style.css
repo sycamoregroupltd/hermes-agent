@@ -168,6 +168,10 @@
 .hermes-kanban-dot-blocked  { background: var(--color-destructive, #d14a4a); }
 .hermes-kanban-dot-done     { background: #4a8cd1; }  /* blue */
 .hermes-kanban-dot-archived { background: var(--color-border); }
+.hermes-kanban-dot-scheduled            { background: #8b9dc3; }  /* slate-blue — time-based */
+.hermes-kanban-dot-awaiting-sub-agents  { background: #e8a838; }  /* amber-gold — waiting for children */
+.hermes-kanban-dot-blocked-by-agent-error { background: #e05a3a; }  /* red-orange — system auto-blocked */
+.hermes-kanban-dot-review               { background: #7c5cbf; }  /* purple — under review */
 
 /* ---- Progress pill (N/M child tasks done) --------------------------- */
 
@@ -185,6 +189,27 @@
   background: color-mix(in srgb, #3fb97d 22%, transparent);
   border-color: color-mix(in srgb, #3fb97d 45%, transparent);
   color: var(--color-foreground);
+}
+
+/* ---- Cost badge (token count + estimated cost) --------------------- */
+
+.hermes-kanban-cost-badge {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.6rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, #6ea8fe 18%, transparent);
+  border: 1px solid color-mix(in srgb, #6ea8fe 40%, transparent);
+  color: var(--color-foreground);
+  letter-spacing: 0.02em;
+}
+
+/* ---- Nesting indicator (parent/child link arrows) ------------------ */
+
+.hermes-kanban-nesting {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.65rem;
+  letter-spacing: 0.02em;
 }
 
 /* ---- Lanes (per-profile sub-grouping inside Running) ---------------- */
