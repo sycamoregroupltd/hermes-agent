@@ -6756,6 +6756,23 @@ def _default_spawn(
         # This only happens in test fixtures where the isolated
         # HERMES_HOME never had profiles created.
         pass
+    # Strip dispatcher-inherited provider/model env vars so the worker
+    # reads its own profile's config.yaml model section instead of
+    # inheriting the dispatcher's auth context. Without this, a worker
+    # spawned from a gateway running xai-oauth would resolve xai-oauth
+    # even when its profile config.yaml says provider=ollama-cloud.
+    # HERMES_INFERENCE_PROVIDER is checked by cli.py ChatConsole.__init__
+    # (line ~3355) as a fallback before config.yaml model.provider;
+    # HERMES_INFERENCE_MODEL is checked by oneshot.py resolve_model()
+    # (line ~155) as a fallback before config.yaml model.default.
+    # HERMES_TUI_PROVIDER is set by the TUI launch path and can also
+    # leak into worker subprocesses.
+    for _leak_var in (
+        "HERMES_INFERENCE_PROVIDER",
+        "HERMES_INFERENCE_MODEL",
+        "HERMES_TUI_PROVIDER",
+    ):
+        env.pop(_leak_var, None)
     if task.tenant:
         env["HERMES_TENANT"] = task.tenant
     env["HERMES_KANBAN_TASK"] = task.id
