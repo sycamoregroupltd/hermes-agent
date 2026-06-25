@@ -28,6 +28,8 @@ def test_agent_spawn_background_records_run_and_prints_run_id(
 
     profile_dir = hermes_home / "profiles" / "research"
     profile_dir.mkdir(parents=True)
+    context_path = tmp_path / "ctx.txt"
+    context_path.write_text("file context here", encoding="utf-8")
 
     popen_calls: list[dict[str, object]] = []
 
@@ -48,7 +50,7 @@ def test_agent_spawn_background_records_run_and_prints_run_id(
             goal=None,
             block=False,
             toolsets="web,file",
-            context_file=[str(tmp_path / "ctx.txt")],
+            context_file=[str(context_path)],
             env=["FOO=bar"],
             cwd=str(tmp_path),
             json=True,
@@ -67,7 +69,10 @@ def test_agent_spawn_background_records_run_and_prints_run_id(
     assert isinstance(cmd, list)
     assert cmd[:5] == [sys.executable, "-m", "hermes_cli.main", "--profile", "research"]
     assert "--oneshot" in cmd
-    assert "write a market brief" in cmd
+    prompt_arg = cmd[cmd.index("--oneshot") + 1]
+    assert "write a market brief" in prompt_arg
+    assert f"Context file: {context_path}" in prompt_arg
+    assert "file context here" in prompt_arg
     assert "--toolsets" in cmd
     assert "web,file" in cmd
     kwargs = popen_calls[0]["kwargs"]
@@ -85,7 +90,7 @@ def test_agent_spawn_background_records_run_and_prints_run_id(
     assert record["status"] == "running"
     assert record["pid"] == 4321
     assert record["mode"] == "background"
-    assert record["context_files"] == [str(tmp_path / "ctx.txt")]
+    assert record["context_files"] == [str(context_path)]
     assert record["env"] == {"FOO": "bar"}
 
 

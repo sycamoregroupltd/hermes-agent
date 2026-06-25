@@ -53,6 +53,28 @@ def _build_command(*, profile: str, prompt: str, toolsets: str | None) -> list[s
     return cmd
 
 
+def _prompt_with_context(prompt: str, context_files: list[str]) -> tuple[str, str | None]:
+    if not context_files:
+        return prompt, None
+
+    parts = [prompt, "", "Additional context files:"]
+    for raw_path in context_files:
+        path = Path(raw_path)
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return prompt, f"Failed to read context file {raw_path}: {exc}"
+        parts.extend(
+            [
+                "",
+                f"--- Context file: {path} ---",
+                content,
+                f"--- End context file: {path} ---",
+            ]
+        )
+    return "\n".join(parts), None
+
+
 def _print_spawn_result(*, run_id: str, status: str, pid: int | None = None, stdout: str | None = None, as_json: bool = False) -> None:
     if as_json:
         payload: dict[str, object] = {"run_id": run_id, "status": status}
@@ -95,7 +117,12 @@ def _agent_spawn(args: Any) -> int:
         cwd = str(cwd_path)
 
     context_files = [str(Path(path).expanduser()) for path in (getattr(args, "context_file", None) or [])]
-    command = _build_command(profile=profile, prompt=prompt, toolsets=getattr(args, "toolsets", None))
+    child_prompt, context_error = _prompt_with_context(prompt, context_files)
+    if context_error:
+        print(context_error, file=sys.stderr)
+        return 2
+
+    command = _build_command(profile=profile, prompt=child_prompt, toolsets=getattr(args, "toolsets", None))
     run_id = AgentRunStore.new_run_id()
     env = os.environ.copy()
     env.update(env_overrides)
