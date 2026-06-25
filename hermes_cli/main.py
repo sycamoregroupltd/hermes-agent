@@ -293,6 +293,7 @@ from hermes_cli.subcommands.logs import build_logs_parser
 from hermes_cli.subcommands.prompt_size import build_prompt_size_parser
 from hermes_cli.subcommands.memory import build_memory_parser
 from hermes_cli.subcommands.acp import build_acp_parser
+from hermes_cli.subcommands.agent import build_agent_parser
 from hermes_cli.subcommands.tools import build_tools_parser
 from hermes_cli.subcommands.insights import build_insights_parser
 from hermes_cli.subcommands.skills import build_skills_parser
@@ -2406,6 +2407,15 @@ def cmd_gateway(args):
     from hermes_cli.gateway import gateway_command
 
     gateway_command(args)
+
+
+def cmd_agent(args):
+    """Spawn and manage independent Hermes agent runs."""
+    from hermes_cli.agent_cmd import agent_command
+
+    rc = agent_command(args)
+    if isinstance(rc, int) and rc != 0:
+        raise SystemExit(rc)
 
 
 def cmd_proxy(args):
@@ -11544,7 +11554,7 @@ def _build_provider_choices() -> list[str]:
 # to parse.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
-        "acp", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
+        "acp", "agent", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
         "computer-use",
         "config", "cron", "curator", "dashboard", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
@@ -12261,6 +12271,11 @@ def main():
     # status command  (parser built in hermes_cli/subcommands/status.py)
     # =========================================================================
     build_status_parser(subparsers, cmd_status=cmd_status)
+
+    # =========================================================================
+    # agent command  (parser built in hermes_cli/subcommands/agent.py)
+    # =========================================================================
+    build_agent_parser(subparsers, cmd_agent=cmd_agent)
 
     # =========================================================================
     # cron command  (parser built in hermes_cli/subcommands/cron.py)
