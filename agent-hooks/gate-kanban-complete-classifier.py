@@ -62,6 +62,13 @@ COMPLETION_HOOK_CLASSIFIER_PATTERNS: PatternList = [
     r"completion[- ]hook contract table",
 ]
 
+CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
+    r"apps/web",
+    r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])(route component|page component|app page|web page|page\.tsx|middleware|layout)([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])dashboard([^.\n]{0,80})(route|page|component|frontend|react|ui|app)([^a-z0-9]|$)",
+]
+
 # Explicit non-application intents. These may neutralize broad web words only
 # when APP_IMPL_PATTERNS do not identify concrete app implementation work.
 NONAPP_OVERRIDE_PATTERNS: PatternList = [
@@ -197,7 +204,7 @@ def _has_app_impl(task_part: str) -> bool:
     # implementation signal bypasses the running-app VERIFY_PASS gate.
     # Keep explicit "do not modify/touch/change frontend" review-routing wording
     # as a negation so PM/reviewer handoff cards are not misread as app work.
-    if _any(COMPLETION_HOOK_CLASSIFIER_PATTERNS, task_part) and not _any(FLEET_SLO_WEB_PATTERNS, task_part):
+    if _any(COMPLETION_HOOK_CLASSIFIER_PATTERNS, task_part) and not _any(CONCRETE_WEB_IMPL_PATTERNS, task_part):
         return False
     return _any(APP_IMPL_PATTERNS, task_part) and not _any(NEGATED_APP_IMPL_PATTERNS, task_part)
 
