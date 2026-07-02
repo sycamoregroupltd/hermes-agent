@@ -65,7 +65,6 @@ COMPLETION_HOOK_CLASSIFIER_PATTERNS: PatternList = [
 CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
     r"apps/web",
     r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^a-z0-9]|$)",
-    r"(^|[^a-z0-9])(route component|page component|app page|web page|page\.tsx|middleware|layout)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])dashboard([^.\n]{0,80})(route|page|component|frontend|react|ui|app)([^a-z0-9]|$)",
 ]
 
