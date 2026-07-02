@@ -3918,43 +3918,113 @@ def _verify_created_cards(
     return verified, phantom
 
 
-# Task-id pattern used both by ``kanban_create`` (``t_<12 hex>``) and
-# ``_new_task_id`` below. Kept permissive on length for forward compat:
-# accept 8+ hex chars after the ``t_`` prefix.
-_TASK_ID_PROSE_RE = re.compile(r"\bt_[a-f0-9]{8,}\b")
+# Board-qualified task references in free-form prose. Task ids are the same
+# ``t_<12 hex>`` shape produced by ``kanban_create`` / ``_new_task_id`` below,
+# with a permissive 8+ hex chars for forward compatibility. The optional
+# ``<board>/`` prefix lets advisory completion scans distinguish a legitimate
+# cross-board citation (for example ``upero/t_8b2f2522``) from an unqualified
+# current-board-only task id. ``created_cards`` intentionally does NOT use this
+# parser; that gate remains strict and same-board only.
+_TASK_ID_PROSE_RE = re.compile(
+    rf"(?<![a-z0-9_/-])"
+    rf"(?:(?P<board>{_BOARD_SLUG_RE.pattern[1:-1]})/)?"
+    rf"(?P<task_id>t_[a-f0-9]{{8,}})\b"
+)
+
+
+def _kanban_db_path_for_prose_scan(board: str) -> Path:
+    """Return ``board``'s DB path without honoring ``HERMES_KANBAN_DB``.
+
+    Worker processes pin ``HERMES_KANBAN_DB`` to their current board so normal
+    ``connect()`` calls cannot accidentally drift. The advisory prose scanner is
+    different: when prose explicitly says ``other-board/t_...`` it must perform
+    a read-only lookup against that named board's DB, not the worker's pinned
+    current-board DB. This helper mirrors :func:`kanban_db_path`'s default vs
+    named-board layout while deliberately ignoring the env override.
+    """
+    if board == DEFAULT_BOARD:
+        return kanban_home() / "kanban.db"
+    return board_dir(board) / "kanban.db"
+
+
+def _task_id_exists_for_prose_scan(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    board: Optional[str],
+    current_board: str,
+) -> bool:
+    """Read-only existence check for a prose task reference.
+
+    Unqualified refs are resolved on the current connection only. Qualified refs
+    resolve on their named board when that board is known and its DB can be
+    opened read-only. Lookup failures are treated as non-existent so the caller
+    can emit an advisory warning without mutating any board.
+    """
+    if not board or board == current_board:
+        return conn.execute(
+            "SELECT 1 FROM tasks WHERE id = ? LIMIT 1", (task_id,)
+        ).fetchone() is not None
+
+    try:
+        slug = _normalize_board_slug(board)
+    except ValueError:
+        return False
+    if not slug or not board_exists(slug):
+        return False
+
+    path = _kanban_db_path_for_prose_scan(slug)
+    if not path.exists():
+        return False
+
+    try:
+        uri = path.resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(uri, uri=True) as other:
+            return other.execute(
+                "SELECT 1 FROM tasks WHERE id = ? LIMIT 1", (task_id,)
+            ).fetchone() is not None
+    except (OSError, sqlite3.Error, ValueError):
+        return False
 
 
 def _scan_prose_for_phantom_ids(
     conn: sqlite3.Connection,
     text: str,
 ) -> list[str]:
-    """Regex-scan free-form text for ``t_<hex>`` references; return the
-    ones that don't exist in ``tasks``.
+    """Regex-scan free-form text for task references that do not exist.
 
     Used as a non-blocking advisory check on completion summaries. An
     empty return means "no suspicious references found" — either the
     text had no IDs at all, or every ID it mentioned resolves to a real
-    task. Duplicates are deduped.
+    task. Unqualified refs resolve only against the current board. Qualified
+    refs like ``upero/t_8b2f2522`` are checked read-only against that named
+    board's DB. Duplicates are deduped while preserving the original spelling
+    used in prose for warning payloads.
     """
     if not text:
         return []
-    matches = _TASK_ID_PROSE_RE.findall(text)
+    matches = list(_TASK_ID_PROSE_RE.finditer(text))
     if not matches:
         return []
-    # Dedupe preserving order.
+
+    current_board = get_current_board()
     seen: set[str] = set()
-    unique: list[str] = []
-    for m in matches:
-        if m not in seen:
-            seen.add(m)
-            unique.append(m)
-    placeholders = ",".join(["?"] * len(unique))
-    rows = conn.execute(
-        f"SELECT id FROM tasks WHERE id IN ({placeholders})",
-        tuple(unique),
-    ).fetchall()
-    existing = {r["id"] for r in rows}
-    return [m for m in unique if m not in existing]
+    phantom: list[str] = []
+    for match in matches:
+        board = match.group("board")
+        task_id = match.group("task_id")
+        ref = f"{board}/{task_id}" if board else task_id
+        if ref in seen:
+            continue
+        seen.add(ref)
+        if not _task_id_exists_for_prose_scan(
+            conn,
+            task_id=task_id,
+            board=board,
+            current_board=current_board,
+        ):
+            phantom.append(ref)
+    return phantom
 
 
 class HallucinatedCardsError(ValueError):

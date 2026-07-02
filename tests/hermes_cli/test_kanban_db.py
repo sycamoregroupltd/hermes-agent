@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import sqlite3
 import subprocess
@@ -1168,6 +1169,76 @@ def test_complete_records_result(kanban_home):
     assert task.status == "done"
     assert task.result == "done and dusted"
     assert task.completed_at is not None
+
+
+def test_complete_prose_scan_accepts_qualified_cross_board_reference(kanban_home):
+    kb.create_board("upero")
+    with kb.connect(board="upero") as other:
+        cross_board_task = kb.create_task(other, title="external evidence")
+
+    with kb.connect() as conn:
+        current_task = kb.create_task(conn, title="current")
+        assert kb.complete_task(
+            conn,
+            current_task,
+            summary=f"reviewed upero/{cross_board_task}",
+        )
+        events = conn.execute(
+            "SELECT kind FROM task_events WHERE task_id = ?",
+            (current_task,),
+        ).fetchall()
+
+    assert "suspected_hallucinated_references" not in [e["kind"] for e in events]
+
+
+def test_complete_prose_scan_warns_for_unknown_qualified_and_unqualified_refs(kanban_home):
+    kb.create_board("upero")
+    unknown_qualified = "upero/t_badc0ffee"
+    unknown_unqualified = "t_deadbeef01"
+
+    with kb.connect() as conn:
+        current_task = kb.create_task(conn, title="current")
+        assert kb.complete_task(
+            conn,
+            current_task,
+            summary=f"follow {unknown_qualified} and {unknown_unqualified}",
+        )
+        event = conn.execute(
+            "SELECT payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'suspected_hallucinated_references'",
+            (current_task,),
+        ).fetchone()
+
+    assert event is not None
+    payload = json.loads(event["payload"])
+    assert payload["phantom_refs"] == [unknown_qualified, unknown_unqualified]
+
+
+def test_created_cards_remains_same_board_strict_with_cross_board_card(kanban_home):
+    kb.create_board("upero")
+    with kb.connect(board="upero") as other:
+        cross_board_task = kb.create_task(other, title="external child", assignee="worker")
+
+    with kb.connect() as conn:
+        current_task = kb.create_task(conn, title="current", assignee="worker")
+        with pytest.raises(kb.HallucinatedCardsError) as exc_info:
+            kb.complete_task(
+                conn,
+                current_task,
+                summary=f"created upero/{cross_board_task}",
+                created_cards=[cross_board_task],
+            )
+        task = kb.get_task(conn, current_task)
+        event = conn.execute(
+            "SELECT kind FROM task_events "
+            "WHERE task_id = ? AND kind = 'completion_blocked_hallucination'",
+            (current_task,),
+        ).fetchone()
+
+    assert task is not None
+    assert task.status == "ready"
+    assert exc_info.value.phantom == [cross_board_task]
+    assert event is not None
 
 
 def test_block_then_unblock(kanban_home):
