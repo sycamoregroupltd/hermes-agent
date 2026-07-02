@@ -60,6 +60,8 @@ COMPLETION_HOOK_CLASSIFIER_PATTERNS: PatternList = [
     r"completion[- ]hook classifier",
     r"ordered completion[- ]hook contract table",
     r"completion[- ]hook contract table",
+    r"completion[- ]gate repair",
+    r"static/obsidian qa completion[- ]gate repair",
 ]
 
 CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
@@ -78,7 +80,26 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"pm acceptance.*non-app.*completion[- ]gate",
     r"non-app.*completion[- ]gate.*app-verification is not applicable",
     r"completion[- ]gate classification mismatch",
-    r"completion gate.*false[ -]?positive",
+    r"completion[- ]gate.*false[ -]?positive",        # also match hyphenated completion-gate (was only space)
+    r"\breview\b[^\n]{0,160}\bcompletion[- ]gate repair\b",
+    r"\bcompletion[- ]gate repair\b[^\n]{0,160}\breview\b",
+    r"\breview\b[^\n]{0,160}\bcompletion[- ]gate\b[^\n]{0,80}\brepair\b",  # non-adjacent combo
+    r"\bcompletion[- ]gate\b[^\n]{0,80}\brepair\b[^\n]{0,160}\breview\b",
+    r"\bcompletion[- ]gate\b[^\n]{0,80}\breview.*card\b[^\n]{0,80}\b(repair|fixture)\b",  # review-card about gate repair
+    r"\breview.*card\b[^\n]{0,80}\b(repair|paired negative|fixture)\b",  # review-card repair task
+    r"\bpaired negative repair\b",                    # repair of paired negative fixtures
+    r"\bstatic/obsidian qa completion[- ]gate repair\b",
+    r"\ba3 proposal\b",                               # A3 proposal cards are not app implementation
+    r"\bnonapp false positive\b",                     # nonapp false positive classification cards
+    r"\bpackage.lock\b[^\n]{0,120}\bnonapp\b",        # package-lock nonapp classification
+    r"\bwhatsapp bridge\b[^\n]{0,120}\b(completion|gate|classifier)\b",  # infra/remediation, not web
+    # Review cards about service-gate/Phase 2F fixtures quote code paths
+    # from git status/diff without being app implementation.
+    r"\breview\b[^\n]{0,200}\b(phase 2[fF]|service[- ]gate|de.?dup|fixtures)\b",
+    r"\b(phase 2[fF]|service[- ]gate|de.?dup|fixtures)\b[^\n]{0,200}\breview\b",
+    # git diff --check output quoting file paths like plugins/kanban/dashboard/plugin_api.py
+    # are evidence, not app surface.
+    r"\bgit (diff|status|check)\b[^\n]{0,200}\bdashboard\b",
     r"verify_pass false[ -]?positive",
     r"fix non-app completion gate",
     r"repair .*verify_pass false[ -]?positive",
@@ -109,6 +130,9 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     # can quote product surfaces but do not modify or serve the app.
     r"\bpm routing\b",
     r"\breview[- ]lane (task|routing|work)\b",
+    r"\breview[- ]lane .*terminal[- ]capable evidence contract\b",
+    r"\bplatform[- ]reviewer .*terminal evidence (path|contract)\b",
+    r"\bterminal evidence[- ]path fix\b",
     r"\breview[- ]required handoff\b",
     r"\bguardian review child\b",
     r"\bdependency[- ]stalled guardian\b",
@@ -130,6 +154,14 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"\bstash preservation\b",
     r"\bgit status\b[^\n]{0,120}\bclean\b",
     r"\bobsidian (note|markdown|log)\b",
+    # PM scope-validation/typecheck-scope cards can mention page/router/tRPC
+    # symbols as inspected compile targets. They are report-only/research cards
+    # unless paired with concrete frontend/app implementation language.
+    r"\b(scope[- ]validation|typecheck[- ]scope|compile[- ]only review[- ]lane)\b",
+    r"\bvalidate [^\n]{0,120}typecheck scope\b",
+    r"\bpre[- ]change typecheck context\b",
+    r"\btypecheck baseline\b[^\n]{0,160}\b(scope note|scope validation|approval to proceed|block with evidence)\b",
+    r"\b(inspected files|observed hotspots/error classes|baseline commands/output counts)\b",
     r"\bno (app|runtime|route|page|component|middleware|api|trpc|auth|tenant|layout|frontend)\b[^\n]{0,160}\b(touched|changed|modified|surface|surfaces)\b",
     # Static/Obsidian QA packets can mention screenshots/render output as audit
     # evidence; they are artifact packets when paired with explicit static scope.
@@ -175,6 +207,11 @@ EXPLICIT_NO_APP_CHANGE_PATTERNS: PatternList = [
 NEGATED_APP_IMPL_PATTERNS: PatternList = [
     r"\bdo not (modify|touch|change) (frontend|web|app)\b",
     r"\bno (frontend|web|app)[^\n.]{0,80}(route|page|component|middleware|layout|ui)[^\n.]{0,80}(touched|changed|modified)\b",
+    # Review/repair cards quote the desired guardrail behavior for real app
+    # work. That expectation text is not itself an instruction to implement UI.
+    r"\bactual [^\n.]{0,160}(frontend|web|app|route|page|component|middleware|layout)[^\n.]{0,120}work remains blocked unless\b",
+    r"\b(concrete|real|actual) [^\n.]{0,160}(frontend|web|app|route|page|component|middleware|layout)[^\n.]{0,120}(blocks?|blocked|remains blocked) (without|unless)\b",
+    r"\b(concrete|real|actual) [^\n.]{0,160}(frontend|web|app|route|page|component|middleware|layout)[^\n.]{0,120}work that lacks\b",
 ]
 
 
@@ -203,9 +240,76 @@ def _has_app_impl(task_part: str) -> bool:
     # implementation signal bypasses the running-app VERIFY_PASS gate.
     # Keep explicit "do not modify/touch/change frontend" review-routing wording
     # as a negation so PM/reviewer handoff cards are not misread as app work.
-    if _any(COMPLETION_HOOK_CLASSIFIER_PATTERNS, task_part) and not _any(CONCRETE_WEB_IMPL_PATTERNS, task_part):
+    #
+    # Review cards about completion-gate repair are NOT app implementation.
+    # Match both adjacent "completion-gate repair" and non-adjacent patterns
+    # where "completion-gate" and "repair" are within 80 chars of each other.
+    raw_app_impl = _any(APP_IMPL_PATTERNS, task_part) and not _any(NEGATED_APP_IMPL_PATTERNS, task_part)
+    has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, task_part)
+    review_completion_gate_nonapp = bool(
+        re.search(r"^\s*review:[^\n]{0,300}", task_part)
+        and _any(NONAPP_OVERRIDE_PATTERNS, task_part)
+        and not raw_app_impl
+        and not has_concrete_web_impl
+    )
+    has_app_impl = raw_app_impl and not review_completion_gate_nonapp
+    if re.search(r"^\s*review:[^\n]{0,300}", task_part):
+        # The title starts with "review:". Check if this is about completion-gate
+        # repair (not app impl) vs. actual frontend review. Concrete app
+        # implementation signals win: a review-prefixed card that itself says to
+        # implement/fix apps/web routes/pages/components must still be gated.
+        if (
+            re.search(r"\bcompletion[- ]gate\b[^\n]{0,80}\brepair\b", task_part)
+            and not raw_app_impl
+            and not has_concrete_web_impl
+        ):
+            return False
+        if (
+            re.search(r"\bcompletion[- ]gate\b[^\n]{0,120}\b(classifier|fixture|false positive|nonapp)\b", task_part)
+            and not raw_app_impl
+            and not has_concrete_web_impl
+        ):
+            return False
+        # Review cards that also match nonapp override patterns (service-gate,
+        # Phase 2F, fixtures, de-dup, etc.) are not app implementation.
+        # When NONAPP patterns fire, the review is analysis/audit, not UI work.
+        if _any(NONAPP_OVERRIDE_PATTERNS, task_part) and not has_app_impl and not has_concrete_web_impl:
+            return False
+    if (
+        _any(COMPLETION_HOOK_CLASSIFIER_PATTERNS, task_part)
+        and not _any(CONCRETE_WEB_IMPL_PATTERNS, task_part)
+        and not _any(APP_IMPL_PATTERNS, task_part)
+    ):
         return False
-    return _any(APP_IMPL_PATTERNS, task_part) and not _any(NEGATED_APP_IMPL_PATTERNS, task_part)
+    # Broaden the adjacent-only check to handle non-adjacent "completion-gate repair"
+    # in review context (e.g. "REVIEW: completion-gate review-card paired negative repair")
+    if (
+        re.search(r"^\s*review:[^\n]{0,160}\bcompletion[- ]gate repair\b", task_part)
+        and not raw_app_impl
+        and not has_app_impl
+        and not has_concrete_web_impl
+    ):
+        return False
+    # Also handle cards starting with "REPAIR:" that mention the completion gate
+    # (e.g. "REPAIR: completion-gate classifier review-card false positive fixture")
+    if (
+        re.search(r"^\s*repair:[^\n]{0,300}\bcompletion[- ]gate\b", task_part)
+        and not raw_app_impl
+        and not has_app_impl
+        and not has_concrete_web_impl
+    ):
+        return False
+    # Also handle A3 proposals about completion-gate classification — these
+    # may contain "fix frontend" as a description of the false positive, not
+    # as an instruction to implement frontend work.
+    if (
+        re.search(r"^\s*a3 proposal\b[^\n]{0,300}\bcompletion[- ]gate\b", task_part)
+        and not raw_app_impl
+        and not has_app_impl
+        and not has_concrete_web_impl
+    ):
+        return False
+    return has_app_impl
 
 
 @dataclass(frozen=True)

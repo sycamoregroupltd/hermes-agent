@@ -1,5 +1,41 @@
 [
   {
+    "name": "t_7cf6a11a-pm-typecheck-scope-validation-allows",
+    "task_id": "t_7cf6a11a_fixture",
+    "expected": "allow",
+    "title": "Validate project-phase/page typecheck scope",
+    "body": "Work in `/home/frank/upero` on branch `AI-Dev` or an isolated worktree/branch per local workflow. Read repo rules and inspect `apps/api/src/services/project-phase-manager.service.ts`, `apps/api/src/trpc/routers/page.router.ts`, and relevant usages/imports. Confirm current errors are limited to project-phase/page compile fixes and do not require schema/data migration, tenant isolation policy changes, auth/session behavior, money/payment/pricing/refund/order/cart behavior, credentials/secrets, provider/model routing, deploy, push, irreversible action, or spend. Capture pre-change typecheck context using `./scripts/verify-typecheck.sh 1694` plus root baseline context. Acceptance: produce a concise scope note listing inspected files, observed hotspots/error classes, exact baseline commands/output counts, and either clear approval to proceed or a block with evidence.",
+    "summary": "CLEAR_PROCEED_compile_only_review_lane; apps/api typecheck baseline PASS; root typecheck VERIFY_PASS; no route/UI/page/layout/middleware/runtime code changed; Obsidian scope note persisted.",
+    "description": "ALLOW: real t_7cf6a11a class; PM scope-validation/typecheck-scope task quotes page.router/trpc/page targets as inspected compile scope, but performs no app route/UI/runtime implementation."
+  },
+  {
+    "name": "t_7cf6a11a-paired-frontend-typecheck-scope-negative-blocks",
+    "task_id": "t_7cf6a11a_negative",
+    "expected": "block",
+    "title": "Validate and fix frontend project-phase/page typecheck scope",
+    "body": "Implement apps/web project phase page route component and layout while capturing typecheck baseline context. This is concrete frontend route/page/component work; no VERIFY_PASS is supplied.",
+    "summary": "typecheck baseline PASS; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired t_7cf6a11a negative; typecheck-scope wording must not bypass true frontend route/page/component implementation."
+  },
+  {
+    "name": "t_5f17cc55-reviewer-terminal-evidence-contract-allows",
+    "task_id": "t_5f17cc55_fixture",
+    "expected": "allow",
+    "title": "FIX: platform-reviewer frontend review gate needs terminal-capable evidence contract",
+    "body": "Bounded Hermes/fleet review-lane fix only: repair the platform-reviewer terminal evidence path so frontend/web reviewers can run required gates. Preserve independent REVIEW_VERDICT requirements. No app/product code changes, no frontend/web/app route, page, component, middleware, layout, API, or tRPC surface touched.",
+    "summary": "Closed non-app completion-gate repair after platform-reviewer approved the terminal evidence-path fix; dispatcher-shaped smoke returned PLATFORM_REVIEWER_CLOSEOUT_SMOKE; no app/product code changes.",
+    "description": "ALLOW: real t_5f17cc55 class; the task title contains frontend/web review-gate wording, but the work is profile/tooling evidence-contract repair, not app implementation."
+  },
+  {
+    "name": "t_5f17cc55-paired-frontend-terminal-evidence-negative-blocks",
+    "task_id": "t_5f17cc55_negative",
+    "expected": "block",
+    "title": "Build frontend review dashboard with terminal evidence contract",
+    "body": "Implement apps/web React route component and page layout for a platform-reviewer terminal evidence dashboard. This is concrete frontend UI work and no VERIFY_PASS is supplied.",
+    "summary": "terminal smoke passed; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired negative; terminal-evidence/review wording must not bypass true frontend route/page/component implementation."
+  },
+  {
     "name": "t_411a76da-review-nonapp-script-api-allows",
     "task_id": "t_411a76da_fixture",
     "expected": "allow",
@@ -52,6 +88,60 @@
     "body": "Implement apps/web marketplace route component and page layout, then produce a static visual/content QA packet. This changed a concrete page-dependent API path and frontend route, so it must still prove the running route.",
     "summary": "AD_HOC_VERIFY_PASS packet markers only; no running app VERIFY_PASS supplied",
     "description": "BLOCK: paired t_3983a581 negative; frontend route/page/page-dependent API work still requires VERIFY_PASS even when it also produces a static QA packet."
+  },
+  {
+    "name": "t_d1fdbb8e-review-completion-gate-repair-allows",
+    "task_id": "t_d1fdbb8e_fixture",
+    "expected": "allow",
+    "title": "REVIEW: static Obsidian QA completion-gate repair",
+    "body": "Review the static/Obsidian QA completion-gate repair from jarvis-os/t_3983a581 before downstream Upero static QA packet tasks rely on it. Expected behavior: Static/Obsidian/artifact-only QA packet tasks such as upero/t_462b81ab and upero/t_1c053025 are allowed to complete with durable artifact verification and no running route. Actual frontend route/page/component/middleware/layout/page-dependent API work remains blocked unless a real running-app VERIFY_PASS is supplied. AD_HOC_VERIFY_PASS / no-running-app prose must not be accepted as running-app VERIFY_PASS evidence for frontend work.",
+    "summary": "REVIEW_VERDICT=APPROVE after hook syntax/selftest, direct Upero static packet allows, and AD_HOC/no-running-app frontend block probe; no app implementation performed.",
+    "description": "ALLOW: review-only completion-gate repair card quotes frontend expectations as acceptance criteria but does not itself implement or modify an app surface."
+  },
+  {
+    "name": "t_d1fdbb8e-paired-frontend-completion-gate-repair-negative-blocks",
+    "task_id": "t_d1fdbb8e_negative",
+    "expected": "block",
+    "title": "Fix frontend route completion-gate repair",
+    "body": "Fix frontend route component and page layout for marketplace. This is actual frontend route/page/component work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired t_d1fdbb8e negative; concrete frontend route/page/component work still requires running-app VERIFY_PASS even when it mentions completion-gate repair."
+  },
+  {
+    "name": "t_d1fdbb8e-review-prefixed-frontend-completion-gate-repair-negative-blocks",
+    "task_id": "t_d1fdbb8e_review_prefixed_negative",
+    "expected": "block",
+    "title": "REVIEW: completion-gate repair for frontend route fix",
+    "body": "Implement apps/web marketplace React route component and page layout. This is actual frontend route/page/component work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: reviewer-discovered bypass class; review-prefixed concrete frontend route/page/component work must not be allowed by completion-gate repair wording without real running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_d459f195-review-prefixed-reduced-route-negative-blocks",
+    "task_id": "t_d459f195_reduced_route_negative",
+    "expected": "block",
+    "title": "REVIEW: completion-gate repair for frontend route fix",
+    "body": "Implement marketplace route component and page layout. This is actual frontend route/page/component work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: reduced-token reviewer adversarial case; APP_IMPL_PATTERNS route/page/component signals must win over review/completion-gate non-app wording even without apps/web or React tokens."
+  },
+  {
+    "name": "t_d459f195-review-prefixed-reduced-app-route-negative-blocks",
+    "task_id": "t_d459f195_reduced_app_negative",
+    "expected": "block",
+    "title": "REVIEW: completion-gate repair for app route fix",
+    "body": "Fix app route component and page layout for marketplace. This is actual app route/page/component work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: reduced-token app route case; concrete app route/page/component repair still requires real running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_d459f195-review-prefixed-middleware-layout-negative-blocks",
+    "task_id": "t_d459f195_middleware_layout_negative",
+    "expected": "block",
+    "title": "REVIEW: completion-gate repair for middleware fix",
+    "body": "Update middleware layout handling for the storefront page. This is actual middleware/layout/page work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: reduced-token middleware/layout case; APP_IMPL_PATTERNS middleware/layout/page signals must not be suppressed by review/completion-gate repair wording."
   },
   {
     "name": "t_a50304eb-frontend-nonweb-cli-helper-negative-blocks",
