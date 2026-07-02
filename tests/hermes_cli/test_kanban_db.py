@@ -1191,6 +1191,47 @@ def test_complete_prose_scan_accepts_qualified_cross_board_reference(kanban_home
     assert "suspected_hallucinated_references" not in [e["kind"] for e in events]
 
 
+def test_complete_prose_scan_accepts_slash_and_comma_joined_existing_refs(kanban_home):
+    with kb.connect() as conn:
+        first = kb.create_task(conn, title="first")
+        second = kb.create_task(conn, title="second")
+        third = kb.create_task(conn, title="third")
+        current_task = kb.create_task(conn, title="current")
+        assert kb.complete_task(
+            conn,
+            current_task,
+            summary=f"reviewed {first}/{second},{third}",
+        )
+        events = conn.execute(
+            "SELECT kind FROM task_events WHERE task_id = ?",
+            (current_task,),
+        ).fetchall()
+
+    assert "suspected_hallucinated_references" not in [e["kind"] for e in events]
+
+
+def test_complete_prose_scan_splits_slash_joined_unknown_refs(kanban_home):
+    first = "t_badc0ffee"
+    second = "t_deadbeef01"
+
+    with kb.connect() as conn:
+        current_task = kb.create_task(conn, title="current")
+        assert kb.complete_task(
+            conn,
+            current_task,
+            summary=f"follow {first}/{second}",
+        )
+        event = conn.execute(
+            "SELECT payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'suspected_hallucinated_references'",
+            (current_task,),
+        ).fetchone()
+
+    assert event is not None
+    payload = json.loads(event["payload"])
+    assert payload["phantom_refs"] == [first, second]
+
+
 def test_complete_prose_scan_warns_for_unknown_qualified_and_unqualified_refs(kanban_home):
     kb.create_board("upero")
     unknown_qualified = "upero/t_badc0ffee"

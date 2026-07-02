@@ -3930,6 +3930,7 @@ _TASK_ID_PROSE_RE = re.compile(
     rf"(?:(?P<board>{_BOARD_SLUG_RE.pattern[1:-1]})/)?"
     rf"(?P<task_id>t_[a-f0-9]{{8,}})\b"
 )
+_TASK_ID_TOKEN_RE = re.compile(r"^t_[a-f0-9]{8,}$")
 
 
 def _kanban_db_path_for_prose_scan(board: str) -> Path:
@@ -4013,17 +4014,26 @@ def _scan_prose_for_phantom_ids(
     for match in matches:
         board = match.group("board")
         task_id = match.group("task_id")
-        ref = f"{board}/{task_id}" if board else task_id
-        if ref in seen:
-            continue
-        seen.add(ref)
-        if not _task_id_exists_for_prose_scan(
-            conn,
-            task_id=task_id,
-            board=board,
-            current_board=current_board,
-        ):
-            phantom.append(ref)
+        # People often cite related same-board cards as ``t_a/t_b``. Without
+        # this split, the first task-like token is treated as a board slug and
+        # the whole joined reference is reported as a false phantom. Keep normal
+        # ``board/t_id`` handling for non-task-like board slugs.
+        refs = (
+            [(None, board, board), (None, task_id, task_id)]
+            if board and _TASK_ID_TOKEN_RE.match(board)
+            else [(board, task_id, f"{board}/{task_id}" if board else task_id)]
+        )
+        for ref_board, ref_task_id, ref in refs:
+            if ref in seen:
+                continue
+            seen.add(ref)
+            if not _task_id_exists_for_prose_scan(
+                conn,
+                task_id=ref_task_id,
+                board=ref_board,
+                current_board=current_board,
+            ):
+                phantom.append(ref)
     return phantom
 
 
