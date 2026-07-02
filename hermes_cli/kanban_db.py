@@ -4674,15 +4674,28 @@ def block_task(
             else 0
         )
 
-        # Dependency blocks never enter the human ``blocked`` bucket — they
-        # wait in ``todo`` and let ``recompute_ready`` gate on parents. Routing
-        # here (rather than ``blocked``) is what keeps a cron from ever seeing
-        # a dependency-wait as something to "unblock".
+        # Dependency blocks only use ``todo`` when there is an actual open
+        # parent edge for ``recompute_ready`` to wait on. A dependency block
+        # with no unfinished kanban parent is an external/time gate (for
+        # example "wait until cron X runs after 2026-07-02T11:11:06Z"). Routing
+        # that to ``todo`` is unsafe because ``all([])`` makes
+        # ``recompute_ready`` immediately promote it back to ``ready`` and the
+        # dispatcher respawns it on the same tick. Park those gates in
+        # ``scheduled`` instead; an explicit cron/human follow-up can later call
+        # ``unblock_task`` once the wait condition has actually cleared.
         if kind == "dependency":
+            open_parent = conn.execute(
+                "SELECT 1 FROM task_links l "
+                "JOIN tasks p ON p.id = l.parent_id "
+                "WHERE l.child_id = ? AND p.status NOT IN ('done', 'archived') "
+                "LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            wait_status = "todo" if open_parent else "scheduled"
             cur = conn.execute(
                 """
                 UPDATE tasks
-                   SET status        = 'todo',
+                   SET status        = ?,
                        claim_lock    = NULL,
                        claim_expires = NULL,
                        worker_pid    = NULL,
@@ -4690,8 +4703,8 @@ def block_task(
                  WHERE id = ?
                    AND status IN ('running', 'ready')
                 """ + ("" if expected_run_id is None else " AND current_run_id = ?"),
-                (kind, task_id) if expected_run_id is None
-                else (kind, task_id, int(expected_run_id)),
+                (wait_status, kind, task_id) if expected_run_id is None
+                else (wait_status, kind, task_id, int(expected_run_id)),
             )
             if cur.rowcount != 1:
                 return False
@@ -4706,9 +4719,9 @@ def block_task(
                 )
             _append_event(
                 conn, task_id, "dependency_wait",
-                {"reason": reason, "kind": kind}, run_id=run_id,
+                {"reason": reason, "kind": kind, "status": wait_status}, run_id=run_id,
             )
-            routed_to = "todo"
+            routed_to = wait_status
             _blocked_task = get_task(conn, task_id)
             _fire_kanban_lifecycle_hook(
                 "kanban_task_blocked",

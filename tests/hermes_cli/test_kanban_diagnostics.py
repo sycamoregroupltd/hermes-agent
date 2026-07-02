@@ -9,6 +9,8 @@ engine works on sqlite3.Row objects as well as dataclasses.
 
 from __future__ import annotations
 
+import copy
+import json
 import time
 from pathlib import Path
 
@@ -61,6 +63,266 @@ def _run(outcome="completed", run_id=1, error=None):
         "error": error,
     }
 
+
+PHASE1_CLASSIFIER_FIXTURES = (
+    Path(__file__).with_name("fixtures")
+    / "kanban_failure_classifier_phase1.json"
+)
+
+
+# ---------------------------------------------------------------------------
+# Read-only crash/failure classifier
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("task", "events", "runs", "log_excerpt", "expected"),
+    [
+        (
+            _task(status="running"),
+            [],
+            [_run(outcome="crashed", error="worker died")],
+            "PermissionDeniedError [HTTP 403] while streaming response",
+            "provider_error",
+        ),
+        (
+            _task(status="running"),
+            [],
+            [_run(outcome="crashed", error="worker exited cleanly (rc=0) without calling kanban_complete or kanban_block")],
+            "Query: work kanban task t_x\nInitializing agent\nRateLimitError [HTTP 429]\nMessages: 1 (1 user, 0 tool calls)",
+            "provider_pre_reasoning",
+        ),
+        (
+            _task(status="running"),
+            [],
+            [_run(outcome="crashed", error="exited with code 1")],
+            "Error: Unknown skill(s): riskfolio-lib, trading-data-analysis",
+            "skill_preload_crash",
+        ),
+        (
+            _task(status="running"),
+            [],
+            [_run(outcome="crashed", error="worker exited cleanly (rc=0) without calling kanban_complete or kanban_block")],
+            "worker started and then exited",
+            "protocol_violation",
+        ),
+        (
+            _task(status="running"),
+            [],
+            [_run(outcome="crashed", error="pid 3269252 not alive")],
+            "",
+            "pid_not_alive_or_nonzero_crash",
+        ),
+        (
+            _task(status="blocked", last_failure_error="workspace_kind=worktree but no workspace_path, and board 'upero' has no default_workdir"),
+            [],
+            [_run(outcome="spawn_failed", error="workspace_kind=worktree but no workspace_path")],
+            "",
+            "workspace_spawn_config_failure",
+        ),
+        (
+            _task(status="ready", last_failure_error="Spawned=0; respawn_guarded blocker_auth"),
+            [_event("commented", reason="skipped_nonspawnable terminal lane")],
+            [],
+            "",
+            "ready_but_not_spawned",
+        ),
+        (
+            _task(status="archived", current_run_id=7, last_failure_error="task archived with run still active"),
+            [],
+            [{"id": 7, "status": "running", "outcome": None, "ended_at": None}],
+            "",
+            "queue_metadata_leak_or_stale_active_run",
+        ),
+        (
+            _task(status="scheduled", block_kind="dependency", last_failure_error="time-gated monitor wait until exact UTC boundary"),
+            [],
+            [],
+            "",
+            "dependency_time_gate",
+        ),
+        (
+            _task(status="running", last_failure_error="mystery failure"),
+            [],
+            [_run(outcome="crashed", error="mystery failure")],
+            "",
+            "indeterminate",
+        ),
+    ],
+)
+def test_failure_classifier_covers_phase1_taxonomy(task, events, runs, log_excerpt, expected):
+    result = kd.classify_kanban_failure(
+        task, events, runs, log_excerpt=log_excerpt,
+    )
+    assert result.failure_class == expected
+    assert result.confidence in {"low", "medium", "high"}
+    assert isinstance(result.evidence_markers, list)
+    assert result.safe_recovery_hint
+
+
+def test_failure_classifier_replay_fixtures_cover_contract_and_stay_read_only():
+    raw = PHASE1_CLASSIFIER_FIXTURES.read_text(encoding="utf-8")
+    forbidden = (
+        "api_key", "secret", "token", "password", "credential",
+        "sk-", "xoxb-", "ghp_",
+    )
+    assert not any(marker in raw.lower() for marker in forbidden)
+    fixtures = json.loads(raw)
+    assert fixtures["source_contract_task"] == "jarvis-os/t_25e7fcb1"
+    cases = fixtures["cases"]
+    assert {case["expected_failure_class"] for case in cases} == set(kd.FAILURE_CLASSES)
+
+    confidence_rank = {"low": 0, "medium": 1, "high": 2}
+    saw_safe_ambiguous_case = False
+
+    for case in cases:
+        task = case.get("task", {})
+        events = case.get("events", [])
+        runs = case.get("runs", [])
+        log_excerpt = case.get("log_excerpt", "")
+        dispatch_context = case.get("dispatch_context")
+        before = copy.deepcopy((task, events, runs, dispatch_context))
+
+        result = kd.classify_kanban_failure(
+            task,
+            events,
+            runs,
+            log_excerpt=log_excerpt,
+            dispatch_context=dispatch_context,
+            now=fixtures["now"],
+        )
+
+        assert copy.deepcopy((task, events, runs, dispatch_context)) == before, case["id"]
+        assert set(result.to_dict()) == {
+            "failure_class",
+            "confidence",
+            "evidence_markers",
+            "safe_recovery_hint",
+        }
+        assert result.failure_class == case["expected_failure_class"], case["id"]
+        assert confidence_rank[result.confidence] >= confidence_rank[case["min_confidence"]], case["id"]
+        assert result.safe_recovery_hint.strip(), case["id"]
+        assert result.evidence_markers, case["id"]
+        assert any(
+            expected in marker
+            for expected in case["required_evidence_substrings"]
+            for marker in result.evidence_markers
+        ), case["id"]
+        if case.get("ambiguous_mixed_evidence"):
+            saw_safe_ambiguous_case = True
+            assert result.failure_class == "indeterminate"
+            assert result.confidence == "low"
+
+    assert saw_safe_ambiguous_case
+
+
+def test_failure_classifier_diagnostic_opt_in_surfaces_structured_payload():
+    task = _task(status="running")
+    runs = [_run(outcome="crashed", error="pid 123 not alive")]
+    diags = kd.compute_task_diagnostics(
+        task,
+        [],
+        runs,
+        config={"enable_failure_classifier": True},
+    )
+    classifier = [d for d in diags if d.kind == "failure_classifier"]
+    assert len(classifier) == 1
+    data = classifier[0].data
+    assert data["classifier_version"] == kd.FAILURE_CLASSIFIER_VERSION
+    assert data["failure_class"] == "pid_not_alive_or_nonzero_crash"
+    assert data["safe_recovery_hint"]
+
+
+def test_failure_classifier_ignores_instructional_task_text():
+    task = _task(
+        status="running",
+        block_kind="needs_input",
+        title="Implement dependency_time_gate classifier",
+        body="Acceptance mentions provider_error and dependency_time_gate taxonomy names.",
+        current_run_id=123,
+    )
+
+    result = kd.classify_kanban_failure(task, [], [], log_excerpt="")
+
+    assert result.failure_class == "indeterminate"
+    diags = kd.compute_task_diagnostics(
+        task,
+        [],
+        [],
+        config={"enable_failure_classifier": True},
+    )
+    assert [d.kind for d in diags if d.kind == "failure_classifier"] == []
+
+
+def test_failure_classifier_does_not_treat_live_running_run_as_stale_queue_metadata():
+    task = _task(status="running", current_run_id=123)
+    runs = [{"id": 123, "status": "running", "outcome": None, "ended_at": None}]
+
+    result = kd.classify_kanban_failure(
+        task,
+        [],
+        runs,
+        log_excerpt="context included current_run_id=123 and stale active run text for a live run",
+    )
+
+    assert result.failure_class == "indeterminate"
+    diags = kd.compute_task_diagnostics(
+        task,
+        [],
+        runs,
+        config={
+            "enable_failure_classifier": True,
+            "log_excerpt": "context included current_run_id=123 and stale active run text for a live run",
+        },
+    )
+    assert [d.kind for d in diags if d.kind == "failure_classifier"] == []
+
+
+def test_failure_classifier_accepts_dispatch_context_for_ready_skip_bucket():
+    result = kd.classify_kanban_failure(
+        _task(status="ready"),
+        [],
+        [],
+        dispatch_context={"skip_bucket": "skipped_per_profile_capped", "spawned": 0},
+    )
+
+    assert result.to_dict().keys() == {
+        "failure_class",
+        "confidence",
+        "evidence_markers",
+        "safe_recovery_hint",
+    }
+    assert result.failure_class == "ready_but_not_spawned"
+    assert any("skipped_per_profile_capped" in marker for marker in result.evidence_markers)
+
+
+def test_failure_classifier_uses_contract_precedence_for_workspace_before_dependency():
+    result = kd.classify_kanban_failure(
+        _task(
+            status="scheduled",
+            block_kind="dependency",
+            last_failure_error="workspace_kind=worktree but no workspace_path, and board has no default_workdir",
+        ),
+        [],
+        [_run(outcome="spawn_failed", error="workspace_kind=worktree but no workspace_path")],
+    )
+
+    assert result.failure_class == "workspace_spawn_config_failure"
+
+
+def test_failure_classifier_uses_contract_precedence_for_provider_before_dependency():
+    result = kd.classify_kanban_failure(
+        _task(
+            status="scheduled",
+            block_kind="dependency",
+            last_failure_error="RateLimitError [HTTP 429] before reasoning",
+        ),
+        [_event("claimed"), _event("spawned")],
+        [_run(outcome="provider_error_pre_reasoning", error="RateLimitError [HTTP 429]")],
+        log_excerpt="Messages: 1 (1 user, 0 tool calls)",
+    )
+
+    assert result.failure_class == "provider_pre_reasoning"
 
 # ---------------------------------------------------------------------------
 # Each rule — positive + negative + clearing

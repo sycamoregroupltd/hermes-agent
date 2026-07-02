@@ -1,0 +1,158 @@
+{
+  "source_contract_task": "jarvis-os/t_25e7fcb1",
+  "source_contract_note": "/home/frank/obsidian-fleet-vault/Governance/2026-07-02-crash-taxonomy-implementation-contract-t_25e7fcb1.md",
+  "now": 1782979200,
+  "cases": [
+    {
+      "id": "provider-error-after-startup",
+      "description": "Provider/API failure after normal worker startup evidence.",
+      "task": {"id": "t_replay01", "status": "running", "assignee": "worker", "last_failure_error": null},
+      "events": [
+        {"kind": "claimed", "created_at": 1782979100, "payload": {"run_id": 101}},
+        {"kind": "heartbeat", "created_at": 1782979120, "payload": {"note": "kanban_show reached"}}
+      ],
+      "runs": [
+        {"id": 101, "status": "failed", "outcome": "crashed", "error": "PermissionDeniedError [HTTP 403] while streaming response", "ended_at": 1782979130}
+      ],
+      "log_excerpt": "worker started; kanban_show completed; PermissionDeniedError [HTTP 403] while streaming response",
+      "expected_failure_class": "provider_error",
+      "min_confidence": "medium",
+      "required_evidence_substrings": ["PermissionDeniedError"]
+    },
+    {
+      "id": "provider-pre-reasoning-zero-tools",
+      "description": "Provider rate limit before the agent reached any lifecycle tool.",
+      "task": {"id": "t_replay02", "status": "running", "assignee": "worker"},
+      "events": [
+        {"kind": "claimed", "created_at": 1782979100, "payload": {"run_id": 102}},
+        {"kind": "spawned", "created_at": 1782979101, "payload": {"pid": 222}}
+      ],
+      "runs": [
+        {"id": 102, "status": "failed", "outcome": "provider_error_pre_reasoning", "error": "RateLimitError [HTTP 429]", "ended_at": 1782979105}
+      ],
+      "log_excerpt": "Query: work kanban task t_replay02\nInitializing agent\nRateLimitError [HTTP 429]\nMessages: 1 (1 user, 0 tool calls)",
+      "expected_failure_class": "provider_pre_reasoning",
+      "min_confidence": "high",
+      "required_evidence_substrings": ["RateLimitError", "Messages: 1"]
+    },
+    {
+      "id": "skill-preload-unknown-skill",
+      "description": "Forced skill preload failure before reasoning.",
+      "task": {"id": "t_replay03", "status": "running", "assignee": "worker"},
+      "events": [
+        {"kind": "spawned", "created_at": 1782979101, "payload": {"pid": 333}}
+      ],
+      "runs": [
+        {"id": 103, "status": "failed", "outcome": "crashed", "error": "exited with code 1", "ended_at": 1782979103}
+      ],
+      "log_excerpt": "Error: Unknown skill(s): kanban-worker, trading-data-analysis",
+      "expected_failure_class": "skill_preload_crash",
+      "min_confidence": "high",
+      "required_evidence_substrings": ["Unknown skill(s):"]
+    },
+    {
+      "id": "protocol-violation-clean-exit",
+      "description": "Clean worker exit without kanban_complete or kanban_block and no stronger startup evidence.",
+      "task": {"id": "t_replay04", "status": "running", "assignee": "worker"},
+      "events": [
+        {"kind": "claimed", "created_at": 1782979100, "payload": {"run_id": 104}},
+        {"kind": "spawned", "created_at": 1782979101, "payload": {"pid": 444}}
+      ],
+      "runs": [
+        {"id": 104, "status": "failed", "outcome": "crashed", "error": "worker exited cleanly (rc=0) without calling kanban_complete or kanban_block", "ended_at": 1782979110}
+      ],
+      "log_excerpt": "worker started then exited after final response",
+      "expected_failure_class": "protocol_violation",
+      "min_confidence": "high",
+      "required_evidence_substrings": ["worker exited cleanly"]
+    },
+    {
+      "id": "pid-not-alive-nonzero-crash",
+      "description": "Generic process crash after stronger startup/config buckets are excluded.",
+      "task": {"id": "t_replay05", "status": "running", "assignee": "worker"},
+      "events": [
+        {"kind": "spawned", "created_at": 1782979101, "payload": {"pid": 555}}
+      ],
+      "runs": [
+        {"id": 105, "status": "failed", "outcome": "crashed", "error": "pid 3269252 not alive", "ended_at": 1782979110}
+      ],
+      "log_excerpt": "dispatcher observed pid 3269252 not alive",
+      "expected_failure_class": "pid_not_alive_or_nonzero_crash",
+      "min_confidence": "medium",
+      "required_evidence_substrings": ["pid 3269252 not alive"]
+    },
+    {
+      "id": "workspace-spawn-config-failure",
+      "description": "Worktree spawn setup failed before a worker log existed.",
+      "task": {"id": "t_replay06", "status": "blocked", "assignee": "worker", "workspace_kind": "worktree", "workspace_path": null, "last_failure_error": "workspace_kind=worktree but no workspace_path, and board has no default_workdir"},
+      "events": [
+        {"kind": "blocked", "created_at": 1782979102, "payload": {"reason": "spawn failure before worker log"}}
+      ],
+      "runs": [
+        {"id": 106, "status": "failed", "outcome": "spawn_failed", "error": "workspace_kind=worktree but no workspace_path", "ended_at": 1782979102}
+      ],
+      "log_excerpt": "",
+      "expected_failure_class": "workspace_spawn_config_failure",
+      "min_confidence": "high",
+      "required_evidence_substrings": ["workspace_kind=worktree"]
+    },
+    {
+      "id": "ready-but-not-spawned-skip-bucket",
+      "description": "Ready task accounted for by a dispatcher skip/defer bucket.",
+      "task": {"id": "t_replay07", "status": "ready", "assignee": "worker", "last_failure_error": "Spawned=0; respawn_guarded breaker active"},
+      "events": [
+        {"kind": "commented", "created_at": 1782979100, "payload": {"reason": "skipped_nonspawnable terminal lane"}}
+      ],
+      "runs": [],
+      "dispatch_context": {"skip_bucket": "skipped_per_profile_capped", "spawned": 0},
+      "log_excerpt": "",
+      "expected_failure_class": "ready_but_not_spawned",
+      "min_confidence": "high",
+      "required_evidence_substrings": ["skipped_per_profile_capped", "respawn_guarded"]
+    },
+    {
+      "id": "queue-metadata-stale-active-run",
+      "description": "Terminal task row still points at an open active run.",
+      "task": {"id": "t_replay08", "status": "archived", "assignee": "worker", "current_run_id": 108, "last_failure_error": "task archived with run still active"},
+      "events": [
+        {"kind": "archived", "created_at": 1782979100, "payload": {"reason": "operator cleanup"}}
+      ],
+      "runs": [
+        {"id": 108, "status": "running", "outcome": null, "error": null, "ended_at": null}
+      ],
+      "log_excerpt": "task archived with run still active",
+      "expected_failure_class": "queue_metadata_leak_or_stale_active_run",
+      "min_confidence": "high",
+      "required_evidence_substrings": ["status=archived current_run_id=108", "open task_runs ids"]
+    },
+    {
+      "id": "dependency-time-gate-wait",
+      "description": "Scheduled/dependency row is correctly waiting on a parent or exact time boundary.",
+      "task": {"id": "t_replay09", "status": "scheduled", "assignee": "worker", "block_kind": "dependency", "last_failure_error": "time-gated monitor wait until exact UTC boundary"},
+      "events": [
+        {"kind": "blocked", "created_at": 1782979000, "payload": {"reason": "parent t_parent00 not done"}}
+      ],
+      "runs": [],
+      "log_excerpt": "",
+      "expected_failure_class": "dependency_time_gate",
+      "min_confidence": "high",
+      "required_evidence_substrings": ["status=scheduled block_kind=dependency", "time-gated"]
+    },
+    {
+      "id": "ambiguous-mixed-instruction-only-taxonomy-words",
+      "description": "Ambiguous mixed evidence keeps taxonomy words in task prose from becoming crash evidence.",
+      "task": {"id": "t_replay10", "status": "running", "assignee": "worker", "title": "Investigate provider_error and skill_preload_crash", "body": "Discussion mentions dependency_time_gate, provider_pre_reasoning, and Unknown skill(s) as examples only.", "last_failure_error": "mystery failure"},
+      "events": [
+        {"kind": "heartbeat", "created_at": 1782979100, "payload": {"note": "inspected examples"}}
+      ],
+      "runs": [
+        {"id": 110, "status": "failed", "outcome": "crashed", "error": "mystery failure", "ended_at": 1782979110}
+      ],
+      "log_excerpt": "worker log unavailable; examples discussed after tool calls",
+      "expected_failure_class": "indeterminate",
+      "min_confidence": "low",
+      "required_evidence_substrings": ["failed_runs"],
+      "ambiguous_mixed_evidence": true
+    }
+  ]
+}

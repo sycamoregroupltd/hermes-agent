@@ -5,8 +5,9 @@ task, a cron unblocks it, the worker re-blocks for the same reason, repeat
 forever. The fix gives ``block_task`` a typed ``kind`` and a persistent
 ``block_recurrences`` counter:
 
-* ``dependency`` blocks route to ``todo`` (parent-gated, auto-resumed) and
-  never enter the human ``blocked`` bucket a cron would keep unblocking.
+* ``dependency`` blocks route to ``todo`` only when an unfinished parent exists
+  (parent-gated, auto-resumed). Parent-free dependency/time gates route to
+  ``scheduled`` so ``recompute_ready`` cannot immediately respawn them.
 * ``needs_input`` / ``capability`` / un-typed blocks land in ``blocked``;
   each same-cause re-block after an unblock increments ``block_recurrences``,
   and at ``BLOCK_RECURRENCE_LIMIT`` the task routes to ``triage`` for a human.
@@ -135,14 +136,43 @@ def test_block_loop_detected_event_emitted(kanban_home: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_dependency_block_routes_to_todo(kanban_home: Path) -> None:
-    """Dependency waits never enter the human 'blocked' bucket."""
+def test_parent_free_dependency_block_routes_to_scheduled(kanban_home: Path) -> None:
+    """Parent-free dependency waits are external/time gates, not auto-ready."""
     with kb.connect_closing() as conn:
         tid = _running_task(conn)
         assert kb.block_task(conn, tid, reason="need X first", kind="dependency")
         t = kb.get_task(conn, tid)
-        assert t.status == "todo"
+        assert t is not None
+        assert t.status == "scheduled"
         assert t.block_kind == "dependency"
+        assert kb.recompute_ready(conn) == 0
+        after = kb.get_task(conn, tid)
+        assert after is not None
+        assert after.status == "scheduled"
+
+
+def test_parent_free_time_gated_dependency_not_spawned_by_dispatch(kanban_home: Path) -> None:
+    """Regression: a future monitor/time gate must not respawn next tick."""
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+        reason = (
+            "time-gated: do not unblock until monitor cron runs after "
+            "2026-07-02T11:11:06Z"
+        )
+        assert kb.block_task(conn, tid, reason=reason, kind="dependency")
+
+        spawned: list[tuple[str, str]] = []
+        result = kb.dispatch_once(
+            conn,
+            spawn_fn=lambda task, workspace: spawned.append((task.id, workspace)) or 123,
+        )
+
+        assert result.promoted == 0
+        assert spawned == []
+        assert result.spawned == []
+        task = kb.get_task(conn, tid)
+        assert task is not None
+        assert task.status == "scheduled"
 
 
 def test_dependency_then_parent_done_promotes(kanban_home: Path) -> None:

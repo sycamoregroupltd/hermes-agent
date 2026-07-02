@@ -112,6 +112,93 @@ def test_run_slash_rejects_branch_without_worktree(kanban_home):
     assert "--branch is only valid with --workspace worktree" in out
 
 
+def test_classify_failure_reads_fixture_artifacts_json(tmp_path, capsys, monkeypatch):
+    task_path = tmp_path / "task.json"
+    runs_path = tmp_path / "runs.json"
+    log_path = tmp_path / "worker.log"
+    task_path.write_text(json.dumps({"id": "t_demo", "status": "running"}))
+    runs_path.write_text(json.dumps([
+        {
+            "id": 1,
+            "status": "crashed",
+            "outcome": "crashed",
+            "error": "worker exited cleanly (rc=0) without calling kanban_complete or kanban_block",
+        }
+    ]))
+    log_path.write_text(
+        "Query: work kanban task t_demo\n"
+        "Initializing agent\n"
+        "RateLimitError [HTTP 429]\n"
+        "Messages: 1 (1 user, 0 tool calls)\n"
+    )
+
+    def _forbidden_mutation(*_args, **_kwargs):
+        raise AssertionError("classify-failure must not mutate queue state")
+
+    for name in ("block_task", "complete_task", "reclaim_task", "reassign_task", "promote_task"):
+        if hasattr(kb, name):
+            monkeypatch.setattr(kb, name, _forbidden_mutation)
+
+    rc = kc._cmd_classify_failure(argparse.Namespace(
+        task_id=None,
+        task_json=str(task_path),
+        events_json=None,
+        runs_json=str(runs_path),
+        dispatch_json=None,
+        log_file=str(log_path),
+        log_excerpt=None,
+        workspace=None,
+        json=True,
+    ))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failure_class"] == "provider_pre_reasoning"
+    assert payload["confidence"] == "high"
+    assert payload["read_only"] is True
+    assert "safe_recovery_hint" in payload
+    assert any("RateLimitError" in marker for marker in payload["evidence_markers"])
+
+
+def test_classify_failure_human_output_has_required_fields(tmp_path, capsys):
+    task_path = tmp_path / "task.json"
+    task_path.write_text(json.dumps({"id": "t_demo", "status": "running"}))
+
+    rc = kc._cmd_classify_failure(argparse.Namespace(
+        task_id=None,
+        task_json=str(task_path),
+        events_json=None,
+        runs_json=None,
+        dispatch_json=None,
+        log_file=None,
+        log_excerpt="pid 123 not alive",
+        workspace=None,
+        json=False,
+    ))
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "failure_class: pid_not_alive_or_nonzero_crash" in out
+    assert "confidence:" in out
+    assert "evidence_markers:" in out
+    assert "safe_recovery_hint:" in out
+    assert "read_only: true" in out
+
+
+def test_run_slash_classify_failure_json_uses_artifacts(kanban_home, tmp_path):
+    task_path = tmp_path / "task.json"
+    runs_path = tmp_path / "runs.json"
+    task_path.write_text(json.dumps({"id": "t_demo", "status": "running"}))
+    runs_path.write_text(json.dumps([{"id": 1, "outcome": "crashed", "error": "pid 999 not alive"}]))
+
+    out = kc.run_slash(
+        f"classify-failure --task-json {task_path} --runs-json {runs_path} --json"
+    )
+    payload = json.loads(out)
+    assert payload["failure_class"] == "pid_not_alive_or_nonzero_crash"
+    assert payload["read_only"] is True
+
+
 def test_run_slash_create_with_parent_and_cascade(kanban_home):
     # Parent then child via --parent
     out1 = kc.run_slash("create 'parent' --assignee alice")
@@ -172,6 +259,36 @@ def test_run_slash_dispatch_dry_run_counts(kanban_home):
     kc.run_slash("create 'b' --assignee bob")
     out = kc.run_slash("dispatch --dry-run")
     assert "Spawned:" in out
+
+
+def test_run_slash_dispatch_dry_run_reports_respawn_guarded_provider_capacity(
+    kanban_home, monkeypatch
+):
+    """Dry-run should explain ready-but-not-spawned provider-capacity rows.
+
+    Regression for sentinel/placeholder ``created_at`` rows: a ready task with
+    a provider-capacity failure must not disappear behind ``Spawned: 0`` just
+    because its synthetic timestamp makes stats look ancient.
+    """
+    monkeypatch.setattr("hermes_cli.profiles.profile_exists", lambda name: True)
+    tid = kc.run_slash("create 'provider packet' --assignee jarvis-os-pm --json")
+    tid = json.loads(tid)["id"]
+    with kb.connect_closing() as conn:
+        with kb.write_txn(conn):
+            conn.execute(
+                "UPDATE tasks SET created_at = ?, last_failure_error = ? WHERE id = ?",
+                (1900000, "OpenAI Codex 429 rate limit", tid),
+            )
+
+    text_out = kc.run_slash("dispatch --dry-run --max 5")
+    assert f"Deferred (respawn guard blocker_auth): {tid}" in text_out
+    assert "Spawned:      0" in text_out
+
+    json_out = kc.run_slash("dispatch --dry-run --max 5 --json")
+    payload = json.loads(json_out)
+    assert payload["respawn_guarded"] == [
+        {"task_id": tid, "reason": "blocker_auth"}
+    ]
 
 
 def test_run_slash_context_output_format(kanban_home):
