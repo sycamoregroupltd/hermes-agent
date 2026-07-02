@@ -498,6 +498,71 @@ def test_board_stats(kanban_home):
         conn.close()
 
 
+def test_board_stats_oldest_ready_age_uses_ready_event_over_stale_created_at(kanban_home, monkeypatch):
+    """Ready-age HUD must not use epoch-like created_at sentinels as wall clock."""
+    conn = kb.connect()
+    try:
+        now = int(time.time())
+        ready_since = now - 4500
+        stale_created_at = 1_900_000
+        tid = kb.create_task(conn, title="provider capacity packet", assignee="pm")
+        conn.execute(
+            "UPDATE tasks SET created_at = ? WHERE id = ?",
+            (stale_created_at, tid),
+        )
+        conn.execute(
+            "UPDATE task_events SET created_at = ? WHERE task_id = ? AND kind = 'created'",
+            (stale_created_at, tid),
+        )
+        conn.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'promoted', NULL, ?)",
+            (tid, ready_since),
+        )
+        monkeypatch.setattr(kb.time, "time", lambda: float(now))
+
+        stats = kb.board_stats(conn)
+
+        assert stats["oldest_ready_age_seconds"] == 4500
+        assert stats["oldest_ready_since"] == ready_since
+        assert stats["oldest_ready_task_id"] == tid
+        assert stats["oldest_ready_source"] == "task_events"
+        assert stats["invalid_ready_created_at"] == [
+            {"task_id": tid, "created_at": stale_created_at}
+        ]
+    finally:
+        conn.close()
+
+
+def test_board_stats_oldest_ready_age_uses_manual_promotion_event(kanban_home, monkeypatch):
+    """Manual promotion is a transition into ready and must reset ready age."""
+    conn = kb.connect()
+    try:
+        created_at = 1_700_000_000
+        promoted_at = 2_000_000_000
+        tid = kb.create_task(conn, title="manual promotion", assignee="pm")
+        conn.execute(
+            "UPDATE tasks SET status = 'todo', created_at = ? WHERE id = ?",
+            (created_at, tid),
+        )
+        conn.execute(
+            "UPDATE task_events SET created_at = ? WHERE task_id = ? AND kind = 'created'",
+            (created_at, tid),
+        )
+        monkeypatch.setattr(kb.time, "time", lambda: float(promoted_at))
+
+        ok, error = kb.promote_task(conn, tid, actor="reviewer")
+        stats = kb.board_stats(conn)
+
+        assert ok is True
+        assert error is None
+        assert stats["oldest_ready_age_seconds"] == 0
+        assert stats["oldest_ready_since"] == promoted_at
+        assert stats["oldest_ready_task_id"] == tid
+        assert stats["oldest_ready_source"] == "task_events"
+    finally:
+        conn.close()
+
+
 def test_task_age_helper(kanban_home):
     conn = kb.connect()
     try:

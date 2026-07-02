@@ -8287,9 +8287,83 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
 # Stats + SLA helpers
 # ---------------------------------------------------------------------------
 
+_READY_TRANSITION_EVENT_KINDS = {
+    "created",
+    "promoted",
+    "promoted_manual",
+    "reclaimed",
+    "unblocked",
+}
+
+
+def _is_sane_operational_timestamp(ts: Optional[int], *, now: Optional[int] = None) -> bool:
+    """Return True for timestamps that can represent modern wall-clock state.
+
+    Old boards may contain sentinel or test-era task ``created_at`` values such
+    as ``1900000`` (1970-01-23). Those are valid integers, but they are not
+    meaningful wall-clock ages for operational HUDs. Treat anything before
+    2000-01-01, or implausibly in the future, as a data-quality sentinel rather
+    than an age source.
+    """
+    if ts is None:
+        return False
+    now = int(time.time()) if now is None else int(now)
+    try:
+        value = int(ts)
+    except (TypeError, ValueError):
+        return False
+    return 946684800 <= value <= now + 300
+
+
+def _ready_since_for_task(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    created_at: Optional[int],
+    now: Optional[int] = None,
+) -> tuple[Optional[int], Optional[str], Optional[int]]:
+    """Return the best wall-clock ``ready`` timestamp for a currently-ready task.
+
+    Prefer task_events because they record the last transition into the ready
+    column. Fall back to task.created_at only when it passes sanity validation.
+    The third tuple member is the raw created_at value when it was rejected as
+    impossible, allowing callers to surface data-quality drift without using it
+    as age.
+    """
+    now = int(time.time()) if now is None else int(now)
+    placeholders = ",".join("?" for _ in _READY_TRANSITION_EVENT_KINDS)
+    row = conn.execute(
+        f"""
+        SELECT MAX(created_at) AS ts
+          FROM task_events
+         WHERE task_id = ?
+           AND kind IN ({placeholders})
+        """,
+        (task_id, *_READY_TRANSITION_EVENT_KINDS),
+    ).fetchone()
+    created_ts = int(created_at) if created_at is not None else None
+    invalid_created = (
+        created_ts
+        if created_ts is not None
+        and not _is_sane_operational_timestamp(created_ts, now=now)
+        else None
+    )
+    event_ts = int(row["ts"]) if row and row["ts"] is not None else None
+    if _is_sane_operational_timestamp(event_ts, now=now):
+        return event_ts, "task_events", invalid_created
+
+    if _is_sane_operational_timestamp(created_ts, now=now):
+        return created_ts, "created_at", None
+    return None, None, invalid_created
+
+
 def board_stats(conn: sqlite3.Connection) -> dict:
-    """Per-status + per-assignee counts, plus the oldest ``ready`` age in
-    seconds (the clearest staleness signal for a router or HUD).
+    """Per-status + per-assignee counts, plus oldest currently-ready age.
+
+    The ready age is based on the last transition into ``ready`` when event
+    history is available. It deliberately ignores impossible epoch-like
+    ``tasks.created_at`` sentinels so observability does not report billion-
+    second ages for work that only became ready recently.
     """
     by_status: dict[str, int] = {}
     for row in conn.execute(
@@ -8306,19 +8380,43 @@ def board_stats(conn: sqlite3.Connection) -> dict:
     ):
         by_assignee.setdefault(row["assignee"], {})[row["status"]] = int(row["n"])
 
-    oldest_row = conn.execute(
-        "SELECT MIN(created_at) AS ts FROM tasks WHERE status = 'ready'"
-    ).fetchone()
     now = int(time.time())
-    oldest_ready_age = (
-        (now - int(oldest_row["ts"]))
-        if oldest_row and oldest_row["ts"] is not None else None
-    )
+    oldest_ready_age: Optional[int] = None
+    oldest_ready_since: Optional[int] = None
+    oldest_ready_task_id: Optional[str] = None
+    oldest_ready_source: Optional[str] = None
+    invalid_ready_created_at: list[dict[str, int]] = []
+    for row in conn.execute(
+        "SELECT id, created_at FROM tasks WHERE status = 'ready'"
+    ):
+        ready_since, source, invalid_created_at = _ready_since_for_task(
+            conn,
+            row["id"],
+            created_at=row["created_at"],
+            now=now,
+        )
+        if invalid_created_at is not None:
+            invalid_ready_created_at.append({
+                "task_id": row["id"],
+                "created_at": int(invalid_created_at),
+            })
+        if ready_since is None:
+            continue
+        age = max(0, now - int(ready_since))
+        if oldest_ready_age is None or age > oldest_ready_age:
+            oldest_ready_age = age
+            oldest_ready_since = int(ready_since)
+            oldest_ready_task_id = row["id"]
+            oldest_ready_source = source
 
     return {
         "by_status": by_status,
         "by_assignee": by_assignee,
         "oldest_ready_age_seconds": oldest_ready_age,
+        "oldest_ready_since": oldest_ready_since,
+        "oldest_ready_task_id": oldest_ready_task_id,
+        "oldest_ready_source": oldest_ready_source,
+        "invalid_ready_created_at": invalid_ready_created_at,
         "now": now,
     }
 
