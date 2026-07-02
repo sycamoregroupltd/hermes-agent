@@ -1,0 +1,191 @@
+[
+  {
+    "name": "t_411a76da-review-nonapp-script-api-allows",
+    "task_id": "t_411a76da_fixture",
+    "expected": "allow",
+    "title": "REVIEW: worker visibility script/API handoff",
+    "body": "Review a non-web script/API worker-visibility preflight. The handoff quotes frontend/web false-positive history, but this card only reviews CLI/Python/shell evidence, py_compile, bash -n, and pytest output. No frontend/web route, page, component, middleware, layout, tRPC path, or browser UI is touched.",
+    "summary": "REVIEW_VERDICT: APPROVE for script/API worker visibility preflight; no app runtime route touched.",
+    "description": "ALLOW: contested t_411a76da review-only script/API/preflight task; frontend words appear only as false-positive history and no app surface is implemented."
+  },
+  {
+    "name": "t_411a76da-paired-frontend-review-negative-blocks",
+    "task_id": "t_411a76da_negative",
+    "expected": "block",
+    "title": "Build frontend worker visibility dashboard with script helper",
+    "body": "Implement apps/web worker visibility dashboard route component. A non-web CLI/script helper may generate fixture data, but the React page and route component changed.",
+    "summary": "py_compile helper passed; no VERIFY_PASS supplied",
+    "description": "BLOCK: paired t_411a76da negative; true frontend dashboard/route/component work still requires running-app VERIFY_PASS even when a non-web script helper is mentioned."
+  },
+  {
+    "name": "t_badc39ee-repo-hygiene-allows",
+    "task_id": "t_badc39ee_fixture",
+    "expected": "allow",
+    "title": "UNBLOCK: repo-hygiene checkout reconciliation for Upero",
+    "body": "Repo-hygiene checkout-reconciliation task: classify dirty/untracked paths including apps/web/src/lib/payload-client.test.ts, update .git/info/exclude, create a reversible stash, verify git status clean, and update Obsidian note/log. No app/runtime route, page, component, middleware, API, tRPC, auth/tenant, layout, or frontend runtime surface was modified.",
+    "summary": "git status clean; .git/info/exclude updated; reversible stash created; Obsidian note/log updated; no app/runtime route surface changed",
+    "description": "ALLOW: contested t_badc39ee repo-hygiene/checkout reconciliation only; app paths are quoted from git status and no runtime/frontend surface is touched."
+  },
+  {
+    "name": "t_badc39ee-paired-frontend-repo-hygiene-negative-blocks",
+    "task_id": "t_badc39ee_negative",
+    "expected": "block",
+    "title": "Fix frontend route after repo-hygiene cleanup",
+    "body": "Implement apps/web marketplace route component and page layout after repo-hygiene checkout cleanup. The worker may use git status and a reversible stash, but this is concrete frontend UI work and must still prove the running route.",
+    "summary": "git status clean; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired t_badc39ee negative; true frontend route/page/layout work still requires VERIFY_PASS even when git status/stash/repo-hygiene helpers are involved."
+  },
+  {
+    "name": "t_3983a581-static-obsidian-qa-allows",
+    "task_id": "t_3983a581_fixture",
+    "expected": "allow",
+    "title": "Assemble QA packet and comment evidence path",
+    "body": "Goal: turn completed visual/content evidence and static-only boundary audit into the final lightweight visual/content QA packet. Create a clear Markdown packet under /home/frank/obsidian-fleet-vault/Operations/ with screenshots/render evidence links, blog-category notes, job-tile notes, explicit static-only/forbidden-capability confirmations, and no app/runtime route, page, component, middleware, API, tRPC, auth/tenant, layout, or frontend runtime surface modified.",
+    "summary": "AD_HOC_VERIFY_PASS packet/log markers; artifact exists; forbidden marker scan PASS; no live route exists",
+    "description": "ALLOW: contested t_3983a581 static/authored-only Obsidian QA packet; AD_HOC_VERIFY_PASS validates packet artifacts, not a live app route."
+  },
+  {
+    "name": "t_3983a581-paired-frontend-static-packet-negative-blocks",
+    "task_id": "t_3983a581_negative",
+    "expected": "block",
+    "title": "Build frontend route with static QA packet output",
+    "body": "Implement apps/web marketplace route component and page layout, then produce a static visual/content QA packet. This changed a concrete page-dependent API path and frontend route, so it must still prove the running route.",
+    "summary": "AD_HOC_VERIFY_PASS packet markers only; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired t_3983a581 negative; frontend route/page/page-dependent API work still requires VERIFY_PASS even when it also produces a static QA packet."
+  },
+  {
+    "name": "t_a50304eb-frontend-nonweb-cli-helper-negative-blocks",
+    "task_id": "t_a50304eb_nonweb_cli",
+    "expected": "block",
+    "title": "Build frontend route with non-web CLI/script helper",
+    "body": "Implement apps/web dashboard route component. The worker may use a non-web CLI/script helper for fixture preflight, but this is still true frontend/UI work.",
+    "summary": "py_compile helper passed; no VERIFY_PASS supplied",
+    "description": "BLOCK: contested t_a50304eb false-negative class; concrete frontend route work cannot be bypassed by non-web CLI/script helper wording."
+  },
+  {
+    "name": "t_a50304eb-frontend-nonui-python-preflight-negative-blocks",
+    "task_id": "t_a50304eb_nonui_python",
+    "expected": "block",
+    "title": "Build frontend page with non-UI Python/shell preflight",
+    "body": "Implement apps/web marketplace page component and layout. Use a non-UI Python/shell preflight helper before checking the route.",
+    "summary": "python preflight passed; no VERIFY_PASS supplied",
+    "description": "BLOCK: contested t_a50304eb false-negative class; concrete frontend page/layout work cannot be bypassed by non-UI Python/shell preflight wording."
+  },
+  {
+    "name": "t_a50304eb-frontend-completion-gate-cli-negative-blocks",
+    "task_id": "t_a50304eb_completion_cli",
+    "expected": "block",
+    "title": "Build app route with completion-gate CLI/script support",
+    "body": "Implement apps/web route component. A CLI/script completion-gate support helper is part of the workflow, but VERIFY_PASS is still required.",
+    "summary": "completion-gate helper passed; no VERIFY_PASS supplied",
+    "description": "BLOCK: contested t_a50304eb false-negative class; concrete app route work cannot be bypassed by completion-gate CLI/script support wording."
+  },
+  {
+    "name": "t_a50304eb-frontend-false-positive-python-negative-blocks",
+    "task_id": "t_a50304eb_false_positive_python",
+    "expected": "block",
+    "title": "Fix frontend component with false-positive Python/shell classification note",
+    "body": "Update apps/web React component and page layout. The handoff mentions Python/shell false-positive classification support, but the app surface changed.",
+    "summary": "Python/shell classification helper passed; no VERIFY_PASS supplied",
+    "description": "BLOCK: contested t_a50304eb false-negative class; concrete React component/page layout work cannot be bypassed by false-positive Python/shell classification wording."
+  },
+  {
+    "name": "baseline-pm-review-routing-nonapp-allows",
+    "task_id": "t_pmroute",
+    "expected": "allow",
+    "title": "REVIEW: Meilisearch product-search foundation handoff from t_552f2d3f",
+    "body": "Upero PM task completed its actual PM routing work. Scope: prevent frontend VERIFY_PASS gate on PM review-routing tasks/review-lane tasks that do not modify frontend/web/app surfaces. Evidence: verified handoff, unlinked dependency-stalled guardian child, and verified review child running on guardian. No app/product code changes are requested.",
+    "summary": "done",
+    "description": "ALLOW: legacy PM/review-routing false-positive fixture; no app/product code changes are requested and no frontend/web/app surface is modified."
+  },
+  {
+    "name": "baseline-frontend-without-verify-blocks",
+    "task_id": "t_webwork",
+    "expected": "block",
+    "title": "Build marketplace frontend page",
+    "body": "Implement apps/web marketplace React page and route component.",
+    "summary": "done",
+    "description": "BLOCK: baseline frontend enforcement; marketplace frontend page/route work without VERIFY_PASS must be vetoed."
+  },
+  {
+    "name": "baseline-frontend-no-app-disclaimer-negative-blocks",
+    "task_id": "t_webwork_noapp_disclaimer",
+    "expected": "block",
+    "title": "Build frontend marketplace page",
+    "body": "Implement apps/web marketplace React page and route component. No app/product code changes are requested.",
+    "summary": "done without VERIFY_PASS",
+    "description": "BLOCK: reviewer-discovered no-app disclaimer bypass; concrete frontend implementation wins over contradictory generic no-app/product disclaimer."
+  },
+  {
+    "name": "baseline-frontend-with-verify-allows",
+    "task_id": "t_webpass",
+    "expected": "allow",
+    "title": "Build marketplace frontend page",
+    "body": "Implement apps/web marketplace React page and route component.",
+    "summary": "VERIFY_PASS /marketplace :: HTTP 200, real content",
+    "description": "ALLOW: baseline positive frontend enforcement; concrete frontend page/route work may complete when current completion evidence contains real VERIFY_PASS."
+  },
+  {
+    "name": "baseline-packages-types-review-nonapp-allows",
+    "task_id": "t_pkg_types_review",
+    "expected": "allow",
+    "title": "REVIEW: delivery Zod cleanup reconciliation gate failure",
+    "body": "Review a TypeScript gate/policy failure for packages/types/src/delivery.ts. The diff under review is only packages/types/src/delivery.ts with z.record cleanup; apps/api tsc output mentions src/trpc/routers but this review task does not touch or approve a running app route.",
+    "summary": "REVIEW_VERDICT: BLOCKED for packages/types/src/delivery.ts TypeScript gate; no running app route touched",
+    "description": "ALLOW: package/types/schema review task; app/API typecheck output is quoted as review evidence but no running app route is touched."
+  },
+  {
+    "name": "baseline-completion-hook-contract-table-nonapp-allows",
+    "task_id": "t_completion_hook_contract",
+    "expected": "allow",
+    "title": "Implement the ordered completion-hook contract table",
+    "body": "Modify only the reviewed completion-hook classifier surface to use an explicit ordered contract table. Preserve true running-app enforcement in the hook/classifier tests while avoiding any browser product surface changes. This hook/classifier implementation does not edit application runtime code.",
+    "summary": "classifier selftest PASS; no app/runtime surface changed",
+    "description": "ALLOW: completion-hook classifier/contract implementation is hook code, not browser product-surface work; paired negative fixture below proves frontend contract-table UI work still blocks."
+  },
+  {
+    "name": "baseline-frontend-completion-hook-contract-negative-blocks",
+    "task_id": "t_frontend_completion_hook_contract",
+    "expected": "block",
+    "title": "Build frontend completion-hook contract table dashboard",
+    "body": "Implement apps/web dashboard route component that renders the completion-hook contract table. This is true frontend UI work even though it mentions completion-hook classifier support.",
+    "summary": "classifier selftest PASS; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired completion-hook contract-table negative; concrete frontend dashboard route/component work still requires running-app VERIFY_PASS."
+  },
+  {
+    "name": "baseline-frontend-packages-types-route-negative-blocks",
+    "task_id": "t_frontend_pkg_types_route",
+    "expected": "block",
+    "title": "Build frontend route using packages/types delivery schema",
+    "body": "Implement apps/web delivery dashboard route component using packages/types/src/delivery.ts schema output. This is concrete frontend UI work and must still prove the running route.",
+    "summary": "done",
+    "description": "BLOCK: paired package/types negative; true frontend route using the schema still requires running-app VERIFY_PASS."
+  },
+  {
+    "name": "selftest-cli-script-nonweb-command-evidence-allows",
+    "task_id": "t_cliscript_fixture",
+    "expected": "allow",
+    "description": "ALLOW: preserves current gate-kanban-complete selftest coverage for CLI/Python/shell worker-visibility preflight evidence with no frontend/web route, page, component, middleware, layout, tRPC path, or browser UI touched.",
+    "title": "REPAIR: non-web kanban completion gate false positive for CLI/script tasks",
+    "body": "Investigate a Hermes CLI/Python/shell worker-visibility preflight. Acceptance requires command evidence such as py_compile, bash -n, pytest, and temp JSON; no frontend/web route, page, component, middleware, layout, tRPC path, or browser UI is touched.",
+    "summary": "py_compile rc=0; bash -n rc=0; pytest 6 passed; temp JSON read back"
+  },
+  {
+    "name": "selftest-frontend-cli-script-helper-negative-blocks",
+    "task_id": "t_web_cli_helper_fixture",
+    "expected": "block",
+    "description": "BLOCK: paired current selftest negative; frontend page/route work remains gated when it mentions a CLI/script helper and lacks VERIFY_PASS.",
+    "title": "Build frontend page with CLI/script helper",
+    "body": "Implement apps/web dashboard route component. Use a CLI/script helper to seed fixture data before serving the React page.",
+    "summary": "helper script passed; no VERIFY_PASS supplied"
+  },
+  {
+    "name": "selftest-frontend-python-shell-helper-negative-blocks",
+    "task_id": "t_web_python_helper_fixture",
+    "expected": "block",
+    "description": "BLOCK: paired current selftest negative; frontend route/component work remains gated when it mentions Python/shell helper commands and lacks VERIFY_PASS.",
+    "title": "Build frontend page with Python/shell helper",
+    "body": "Implement apps/web marketplace route component. Use Python/shell commands to generate fixture data before serving the React page.",
+    "summary": "python/shell helper passed; no VERIFY_PASS supplied"
+  }
+]
