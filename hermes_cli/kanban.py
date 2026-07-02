@@ -2180,6 +2180,20 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
                 {"task_id": tid, "assignee": who, "current": current}
                 for (tid, who, current) in res.skipped_per_profile_capped
             ],
+            "respawn_guarded": [
+                {"task_id": tid, "reason": reason}
+                for (tid, reason) in res.respawn_guarded
+            ],
+            "deferred_global_capped": [
+                {"task_id": tid, "assignee": who, "reason": reason}
+                for (tid, who, reason) in res.deferred_global_capped
+            ],
+            "skipped_claim_race": res.skipped_claim_race,
+            "deferred_dependency": [
+                {"task_id": tid, "open_parent_ids": parents}
+                for (tid, parents) in res.deferred_dependency
+            ],
+            "deferred_scheduled": res.deferred_scheduled,
             "auto_assigned_default": res.auto_assigned_default,
         }, indent=2))
         return 0
@@ -2213,6 +2227,19 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             print(
                 f"Deferred ({who} at per-profile cap, {current} running): {tid}"
             )
+    if res.respawn_guarded:
+        for tid, reason in res.respawn_guarded:
+            print(f"Deferred (respawn guard {reason}): {tid}")
+    if res.deferred_global_capped:
+        for tid, who, reason in res.deferred_global_capped:
+            print(f"Deferred ({reason}, {who or 'unassigned'}): {tid}")
+    if res.skipped_claim_race:
+        print(f"Skipped (claimed concurrently): {', '.join(res.skipped_claim_race)}")
+    if res.deferred_dependency:
+        for tid, parents in res.deferred_dependency:
+            print(f"Deferred (dependency parents not done {', '.join(parents)}): {tid}")
+    if res.deferred_scheduled:
+        print(f"Deferred (scheduled/time-gated): {', '.join(res.deferred_scheduled)}")
     if res.skipped_nonspawnable:
         print(
             f"Skipped (non-spawnable assignee — terminal lane, OK): "

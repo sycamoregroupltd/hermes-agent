@@ -5814,6 +5814,32 @@ class DispatchResult:
     DB writes this tick — the lock holder is making progress on the same
     board. This is the steady-state signal that a single-writer guard is
     actively preventing two dispatchers from racing on ``kanban.db``."""
+    deferred_global_capped: list[tuple[str, str, str]] = field(default_factory=list)
+    """Ready task ids deferred by a board-level capacity gate.
+
+    Entries are ``(task_id, assignee, reason)`` where reason is
+    ``"max_in_progress"`` or ``"max_spawn"``. These rows are still ready and
+    spawnable, but this tick intentionally left them alone because the board is
+    already at a configured capacity limit. Keeping them in a visible bucket
+    preserves the ready-row accounting invariant for dry-run and live summaries.
+    """
+    skipped_claim_race: list[str] = field(default_factory=list)
+    """Ready task ids skipped because the atomic claim CAS lost.
+
+    This should be rare under the dispatcher tick lock, but direct/manual
+    claimers can still race a live tick. Reporting it keeps the row from being
+    a silent ready-but-not-spawned gap while preserving the existing no-retry
+    behavior.
+    """
+    deferred_dependency: list[tuple[str, list[str]]] = field(default_factory=list)
+    """Non-ready task ids parked in ``todo`` behind unfinished parents.
+
+    These rows are not spawn candidates, but including them in the dispatch
+    result lets dry-run/live summaries explain dependency-gated queues without
+    mutating them.
+    """
+    deferred_scheduled: list[str] = field(default_factory=list)
+    """Non-ready task ids parked in ``scheduled`` time gates."""
 
 
 # Bounded registry of recently-reaped worker child exits, populated by the
@@ -6999,6 +7025,39 @@ def has_spawnable_review(conn: sqlite3.Connection) -> bool:
     return False
 
 
+def _populate_dispatch_wait_buckets(
+    conn: sqlite3.Connection,
+    result: DispatchResult,
+) -> None:
+    """Populate non-spawnable wait buckets for dispatch reporting only.
+
+    This is deliberately read-only. ``recompute_ready`` remains the only place
+    that promotes dependency-unblocked work; scheduled rows remain parked until
+    an explicit unblock/schedule mechanism moves them.
+    """
+    result.deferred_scheduled = [
+        row["id"]
+        for row in conn.execute(
+            "SELECT id FROM tasks WHERE status = 'scheduled' "
+            "ORDER BY priority DESC, created_at ASC"
+        ).fetchall()
+    ]
+    dependency_rows = conn.execute(
+        """
+        SELECT child.id AS child_id, parent.id AS parent_id
+        FROM tasks AS child
+        JOIN task_links AS link ON link.child_id = child.id
+        JOIN tasks AS parent ON parent.id = link.parent_id
+        WHERE child.status = 'todo' AND parent.status != 'done'
+        ORDER BY child.priority DESC, child.created_at ASC, parent.created_at ASC
+        """
+    ).fetchall()
+    grouped: dict[str, list[str]] = {}
+    for row in dependency_rows:
+        grouped.setdefault(row["child_id"], []).append(row["parent_id"])
+    result.deferred_dependency = list(grouped.items())
+
+
 def dispatch_once(
     conn: sqlite3.Connection,
     *,
@@ -7135,6 +7194,7 @@ def _dispatch_once_locked(
         result.rate_limited.extend(_crash_rate_limited)
     result.timed_out = enforce_max_runtime(conn)
     result.promoted = recompute_ready(conn, failure_limit=failure_limit)
+    _populate_dispatch_wait_buckets(conn, result)
 
     # Count tasks already running so max_spawn enforces concurrency rather
     # than a per-tick spawn budget. See the docstring above for the full
@@ -7165,6 +7225,10 @@ def _dispatch_once_locked(
             "SELECT COUNT(*) FROM tasks WHERE status = 'running'"
         ).fetchone()[0]
         if in_progress >= max_in_progress:
+            result.deferred_global_capped.extend(
+                (row["id"], row["assignee"] or "", "max_in_progress")
+                for row in ready_rows
+            )
             return result
         # Only spawn enough to reach the cap, respecting max_spawn too.
         remaining = max_in_progress - in_progress
@@ -7207,8 +7271,12 @@ def _dispatch_once_locked(
             # bucket it as nonspawnable if the profile genuinely isn't
             # there, with the existing diagnostic.
             _default_assignee_resolved = True
-    for row in ready_rows:
+    for idx, row in enumerate(ready_rows):
         if max_spawn is not None and running_count + spawned >= max_spawn:
+            result.deferred_global_capped.extend(
+                (remaining["id"], remaining["assignee"] or "", "max_spawn")
+                for remaining in ready_rows[idx:]
+            )
             break
         row_assignee = row["assignee"]
         if not row_assignee:
@@ -7313,6 +7381,7 @@ def _dispatch_once_locked(
             continue
         if dry_run:
             result.spawned.append((row["id"], row_assignee, ""))
+            spawned += 1
             # Increment per-profile counter even in dry_run so the cap
             # check sees the would-be spawn on subsequent iterations.
             # Without this, dry_run reports every task as spawnable and
@@ -7324,6 +7393,7 @@ def _dispatch_once_locked(
             continue
         claimed = claim_task(conn, row["id"], ttl_seconds=ttl_seconds)
         if claimed is None:
+            result.skipped_claim_race.append(row["id"])
             continue
         try:
             resolved_branch_name = None
