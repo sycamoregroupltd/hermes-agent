@@ -23,6 +23,12 @@ _ASYNC_SHUTDOWN = object()
 _PEER_ID_HASH_LEN = 8
 _PEER_ID_HASH_ESCALATION_LENGTHS = (_PEER_ID_HASH_LEN, 12, 16, 24, 32, 64)
 
+# Internal sentinel exception for circuit-breaker control flow only
+class _ContextCircuitBreakerTripped(Exception):
+    """Raised internally when the context() circuit breaker is open —
+    signals the fallback path should run without logging an error."""
+    pass
+
 
 @dataclass
 class HonchoSession:
@@ -108,6 +114,10 @@ class HonchoSessionManager:
         # Write frequency state
         write_frequency = (config.write_frequency if config else "async")
         self._write_frequency = write_frequency
+
+        # Circuit breaker: consecutive context() failures (version drift / server down)
+        self._context_failures: int = 0
+        self._context_failure_threshold: int = 5  # trips breaker
         self._turn_counter: int = 0
 
         # Prefetch cache: session_key → last context result (consumed once per turn).
@@ -240,6 +250,15 @@ class HonchoSessionManager:
         # Load existing messages via context() - single call for messages + metadata
         existing_messages = []
         try:
+            # Circuit breaker: skip context() if N consecutive failures have occurred
+            if self._context_failures >= self._context_failure_threshold:
+                logger.error(
+                    "Honcho session '%s' context circuit breaker OPEN (%d consecutive failures) — "
+                    "falling back to raw messages()",
+                    session_id, self._context_failures,
+                )
+                raise _ContextCircuitBreakerTripped()
+
             ctx = session.context(summary=True, tokens=self._context_tokens)
             existing_messages = ctx.messages or []
 
@@ -263,11 +282,40 @@ class HonchoSessionManager:
                 )
             else:
                 logger.info("Honcho session '%s' created (new)", session_id)
+
+            # Reset failure counter on success
+            self._context_failures = 0
+        except _ContextCircuitBreakerTripped:
+            pass  # already handled above; fall through to messages() fallback
         except Exception as e:
-            logger.warning(
-                "Honcho session '%s' loaded (failed to fetch context: %s)",
-                session_id, e,
+            self._context_failures += 1
+            logger.error(
+                "Honcho session '%s' context fetch failed (failure #%d): %s",
+                session_id, self._context_failures, e, exc_info=True,
             )
+
+        # Fallback: when context() fails (server drift, outage, schema mismatch),
+        # load raw messages directly so the session still has conversation history.
+        # Uses .items (first page, no auto-pagination) to avoid hammering the API.
+        if not existing_messages:
+            try:
+                msg_page = session.messages()
+                fallback_msgs = list(msg_page.items) if msg_page else []
+                if fallback_msgs:
+                    existing_messages = fallback_msgs
+                    # Sort by created_at ascending (messages() returns most-recent-first)
+                    if any(m.created_at for m in existing_messages):
+                        existing_messages.sort(key=lambda m: m.created_at or datetime.min)
+                    logger.error(
+                        "Honcho session '%s' fell back to raw messages() — loaded %d messages "
+                        "(no summary/representation available via fallback)",
+                        session_id, len(existing_messages),
+                    )
+            except Exception as e2:
+                logger.error(
+                    "Honcho session '%s' messages() fallback also failed: %s",
+                    session_id, e2, exc_info=True,
+                )
 
         self._sessions_cache[session_id] = session
         return session, existing_messages
@@ -730,7 +778,7 @@ class HonchoSessionManager:
                 if ctx.summary and getattr(ctx.summary, "content", None):
                     result["summary"] = ctx.summary.content
         except Exception as e:
-            logger.debug("Failed to fetch session summary from Honcho: %s", e)
+            logger.error("Failed to fetch session summary from Honcho: %s", e, exc_info=True)
 
         try:
             user_ctx = self._fetch_peer_context(session.user_peer_id, search_query=user_message or None, target=session.user_peer_id)

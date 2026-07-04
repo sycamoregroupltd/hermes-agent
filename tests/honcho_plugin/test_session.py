@@ -1,5 +1,6 @@
 """Tests for plugins/memory/honcho/session.py — HonchoSession and helpers."""
 
+import logging
 import time
 
 from datetime import datetime
@@ -191,6 +192,72 @@ class TestManagerCacheOps:
         assert keys == {"k1", "k2"}
         s1_info = next(s for s in sessions if s["key"] == "k1")
         assert s1_info["message_count"] == 1
+
+
+class TestContextFallbackTelemetry:
+    def _make_manager(self):
+        mgr = HonchoSessionManager.__new__(HonchoSessionManager)
+        mgr._cache_lock = MagicMock()
+        mgr._sessions_cache = {}
+        mgr._context_tokens = 123
+        mgr._context_failures = 0
+        mgr._context_failure_threshold = 5
+        return mgr
+
+    def _message(self, peer_id, content, created_at):
+        return SimpleNamespace(peer_id=peer_id, content=content, created_at=created_at)
+
+    def test_context_failure_fallback_logs_error_and_loads_messages(self, caplog):
+        """Fallback success must be ERROR-level so errors.log/error monitors see it."""
+        mgr = self._make_manager()
+        session = MagicMock()
+        session.context.side_effect = RuntimeError("context API drift")
+        newest = self._message("user-peer", "new", datetime(2026, 1, 1, 0, 2))
+        oldest = self._message("user-peer", "old", datetime(2026, 1, 1, 0, 1))
+        session.messages.return_value = SimpleNamespace(items=[newest, oldest])
+        honcho = MagicMock()
+        honcho.session.return_value = session
+
+        from unittest.mock import patch
+
+        with patch("plugins.memory.honcho.session.get_honcho_client", return_value=honcho), \
+             caplog.at_level(logging.ERROR, logger="plugins.memory.honcho.session"):
+            returned_session, existing_messages = mgr._get_or_create_honcho_session(
+                "sid", MagicMock(), MagicMock()
+            )
+
+        assert returned_session is session
+        assert existing_messages == [oldest, newest]
+        assert mgr._context_failures == 1
+        assert session.context.call_count == 1
+        session.messages.assert_called_once_with()
+        error_messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("context fetch failed" in msg for msg in error_messages)
+        assert any("fell back to raw messages()" in msg for msg in error_messages)
+
+    def test_open_circuit_fallback_logs_error_without_context_call(self, caplog):
+        mgr = self._make_manager()
+        mgr._context_failures = mgr._context_failure_threshold
+        session = MagicMock()
+        old_msg = self._message("user-peer", "old", datetime(2026, 1, 1, 0, 1))
+        session.messages.return_value = SimpleNamespace(items=[old_msg])
+        honcho = MagicMock()
+        honcho.session.return_value = session
+
+        from unittest.mock import patch
+
+        with patch("plugins.memory.honcho.session.get_honcho_client", return_value=honcho), \
+             caplog.at_level(logging.ERROR, logger="plugins.memory.honcho.session"):
+            _, existing_messages = mgr._get_or_create_honcho_session(
+                "sid", MagicMock(), MagicMock()
+            )
+
+        assert existing_messages == [old_msg]
+        session.context.assert_not_called()
+        session.messages.assert_called_once_with()
+        error_messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("context circuit breaker OPEN" in msg for msg in error_messages)
+        assert any("fell back to raw messages()" in msg for msg in error_messages)
 
 
 class TestPeerLookupHelpers:
