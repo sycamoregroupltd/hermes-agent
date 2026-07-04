@@ -1046,7 +1046,7 @@ class HonchoSessionManager:
             )
             card = self._normalize_card(getattr(ctx, "peer_card", None))
         except Exception as e:
-            logger.debug("Direct peer.context() failed for '%s': %s", peer_id, e)
+            logger.error("Direct peer.context() failed for '%s': %s", peer_id, e, exc_info=True)
 
         if not representation:
             try:
@@ -1054,13 +1054,13 @@ class HonchoSessionManager:
                     peer.representation(target=target) if target is not None else peer.representation()
                 ) or ""
             except Exception as e:
-                logger.debug("Direct peer.representation() failed for '%s': %s", peer_id, e)
+                logger.error("Direct peer.representation() failed for '%s': %s", peer_id, e, exc_info=True)
 
         if not card:
             try:
                 card = self._fetch_peer_card(peer_id, target=target)
             except Exception as e:
-                logger.debug("Direct peer card fetch failed for '%s': %s", peer_id, e)
+                logger.error("Direct peer card fetch failed for '%s': %s", peer_id, e, exc_info=True)
 
         return {"representation": representation, "card": card}
 

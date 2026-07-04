@@ -332,6 +332,67 @@ class TestContextFallbackTelemetry:
         assert any("get_session_context() failed" in r.getMessage() for r in error_records)
         assert any(r.exc_info and r.exc_info[0] for r in error_records)
 
+    def test_peer_context_real_fallback_swallowed_failures_log_error(self, caplog):
+        """Regression: _fetch_peer_context() internal peer failures must log ERROR with exc_info.
+
+        The os-reviewer found that _fetch_peer_context() catches peer.context(),
+        peer.representation(), and _fetch_peer_card() failures at DEBUG level,
+        silently returning {"representation": "", "card": []} with no ERROR
+        telemetry. This test exercises the real _fetch_peer_context() path with
+        peer objects whose methods fail, verifying each catch emits ERROR-level
+        telemetry with traceback while preserving the graceful fallback return.
+        """
+        mgr = self._make_manager()
+        session = HonchoSession(
+            key="test",
+            user_peer_id="user-peer",
+            assistant_peer_id="ai-peer",
+            honcho_session_id="sid-not-in-cache",  # triggers peer-level fallback
+        )
+        mgr._cache["test"] = session
+
+        # Build a peer whose context/representation/get_card all raise
+        failing_peer = MagicMock()
+        failing_peer.context.side_effect = RuntimeError("peer context exploded")
+        failing_peer.representation.side_effect = RuntimeError("peer representation exploded")
+        # _fetch_peer_card calls _get_or_create_peer internally then invokes get_card
+        # Mock at the peer level so _fetch_peer_card sees the failing peer too
+        card_fail_peer = MagicMock()
+        card_fail_peer.get_card.side_effect = RuntimeError("peer card exploded")
+        card_fail_peer.card.side_effect = RuntimeError("peer card legacy exploded")
+
+        # Override _get_or_create_peer to return the failing peer
+        # Note: _fetch_peer_context calls _get_or_create_peer once for context+repr
+        # and _fetch_peer_card calls it again for the card fetch.
+        mgr._get_or_create_peer = MagicMock(
+            side_effect=[failing_peer, card_fail_peer]
+        )
+
+        with caplog.at_level(logging.ERROR, logger="plugins.memory.honcho.session"):
+            result = mgr.get_session_context("test", peer="user")
+
+        # Graceful fallback: empty representation and card, not a crash
+        assert result == {"representation": "", "card": []}
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        error_messages = [r.getMessage() for r in error_records]
+
+        # All three failure sites must log ERROR
+        assert any(
+            "Direct peer.context() failed" in msg for msg in error_messages
+        ), "peer.context() failure must log ERROR"
+        assert any(
+            "Direct peer.representation() failed" in msg for msg in error_messages
+        ), "peer.representation() failure must log ERROR"
+        assert any(
+            "Direct peer card fetch failed" in msg for msg in error_messages
+        ), "peer card fetch failure must log ERROR"
+
+        # All errors must include traceback via exc_info
+        assert all(
+            r.exc_info and r.exc_info[0] is not None for r in error_records
+        ), "all error records must have exc_info set"
+
 
 class TestPeerLookupHelpers:
     def _make_cached_manager(self):
