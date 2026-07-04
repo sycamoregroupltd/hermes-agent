@@ -46,6 +46,32 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _single_query_kanban_exit_code(result: Any) -> int:
+    """Return the process exit code for a kanban ``chat -q`` worker result.
+
+    Human-facing single-query mode normally returns from ``main`` without an
+    explicit ``sys.exit``. Kanban workers are different: the dispatcher infers
+    task health from the child process exit status when the task row is still
+    ``running``. A provider failure that renders an error panel but exits 0
+    is therefore misclassified later as a clean-exit protocol violation. Keep
+    ordinary non-kanban ``chat -q`` behaviour unchanged, but make kanban
+    workers surface failed turns as non-zero and quota/billing walls as the
+    dispatcher-recognized temporary-failure sentinel.
+    """
+    if not os.environ.get("HERMES_KANBAN_TASK"):
+        return 0
+    if not isinstance(result, dict) or not result.get("failed"):
+        return 0
+    if result.get("failure_reason") in ("rate_limit", "billing"):
+        try:
+            from hermes_cli.kanban_db import KANBAN_RATE_LIMIT_EXIT_CODE
+
+            return int(KANBAN_RATE_LIMIT_EXIT_CODE)
+        except Exception:
+            return 1
+    return 1
+
 # Suppress startup messages for clean CLI experience
 os.environ["HERMES_QUIET"] = "1"  # Our own modules
 
@@ -11937,6 +11963,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         Returns:
             The agent's response, or None on error
         """
+        self._last_chat_result = None
+
         # Single-query and direct chat callers do not go through run(), so
         # register secure secret capture here as well.
         set_secret_capture_callback(self._secret_capture_callback)
@@ -11949,6 +11977,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
 
         # Refresh provider credentials if needed (handles key rotation transparently)
         if not self._ensure_runtime_credentials():
+            self._last_chat_result = {
+                "failed": True,
+                "error": "runtime credential refresh failed",
+            }
             return None
 
         turn_route = self._resolve_turn_agent_config(message)
@@ -11963,6 +11995,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             runtime_override=turn_route["runtime"],
             request_overrides=turn_route.get("request_overrides"),
         ):
+            self._last_chat_result = {
+                "failed": True,
+                "error": "agent initialization failed",
+            }
             return None
         
         # Route image attachments based on the active model's vision capability.
@@ -12375,6 +12411,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
 
             # Update history with full conversation
             self.conversation_history = result.get("messages", self.conversation_history) if result else self.conversation_history
+            self._last_chat_result = result
 
             # If auto-compression fired mid-turn, the agent created a new
             # continuation session and mutated self.agent.session_id. Sync
@@ -12596,6 +12633,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             
         except Exception as e:
             print(f"Error: {e}")
+            self._last_chat_result = {
+                "failed": True,
+                "error": str(e),
+            }
             return None
         finally:
             # Ensure streaming TTS resources are cleaned up even on error.
@@ -16039,19 +16080,9 @@ def main(
                         # 5-hour quota window can't trip the circuit breaker and
                         # permanently block the card. Non-kanban runs keep the
                         # plain 0/1 contract automation wrappers expect.
-                        _exit_code = 0
-                        if isinstance(result, dict) and result.get("failed"):
+                        _exit_code = _single_query_kanban_exit_code(result)
+                        if _exit_code == 0 and isinstance(result, dict) and result.get("failed"):
                             _exit_code = 1
-                            if os.environ.get("HERMES_KANBAN_TASK") and result.get(
-                                "failure_reason"
-                            ) in ("rate_limit", "billing"):
-                                try:
-                                    from hermes_cli.kanban_db import (
-                                        KANBAN_RATE_LIMIT_EXIT_CODE as _RL_CODE,
-                                    )
-                                    _exit_code = _RL_CODE
-                                except Exception:
-                                    _exit_code = 1
                         sys.exit(_exit_code)
 
                 # Exit with error code if credentials or agent init fails
@@ -16078,6 +16109,11 @@ def main(
                 cli._show_security_advisories()
                 cli.chat(query, images=single_query_images or None)
                 cli._print_exit_summary()
+                _kanban_exit_code = _single_query_kanban_exit_code(
+                    getattr(cli, "_last_chat_result", None)
+                )
+                if _kanban_exit_code:
+                    sys.exit(_kanban_exit_code)
         finally:
             _finalize_single_query(cli)
         return

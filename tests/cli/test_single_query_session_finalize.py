@@ -200,6 +200,77 @@ def test_human_single_query_main_finalizes_after_query(monkeypatch):
     ]
 
 
+def test_human_single_query_kanban_worker_failed_turn_exits_nonzero(monkeypatch):
+    calls = []
+
+    import cli as cli_mod
+
+    class _Console:
+        def print(self, *_args, **_kwargs):
+            calls.append("query-label")
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            self.console = _Console()
+            self.session_id = "kanban-session"
+            self._last_chat_result = None
+            self.agent = SimpleNamespace(
+                session_id="kanban-session",
+                platform="cli",
+            )
+
+        def _claim_active_session(self, surface, *, stderr=False):
+            calls.append(("claim", surface, stderr))
+            return True
+
+        def _show_security_advisories(self):
+            calls.append("advisories")
+
+        def chat(self, query, images=None):
+            calls.append(("chat", query, images))
+            self._last_chat_result = {
+                "failed": True,
+                "error": "provider exhausted",
+            }
+            return "Error: provider exhausted"
+
+        def _print_exit_summary(self):
+            calls.append("summary")
+
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_demo")
+    monkeypatch.setattr(cli_mod, "HermesCLI", FakeCLI)
+    monkeypatch.setattr(cli_mod.atexit, "register", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cli_mod,
+        "_finalize_single_query",
+        lambda fake_cli: calls.append(("finalize", fake_cli.session_id)),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_mod.main(query="work kanban task t_demo", quiet=False, toolsets="terminal")
+
+    assert exc_info.value.code == 1
+    assert calls == [
+        ("claim", "cli", False),
+        "query-label",
+        "advisories",
+        ("chat", "work kanban task t_demo", None),
+        "summary",
+        ("finalize", "kanban-session"),
+    ]
+
+
+def test_human_single_query_kanban_worker_rate_limit_uses_tempfail(monkeypatch):
+    import cli as cli_mod
+    from hermes_cli.kanban_db import KANBAN_RATE_LIMIT_EXIT_CODE
+
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_demo")
+
+    assert cli_mod._single_query_kanban_exit_code(
+        {"failed": True, "failure_reason": "rate_limit"}
+    ) == KANBAN_RATE_LIMIT_EXIT_CODE
+
+
 def test_quiet_single_query_main_finalizes_while_preserving_exit_code(monkeypatch):
     calls = []
 
