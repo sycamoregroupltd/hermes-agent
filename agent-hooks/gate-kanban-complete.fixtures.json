@@ -1,5 +1,325 @@
 [
   {
+    "name": "t_5ca5dc8e-negated-running-app-packet-gate-repair-allows",
+    "task_id": "t_5ca5dc8e_fixture",
+    "expected": "allow",
+    "title": "Fix completion gate false allow on negated RUNNING_APP_VERIFICATION comment",
+    "body": "Parent verification task t_51709d65 found a red safety case in the platform-reviewer evidence path smoke. Suspected root cause: gate-kanban-complete.sh accepts comments when aggregate comment text contains RUNNING_APP_VERIFICATION anywhere and VERIFY_PASS anywhere. Acceptance: repair the hook and add deterministic regression fixtures so linked terminal-capable platform-reviewer evidence still allows frontend/web running-app gate completion, REVIEW_VERDICT alone still does not bypass the running-app gate, and implementation/self/delegated discussion that negates/misses RUNNING_APP_VERIFICATION cannot self-approve or allow without a real explicit packet. Do not touch app repo code or weaken REVIEW_VERDICT.",
+    "summary": "hook selftest PASS; platform-reviewer evidence-path smoke PASS; allowlist reapproval verified; no app repo code changed",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.sh",
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.selftest.sh",
+        "/home/frank/.hermes/shell-hooks-allowlist.json",
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-03-sycode-ai-negated-running-app-packet-gate-t_5ca5dc8e.md"
+      ]
+    },
+    "description": "ALLOW: real t_5ca5dc8e closeout class; completion-gate hook repair quotes frontend/web running-app evidence requirements but does not modify app/runtime surfaces."
+  },
+  {
+    "name": "t_5ca5dc8e-paired-frontend-negated-packet-negative-blocks",
+    "task_id": "t_5ca5dc8e_negative",
+    "expected": "block",
+    "title": "Fix frontend route handling for negated RUNNING_APP_VERIFICATION comments",
+    "body": "Implement apps/web React route component and page layout that displays platform-reviewer RUNNING_APP_VERIFICATION packet state. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "hook selftest PASS; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/reviewer-evidence/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_5ca5dc8e wording; negated RUNNING_APP_VERIFICATION/completion-gate terms must not bypass true apps/web route/page work."
+  },
+  {
+    "name": "t_f5f5385f-cron-config-repoint-allows",
+    "task_id": "t_f5f5385f_fixture",
+    "expected": "allow",
+    "title": "P0: paper-risk-agent (15m safety monitor) failing every run — repoint off paid nous deepseek-v4-flash",
+    "body": "FINDING: jarvis cron job paper-risk-agent is the fleet paper-trading risk monitor and model traffic is demonstrably serving elsewhere. TASK: repoint the job provider/model pin, back up jobs.json, verify forced smoke output, and record before/after pins. This is a cron/config task only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
+    "summary": "backup path recorded; jobs.json before/after pins recorded; forced cron smoke output ok; no app route changed; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/profiles/jarvis/cron/jobs.json",
+        "/home/frank/obsidian/quant-team/Sycode-Trading-Home.md"
+      ],
+      "verification": [
+        "backup before edit",
+        "before/after state",
+        "forced cron smoke output"
+      ]
+    },
+    "description": "ALLOW: real t_f5f5385f regression; cron/config provider-model repoint with backup + before/after + smoke evidence must not require frontend running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_cbede0a3-provider-bookkeeping-allows",
+    "task_id": "t_cbede0a3_fixture",
+    "expected": "allow",
+    "title": "Reconcile stale provider-state bookkeeping: codex exhausted zombie flags vs demonstrably-serving reality",
+    "body": "TASK (bookkeeping only — NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
+    "summary": "backups recorded; forced smokes ok; before/after flags recorded; zero credential/routing changes; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/auth.json",
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-03-provider-state-bookkeeping-reconciliation-t_cbede0a3.md"
+      ],
+      "verification": [
+        "backup before edit",
+        "before/after state",
+        "forced provider smoke output"
+      ]
+    },
+    "description": "ALLOW: real t_cbede0a3 regression; provider-state bookkeeping with backup + before/after + smoke evidence must not require frontend running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_e19957f3-whatsapp-bridge-package-remediation-allows",
+    "task_id": "t_e19957f3_fixture",
+    "expected": "allow",
+    "title": "BOARD-HYGIENE: non-web package remediation blocked by false frontend VERIFY_PASS completion gate",
+    "body": "Board-hygiene acceptance for a non-web/package-lock remediation: source task completed approved dependency remediation for scripts/whatsapp-bridge/package.json and scripts/whatsapp-bridge/package-lock.json with reviewer approval, bridge tests, syntax checks, and Obsidian closeout. It quotes a prior frontend VERIFY_PASS false positive only as the blocker being repaired. No frontend/web/app route, page, component, middleware, layout, UI, tRPC, browser surface, gateway restart, SMS/Twilio, credential, provider routing, deploy, or production runtime surface is changed.",
+    "summary": "REVIEW_VERDICT=APPROVE; bridge package tests 20 pass; syntax/diff checks pass; vulnerable package markers absent; Obsidian closeout verified; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "scripts/whatsapp-bridge/package.json",
+        "scripts/whatsapp-bridge/package-lock.json",
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-02-whatsapp-bridge-completion-gate-board-hygiene-t_e19957f3.md"
+      ],
+      "verification": [
+        "npm/package audit total 0",
+        "bridge tests 20 pass",
+        "syntax/diff checks pass",
+        "Obsidian closeout verified"
+      ]
+    },
+    "description": "ALLOW: real t_e19957f3 board-hygiene regression; scripts/whatsapp-bridge package remediation with package/test evidence is not frontend route/page work and must not require running-app VERIFY_PASS."
+  },
+  {
+    "name": "cron-config-wording-paired-frontend-negative-blocks",
+    "task_id": "t_cron_config_frontend_negative",
+    "expected": "block",
+    "title": "Build frontend cron configuration dashboard",
+    "body": "Implement apps/web React dashboard route component and page layout that renders cron job provider/model pins and before/after smoke status. This is concrete frontend UI work even though it mentions cron/config bookkeeping.",
+    "summary": "backup path recorded; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/cron-config/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for cron/config/provider-bookkeeping allow terms; true apps/web route/page work still requires running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_1c83210a-completion-gate-misclassification-closeout-allows",
+    "task_id": "t_1c83210a_fixture",
+    "expected": "allow",
+    "title": "Fix kanban completion-gate misclassification: non-frontend tasks rejected with frontend running-app VERIFY_PASS gate",
+    "body": "Repair the gate-kanban-complete classifier so cron/config/provider-bookkeeping tasks with backup, before/after state, and smoke evidence are not rejected as frontend work. The task quotes the frontend running-app VERIFY_PASS gate being repaired but changes only the hook classifier, fixture corpus, and Obsidian governance notes; no app route, page, component, middleware, layout, UI, or app runtime surface is changed.",
+    "summary": "classifier selftest PASS; direct hook replay allow for t_f5f5385f and t_cbede0a3; REVIEW_VERDICT=APPROVED; no app/runtime surface changed",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py",
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json",
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-03-cron-config-bookkeeping-completion-gate-t_1c83210a.md"
+      ]
+    },
+    "description": "ALLOW: source closeout for t_1c83210a; completion-gate misclassification wording quotes the frontend VERIFY_PASS false positive but the actual changes are hook/fixture/documentation only."
+  },
+  {
+    "name": "t_1c83210a-paired-frontend-misclassification-negative-blocks",
+    "task_id": "t_1c83210a_frontend_negative",
+    "expected": "block",
+    "title": "Fix frontend completion-gate misclassification dashboard",
+    "body": "Implement apps/web React dashboard route component and page layout for completion-gate misclassification reporting. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "classifier selftest PASS; REVIEW_VERDICT=APPROVED; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/completion-gate/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired t_1c83210a negative; completion-gate misclassification wording must not bypass real apps/web route/page work."
+  },
+  {
+    "name": "t_1c83210a-long-changed-files-app-surface-negative-blocks",
+    "task_id": "t_1c83210a_long_metadata_negative",
+    "expected": "block",
+    "title": "Fix kanban completion-gate misclassification closeout with long metadata",
+    "body": "Classifier closeout wording quotes non-frontend VERIFY_PASS false positives, but completion metadata includes a late apps/web page path after many non-app notes. App changed_files metadata must win and block without running-app VERIFY_PASS.",
+    "summary": "classifier selftest PASS; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-00.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-01.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-02.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-03.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-04.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-05.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-06.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-07.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-08.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-09.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-10.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-11.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-12.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-13.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-14.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-15.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-16.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-17.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-18.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-19.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-20.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-21.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-22.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-23.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-24.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-25.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-26.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-27.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-28.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-29.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-30.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-31.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-32.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-33.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-34.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-35.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-36.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-37.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-38.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-39.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-40.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-41.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-42.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-43.md",
+        "/home/frank/obsidian-fleet-vault/Governance/nonapp-44.md",
+        "apps/web/src/app/completion-gate/page.tsx"
+      ]
+    },
+    "description": "BLOCK: long changed_files regression; app-surface metadata must be detected even when apps/web appears after many non-app files."
+  },
+  {
+    "name": "t_1c83210a-nonapp-changed-files-with-later-app-path-note-allows",
+    "task_id": "t_1c83210a_overmatch_positive",
+    "expected": "allow",
+    "title": "Fix kanban completion-gate misclassification closeout with non-app changed_files and explanatory app-path note",
+    "body": "Classifier closeout wording quotes non-frontend VERIFY_PASS false positives and explains that concrete frontend work remains blocked, but this task changes only hook classifier, fixture corpus, and Obsidian governance notes. The app path mentioned in completion metadata is an example/negated note, not an entry in changed_files. No app route, page, component, middleware, layout, UI, or app runtime surface is changed.",
+    "summary": "classifier selftest PASS for non-app changed_files; notes mention example apps/web path only as a negated reviewer probe; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py",
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json",
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-03-cron-config-bookkeeping-completion-gate-t_1c83210a.md"
+      ],
+      "notes": "Reviewer overmatch probe: apps/web/src/app/completion-gate/page.tsx is mentioned here only as a negated/example path outside changed_files; it must not make this non-app closeout require VERIFY_PASS."
+    },
+    "description": "ALLOW: reviewer-discovered overmatch regression; app paths in later metadata prose/notes outside the actual changed_files array must not trigger the frontend running-app gate."
+  },
+  {
+    "name": "t_1c575d3e-task-type-classifier-closeout-allows",
+    "task_id": "t_1c575d3e_fixture",
+    "expected": "allow",
+    "title": "Fix completion-gate task-type classification",
+    "body": "Goal: implement the classifier/gate fix so kanban_complete and board-hygiene assign VERIFY_PASS requirements that match the actual task type. Ensure cron/config/bookkeeping/non-code operational tasks use evidence-based verification gates instead of frontend running-app verification, while true frontend/web tasks still require the existing frontend gate. Keep the change narrow, maintainable, and explicit about task-type categories and fallbacks.",
+    "summary": "Accepted approved completion-gate task-type classifier fix; structural changed_files parsing keeps non-code/cron/config/bookkeeping closeouts on evidence-based gates while concrete apps/web/frontend changed files still require the frontend running-app VERIFY_PASS gate.",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py",
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json",
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-03-completion-gate-task-type-classification-t_1c575d3e.md"
+      ]
+    },
+    "description": "ALLOW: current t_1c575d3e acceptance closeout; task-type classifier wording quotes protected frontend behavior but changes only hook/fixture/documentation paths."
+  },
+  {
+    "name": "t_1c575d3e-task-type-classifier-paired-frontend-negative-blocks",
+    "task_id": "t_1c575d3e_frontend_negative",
+    "expected": "block",
+    "title": "Fix completion-gate task-type classification frontend dashboard",
+    "body": "Implement apps/web React dashboard route component and page layout for task-type classification status. This is concrete frontend UI work and no running-app VERIFY_PASS is supplied.",
+    "summary": "classifier selftest PASS; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/completion-gate-task-types/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired t_1c575d3e negative; task-type classifier wording must not bypass concrete apps/web route/page work."
+  },
+  {
+    "name": "t_11fb678a-operational-category-closeout-allows",
+    "task_id": "t_11fb678a_fixture",
+    "expected": "allow",
+    "title": "Patch the completion-gate classifier narrowly",
+    "body": "Define auditable task-type categories so cron/config/bookkeeping/non-code operational work with command evidence uses evidence-based verification gates, while true frontend/web tasks still require running-app VERIFY_PASS. This task edits only the hook classifier and fixture corpus; no app route, page, component, middleware, layout, UI, or runtime surface is changed.",
+    "summary": "classifier selftest PASS; explicit operational_noncode_bookkeeping and frontend_web_app_surface categories added; no app/runtime surface changed",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py",
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json"
+      ]
+    },
+    "description": "ALLOW: current t_11fb678a closeout class; classifier/category work quotes frontend gate behavior but changes only hook/fixture code."
+  },
+  {
+    "name": "t_11fb678a-live-task-body-closeout-allows",
+    "task_id": "t_11fb678a_live_body_fixture",
+    "expected": "allow",
+    "title": "Patch the completion-gate classifier narrowly",
+    "body": "Locate the classifier/gate-selection logic that assigns VERIFY_PASS requirements for kanban_complete and board-hygiene. Check whether the prior t_e19957f3 fix already touches the same classifier; extend that implementation if appropriate, otherwise patch the located classifier directly. Keep the change narrow, maintainable, and explicit: define task-type categories for frontend/web versus cron/config/bookkeeping/non-code operational work, preserve the existing frontend gate for true frontend/web tasks, and route operational/non-code categories to evidence-based verification gates. Avoid broad rewrites or unrelated behavior changes. Acceptance criteria: the new regression fixtures pass, existing frontend/web gate behavior remains unchanged, and the code makes category/fallback behavior easy to audit.",
+    "summary": "classifier selftest PASS; landed approved local hook commit; no app/runtime surface changed",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py",
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json"
+      ]
+    },
+    "description": "ALLOW: exact live t_11fb678a task body is classifier/hook contract work even though it quotes frontend gate preservation requirements."
+  },
+  {
+    "name": "t_11fb678a-paired-frontend-category-negative-blocks",
+    "task_id": "t_11fb678a_frontend_negative",
+    "expected": "block",
+    "title": "Build frontend task-type category dashboard",
+    "body": "Implement apps/web React dashboard route component and page layout for completion-gate task-type category status. This is concrete frontend UI work and no running-app VERIFY_PASS is supplied.",
+    "summary": "classifier selftest PASS; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/completion-gate-categories/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired t_11fb678a negative; task-type category wording must not bypass real apps/web route/page work."
+  },
+  {
+    "name": "t_11fb678a-nonweb-component-helper-path-allows",
+    "task_id": "t_11fb678a_component_helper",
+    "expected": "allow",
+    "title": "BOARD-HYGIENE: non-web package helper component remediation",
+    "body": "Operational package remediation for a non-web helper under scripts/whatsapp-bridge. Preserve evidence-based npm/test/syntax verification and do not require frontend running-app VERIFY_PASS; no frontend/web/app route, page, middleware, layout, UI, tRPC, browser surface, or app runtime surface is changed.",
+    "summary": "package helper tests PASS; syntax checks PASS; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "scripts/whatsapp-bridge/src/component.ts",
+        "/home/frank/obsidian-fleet-vault/Governance/nonweb-component-helper.md"
+      ]
+    },
+    "description": "ALLOW: non-web package files with a basename like component.ts are not automatically frontend/app changed_files; explicit apps/web/app route paths still block via paired negatives."
+  },
+  {
+    "name": "t_a44c9fbc-reviewer-evidence-contract-fix-allows",
+    "task_id": "t_a44c9fbc_fixture",
+    "expected": "allow",
+    "title": "Implement minimal reviewer evidence contract fix",
+    "body": "Goal: apply the smallest reversible Hermes/fleet review-lane fix based on the audit deliverable. Implement only the selected safe path: either profile-local config/checklist/tool-path repair for platform-reviewer so frontend/web reviewers can run required gates, or a completion-gate/hook contract change that accepts an explicitly linked terminal-capable evidence packet when reviewer no-terminal/read-only constraints apply. Preserve independent REVIEW_VERDICT requirements and prevent implementation workers from approving their own work. No app/product code changes, no frontend/web/app route, page, component, middleware, layout, API, or tRPC surface touched.",
+    "summary": "classifier selftest PASS; source closeout unblocks downstream independent test/PM/guardian gates; no app/product code changed",
+    "description": "ALLOW: real t_a44c9fbc source-closeout class; reviewer evidence contract repair can quote frontend/web reviewer requirements but remains review-lane hook/profile tooling work, not app implementation."
+  },
+  {
+    "name": "t_a44c9fbc-paired-frontend-reviewer-evidence-negative-blocks",
+    "task_id": "t_a44c9fbc_negative",
+    "expected": "block",
+    "title": "Implement frontend reviewer evidence dashboard",
+    "body": "Implement apps/web React route component and page layout for a platform-reviewer terminal evidence dashboard. This is concrete frontend UI work and no VERIFY_PASS is supplied.",
+    "summary": "classifier selftest PASS; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired t_a44c9fbc negative; reviewer-evidence wording must not bypass true frontend route/page/component implementation."
+  },
+  {
     "name": "t_7cf6a11a-pm-typecheck-scope-validation-allows",
     "task_id": "t_7cf6a11a_fixture",
     "expected": "allow",
@@ -9,6 +329,22 @@
     "description": "ALLOW: real t_7cf6a11a class; PM scope-validation/typecheck-scope task quotes page.router/trpc/page targets as inspected compile scope, but performs no app route/UI/runtime implementation."
   },
   {
+    "name": "t_7cf6a11a-pm-typecheck-scope-metadata-nonapp-allows",
+    "task_id": "t_7cf6a11a_metadata_fixture",
+    "expected": "allow",
+    "title": "Validate project-phase/page typecheck scope",
+    "body": "PM scope-validation/report-only/typecheck-scope task: inspect compile targets such as apps/api/src/trpc/routers/page.router.ts and produce a concise scope note. No frontend route/page/UI/layout/runtime code edits are requested or performed.",
+    "summary": "CLEAR_PROCEED_compile_only_review_lane; no running app VERIFY_PASS supplied because no app runtime surface changed.",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/obsidian-fleet-vault/Projects/Sycode-AI.md",
+        "/home/frank/obsidian-fleet-vault/log.md"
+      ],
+      "scope": "pm-typecheck-report-only"
+    },
+    "description": "ALLOW: focused t_7cf6a11a-like fixture with metadata; report-only/typecheck-scope PM validation and non-app changed_files must not require frontend VERIFY_PASS."
+  },
+  {
     "name": "t_7cf6a11a-paired-frontend-typecheck-scope-negative-blocks",
     "task_id": "t_7cf6a11a_negative",
     "expected": "block",
@@ -16,6 +352,67 @@
     "body": "Implement apps/web project phase page route component and layout while capturing typecheck baseline context. This is concrete frontend route/page/component work; no VERIFY_PASS is supplied.",
     "summary": "typecheck baseline PASS; no running app VERIFY_PASS supplied",
     "description": "BLOCK: paired t_7cf6a11a negative; typecheck-scope wording must not bypass true frontend route/page/component implementation."
+  },
+  {
+    "name": "t_7cf6a11a-mixed-typecheck-scope-app-changed-files-negative-blocks",
+    "task_id": "t_7cf6a11a_metadata_negative",
+    "expected": "block",
+    "title": "Validate project-phase/page typecheck scope",
+    "body": "PM scope-validation/report-only/typecheck-scope task: inspect compile targets and produce a scope note. No frontend route/page/UI/layout/runtime code edits are requested.",
+    "summary": "typecheck scope note persisted; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/marketplace/page.tsx",
+        "apps/web/src/app/marketplace/layout.tsx"
+      ],
+      "scope": "pm-typecheck-report-only"
+    },
+    "description": "BLOCK: mixed/ambiguous fixture; app-impacting changed_files must not be exempt merely because the task mentions PM/typecheck/report-only wording."
+  },
+  {
+    "name": "t_d090ff46-self-closeout-false-positive-allows",
+    "task_id": "t_d090ff46_fixture",
+    "expected": "allow",
+    "title": "FIX: non-app PM scope-validation task falsely requires frontend VERIFY_PASS",
+    "body": "PM completion-gate repair: inspect why a non-app PM validation card is classified as frontend/web; add or adjust a narrow classifier contract so report-only/typecheck-scope cards without route/UI/code changes do not require running-app VERIFY_PASS. No frontend/web route, page, UI, layout, middleware, tenant rendering, tRPC surface code edits, or app runtime change in this run.",
+    "summary": "classifier selftest PASS; direct t_7cf6a11a -> readonly_nonapp; paired frontend negative -> web; no app runtime surface changed",
+    "description": "ALLOW: current t_d090ff46 closeout class; the task quotes the frontend VERIFY_PASS false-positive it repairs, but it only changes hook classifier/fixtures and Obsidian notes."
+  },
+  {
+    "name": "t_d090ff46-paired-frontend-closeout-negative-blocks",
+    "task_id": "t_d090ff46_negative",
+    "expected": "block",
+    "title": "FIX: frontend PM scope-validation page route",
+    "body": "Implement apps/web project phase page route component and layout while updating the completion-gate classifier. This is concrete frontend route/page/component work and no VERIFY_PASS is supplied.",
+    "summary": "classifier selftest PASS; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired t_d090ff46 negative; self-closeout false-positive wording must not bypass concrete frontend route/page/component implementation."
+  },
+  {
+    "name": "t_32f15f61-classifier-scope-validation-repair-allows",
+    "task_id": "t_32f15f61_fixture",
+    "expected": "allow",
+    "title": "Patch classifier to exempt report-only PM scope validation",
+    "body": "Using the diagnosis from the parent task, implement the narrowest safe classifier/hook change so PM scope-validation, research, report-only, and typecheck-scope cards with no frontend route/page/UI/layout/middleware/tenant rendering/tRPC surface/runtime code edits do not require running-app VERIFY_PASS. Preserve the existing requirement that true frontend/web route, page, UI, layout, middleware, tenant rendering, tRPC surface, or app runtime changes must include VERIFY_PASS evidence before kanban_complete accepts them. Avoid broad keyword exemptions that could let app changes bypass verification.",
+    "summary": "classifier selftest PASS; no app runtime surface changed; no frontend route/page/UI/layout/middleware/tRPC surface code edits",
+    "description": "ALLOW: current t_32f15f61 class; classifier/hook repair quotes frontend surfaces as protected negatives but only edits the completion gate contract and fixtures."
+  },
+  {
+    "name": "research-trpc-page-router-scope-no-code-edits-allows",
+    "task_id": "t_research_trpc_scope_fixture",
+    "expected": "allow",
+    "title": "Research tRPC page router typecheck scope",
+    "body": "Research only: inspect apps/api/src/trpc/routers/page.router.ts and summarize typecheck scope. No frontend route/page/UI/layout/middleware/tenant rendering/tRPC surface/runtime code edits.",
+    "summary": "research scope note persisted; no app/runtime code edits",
+    "description": "ALLOW: research/typecheck-scope card may quote tRPC/page/router targets as inspected evidence when it explicitly performs no frontend route/page/runtime code edits."
+  },
+  {
+    "name": "research-trpc-page-router-scope-frontend-negative-blocks",
+    "task_id": "t_research_trpc_scope_negative",
+    "expected": "block",
+    "title": "Research and fix tRPC page router frontend scope",
+    "body": "Research the page router, then implement apps/web project phase page route component and layout. This is concrete frontend route/page/component work and no VERIFY_PASS is supplied.",
+    "summary": "research note persisted; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired research/typecheck-scope negative; research wording must not bypass true frontend route/page/component implementation."
   },
   {
     "name": "t_5f17cc55-reviewer-terminal-evidence-contract-allows",
@@ -252,6 +649,58 @@
     "description": "BLOCK: paired package/types negative; true frontend route using the schema still requires running-app VERIFY_PASS."
   },
   {
+    "name": "task-type-cron-config-evidence-gate-maps-readonly-nonapp-allows",
+    "task_id": "t_task_type_cron_config_evidence_gate",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "Verify cron/config bookkeeping completion gate mapping",
+    "body": "Cron/config operational bookkeeping task: update a disabled job note, record before/after cron-store state, preserve provider routing, and attach forced smoke output. This is non-code operational evidence; no frontend/web route, page, component, middleware, layout, UI, tRPC, browser, or app runtime surface is changed.",
+    "summary": "VERIFY_PASS evidence gate mapping: backup recorded; before/after cron-store state captured; forced smoke output present; no running app VERIFY_PASS supplied because this maps to the evidence-based readonly_nonapp gate.",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/profiles/jarvis/cron/jobs.json",
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-03-cron-config-bookkeeping-regression.md"
+      ],
+      "verification": [
+        "backup before edit",
+        "before/after cron-store state",
+        "forced cron smoke output"
+      ]
+    },
+    "description": "ALLOW+CATEGORY: cron/config/bookkeeping/non-code operational work maps to readonly_nonapp/evidence-based verification, not the frontend running-app gate."
+  },
+  {
+    "name": "task-type-frontend-route-maps-web-running-app-gate-blocks",
+    "task_id": "t_task_type_frontend_route_gate",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Build frontend completion-gate task-type dashboard route",
+    "body": "Implement apps/web React dashboard route component and page layout that renders task-type classifier status for cron/config, bookkeeping, and fallback categories. This is true frontend/web UI work.",
+    "summary": "unit tests pass; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/completion-gate-task-types/page.tsx",
+        "apps/web/src/app/completion-gate-task-types/layout.tsx"
+      ]
+    },
+    "description": "BLOCK+CATEGORY: true frontend route/page/component work maps to web and must require the existing frontend running-app VERIFY_PASS gate."
+  },
+  {
+    "name": "task-type-ambiguous-fallback-maps-not-web-allows",
+    "task_id": "t_task_type_ambiguous_fallback",
+    "expected": "allow",
+    "expected_class": "not_web",
+    "title": "Update completion checklist wording",
+    "body": "Ambiguous bookkeeping-free handoff task: revise a local checklist sentence, record the command used, and note the reviewer. The description intentionally avoids product-surface terms so the classifier should use its safe fallback category.",
+    "summary": "checklist sentence reviewed; command output recorded; no running app VERIFY_PASS supplied because the fallback maps to not_web.",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/obsidian-fleet-vault/Governance/completion-checklist.md"
+      ]
+    },
+    "description": "ALLOW+CATEGORY: ambiguous/fallback task descriptions with no frontend/web/app surface map to not_web, the intended safe default."
+  },
+  {
     "name": "selftest-cli-script-nonweb-command-evidence-allows",
     "task_id": "t_cliscript_fixture",
     "expected": "allow",
@@ -277,5 +726,39 @@
     "title": "Build frontend page with Python/shell helper",
     "body": "Implement apps/web marketplace route component. Use Python/shell commands to generate fixture data before serving the React page.",
     "summary": "python/shell helper passed; no VERIFY_PASS supplied"
+  },
+  {
+    "name": "t_aacdb046-superseded-banner-paper-hygiene-allows",
+    "task_id": "t_aacdb046_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "description": "ALLOW: real t_aacdb046 regression; SUPERSEDED-banner detector/triage candidate paths can include dashboard artifact filenames, but the task is paper-only Obsidian markdown hygiene with no app/runtime/trading surface changed.",
+    "title": "TRIAGE: add SUPERSEDED banners for stale edge-claim notes (2026-07-03-kill-list)",
+    "body": "SUPERSEDED-banner detector candidate list from t_79ab46bf. Candidate note path includes research/2026-06/2026-06-26-confidence-scorer-vnext-telemetry-dashboard-spec.md. Task: review each candidate and add a SUPERSEDED banner only where the cited edge claim is actually refuted by the kill-list. PAPER-only knowledge hygiene; no trading/runtime mutation.",
+    "summary": "SUPERSEDED banner sweep verified complete: 170 candidates, 31 bannered, 139 skipped, 0 ambiguous; paper-only Obsidian markdown hygiene; no runtime/trading/app changes.",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/obsidian/sycode-trading/rebuild-2026-07-03-artifacts/superseded-banner-shard-1.md",
+        "/home/frank/obsidian/sycode-trading/rebuild-2026-07-03-artifacts/superseded-banner-shard-2.md",
+        "/home/frank/obsidian/sycode-trading/rebuild-2026-07-03-artifacts/superseded-banner-shard-3.md",
+        "/home/frank/obsidian/sycode-trading/rebuild-2026-07-03-artifacts/superseded-banner-shard-4.md",
+        "/home/frank/obsidian/quant-team/rebuild-2026-07-03-artifacts/superseded-banner-detector-2026-07-03-kill-list-summary.md"
+      ]
+    }
+  },
+  {
+    "name": "t_aacdb046-paired-frontend-dashboard-negative-blocks",
+    "task_id": "t_aacdb046_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "description": "BLOCK: paired negative for SUPERSEDED/paper-only allow terms; true apps/web dashboard route work still requires running-app VERIFY_PASS.",
+    "title": "Build frontend SUPERSEDED banner dashboard",
+    "body": "Implement apps/web React dashboard route component and page layout that renders SUPERSEDED-banner detector results. This is concrete frontend/web UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "detector fixture passed; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/superseded-banners/page.tsx"
+      ]
+    }
   }
 ]

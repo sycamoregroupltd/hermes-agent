@@ -14,17 +14,29 @@ from __future__ import annotations
 
 import re
 import sys
+import json
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
 PatternList = Sequence[str]
 
 
+@dataclass(frozen=True)
+class TaskTypeCategory:
+    """Auditable task category mapped to the gate that should verify it."""
+
+    name: str
+    decision: str
+    verification_gate: str
+    patterns: PatternList
+    rationale: str
+
+
 WEB_PATTERNS: PatternList = [
     # UI/app implementation nouns. Deliberately exclude bare "route" and "page";
     # infra/report cards say "route this cron" or "source page content" without
     # being browser/app surfaces.
-    r"(^|[^a-z0-9])(marketplace|storefront|frontend|dashboard|render|renders|serve|serving|client|component|middleware|layout|ui)([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])(marketplace|storefront|frontend|dashboard|render|renders|client|component|middleware|layout|ui)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])(page\.tsx|web page|app page|route page|page component)([^a-z0-9]|$)",
     r"apps/web",
     r"(^|[^a-z0-9])(trpc|next\.js|nextjs|react|vite)([^a-z0-9]|$)",
@@ -60,7 +72,10 @@ COMPLETION_HOOK_CLASSIFIER_PATTERNS: PatternList = [
     r"completion[- ]hook classifier",
     r"ordered completion[- ]hook contract table",
     r"completion[- ]hook contract table",
+    r"completion[- ]gate classifier",
     r"completion[- ]gate repair",
+    r"completion[- ]gate task[- ]type classification",
+    r"completion[- ]gate task[- ]type classifier fix",
     r"static/obsidian qa completion[- ]gate repair",
 ]
 
@@ -70,6 +85,16 @@ CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
     r"(^|[^a-z0-9])dashboard([^.\n]{0,80})(route|page|component|frontend|react|ui|app)([^a-z0-9]|$)",
 ]
 
+APP_CHANGED_FILE_PATTERNS: PatternList = [
+    # Completion metadata changed_files entries are authoritative evidence of
+    # actual impact. Match each parsed path separately so explanatory metadata
+    # prose after the changed_files array cannot masquerade as an edited app file.
+    r"(^|/)apps/web/",
+    r"(^|/)(src/)?app/[^\n\]]{0,240}(page|layout)\.(tsx|jsx|ts|js)$",
+    r"(^|/)(src/)?pages/[^\n\]]{0,240}\.(tsx|jsx|ts|js)$",
+    r"(^|/)(src/)?(middleware|layout)\.(tsx|jsx|ts|js)$",
+]
+
 # Explicit non-application intents. These may neutralize broad web words only
 # when APP_IMPL_PATTERNS do not identify concrete app implementation work.
 NONAPP_OVERRIDE_PATTERNS: PatternList = [
@@ -77,6 +102,8 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"completion[- ]hook mismatch",
     *COMPLETION_HOOK_CLASSIFIER_PATTERNS,
     r"completion[- ]gate bug",
+    r"completion[- ]gate misclassification",
+    r"non[- ]frontend tasks rejected[^\n]{0,160}verify_pass",
     r"pm acceptance.*non-app.*completion[- ]gate",
     r"non-app.*completion[- ]gate.*app-verification is not applicable",
     r"completion[- ]gate classification mismatch",
@@ -104,6 +131,15 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"fix non-app completion gate",
     r"repair .*verify_pass false[ -]?positive",
     r"infra cron/report-only",
+    # Cron/config/provider bookkeeping cards often mention that a model/provider
+    # is "serving" or that a cron job was "repointed"; those are operational
+    # verification terms, not evidence of a browser/app surface.
+    r"\bcron/config task\b",
+    r"\bcron (job|jobs?)\b[^\n]{0,180}\b(provider|model|pin|repoint|jobs\.json|backup)\b",
+    r"\b(provider[- ]state|provider) bookkeeping\b",
+    r"\bbookkeeping only\b",
+    r"\bno provider routing/fallback changes\b",
+    r"\bjobs\.json backup\b",
     # Documentation/index/report artifacts can mention Mission Control,
     # north-star boards, or dashboard/runbook context without changing a web route.
     r"mission control.*jarvis bible.*index",
@@ -132,6 +168,13 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"\breview[- ]lane (task|routing|work)\b",
     r"\breview[- ]lane .*terminal[- ]capable evidence contract\b",
     r"\bplatform[- ]reviewer .*terminal evidence (path|contract)\b",
+    r"\bcompletion[- ]gate false allow\b",
+    r"\bnegated running_app_verification (comment|packet)\b",
+    r"\bnegated RUNNING_APP_VERIFICATION (comment|packet)\b",
+    r"\brepair (the )?hook\b[^\n]{0,160}\bRUNNING_APP_VERIFICATION\b",
+    r"\bminimal reviewer evidence contract fix\b",
+    r"\breviewer evidence contract fix\b",
+    r"\bprofile-local config/checklist/tool-path repair\b[^\n]{0,180}\bfrontend/web reviewers can run required gates\b",
     r"\bterminal evidence[- ]path fix\b",
     r"\breview[- ]required handoff\b",
     r"\bguardian review child\b",
@@ -170,6 +213,12 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"\bobsidian/static qa packet\b",
     r"\bfinal lightweight visual/content qa packet\b",
     r"\bforbidden[- ]capability confirmations\b",
+    # SUPERSEDED-banner detector/triage tasks are paper-only Obsidian hygiene.
+    # Their candidate note paths may include words such as "dashboard" from
+    # stale artifact filenames, but no browser/app surface is changed.
+    r"\bsuperseded[- ]banner\b",
+    r"\bpaper[- ]only knowledge hygiene\b",
+    r"\bpaper[- ]only obsidian markdown hygiene\b",
 ]
 
 FLEET_SLO_NONAPP_PATTERNS: PatternList = [
@@ -206,17 +255,62 @@ EXPLICIT_NO_APP_CHANGE_PATTERNS: PatternList = [
 
 NEGATED_APP_IMPL_PATTERNS: PatternList = [
     r"\bdo not (modify|touch|change) (frontend|web|app)\b",
-    r"\bno (frontend|web|app)[^\n.]{0,80}(route|page|component|middleware|layout|ui)[^\n.]{0,80}(touched|changed|modified)\b",
+    r"\bno (frontend|web|app)[^\n.]{0,120}(route|page|component|middleware|layout|ui)[^\n.]{0,120}(touched|changed|modified|code edits?|edits?)\b",
+    r"\bno [^\n.]{0,80}(frontend/web/app|frontend|web|app)[^\n.]{0,200}(route|page|component|middleware|layout|ui|trpc|browser)[^\n.]{0,200}(is changed|changed|touched|modified|code edits?|edits?)\b",
     # Review/repair cards quote the desired guardrail behavior for real app
     # work. That expectation text is not itself an instruction to implement UI.
     r"\bactual [^\n.]{0,160}(frontend|web|app|route|page|component|middleware|layout)[^\n.]{0,120}work remains blocked unless\b",
     r"\b(concrete|real|actual) [^\n.]{0,160}(frontend|web|app|route|page|component|middleware|layout)[^\n.]{0,120}(blocks?|blocked|remains blocked) (without|unless)\b",
     r"\b(concrete|real|actual) [^\n.]{0,160}(frontend|web|app|route|page|component|middleware|layout)[^\n.]{0,120}work that lacks\b",
+    # False-positive classifier repair cards can begin with "FIX:" and quote the
+    # frontend/web gate they are repairing. That wording is not an instruction to
+    # implement the app surface; concrete apps/web/route implementation still
+    # matches APP_IMPL_PATTERNS and is covered by paired negatives.
+    r"\bfalsely requires [^\n.]{0,80}(frontend|web|app)[^\n.]{0,120}verify_pass\b",
+    r"\bclassified as (a )?(frontend|web|app)[^\n.]{0,120}\b(add|adjust|repair)\b[^\n.]{0,120}\b(classifier|contract|hook|gate)\b",
+    r"\bprofile-local config/checklist/tool-path repair\b[^\n.]{0,180}\bfrontend/web reviewers can run required gates\b",
 ]
+
+
+FRONTEND_WEB_TASK_CATEGORY = TaskTypeCategory(
+    name="frontend_web_app_surface",
+    decision="web",
+    verification_gate="running-app VERIFY_PASS",
+    patterns=WEB_PATTERNS,
+    rationale="frontend/web/app surface detected in task title/body",
+)
+
+FRONTEND_WEB_CHANGED_FILES_CATEGORY = TaskTypeCategory(
+    name="frontend_web_changed_files",
+    decision="web",
+    verification_gate="running-app VERIFY_PASS",
+    patterns=APP_CHANGED_FILE_PATTERNS,
+    rationale="completion metadata changed_files includes frontend/web app surface files",
+)
+
+OPERATIONAL_NONCODE_TASK_CATEGORY = TaskTypeCategory(
+    name="operational_noncode_bookkeeping",
+    decision="readonly_nonapp",
+    verification_gate="evidence-based task-specific verification",
+    patterns=NONAPP_OVERRIDE_PATTERNS,
+    rationale="cron/config/bookkeeping/review/static/repo-hygiene work with no concrete app implementation signal",
+)
+
+READONLY_EVIDENCE_TASK_CATEGORY = TaskTypeCategory(
+    name="readonly_evidence_only",
+    decision="readonly_nonapp",
+    verification_gate="evidence-based task-specific verification",
+    patterns=READONLY_PATTERNS,
+    rationale="read-only/report/observability evidence without frontend/web task surface",
+)
 
 
 def _any(patterns: PatternList, text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _matches_category(category: TaskTypeCategory, text: str) -> bool:
+    return _any(category.patterns, text)
 
 
 def _split_hook_text(raw: str) -> tuple[str, str]:
@@ -246,6 +340,17 @@ def _has_app_impl(task_part: str) -> bool:
     # where "completion-gate" and "repair" are within 80 chars of each other.
     raw_app_impl = _any(APP_IMPL_PATTERNS, task_part) and not _any(NEGATED_APP_IMPL_PATTERNS, task_part)
     has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, task_part)
+    if (
+        _any(NONAPP_OVERRIDE_PATTERNS, task_part)
+        and re.search(r"\bcompletion[- ]gate false allow\b|\bcompletion[- ]gate misclassification\b|\bnon[- ]frontend tasks rejected[^\n]{0,160}verify_pass\b|\bnegated running_app_verification (comment|packet)\b", task_part)
+        and not has_concrete_web_impl
+    ):
+        return False
+    if (
+        re.search(r"\bcompletion[- ]gate classifier\b", task_part)
+        and not has_concrete_web_impl
+    ):
+        return False
     review_completion_gate_nonapp = bool(
         re.search(r"^\s*review:[^\n]{0,300}", task_part)
         and _any(NONAPP_OVERRIDE_PATTERNS, task_part)
@@ -321,27 +426,71 @@ class ContractRule:
 
 
 def _nonapp_override_without_app_impl(task_part: str, raw: str) -> bool:
-    return _any(NONAPP_OVERRIDE_PATTERNS, task_part) and not _has_app_impl(task_part)
+    return _matches_category(OPERATIONAL_NONCODE_TASK_CATEGORY, task_part) and not _has_app_impl(task_part)
 
 
 def _fleet_slo_report_without_web(task_part: str, raw: str) -> bool:
     return _any(FLEET_SLO_NONAPP_PATTERNS, task_part) and not _any(FLEET_SLO_WEB_PATTERNS, task_part)
 
 
+def _changed_files_from_completion_input(raw: str) -> list[str]:
+    """Best-effort extraction of JSON metadata.changed_files arrays.
+
+    gate-kanban-complete.sh appends current completion summary/result text and a
+    JSON dump of metadata after ---INPUT---. This intentionally parses only the
+    changed_files array values, not arbitrary prose later in metadata, because
+    reviewer notes may quote apps/web example paths that are not changed files.
+    """
+    input_text = raw.split("\n---input---\n", 1)[-1]
+    decoder = json.JSONDecoder()
+    paths: list[str] = []
+    for match in re.finditer(r'"changed_files"\s*:', input_text):
+        idx = match.end()
+        while idx < len(input_text) and input_text[idx].isspace():
+            idx += 1
+        if idx >= len(input_text) or input_text[idx] != "[":
+            continue
+        try:
+            value, _ = decoder.raw_decode(input_text[idx:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, list):
+            paths.extend(str(item).lower() for item in value if isinstance(item, str))
+    return paths
+
+
+def _completion_metadata_touches_app_surface(task_part: str, raw: str) -> bool:
+    # Completion metadata is current evidence about what changed. If changed_files
+    # names app/frontend surface files, that concrete impact must win over
+    # report-only/typecheck/research wording in the title/body.
+    return any(
+        _matches_category(FRONTEND_WEB_CHANGED_FILES_CATEGORY, path)
+        for path in _changed_files_from_completion_input(raw)
+    )
+
+
 def _readonly_without_web(task_part: str, raw: str) -> bool:
-    return _any(READONLY_PATTERNS, raw) and not _any(WEB_PATTERNS, task_part)
+    return _matches_category(READONLY_EVIDENCE_TASK_CATEGORY, raw) and not _matches_category(
+        FRONTEND_WEB_TASK_CATEGORY, task_part
+    )
 
 
 def _web_surface(task_part: str, raw: str) -> bool:
-    return _any(WEB_PATTERNS, task_part)
+    return _matches_category(FRONTEND_WEB_TASK_CATEGORY, task_part)
 
 
 CONTRACT_TABLE: Sequence[ContractRule] = [
     ContractRule(
+        name="BLOCK_APP_CHANGED_FILES_NEED_VERIFY_PASS",
+        decision=FRONTEND_WEB_CHANGED_FILES_CATEGORY.decision,
+        predicate=_completion_metadata_touches_app_surface,
+        rationale=FRONTEND_WEB_CHANGED_FILES_CATEGORY.rationale,
+    ),
+    ContractRule(
         name="ALLOW_NONAPP_OVERRIDE_ONLY_WITHOUT_APP_IMPL",
-        decision="readonly_nonapp",
+        decision=OPERATIONAL_NONCODE_TASK_CATEGORY.decision,
         predicate=_nonapp_override_without_app_impl,
-        rationale="explicit non-app/review/repo/static packet intent, with no concrete app implementation signal",
+        rationale=OPERATIONAL_NONCODE_TASK_CATEGORY.rationale,
     ),
     ContractRule(
         name="ALLOW_FLEET_SLO_REPORT_ONLY_WITHOUT_WEB_UI",
@@ -351,15 +500,15 @@ CONTRACT_TABLE: Sequence[ContractRule] = [
     ),
     ContractRule(
         name="ALLOW_READONLY_EVIDENCE_ONLY_WITHOUT_WEB_SURFACE",
-        decision="readonly_nonapp",
+        decision=READONLY_EVIDENCE_TASK_CATEGORY.decision,
         predicate=_readonly_without_web,
-        rationale="read-only/report/observability evidence without frontend/web task surface",
+        rationale=READONLY_EVIDENCE_TASK_CATEGORY.rationale,
     ),
     ContractRule(
         name="BLOCK_WEB_SURFACE_NEEDS_VERIFY_PASS",
-        decision="web",
+        decision=FRONTEND_WEB_TASK_CATEGORY.decision,
         predicate=_web_surface,
-        rationale="frontend/web/app surface detected; running-app VERIFY_PASS required by shell hook",
+        rationale=FRONTEND_WEB_TASK_CATEGORY.rationale,
     ),
     ContractRule(
         name="ALLOW_DEFAULT_NOT_WEB",
