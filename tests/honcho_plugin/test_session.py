@@ -198,10 +198,16 @@ class TestContextFallbackTelemetry:
     def _make_manager(self):
         mgr = HonchoSessionManager.__new__(HonchoSessionManager)
         mgr._cache_lock = MagicMock()
+        mgr._cache = {}
         mgr._sessions_cache = {}
         mgr._context_tokens = 123
         mgr._context_failures = 0
         mgr._context_failure_threshold = 5
+        mgr._context_failure_backoff_window = 300.0
+        mgr._context_last_open_at = None
+        mgr._context_half_open_attempts = 0
+        mgr._context_max_half_open_attempts = 2
+        mgr._ai_observe_others = True
         return mgr
 
     def _message(self, peer_id, content, created_at):
@@ -258,6 +264,73 @@ class TestContextFallbackTelemetry:
         error_messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
         assert any("context circuit breaker OPEN" in msg for msg in error_messages)
         assert any("fell back to raw messages()" in msg for msg in error_messages)
+
+    def test_context_breaker_half_open_success_recovers(self):
+        """A transient context() outage must not permanently poison the manager."""
+        mgr = self._make_manager()
+        mgr._context_failures = mgr._context_failure_threshold
+        mgr._context_last_open_at = 1.0
+        mgr._context_failure_backoff_window = 10.0
+        session = MagicMock()
+        old_msg = self._message("user-peer", "old", datetime(2026, 1, 1, 0, 1))
+        session.context.return_value = SimpleNamespace(messages=[old_msg])
+        honcho = MagicMock()
+        honcho.session.return_value = session
+
+        from unittest.mock import patch
+
+        with patch("plugins.memory.honcho.session.get_honcho_client", return_value=honcho), \
+             patch("plugins.memory.honcho.session.time.monotonic", return_value=12.0):
+            _, existing_messages = mgr._get_or_create_honcho_session(
+                "sid", MagicMock(), MagicMock()
+            )
+
+        assert existing_messages == [old_msg]
+        session.context.assert_called_once_with(summary=True, tokens=123)
+        session.messages.assert_not_called()
+        assert mgr._context_failures == 0
+        assert mgr._context_last_open_at is None
+        assert mgr._context_half_open_attempts == 0
+
+    def test_get_session_context_fallback_failure_logs_error_exc_info(self, caplog):
+        mgr = self._make_manager()
+        session = HonchoSession(
+            key="test",
+            user_peer_id="user-peer",
+            assistant_peer_id="ai-peer",
+            honcho_session_id="sid-missing-from-sessions-cache",
+        )
+        mgr._cache["test"] = session
+        mgr._fetch_peer_context = MagicMock(side_effect=RuntimeError("peer context down"))
+
+        with caplog.at_level(logging.ERROR, logger="plugins.memory.honcho.session"):
+            result = mgr.get_session_context("test", peer="user")
+
+        assert result == {}
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("get_session_context() fallback failed" in r.getMessage() for r in error_records)
+        assert any(r.exc_info and r.exc_info[0] for r in error_records)
+
+    def test_get_session_context_cached_session_failure_logs_error_exc_info(self, caplog):
+        mgr = self._make_manager()
+        session = HonchoSession(
+            key="test",
+            user_peer_id="user-peer",
+            assistant_peer_id="ai-peer",
+            honcho_session_id="sid",
+        )
+        honcho_session = MagicMock()
+        honcho_session.context.side_effect = RuntimeError("session context down")
+        mgr._cache["test"] = session
+        mgr._sessions_cache["sid"] = honcho_session
+
+        with caplog.at_level(logging.ERROR, logger="plugins.memory.honcho.session"):
+            result = mgr.get_session_context("test", peer="user")
+
+        assert result == {}
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("get_session_context() failed" in r.getMessage() for r in error_records)
+        assert any(r.exc_info and r.exc_info[0] for r in error_records)
 
 
 class TestPeerLookupHelpers:
