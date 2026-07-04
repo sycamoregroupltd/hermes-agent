@@ -859,5 +859,35 @@
         "apps/web/src/app/a3-proposals/page.tsx"
       ]
     }
+  },
+  {
+    "name": "t_01f1faa2-review-prefixed-reduced-implement-route-negative-blocks",
+    "task_id": "t_01f1faa2_route_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "description": "BLOCK: reduced-token review-prefixed bypass regression; REVIEW: completion-gate repair with bare 'implement route' must still block because APP_IMPL_PATTERNS detect verb+target implementation intent.",
+    "title": "REVIEW: completion-gate repair",
+    "body": "implement route. This is actual frontend route work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied"
+  },
+  {
+    "name": "t_01f1faa2-review-prefixed-reduced-add-page-negative-blocks",
+    "task_id": "t_01f1faa2_page_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "description": "BLOCK: reduced-token review-prefixed bypass regression; REVIEW: completion-gate repair with bare 'add page' must still block because APP_IMPL_PATTERNS detect verb+target implementation intent.",
+    "title": "REVIEW: completion-gate repair",
+    "body": "Add page layout. This is actual frontend page work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied"
+  },
+  {
+    "name": "t_01f1faa2-review-prefixed-all-in-title-reduced-negative-blocks",
+    "task_id": "t_01f1faa2_title_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "description": "BLOCK: all-in-title reduced-token review-prefixed bypass regression; app implementation tokens in the title next to review/completion-gate wording must still block.",
+    "title": "REVIEW: completion-gate repair for frontend route fix + implement marketplace route component and page layout",
+    "body": "This is actual frontend route/page/component work; no VERIFY_PASS supplied.",
+    "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied"
   }
 ]

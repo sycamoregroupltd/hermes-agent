@@ -494,6 +494,14 @@ def _readonly_without_web(task_part: str, raw: str) -> bool:
     )
 
 
+def _app_impl_needs_verify_pass(task_part: str, raw: str) -> bool:
+    # Catch reduced-token app implementation signals that _has_app_impl detects
+    # but WEB_PATTERNS don't cover (e.g. bare "implement route" or "add page"
+    # without surface-level qualifiers like frontend/component/layout).
+    # This closes the review-prefixed reduced-token bypass class.
+    return _has_app_impl(task_part)
+
+
 def _web_surface(task_part: str, raw: str) -> bool:
     return _matches_category(FRONTEND_WEB_TASK_CATEGORY, task_part)
 
@@ -504,6 +512,12 @@ CONTRACT_TABLE: Sequence[ContractRule] = [
         decision=FRONTEND_WEB_CHANGED_FILES_CATEGORY.decision,
         predicate=_completion_metadata_touches_app_surface,
         rationale=FRONTEND_WEB_CHANGED_FILES_CATEGORY.rationale,
+    ),
+    ContractRule(
+        name="BLOCK_APP_IMPL_NEEDS_VERIFY_PASS",
+        decision=FRONTEND_WEB_CHANGED_FILES_CATEGORY.decision,
+        predicate=_app_impl_needs_verify_pass,
+        rationale="concrete app implementation signal detected in task title/body; running-app VERIFY_PASS required by shell hook even without broad web surface keywords",
     ),
     ContractRule(
         name="ALLOW_NONAPP_OVERRIDE_ONLY_WITHOUT_APP_IMPL",
