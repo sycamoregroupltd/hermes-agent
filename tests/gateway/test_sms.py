@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac
 import os
+import urllib.parse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -227,7 +228,9 @@ class TestStartupGuard:
         env = {
             "TWILIO_ACCOUNT_SID": "ACtest",
             "TWILIO_AUTH_TOKEN": "tok",
-            "TWILIO_PHONE_NUMBER": "+15550001111",
+            "TWILIO_PHONE_NUMBER": "+155****1111",
+            "SMS_WEBHOOK_URL": "",
+            "SMS_INSECURE_NO_SIGNATURE": "",
         }
         if extra_env:
             env.update(extra_env)
@@ -430,13 +433,69 @@ class TestTwilioSignatureValidation:
     def test_port_variant_http_80(self):
         """Port variant also works for http with port 80."""
         adapter = self._make_adapter()
-        params = {"From": "+15551234567", "Body": "hello"}
+        params = {"From": "+155****4567", "Body": "hello"}
         sig = _compute_twilio_signature(
             "test_token_secret", "http://example.com:80/webhooks/twilio", params
         )
         assert adapter._validate_twilio_signature(
             "http://example.com/webhooks/twilio", params, sig
         ) is True
+
+
+class TestConversationRelayVoiceAdapter:
+    """Voice webhook behavior for the active adapter-entry Twilio path."""
+
+    def test_wss_url_falls_back_to_current_public_conversation_relay_path(self):
+        from plugins.platforms.sms import adapter as sms_adapter
+
+        env = {
+            "CONVERSATION_RELAY_PUBLIC_HOST": "voice.example.test",
+            "CONVERSATION_RELAY_PUBLIC_PORT": "443",
+            "CONVERSATION_RELAY_PUBLIC_WSS_PATH": "/conversation-relay/twilio/ws",
+            "TWILIO_CONVERSATION_RELAY_WSS": "",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            assert sms_adapter._conversation_relay_wss_url() == (
+                "wss://voice.example.test/conversation-relay/twilio/ws"
+            )
+
+    @pytest.mark.asyncio
+    async def test_voice_webhook_accepts_current_8443_url_and_returns_conversationrelay_twiml(self):
+        from plugins.platforms.sms import adapter as sms_adapter
+        from plugins.platforms.sms.adapter import SmsAdapter
+
+        webhook_url = "https://voice.example.test:8443/twilio-webhook"
+        wss_url = "wss://voice.example.test/conversation-relay/twilio/ws"
+        env = {
+            "TWILIO_ACCOUNT_SID": "ACtest",
+            "TWILIO_AUTH_TOKEN": "test_token_secret",
+            "TWILIO_PHONE_NUMBER": "+155****1111",
+            "SMS_WEBHOOK_URL": webhook_url,
+            "TWILIO_CONVERSATION_RELAY_WSS": wss_url,
+        }
+        params = {
+            "From": "+155****4567",
+            "To": "+155****1111",
+            "CallSid": "CA123",
+            "CallStatus": "ringing",
+        }
+        body = urllib.parse.urlencode(params).encode("utf-8")
+        sig = _compute_twilio_signature("test_token_secret", webhook_url, params)
+
+        with patch.dict(os.environ, env, clear=False):
+            pc = PlatformConfig(enabled=True, api_key="test_token_secret")
+            adapter = SmsAdapter(pc)
+            sms_adapter._VOICE_ALLOWED_CALLERS = [params["From"]]
+            adapter._message_handler = AsyncMock()
+
+            request = MagicMock()
+            request.read = AsyncMock(return_value=body)
+            request.headers = {"X-Twilio-Signature": sig}
+
+            resp = await adapter._handle_webhook(request)
+        assert resp.status == 200
+        assert f'<ConversationRelay url="{wss_url}" />' in resp.text
+        adapter._message_handler.assert_not_called()
 
 
 # ── Webhook signature enforcement (handler-level) ──────────────────

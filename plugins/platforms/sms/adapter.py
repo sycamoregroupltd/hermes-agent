@@ -24,6 +24,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import urllib.parse
 from typing import Any, Dict, Optional
 
@@ -42,6 +43,52 @@ TWILIO_API_BASE = "https://api.twilio.com/2010-04-01/Accounts"
 MAX_SMS_LENGTH = 1600  # ~10 SMS segments
 DEFAULT_WEBHOOK_PORT = 8080
 DEFAULT_WEBHOOK_HOST = "127.0.0.1"
+
+_VOICE_ALLOWED_CALLERS = os.getenv(
+    "TWILIO_VOICE_ALLOWED_CALLERS",
+    "+447****6003",
+).split(",")
+_VOICE_REJECT_MESSAGE = os.getenv(
+    "TWILIO_VOICE_REJECT_MESSAGE",
+    "Sorry, you are not authorized to call this number.",
+)
+
+
+def _public_origin(scheme: str) -> str:
+    """Return the configured public ConversationRelay origin.
+
+    Defaults mirror the active DGX Funnel route and omit the default HTTPS/WSS
+    port. This keeps the adapter-entry TwiML path from falling back to stale
+    placeholder URLs when TWILIO_CONVERSATION_RELAY_WSS is not explicitly set.
+    """
+    host = os.getenv("CONVERSATION_RELAY_PUBLIC_HOST", "spark-4be3-1.tail156138.ts.net")
+    port = os.getenv("CONVERSATION_RELAY_PUBLIC_PORT", "443").strip()
+    suffix = "" if port in ("", "443") else f":{port}"
+    return f"{scheme}://{host}{suffix}"
+
+
+def _conversation_relay_wss_url() -> str:
+    """Resolve the Twilio ConversationRelay WSS URL at request time."""
+    configured = os.getenv("TWILIO_CONVERSATION_RELAY_WSS", "").strip()
+    if configured:
+        return configured
+
+    public_path = os.getenv("CONVERSATION_RELAY_PUBLIC_WSS_PATH", "").strip()
+    if not public_path:
+        local_path = os.getenv("CONVERSATION_RELAY_WSS_PATH", "/twilio/ws").strip()
+        if not local_path.startswith("/"):
+            local_path = f"/{local_path}"
+        public_path = f"/conversation-relay{local_path}"
+    elif not public_path.startswith("/"):
+        public_path = f"/{public_path}"
+
+    return f"{_public_origin('wss')}{public_path}"
+
+
+async def _health_response(_request):
+    from aiohttp import web
+
+    return web.Response(text="ok")
 
 
 def check_sms_requirements() -> bool:
@@ -120,7 +167,13 @@ class SmsAdapter(BasePlatformAdapter):
 
         app = web.Application()
         app.router.add_post("/webhooks/twilio", self._handle_webhook)
-        app.router.add_get("/health", lambda _: web.Response(text="ok"))
+        app.router.add_post("/twilio-webhook", self._handle_webhook)
+        app.router.add_get("/twilio-webhook/health", _health_response)
+        # Rollback/compatibility: older Funnel mappings may strip the exact
+        # /twilio-webhook prefix. The explicit route above is the current
+        # Twilio-facing path; root remains only so existing traffic is not cut.
+        app.router.add_post("/", self._handle_webhook)
+        app.router.add_get("/health", _health_response)
 
         self._runner = web.AppRunner(app)
         await self._runner.setup()
@@ -330,7 +383,55 @@ class SmsAdapter(BasePlatformAdapter):
         to_number = (form.get("To", [""]))[0].strip()
         text = (form.get("Body", [""]))[0].strip()
         message_sid = (form.get("MessageSid", [""]))[0].strip()
+        call_sid = (form.get("CallSid", [""]))[0].strip()
+        call_status = (form.get("CallStatus", [""]))[0].strip()
 
+        # ------------------------------------------------------------------
+        # VOICE CALL handling
+        # ------------------------------------------------------------------
+        if call_sid:
+            caller = from_number.strip()
+            logger.info(
+                "[twilio] inbound voice call from %s (CallSid=%s, status=%s)",
+                redact_phone(caller), call_sid, call_status,
+            )
+
+            # Whitelist enforcement: reject callers not in the allowed list
+            allowed_callers = [c.strip() for c in _VOICE_ALLOWED_CALLERS if c.strip()]
+            if allowed_callers and caller not in allowed_callers:
+                logger.warning(
+                    "[twilio] REJECTED voice call from unauthorized %s (allowed: %s)",
+                    redact_phone(caller), allowed_callers,
+                )
+                return web.Response(
+                    text=f'<?xml version="1.0" encoding="UTF-8"?>'
+                         f'<Response><Say>{_VOICE_REJECT_MESSAGE}</Say></Response>',
+                    content_type="application/xml",
+                    status=200,
+                )
+
+            # Return TwiML with ConversationRelay pointing to our WSS endpoint
+            conversation_relay_wss_url = _conversation_relay_wss_url()
+            twiml = (
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Response>'
+                '<Connect>'
+                f'<ConversationRelay url="{conversation_relay_wss_url}" />'
+                '</Connect>'
+                '</Response>'
+            )
+            logger.info(
+                "[twilio] voice call from %s → TwiML with ConversationRelay to %s",
+                redact_phone(caller), conversation_relay_wss_url,
+            )
+            return web.Response(
+                text=twiml,
+                content_type="application/xml",
+            )
+
+        # ------------------------------------------------------------------
+        # SMS handling (original logic)
+        # ------------------------------------------------------------------
         if not from_number or not text:
             return web.Response(
                 text='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
