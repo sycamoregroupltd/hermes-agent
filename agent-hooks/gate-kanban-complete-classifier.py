@@ -271,6 +271,15 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     r"\bprofile-local config/checklist/tool-path repair\b[^\n.]{0,180}\bfrontend/web reviewers can run required gates\b",
 ]
 
+NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
+    # Review-only classifier/hook cards can quote paired negative cases,
+    # including literal apps/web paths, to prove frontend work still blocks.
+    # Those acceptance quotes are not concrete implementation signals.
+    r"\bpaired frontend negative\b[^\n.]{0,200}\bblocks?\b[^\n.]{0,120}\bapps/web\b",
+    r"\bpaired frontend negative\b[^\n.]{0,200}\bapps/web\b[^\n.]{0,120}\bblocks?\b",
+    r"\bpaired [^\n.]{0,80}negative\b[^\n.]{0,200}\bconcrete apps/web\b[^\n.]{0,120}\bwithout verify_pass\b",
+]
+
 
 FRONTEND_WEB_TASK_CATEGORY = TaskTypeCategory(
     name="frontend_web_app_surface",
@@ -339,7 +348,10 @@ def _has_app_impl(task_part: str) -> bool:
     # Match both adjacent "completion-gate repair" and non-adjacent patterns
     # where "completion-gate" and "repair" are within 80 chars of each other.
     raw_app_impl = _any(APP_IMPL_PATTERNS, task_part) and not _any(NEGATED_APP_IMPL_PATTERNS, task_part)
-    has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, task_part)
+    has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, task_part) and not _any(
+        NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS,
+        task_part,
+    )
     if (
         _any(NONAPP_OVERRIDE_PATTERNS, task_part)
         and re.search(r"\bcompletion[- ]gate false allow\b|\bcompletion[- ]gate misclassification\b|\bnon[- ]frontend tasks rejected[^\n]{0,160}verify_pass\b|\bnegated running_app_verification (comment|packet)\b", task_part)

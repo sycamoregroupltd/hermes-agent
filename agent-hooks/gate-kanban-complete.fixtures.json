@@ -137,6 +137,21 @@
     "description": "BLOCK: paired t_1c83210a negative; completion-gate misclassification wording must not bypass real apps/web route/page work."
   },
   {
+    "name": "t_63be97ed-review-only-quotes-apps-web-negative-allows",
+    "task_id": "t_63be97ed_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "REVIEW: cron/config bookkeeping completion-gate classifier repair t_1c83210a",
+    "body": "Review source task jarvis-os/t_1c83210a. Scope: guardrail/classifier review only. Changed files: /home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py and /home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json. Acceptance for review: Non-app cron/config/bookkeeping fixtures allow completion with evidence-based verification, without frontend VERIFY_PASS. Paired frontend negative still blocks concrete apps/web route/page work without VERIFY_PASS. Existing gate selftest remains green. This review-only card quotes apps/web negative acceptance text but posts REVIEW_VERDICT only and does not implement frontend work.",
+    "summary": "REVIEW_VERDICT=APPROVED posted for t_1c83210a; py_compile PASS; bash -n PASS; fixture JSON PASS; gate selftest PASS; no app/runtime surface changed; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-03-review-cron-config-bookkeeping-completion-gate-t_63be97ed.md"
+      ]
+    },
+    "description": "ALLOW: real t_63be97ed regression; review-only completion-gate repair cards may quote apps/web paired-negative acceptance text without being frontend implementation work."
+  },
+  {
     "name": "t_1c83210a-long-changed-files-app-surface-negative-blocks",
     "task_id": "t_1c83210a_long_metadata_negative",
     "expected": "block",
