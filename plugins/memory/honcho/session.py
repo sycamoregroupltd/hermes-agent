@@ -7,6 +7,7 @@ import queue
 import re
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TYPE_CHECKING
@@ -118,6 +119,10 @@ class HonchoSessionManager:
         # Circuit breaker: consecutive context() failures (version drift / server down)
         self._context_failures: int = 0
         self._context_failure_threshold: int = 5  # trips breaker
+        self._context_failure_backoff_window: float = 300.0
+        self._context_last_open_at: float | None = None
+        self._context_half_open_attempts: int = 0
+        self._context_max_half_open_attempts: int = 2
         self._turn_counter: int = 0
 
         # Prefetch cache: session_key → last context result (consumed once per turn).
@@ -252,12 +257,29 @@ class HonchoSessionManager:
         try:
             # Circuit breaker: skip context() if N consecutive failures have occurred
             if self._context_failures >= self._context_failure_threshold:
-                logger.error(
-                    "Honcho session '%s' context circuit breaker OPEN (%d consecutive failures) — "
-                    "falling back to raw messages()",
-                    session_id, self._context_failures,
-                )
-                raise _ContextCircuitBreakerTripped()
+                now = time.monotonic()
+                if (
+                    self._context_last_open_at is not None
+                    and (now - self._context_last_open_at) >= self._context_failure_backoff_window
+                    and self._context_half_open_attempts < self._context_max_half_open_attempts
+                ):
+                    self._context_half_open_attempts += 1
+                    self._context_failures = self._context_failure_threshold - 1
+                    logger.warning(
+                        "Honcho session '%s' context circuit breaker half-open attempt %d/%d "
+                        "after %.0fs backoff",
+                        session_id,
+                        self._context_half_open_attempts,
+                        self._context_max_half_open_attempts,
+                        now - self._context_last_open_at,
+                    )
+                else:
+                    logger.error(
+                        "Honcho session '%s' context circuit breaker OPEN (%d consecutive failures) — "
+                        "falling back to raw messages()",
+                        session_id, self._context_failures,
+                    )
+                    raise _ContextCircuitBreakerTripped()
 
             ctx = session.context(summary=True, tokens=self._context_tokens)
             existing_messages = ctx.messages or []
@@ -283,12 +305,15 @@ class HonchoSessionManager:
             else:
                 logger.info("Honcho session '%s' created (new)", session_id)
 
-            # Reset failure counter on success
+            # Reset failure counter and half-open state on success
             self._context_failures = 0
+            self._context_last_open_at = None
+            self._context_half_open_attempts = 0
         except _ContextCircuitBreakerTripped:
             pass  # already handled above; fall through to messages() fallback
         except Exception as e:
             self._context_failures += 1
+            self._context_last_open_at = time.monotonic()
             logger.error(
                 "Honcho session '%s' context fetch failed (failure #%d): %s",
                 session_id, self._context_failures, e, exc_info=True,
@@ -1021,7 +1046,7 @@ class HonchoSessionManager:
             )
             card = self._normalize_card(getattr(ctx, "peer_card", None))
         except Exception as e:
-            logger.debug("Direct peer.context() failed for '%s': %s", peer_id, e)
+            logger.error("Direct peer.context() failed for '%s': %s", peer_id, e, exc_info=True)
 
         if not representation:
             try:
@@ -1029,13 +1054,13 @@ class HonchoSessionManager:
                     peer.representation(target=target) if target is not None else peer.representation()
                 ) or ""
             except Exception as e:
-                logger.debug("Direct peer.representation() failed for '%s': %s", peer_id, e)
+                logger.error("Direct peer.representation() failed for '%s': %s", peer_id, e, exc_info=True)
 
         if not card:
             try:
                 card = self._fetch_peer_card(peer_id, target=target)
             except Exception as e:
-                logger.debug("Direct peer card fetch failed for '%s': %s", peer_id, e)
+                logger.error("Direct peer card fetch failed for '%s': %s", peer_id, e, exc_info=True)
 
         return {"representation": representation, "card": card}
 
@@ -1055,7 +1080,17 @@ class HonchoSessionManager:
             peer_id = self._resolve_peer_id(session, peer)
             if peer_id is None:
                 peer_id = session.user_peer_id
-            return self._fetch_peer_context(peer_id, target=peer_id)
+            try:
+                return self._fetch_peer_context(peer_id, target=peer_id)
+            except Exception as e:
+                logger.error(
+                    "get_session_context() fallback failed for '%s' peer '%s': %s",
+                    session.key,
+                    peer,
+                    e,
+                    exc_info=True,
+                )
+                return {}
 
         try:
             observer_peer_id, target_peer_id = self._resolve_observer_target(session, peer)
@@ -1087,7 +1122,13 @@ class HonchoSessionManager:
 
             return result
         except Exception as e:
-            logger.debug("Session context fetch failed: %s", e)
+            logger.error(
+                "get_session_context() failed for '%s' peer '%s': %s",
+                session.key,
+                peer,
+                e,
+                exc_info=True,
+            )
             return {}
 
     def _resolve_peer_id(self, session: HonchoSession, peer: str | None) -> str:
