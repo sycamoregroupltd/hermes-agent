@@ -1,0 +1,552 @@
+[
+  {
+    "name": "approved-source-card-completes",
+    "description": "Eligible source/docs/spec/test-only card with same-card APPROVED verdict plans completion.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000001",
+      "status": "blocked",
+      "title": "Add deterministic source-only regression fixtures",
+      "body": "Bounded source/test-only deliverable with deterministic fixture files and local command output evidence.",
+      "block_reason": "review-required: tests pass; needs reviewer verdict",
+      "comments": [
+        {
+          "id": 101,
+          "author": "os-reviewer",
+          "created_at": 1783110001,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: jarvis-os/t_a0000001\nFinding: source/test fixture scope only; tests pass."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "source_docs_spec_test_only",
+      "action": "complete",
+      "result": "would_complete",
+      "mutations": ["complete"],
+      "comment_prefix": null
+    }
+  },
+  {
+    "name": "approved-runtime-a3-needs-operator",
+    "description": "APPROVED runtime/A3 card is operator-gated and must not complete.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000002",
+      "status": "blocked",
+      "title": "A3: enable verdict-router apply sentinel and runtime cron activation",
+      "body": "Requires A3 approval, runtime activation, cron apply sentinel enablement, and service restart after review.",
+      "block_reason": "review-required: proposed apply activation",
+      "comments": [
+        {
+          "id": 102,
+          "author": "os-reviewer",
+          "created_at": 1783110002,
+          "body": "REVIEW_VERDICT: APPROVED\nTarget t_a0000002\nA3 proposal is internally consistent."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "operator_gated",
+      "action": "needs_operator",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-OPERATOR: verdict-router operator-gated"
+    }
+  },
+  {
+    "name": "approved-db-live-scope-needs-operator",
+    "description": "APPROVED verdict mentioning deploy/live/DB scope fails into operator gate, no completion.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000003",
+      "status": "blocked",
+      "title": "Run production DB migration and live runtime deploy",
+      "body": "Scope includes schema migration, live data write, production deploy, and gateway restart.",
+      "block_reason": "review-required: migration plan ready",
+      "comments": [
+        {
+          "id": 103,
+          "author": "os-reviewer",
+          "created_at": 1783110003,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000003\nMigration plan reviewed; deploy/live/DB scope remains operator gated."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "operator_gated",
+      "action": "needs_operator",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-OPERATOR: verdict-router operator-gated"
+    }
+  },
+  {
+    "name": "changes-requested-unblocks-with-quoted-finding",
+    "description": "CHANGES_REQUESTED on same card plans rework comment and unblock with quoted reviewer finding.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000004",
+      "status": "blocked",
+      "title": "Fix parser edge cases in source-only script",
+      "body": "Source/test-only script work; no operator-gated scope.",
+      "block_reason": "review-required: parser tests ready",
+      "comments": [
+        {
+          "id": 104,
+          "author": "os-reviewer",
+          "created_at": 1783110004,
+          "body": "REVIEW_VERDICT: CHANGES_REQUESTED\nBlocking finding: parser accepts APPROVED_WITH_NOTES; fail closed instead.\nTarget: t_a0000004"
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "CHANGES_REQUESTED",
+      "target_validation": "same-card",
+      "scope_class": "source_docs_spec_test_only",
+      "action": "unblock_rework",
+      "result": "would_unblock",
+      "mutations": ["comment", "unblock"],
+      "comment_prefix": "verdict-router: REWORK_REQUIRED",
+      "comment_contains": "parser accepts APPROVED_WITH_NOTES"
+    }
+  },
+  {
+    "name": "ambiguous-malformed-verdict-fails-closed",
+    "description": "Custom/ambiguous verdict values fail closed with NEEDS-PM and no unblock/complete.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000005",
+      "status": "blocked",
+      "title": "Source-only cleanup",
+      "body": "Source-only cleanup with tests.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 105,
+          "author": "os-reviewer",
+          "created_at": 1783110005,
+          "body": "REVIEW_VERDICT=APPROVED_WITH_NOTES\nTarget: t_a0000005\nLooks okay with notes."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED_WITH_NOTES",
+      "target_validation": "same-card",
+      "scope_class": "ambiguous",
+      "action": "needs_pm",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-PM: verdict-router fail-closed"
+    }
+  },
+  {
+    "name": "multiple-verdict-tokens-fail-closed",
+    "description": "A latest comment with more than one REVIEW_VERDICT token is ambiguous and must not complete or unblock.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000017",
+      "status": "blocked",
+      "title": "Source-only card with contradictory review comment",
+      "body": "Source-only docs/tests update.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 118,
+          "author": "os-reviewer",
+          "created_at": 1783110018,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000017\nLater correction in same comment: REVIEW_VERDICT=CHANGES_REQUESTED\nBlocking finding: contradictory verdict tokens must fail closed."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": null,
+      "target_validation": "not-applicable",
+      "scope_class": "ambiguous",
+      "action": "needs_pm",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-PM: verdict-router fail-closed",
+      "comment_contains": "ambiguous or malformed verdict"
+    }
+  },
+  {
+    "name": "off-target-approved-fails-closed",
+    "description": "APPROVED comment naming a different task id fails closed.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000006",
+      "status": "blocked",
+      "title": "Source-only card awaiting review",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 106,
+          "author": "os-reviewer",
+          "created_at": 1783110006,
+          "body": "REVIEW_VERDICT: APPROVED\nTarget: t_b0000006\nApproved the other card."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "cross-target",
+      "scope_class": "ambiguous",
+      "action": "needs_pm",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-PM: verdict-router fail-closed"
+    }
+  },
+  {
+    "name": "non-latest-verdict-ignored",
+    "description": "Older verdict is ignored when a later non-router comment exists without a verdict.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000007",
+      "status": "blocked",
+      "title": "Source-only card with stale verdict",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 107,
+          "author": "os-reviewer",
+          "created_at": 1783110007,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000007\nOlder approval."
+        },
+        {
+          "id": 108,
+          "author": "builder",
+          "created_at": 1783110008,
+          "body": "Worker added more context after review; this comment is now latest and contains no verdict."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": null,
+      "target_validation": "not-applicable",
+      "scope_class": "unknown",
+      "action": "skip",
+      "result": "skipped",
+      "mutations": []
+    }
+  },
+  {
+    "name": "repeated-run-idempotent-skips-existing-key",
+    "description": "Repeated run with an existing idempotency marker skips mutation planning.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000008",
+      "status": "blocked",
+      "title": "Source-only card already routed once",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "existing_idempotency_keys": [
+        "verdict-router:v1:jarvis-os:t_a0000008:comment:109:action:complete"
+      ],
+      "comments": [
+        {
+          "id": 109,
+          "author": "os-reviewer",
+          "created_at": 1783110009,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000008\nApproved source-only scope."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "source_docs_spec_test_only",
+      "action": "skip",
+      "result": "skipped_idempotent",
+      "mutations": []
+    }
+  },
+  {
+    "name": "repeated-needs-pm-idempotent-skips-existing-key",
+    "description": "Repeated fail-closed PM comment with an existing idempotency marker skips duplicate comment planning.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000009",
+      "status": "blocked",
+      "title": "Source-only card already PM-routed once",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "existing_idempotency_keys": [
+        "verdict-router:v1:jarvis-os:t_a0000009:comment:111:action:needs_pm"
+      ],
+      "comments": [
+        {
+          "id": 111,
+          "author": "os-reviewer",
+          "created_at": 1783110011,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_b0000009\nApproved a different source card."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "cross-target",
+      "scope_class": "ambiguous",
+      "action": "skip",
+      "result": "skipped_idempotent",
+      "mutations": []
+    }
+  },
+  {
+    "name": "repeated-needs-operator-idempotent-skips-existing-key",
+    "description": "Repeated operator-gated fail-closed comment with an existing idempotency marker skips duplicate comment planning.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000010",
+      "status": "blocked",
+      "title": "A3 production deploy already operator-routed once",
+      "body": "Requires A3 approval, production deploy, live runtime activation, and gateway restart.",
+      "block_reason": "review-required: operator gate needed",
+      "existing_idempotency_keys": [
+        "verdict-router:v1:jarvis-os:t_a0000010:comment:112:action:needs_operator"
+      ],
+      "comments": [
+        {
+          "id": 112,
+          "author": "os-reviewer",
+          "created_at": 1783110012,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000010\nA3 deploy plan is approved for operator consideration."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "operator_gated",
+      "action": "skip",
+      "result": "skipped_idempotent",
+      "mutations": []
+    }
+  },
+  {
+    "name": "cross-target-operator-gated-approval-needs-operator",
+    "description": "Cross-target approval on an operator-gated deploy/DB card preserves NEEDS-OPERATOR instead of downgrading to NEEDS-PM.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000011",
+      "status": "blocked",
+      "title": "Run production DB migration after deploy review",
+      "body": "Operator-gated schema migration with live data write and production deploy.",
+      "block_reason": "review-required: DB deploy plan",
+      "comments": [
+        {
+          "id": 113,
+          "author": "os-reviewer",
+          "created_at": 1783110013,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_b0000011\nMigration approach approved for the other card."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "cross-target",
+      "scope_class": "operator_gated",
+      "action": "needs_operator",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-OPERATOR: verdict-router operator-gated"
+    }
+  },
+  {
+    "name": "approved-with-no-task-id-fails-closed",
+    "description": "APPROVED with no explicit task id fails closed instead of inferring the current card.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000012",
+      "status": "blocked",
+      "title": "Source-only card awaiting explicit approval target",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 114,
+          "author": "os-reviewer",
+          "created_at": 1783110014,
+          "body": "REVIEW_VERDICT=APPROVED\nLooks good."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "missing-target",
+      "scope_class": "ambiguous",
+      "action": "needs_pm",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-PM: verdict-router fail-closed"
+    }
+  },
+  {
+    "name": "changes-requested-cross-target-fails-closed",
+    "description": "CHANGES_REQUESTED that mentions another task id fails closed and does not unblock the current card.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000013",
+      "status": "blocked",
+      "title": "Source-only current card",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 115,
+          "author": "os-reviewer",
+          "created_at": 1783110015,
+          "body": "REVIEW_VERDICT=CHANGES_REQUESTED\nTarget: t_b0000013\nBlocking finding: wrong target needs parser work."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "CHANGES_REQUESTED",
+      "target_validation": "cross-target",
+      "scope_class": "ambiguous",
+      "action": "needs_pm",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-PM: verdict-router fail-closed"
+    }
+  },
+  {
+    "name": "custom-changes-requested-for-fails-closed",
+    "description": "Custom CHANGES_REQUESTED_FOR_* verdict values are malformed and fail closed.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000014",
+      "status": "blocked",
+      "title": "Source-only custom verdict card",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 116,
+          "author": "os-reviewer",
+          "created_at": 1783110016,
+          "body": "REVIEW_VERDICT=CHANGES_REQUESTED_FOR_DOCS\nTarget: t_a0000014\nBlocking finding: custom verdict must not be accepted."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "CHANGES_REQUESTED_FOR_DOCS",
+      "target_validation": "same-card",
+      "scope_class": "ambiguous",
+      "action": "needs_pm",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-PM: verdict-router fail-closed"
+    }
+  },
+  {
+    "name": "frontend-app-without-verify-pass-needs-pm",
+    "description": "True frontend/app work without running-app VERIFY_PASS is not auto-completed by APPROVED alone.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000015",
+      "status": "blocked",
+      "title": "Fix apps/web marketplace page component",
+      "body": "Changed files include apps/web/app/marketplace/page.tsx and packages/ui/card.tsx. Review says code is approved but running-app VERIFY_PASS is missing.",
+      "block_reason": "review-required: no running-app VERIFY_PASS evidence yet",
+      "changed_files": [
+        "apps/web/app/marketplace/page.tsx",
+        "packages/ui/card.tsx"
+      ],
+      "comments": [
+        {
+          "id": 117,
+          "author": "os-reviewer",
+          "created_at": 1783110017,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000015\nCode review approved, but no VERIFY_PASS output is present."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "ambiguous",
+      "action": "needs_pm",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-PM: verdict-router fail-closed",
+      "comment_contains": "frontend/app work without VERIFY_PASS"
+    }
+  },
+  {
+    "name": "changes-requested-operator-gated-needs-operator",
+    "description": "CHANGES_REQUESTED on a deploy/DB/live card is unsafe for deterministic unblock and remains blocked for operator routing.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000018",
+      "status": "blocked",
+      "title": "Fix live DB migration rollback packet",
+      "body": "Operator-gated schema migration and live data rollback packet.",
+      "block_reason": "review-required: DB migration packet",
+      "comments": [
+        {
+          "id": 119,
+          "author": "os-reviewer",
+          "created_at": 1783110019,
+          "body": "REVIEW_VERDICT=CHANGES_REQUESTED\nTarget: t_a0000018\nBlocking finding: live DB migration packet is missing rollback verification."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "CHANGES_REQUESTED",
+      "target_validation": "same-card",
+      "scope_class": "operator_gated",
+      "action": "needs_operator",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-OPERATOR: verdict-router operator-gated"
+    }
+  },
+  {
+    "name": "router-authored-verdict-value-comment-ignored",
+    "description": "Router-authored comments use verdict_value and are ignored as verdict sources.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000016",
+      "status": "blocked",
+      "title": "Source-only card with router echo",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 110,
+          "author": "verdict-router",
+          "created_at": 1783110010,
+          "body": "NEEDS-PM: verdict-router fail-closed\nverdict_value=APPROVED idempotency_key=verdict-router:v1:jarvis-os:t_a0000016:comment:999:action:needs_pm"
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": null,
+      "target_validation": "not-applicable",
+      "scope_class": "unknown",
+      "action": "skip",
+      "result": "skipped",
+      "mutations": []
+    }
+  }
+]
