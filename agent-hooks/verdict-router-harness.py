@@ -73,6 +73,26 @@ VERDICT_RE = re.compile(r"REVIEW_VERDICT\s*[:=]\s*([A-Z0-9_]+)", re.I)
 TASK_RE = re.compile(r"(?:(?P<board>[a-z0-9][a-z0-9_-]*)/)?(?P<task>t_[0-9a-zA-Z]+)")
 
 
+def safe_sort_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def fixture_tasks(fixture: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the primary task plus optional board peers used to prove scan continuity."""
+    return [fixture["task"], *fixture.get("extra_tasks", [])]
+
+
+def has_nonnumeric_comment_id(fixture: dict[str, Any]) -> bool:
+    for task in fixture_tasks(fixture):
+        for comment in task.get("comments", []):
+            if safe_sort_int(comment.get("id")) == 0 and str(comment.get("id")) != "0":
+                return True
+    return False
+
+
 @dataclass(frozen=True)
 class VerdictParse:
     raw_value: str | None
@@ -85,10 +105,15 @@ class VerdictParse:
 
 
 def latest_non_router_comment(task: dict[str, Any]) -> dict[str, Any] | None:
-    comments = [c for c in task.get("comments", []) if str(c.get("author", "")) not in ROUTER_AUTHORS]
+    comments = [
+        c
+        for c in task.get("comments", [])
+        if str(c.get("author", "")) not in ROUTER_AUTHORS
+        and not (safe_sort_int(c.get("id")) == 0 and str(c.get("id")) != "0")
+    ]
     if not comments:
         return None
-    return max(comments, key=lambda c: (int(c.get("created_at", 0)), int(c.get("id", 0))))
+    return max(comments, key=lambda c: (safe_sort_int(c.get("created_at", 0)), safe_sort_int(c.get("id", 0))))
 
 
 def parse_latest_verdict(task: dict[str, Any]) -> VerdictParse:
@@ -356,6 +381,7 @@ def write_fixture_board(root: Path, fixture: dict[str, Any]) -> Path:
     db.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db)
     try:
+        comment_id_type = "TEXT" if has_nonnumeric_comment_id(fixture) else "INTEGER"
         con.executescript(
             """
             CREATE TABLE tasks (
@@ -367,8 +393,10 @@ def write_fixture_board(root: Path, fixture: dict[str, Any]) -> Path:
                 priority INTEGER DEFAULT 0,
                 created_at INTEGER NOT NULL
             );
+            """
+            + f"""
             CREATE TABLE task_comments (
-                id INTEGER PRIMARY KEY,
+                id {comment_id_type} PRIMARY KEY,
                 task_id TEXT NOT NULL,
                 author TEXT NOT NULL,
                 body TEXT NOT NULL,
@@ -376,42 +404,43 @@ def write_fixture_board(root: Path, fixture: dict[str, Any]) -> Path:
             );
             """
         )
-        con.execute(
-            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
-            (
-                str(task["id"]),
-                str(task.get("title", "")),
-                str(task.get("body", "")),
-                str(task.get("assignee", "test-engineer")),
-                str(task.get("status", "blocked")),
-                int(task.get("priority", 0)),
-                int(task.get("created_at", 1783110000)),
-            ),
-        )
-        for comment in task.get("comments", []):
+        for task in fixture_tasks(fixture):
             con.execute(
-                "INSERT INTO task_comments(id, task_id, author, body, created_at) VALUES (?,?,?,?,?)",
+                "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
                 (
-                    int(comment["id"]),
                     str(task["id"]),
-                    str(comment.get("author", "")),
-                    str(comment.get("body", "")),
-                    int(comment.get("created_at", 0)),
+                    str(task.get("title", "")),
+                    str(task.get("body", "")),
+                    str(task.get("assignee", "test-engineer")),
+                    str(task.get("status", "blocked")),
+                    int(task.get("priority", 0)),
+                    int(task.get("created_at", 1783110000)),
                 ),
             )
-        next_comment_id = max([int(c.get("id", 0)) for c in task.get("comments", [])] or [0]) + 1
-        for key in task.get("existing_idempotency_keys", []):
-            con.execute(
-                "INSERT INTO task_comments(id, task_id, author, body, created_at) VALUES (?,?,?,?,?)",
-                (
-                    next_comment_id,
-                    str(task["id"]),
-                    "verdict-router",
-                    f"prior verdict-router marker idempotency_key={key}",
-                    int(task.get("created_at", 1783110000)) - 1,
-                ),
-            )
-            next_comment_id += 1
+            for comment in task.get("comments", []):
+                con.execute(
+                    "INSERT INTO task_comments(id, task_id, author, body, created_at) VALUES (?,?,?,?,?)",
+                    (
+                        str(comment["id"]) if comment_id_type == "TEXT" else int(comment["id"]),
+                        str(task["id"]),
+                        str(comment.get("author", "")),
+                        str(comment.get("body", "")),
+                        comment.get("created_at", 0),
+                    ),
+                )
+            next_comment_id = max([safe_sort_int(c.get("id", 0)) for c in task.get("comments", [])] or [0]) + 1
+            for key in task.get("existing_idempotency_keys", []):
+                con.execute(
+                    "INSERT INTO task_comments(id, task_id, author, body, created_at) VALUES (?,?,?,?,?)",
+                    (
+                        str(next_comment_id) if comment_id_type == "TEXT" else next_comment_id,
+                        str(task["id"]),
+                        "verdict-router",
+                        f"prior verdict-router marker idempotency_key={key}",
+                        int(task.get("created_at", 1783110000)) - 1,
+                    ),
+                )
+                next_comment_id += 1
         con.commit()
     finally:
         con.close()
@@ -449,7 +478,10 @@ def run_router_script(script_path: str, fixture: dict[str, Any]) -> dict[str, An
             summary = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError as exc:
             raise AssertionError(f"router script did not print JSON: {proc.stdout!r}") from exc
-        return script_summary_to_plan(fixture, summary)
+        plan = script_summary_to_plan(fixture, summary)
+        logs = "\n".join(p.read_text(encoding="utf-8") for p in (root / "scripts" / "logs").glob("*.log"))
+        plan["router_logs"] = logs
+        return plan
 
 
 def script_summary_to_plan(fixture: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
@@ -486,6 +518,151 @@ def script_summary_to_plan(fixture: dict[str, Any], summary: dict[str, Any]) -> 
     return base
 
 
+def fixture_from_local_inputs(
+    *,
+    board: str,
+    task: dict[str, Any] | None = None,
+    cards: list[dict[str, Any]] | None = None,
+    comments: list[dict[str, Any]] | None = None,
+    expect: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a fixture from explicit local card/comment data.
+
+    This is the importable harness boundary used by tests that do not want to
+    read fixture files. The first card is the target card; additional cards are
+    written only into the isolated temp DB used by router-script mode.
+    """
+    if task is not None and cards is not None:
+        raise ValueError("pass either task or cards, not both")
+    local_cards = [dict(task)] if task is not None else [dict(card) for card in (cards or [])]
+    if not local_cards:
+        raise ValueError("run_harness requires a task or at least one card")
+    if comments is not None:
+        local_cards[0]["comments"] = [dict(comment) for comment in comments]
+    local_cards[0].setdefault("comments", [])
+    fixture: dict[str, Any] = {"name": str(local_cards[0].get("id", "local-card")), "board": board, "task": local_cards[0]}
+    if len(local_cards) > 1:
+        fixture["extra_tasks"] = local_cards[1:]
+    if expect is not None:
+        fixture["expect"] = expect
+    return fixture
+
+
+def plan_to_structured_result(fixture: dict[str, Any], plan: dict[str, Any] | None, errors: list[str] | None = None) -> dict[str, Any]:
+    """Normalize planner/script output into the assertion surface callers need."""
+    task = fixture["task"]
+    parsed = parse_latest_verdict(task)
+    plan = plan or {}
+    action = str(plan.get("action") or "skip")
+    mutations = list(plan.get("mutations") or [])
+    comment_body = plan.get("comment")
+    comments = []
+    if comment_body:
+        comments.append(
+            {
+                "task_id": str(task.get("id")),
+                "body": str(comment_body),
+                "idempotency_key": plan.get("idempotency_key"),
+                "source_comment_id": plan.get("source_comment_id"),
+            }
+        )
+    completion_actions = []
+    if "complete" in mutations or action == "complete":
+        completion_actions.append(
+            {
+                "task_id": str(task.get("id")),
+                "summary": plan.get("reason"),
+                "metadata": plan.get("metadata", {}),
+                "idempotency_key": plan.get("idempotency_key"),
+            }
+        )
+    unblock_actions = []
+    if "unblock" in mutations or action == "unblock_rework":
+        unblock_actions.append(
+            {
+                "task_id": str(task.get("id")),
+                "reason": comment_body or plan.get("reason"),
+                "idempotency_key": plan.get("idempotency_key"),
+            }
+        )
+    ignored_noop_results = []
+    if action == "skip" or not mutations:
+        ignored_noop_results.append(
+            {
+                "task_id": str(task.get("id")),
+                "action": action,
+                "result": plan.get("result", "skipped"),
+                "reason": plan.get("reason"),
+            }
+        )
+    return {
+        "name": fixture.get("name"),
+        "task_id": str(task.get("id")),
+        "parsed_verdict": {
+            "raw_value": parsed.raw_value,
+            "value": plan.get("verdict_value", parsed.verdict_value),
+            "token_count": parsed.token_count,
+            "source_comment_id": plan.get("source_comment_id", parsed.comment.get("id") if parsed.comment else None),
+            "source_author": plan.get("source_author", parsed.comment.get("author") if parsed.comment else None),
+            "target_validation": plan.get("target_validation", target_validation(str(fixture.get("board", "test")), task, parsed)),
+        },
+        "safety_classification": plan.get("scope_class"),
+        "planned_mutations": mutations,
+        "comments": comments,
+        "unblock_actions": unblock_actions,
+        "completion_actions": completion_actions,
+        "ignored_noop_results": ignored_noop_results,
+        "errors": list(errors or []),
+        "plan": plan,
+    }
+
+
+def run_harness(
+    *,
+    board: str,
+    task: dict[str, Any] | None = None,
+    cards: list[dict[str, Any]] | None = None,
+    comments: list[dict[str, Any]] | None = None,
+    mode: str = "dry-run",
+    router_script: str | None = None,
+    router_command: str | None = None,
+) -> dict[str, Any]:
+    """Run the verdict router harness against local in-memory inputs only.
+
+    `mode="dry-run"` and `mode="mutation-plan"` both record intended effects
+    without applying them. `router_script` executes the real production router
+    against a temporary fixture DB with all router paths redirected to temp dirs.
+    """
+    if mode not in {"dry-run", "mutation-plan"}:
+        raise ValueError("mode must be 'dry-run' or 'mutation-plan'")
+    if router_script and router_command:
+        raise ValueError("router_script and router_command are mutually exclusive")
+    fixture = fixture_from_local_inputs(board=board, task=task, cards=cards, comments=comments)
+    errors: list[str] = []
+    implementation = "reference"
+    try:
+        if router_command:
+            implementation = "router-command"
+            plan = run_external(router_command, fixture)
+        elif router_script:
+            implementation = "router-script"
+            plan = run_router_script(router_script, fixture)
+        else:
+            plan = reference_plan(fixture, mode=mode)
+    except Exception as exc:
+        plan = None
+        errors.append(str(exc))
+    return {
+        "ok": not errors,
+        "mode": mode,
+        "implementation": implementation,
+        "board": board,
+        "live_side_effects_possible": False,
+        "results": [plan_to_structured_result(fixture, plan, errors)],
+        "errors": errors,
+    }
+
+
 def assert_plan(fixture: dict[str, Any], plan: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     expect = fixture["expect"]
@@ -517,6 +694,9 @@ def assert_plan(fixture: dict[str, Any], plan: dict[str, Any]) -> list[str]:
     action = plan.get("action")
     if action not in {"skip", None} and not plan.get("idempotency_key"):
         errors.append("mutation/comment action missing idempotency_key")
+    for expected_log in expect.get("router_log_contains", []):
+        if "router_logs" in plan and expected_log not in str(plan.get("router_logs") or ""):
+            errors.append(f"router log missing expected excerpt {expected_log!r}")
     return errors
 
 
