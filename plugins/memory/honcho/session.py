@@ -227,7 +227,7 @@ class HonchoSessionManager:
                     self._ai_observe_me, self._ai_observe_others,
                 )
             except Exception as e:
-                logger.debug("Honcho get_peer_configuration failed (using local config): %s", e)
+                logger.warning("Honcho get_peer_configuration failed for session '%s' (using local config): %s", session_id, e)
         except Exception as e:
             logger.warning(
                 "Honcho session '%s' add_peers failed (non-fatal): %s",
@@ -261,9 +261,9 @@ class HonchoSessionManager:
             else:
                 logger.info("Honcho session '%s' created (new)", session_id)
         except Exception as e:
-            logger.warning(
-                "Honcho session '%s' loaded (failed to fetch context: %s)",
-                session_id, e,
+            logger.error(
+                "Honcho session '%s' context() call failed (summary=True, tokens=%s): %s",
+                session_id, self._context_tokens, e,
             )
 
         self._sessions_cache[session_id] = session
@@ -727,7 +727,11 @@ class HonchoSessionManager:
                 if ctx.summary and getattr(ctx.summary, "content", None):
                     result["summary"] = ctx.summary.content
         except Exception as e:
-            logger.debug("Failed to fetch session summary from Honcho: %s", e)
+            logger.error(
+                "Failed to fetch session summary from Honcho for session_key '%s' "
+                "(honcho_session.context(summary=True)): %s",
+                session_key, e,
+            )
 
         try:
             user_ctx = self._fetch_peer_context(session.user_peer_id, search_query=user_message or None, target=session.user_peer_id)
@@ -742,7 +746,11 @@ class HonchoSessionManager:
             result["ai_representation"] = ai_ctx["representation"]
             result["ai_card"] = "\n".join(ai_ctx["card"])
         except Exception as e:
-            logger.debug("Failed to fetch AI peer context from Honcho: %s", e)
+            logger.error(
+                "Failed to fetch AI peer context from Honcho for session_key '%s' "
+                "(_fetch_peer_context(assistant=%s)): %s",
+                session_key, session.assistant_peer_id, e,
+            )
 
         return result
 
@@ -970,7 +978,10 @@ class HonchoSessionManager:
             )
             card = self._normalize_card(getattr(ctx, "peer_card", None))
         except Exception as e:
-            logger.debug("Direct peer.context() failed for '%s': %s", peer_id, e)
+            logger.warning(
+                "Direct peer.context() failed for '%s' (target=%s, search_query=%s): %s",
+                peer_id, target, search_query, e,
+            )
 
         if not representation:
             try:
@@ -978,13 +989,13 @@ class HonchoSessionManager:
                     peer.representation(target=target) if target is not None else peer.representation()
                 ) or ""
             except Exception as e:
-                logger.debug("Direct peer.representation() failed for '%s': %s", peer_id, e)
+                logger.warning("Direct peer.representation() failed for '%s': %s", peer_id, e)
 
         if not card:
             try:
                 card = self._fetch_peer_card(peer_id, target=target)
             except Exception as e:
-                logger.debug("Direct peer card fetch failed for '%s': %s", peer_id, e)
+                logger.warning("Direct peer card fetch failed for '%s': %s", peer_id, e)
 
         return {"representation": representation, "card": card}
 
@@ -1036,7 +1047,11 @@ class HonchoSessionManager:
 
             return result
         except Exception as e:
-            logger.debug("Session context fetch failed: %s", e)
+            logger.error(
+                "Honcho get_session_context failed for session_key '%s' (peer=%s): "
+                "honcho_session.context(summary=True, ...) raised: %s",
+                session_key, peer, e,
+            )
             return {}
 
     def _resolve_peer_id(self, session: HonchoSession, peer: str | None) -> str:
@@ -1096,7 +1111,10 @@ class HonchoSessionManager:
                 return self._fetch_peer_card(target_peer_id)
             return []
         except Exception as e:
-            logger.debug("Failed to fetch peer card from Honcho: %s", e)
+            logger.warning(
+                "Failed to fetch peer card from Honcho for session_key '%s' (peer=%s): %s",
+                session_key, peer, e,
+            )
             return []
 
     def search_context(
@@ -1142,7 +1160,10 @@ class HonchoSessionManager:
                 parts.append("\n".join(f"- {f}" for f in card))
             return "\n\n".join(parts)
         except Exception as e:
-            logger.debug("Honcho search_context failed: %s", e)
+            logger.warning(
+                "Honcho search_context failed for session_key '%s' (query='%s', peer=%s): %s",
+                session_key, query, peer, e,
+            )
             return ""
 
     def create_conclusion(self, session_key: str, content: str, peer: str = "user") -> bool:
@@ -1325,7 +1346,10 @@ class HonchoSessionManager:
                 "card": "\n".join(ctx["card"]),
             }
         except Exception as e:
-            logger.debug("Failed to fetch AI representation: %s", e)
+            logger.warning(
+                "Failed to fetch AI representation from Honcho for session_key '%s': %s",
+                session_key, e,
+            )
             return {"representation": "", "card": ""}
 
     def list_sessions(self) -> list[dict[str, Any]]:

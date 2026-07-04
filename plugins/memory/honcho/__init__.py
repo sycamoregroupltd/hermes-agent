@@ -663,7 +663,10 @@ class HonchoMemoryProvider(MemoryProvider):
                 try:
                     self._manager.prefetch_context(self._session_key, query or None)
                 except Exception as e:
-                    logger.debug("Honcho base context prefetch failed: %s", e)
+                    logger.warning(
+                        "Failed to fetch base context from Honcho for session '%s': %s",
+                        self._session_key, e,
+                    )
             base_context = self._base_context_cache
 
         # Check if background context prefetch has a fresher result
@@ -835,7 +838,10 @@ class HonchoMemoryProvider(MemoryProvider):
             try:
                 result = self._run_dialectic_depth(query)
             except Exception as e:
-                logger.debug("Honcho prefetch failed: %s", e)
+                logger.warning(
+                    "Honcho dialectic prefetch failed for session '%s': %s",
+                    self._session_key, e,
+                )
                 self._dialectic_empty_streak += 1
                 return
             if result and result.strip():
