@@ -34,6 +34,7 @@
     "name": "t_f5f5385f-cron-config-repoint-allows",
     "task_id": "t_f5f5385f_fixture",
     "expected": "allow",
+    "expected_class": "readonly_nonapp",
     "title": "P0: paper-risk-agent (15m safety monitor) failing every run — repoint off paid nous deepseek-v4-flash",
     "body": "FINDING: jarvis cron job paper-risk-agent is the fleet paper-trading risk monitor and model traffic is demonstrably serving elsewhere. TASK: repoint the job provider/model pin, back up jobs.json, verify forced smoke output, and record before/after pins. This is a cron/config task only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backup path recorded; jobs.json before/after pins recorded; forced cron smoke output ok; no app route changed; no running app VERIFY_PASS supplied",
@@ -54,6 +55,7 @@
     "name": "t_cbede0a3-provider-bookkeeping-allows",
     "task_id": "t_cbede0a3_fixture",
     "expected": "allow",
+    "expected_class": "readonly_nonapp",
     "title": "Reconcile stale provider-state bookkeeping: codex exhausted zombie flags vs demonstrably-serving reality",
     "body": "TASK (bookkeeping only — NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backups recorded; forced smokes ok; before/after flags recorded; zero credential/routing changes; no running app VERIFY_PASS supplied",
@@ -74,6 +76,7 @@
     "name": "t_e19957f3-whatsapp-bridge-package-remediation-allows",
     "task_id": "t_e19957f3_fixture",
     "expected": "allow",
+    "expected_class": "readonly_nonapp",
     "title": "BOARD-HYGIENE: non-web package remediation blocked by false frontend VERIFY_PASS completion gate",
     "body": "Board-hygiene acceptance for a non-web/package-lock remediation: source task completed approved dependency remediation for scripts/whatsapp-bridge/package.json and scripts/whatsapp-bridge/package-lock.json with reviewer approval, bridge tests, syntax checks, and Obsidian closeout. It quotes a prior frontend VERIFY_PASS false positive only as the blocker being repaired. No frontend/web/app route, page, component, middleware, layout, UI, tRPC, browser surface, gateway restart, SMS/Twilio, credential, provider routing, deploy, or production runtime surface is changed.",
     "summary": "REVIEW_VERDICT=APPROVE; bridge package tests 20 pass; syntax/diff checks pass; vulnerable package markers absent; Obsidian closeout verified; no running app VERIFY_PASS supplied",
@@ -96,6 +99,7 @@
     "name": "cron-config-wording-paired-frontend-negative-blocks",
     "task_id": "t_cron_config_frontend_negative",
     "expected": "block",
+    "expected_class": "web",
     "title": "Build frontend cron configuration dashboard",
     "body": "Implement apps/web React dashboard route component and page layout that renders cron job provider/model pins and before/after smoke status. This is concrete frontend UI work even though it mentions cron/config bookkeeping.",
     "summary": "backup path recorded; no running app VERIFY_PASS supplied",
@@ -716,9 +720,25 @@
     "description": "ALLOW+CATEGORY: ambiguous/fallback task descriptions with no frontend/web/app surface map to not_web, the intended safe default."
   },
   {
+    "name": "task-type-ambiguous-body-with-app-changed-files-maps-web-blocks",
+    "task_id": "t_task_type_ambiguous_body_app_changed_files",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Update completion checklist wording",
+    "body": "Ambiguous report-only handoff task: revise a local checklist sentence, record the command used, and note the reviewer. The description intentionally avoids product-surface terms so task body alone would use its safe fallback category.",
+    "summary": "checklist sentence reviewed; command output recorded; no running app VERIFY_PASS supplied.",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/completion-gate-task-types/page.tsx"
+      ]
+    },
+    "description": "BLOCK+CATEGORY+REGRESSION: ambiguous/fallback prose is not allowed to hide concrete frontend changed_files; changed_files metadata maps to web and requires the running-app VERIFY_PASS gate. This fails against the pre task-type classifier that ignored changed_files and classified this as readonly_nonapp."
+  },
+  {
     "name": "selftest-cli-script-nonweb-command-evidence-allows",
     "task_id": "t_cliscript_fixture",
     "expected": "allow",
+    "expected_class": "readonly_nonapp",
     "description": "ALLOW: preserves current gate-kanban-complete selftest coverage for CLI/Python/shell worker-visibility preflight evidence with no frontend/web route, page, component, middleware, layout, tRPC path, or browser UI touched.",
     "title": "REPAIR: non-web kanban completion gate false positive for CLI/script tasks",
     "body": "Investigate a Hermes CLI/Python/shell worker-visibility preflight. Acceptance requires command evidence such as py_compile, bash -n, pytest, and temp JSON; no frontend/web route, page, component, middleware, layout, tRPC path, or browser UI is touched.",
@@ -728,6 +748,7 @@
     "name": "selftest-frontend-cli-script-helper-negative-blocks",
     "task_id": "t_web_cli_helper_fixture",
     "expected": "block",
+    "expected_class": "web",
     "description": "BLOCK: paired current selftest negative; frontend page/route work remains gated when it mentions a CLI/script helper and lacks VERIFY_PASS.",
     "title": "Build frontend page with CLI/script helper",
     "body": "Implement apps/web dashboard route component. Use a CLI/script helper to seed fixture data before serving the React page.",
@@ -737,6 +758,7 @@
     "name": "selftest-frontend-python-shell-helper-negative-blocks",
     "task_id": "t_web_python_helper_fixture",
     "expected": "block",
+    "expected_class": "web",
     "description": "BLOCK: paired current selftest negative; frontend route/component work remains gated when it mentions Python/shell helper commands and lacks VERIFY_PASS.",
     "title": "Build frontend page with Python/shell helper",
     "body": "Implement apps/web marketplace route component. Use Python/shell commands to generate fixture data before serving the React page.",
@@ -773,6 +795,68 @@
     "metadata": {
       "changed_files": [
         "apps/web/src/app/superseded-banners/page.tsx"
+      ]
+    }
+  },
+  {
+    "name": "t_e2ac550c-kanban-worker-exit-code-hardening-allows",
+    "task_id": "t_e2ac550c_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "description": "ALLOW: real t_e2ac550c regression; completion-gate/review-router worker exit-code hardening changed only CLI/backend test files and must not require frontend running-app VERIFY_PASS.",
+    "title": "FIX: completion-gate review/router workers must always exit with kanban signal",
+    "body": "Repair or harden the upstream completion-gate/review-router worker path so generated review/router cards cannot clean-exit without a kanban signal. Preserve reviewer/guardian gates; do not bypass REVIEW_VERDICT or frontend running-app requirements. No frontend/web app surface is touched.",
+    "summary": "Accepted approved locally-landed CLI/backend exit-code hardening commit e6c798d19; reviewer approval and targeted tests are recorded; no frontend/web route/app surface changed.",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/hermes-agent/cli.py",
+        "/home/frank/.hermes/hermes-agent/tests/cli/test_single_query_session_finalize.py"
+      ]
+    }
+  },
+  {
+    "name": "t_e2ac550c-paired-frontend-router-negative-blocks",
+    "task_id": "t_e2ac550c_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "description": "BLOCK: paired negative for completion-gate/review-router wording; concrete apps/web route/page work still requires running-app VERIFY_PASS.",
+    "title": "FIX: completion-gate review/router frontend status page",
+    "body": "Implement apps/web React dashboard route component and page layout that renders completion-gate/review-router worker exit-code status. This is true frontend/web UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "unit tests pass; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/completion-gate-review-router/page.tsx"
+      ]
+    }
+  },
+  {
+    "name": "t_da5b6faf-a3-proposal-completion-gate-classifier-allows",
+    "task_id": "t_da5b6faf_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "description": "ALLOW: real t_da5b6faf A3 proposal regression; A3 proposal about completion-gate classifier false positive for package-lock/nonapp remediation quotes frontend/web vocabulary as the blocker being repaired but changes only Obsidian governance notes and proposal artifacts.",
+    "title": "A3 PROPOSAL: completion-gate classifier package-lock nonapp false positive for WhatsApp bridge remediation",
+    "body": "Context: source t_eb1ef6b8 repaired WhatsApp bridge npm remediation drift in only scripts/whatsapp-bridge/package.json and scripts/whatsapp-bridge/package-lock.json, with os-reviewer APPROVE but live gate-kanban-complete hook classified it as web and blocked completion for missing running-app VERIFY_PASS. This card is for an A3/upstream proposal packet only. Produce a concise A3 proposal with diagnosis, candidate classifier rule/fixture shape, tests, and rollback plan.",
+    "summary": "A3 proposal completed with classifier diagnosis and candidate fix; no app surface changed",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/obsidian-fleet-vault/Governance/2026-07-02-a3-whatsapp-bridge-package-lock-completion-gate-classifier-t_da5b6faf.md",
+        "/home/frank/obsidian-fleet-vault/log.md"
+      ]
+    }
+  },
+  {
+    "name": "t_da5b6faf-paired-frontend-a3-dashboard-negative-blocks",
+    "task_id": "t_da5b6faf_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "description": "BLOCK: paired negative for A3 proposal allow terms; concrete apps/web route/page work still requires running-app VERIFY_PASS even when it mentions A3 proposal status.",
+    "title": "Build frontend A3 proposal dashboard",
+    "body": "Implement apps/web React dashboard route component and page layout for A3 proposal status. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "A3 dashboard route implemented; no VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/a3-proposals/page.tsx"
       ]
     }
   }

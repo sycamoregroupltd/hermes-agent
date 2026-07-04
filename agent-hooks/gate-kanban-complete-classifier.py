@@ -6,9 +6,11 @@ Contract output is one of:
 - readonly_nonapp: explicit non-app/review/report/static artifact work; running-app gate does not apply.
 - not_web: no frontend/web/app surface detected.
 
-The ordered CONTRACT_TABLE is intentionally explicit. New allow overrides must be
-paired with negative fixtures in gate-kanban-complete.fixtures.json proving that
-the same wording still blocks when attached to concrete frontend work.
+The ordered CONTRACT_TABLE is intentionally explicit. Maintenance rule: every
+future non-app allow override must ship with paired frontend/app negative
+fixtures and changed-files-aware tests in gate-kanban-complete.fixtures.json,
+proving the same allow wording still blocks when attached to concrete frontend
+work or app-surface changed_files metadata.
 """
 from __future__ import annotations
 
@@ -77,6 +79,9 @@ COMPLETION_HOOK_CLASSIFIER_PATTERNS: PatternList = [
     r"completion[- ]gate task[- ]type classification",
     r"completion[- ]gate task[- ]type classifier fix",
     r"static/obsidian qa completion[- ]gate repair",
+    r"completion[- ]gate\s*/?\s*review[-/]router",
+    r"kanban worker exit[- ]code hardening",
+    r"clean[- ]exit without a kanban signal",
 ]
 
 CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
@@ -269,6 +274,8 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     r"\bfalsely requires [^\n.]{0,80}(frontend|web|app)[^\n.]{0,120}verify_pass\b",
     r"\bclassified as (a )?(frontend|web|app)[^\n.]{0,120}\b(add|adjust|repair)\b[^\n.]{0,120}\b(classifier|contract|hook|gate)\b",
     r"\bprofile-local config/checklist/tool-path repair\b[^\n.]{0,180}\bfrontend/web reviewers can run required gates\b",
+    r"\bpaired frontend negative\b[^\n.]{0,160}\b(still )?blocks?\b[^\n.]{0,160}\bapps/web\b",
+    r"\bapps/web\b[^\n.]{0,160}\b(still )?blocks?\b[^\n.]{0,160}\bwithout verify_pass\b",
 ]
 
 NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
