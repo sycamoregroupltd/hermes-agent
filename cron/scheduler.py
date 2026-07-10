@@ -12,6 +12,7 @@ import asyncio
 import atexit
 import concurrent.futures
 import contextvars
+import errno
 import json
 import logging
 import os
@@ -47,15 +48,90 @@ from hermes_time import now as _hermes_now
 logger = logging.getLogger(__name__)
 
 
+# --- Watchdog exit-code labelling ------------------------------------------
+# no_agent (and LLM-prerun) cron scripts are sometimes *health watchdogs*
+# whose non-zero exit codes are DESIGNED alerts, not "the script broke".
+# The canonical example is the DQSH audit watchdog
+# (``~/.hermes/scripts/dqsh_audit_watchdog.py``), which emits a verbatim
+# ``[DQSH-WATCHDOG] ...`` stdout and exits:
+#   0 -> healthy, 2 -> DEAD (daemon silent), 4 -> DEGRADED (alive-but-not-healing)
+# Delivering these as "Script Error / the script failed" erodes trust: the
+# operator assumes the watchdog itself is broken when it is correctly
+# surfacing a masked incident. We therefore detect that sentinel and relabel
+# the delivery so the verbatim watchdog body is shown as an *alert verdict*,
+# not a failure.  Scoped narrowly to the sentinel so ordinary genuine script
+# failures (missing file, traceback, exit 1) keep the existing "script failed"
+# semantics.  See kanban t_6d8fe41c.
+_WATCHDOG_SENTINEL = "[DQSH-WATCHDOG]"
+_WATCHDOG_EXIT_LABELS = {
+    0: "OK",
+    2: "DEAD (daemon silent)",
+    3: "ERROR",
+    4: "DEGRADED (alive-but-not-healing)",
+}
+
+
+def _is_watchdog_output(output: str) -> bool:
+    """True when ``output`` looks like a DQSH-watchdog verdict (carries the
+    ``[DQSH-WATCHDOG]`` sentinel).  Used to relabel intended non-zero exits."""
+    return bool(output) and _WATCHDOG_SENTINEL in output
+
+
+def _extract_watchdog_exit_code(output: str) -> int | None:
+    """Pull the exit code out of a ``_run_job_script`` failure string such as
+    ``Script exited with code 4\\nstdout:\\n[DQSH-WATCHDOG] ...``.  Returns None
+    when no code is present (genuine failure with no code)."""
+    if not output:
+        return None
+    m = re.search(r"Script exited with code\s+(\d+)", output)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _watchdog_label_for_exit(exit_code: int | None) -> str:
+    """Human label for a watchdog exit code; falls back to a neutral label."""
+    if exit_code is None:
+        return "WATCHDOG ALERT"
+    return _WATCHDOG_EXIT_LABELS.get(exit_code, f"WATCHDOG (exit {exit_code})")
+
+
+def _extract_watchdog_body(error: str) -> str:
+    """Return the verbatim ``[DQSH-WATCHDOG] ...`` body from a ``_run_job_script``
+    failure string (``Script exited with code N\\nstdout:\\n...``).  Falls back to
+    the whole string when the ``stdout:`` marker is absent."""
+    if "stdout:" in error:
+        return error.split("stdout:", 1)[1].strip()
+    return error.strip()
+
+
 def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
     """Return a compact one-line failure message for chat delivery.
 
     Full details stay in the cron output directory and the logs. Chat should
     show the operator what broke without dumping provider JSON, retry noise, or
     stack traces into the delivery channel.
+
+    Health-watchdog special case: a script that emits the ``[DQSH-WATCHDOG]``
+    sentinel and exits non-zero is a *designed alert* (e.g. DEGRADED), not a
+    broken script. We relabel it as an alert verdict and pass the verbatim
+    watchdog body through unchanged instead of prefixing "Script Error".
     """
     job_name = job.get("name") or job.get("id") or "cron job"
     text = (error or "unknown error").strip()
+
+    if _is_watchdog_output(text):
+        exit_code = _extract_watchdog_exit_code(text)
+        label = _watchdog_label_for_exit(exit_code)
+        body = _extract_watchdog_body(text)
+        return (
+            f"\U0001f6a8 Cron watchdog '{job_name}' \u2014 {label}\n\n"
+            f"{body}"
+        )
+
     lower = text.lower()
 
     # Provider/API failures are the common noisy path. Keep these short.
@@ -1973,12 +2049,28 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
                 # Script produced no output — nothing to report, skip AI call.
                 return None
         else:
-            prompt = (
-                "## Script Error\n"
-                "The data-collection script failed. Report this to the user.\n\n"
-                f"```\n{script_output}\n```\n\n"
-                f"{prompt}"
-            )
+            if _is_watchdog_output(script_output):
+                # Health-watchdog alert, not a broken script. Relabel so the
+                # operator is told DEGRADED/DEAD (verbatim body) rather than
+                # "the script failed". See kanban t_6d8fe41c.
+                exit_code = _extract_watchdog_exit_code(script_output)
+                label = _watchdog_label_for_exit(exit_code)
+                prompt = (
+                    "## Watchdog Alert\n"
+                    f"The health-watchdog script reported: {label}. "
+                    "This is a designed alert (the watchdog is working), not a "
+                    "script failure. Use the captured output as context for your "
+                    "analysis.\n\n"
+                    f"```\n{script_output}\n```\n\n"
+                    f"{prompt}"
+                )
+            else:
+                prompt = (
+                    "## Script Error\n"
+                    "The data-collection script failed. Report this to the user.\n\n"
+                    f"```\n{script_output}\n```\n\n"
+                    f"{prompt}"
+                )
             has_injected_data = True
 
     # Inject output from referenced cron jobs as context.
@@ -2309,11 +2401,40 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         now_iso = _hermes_now().strftime("%Y-%m-%d %H:%M:%S")
 
         if not ok:
-            # Script crashed / timed out / exited non-zero.  Deliver the
-            # error so the user knows the watchdog itself broke — silent
-            # failure for an alerting job is the worst-case outcome.
+            # Script crashed / timed out / exited non-zero.
+            #
+            # Two cases:
+            #  - A *health-watchdog* sentinel output ([DQSH-WATCHDOG]) with a
+            #    designed non-zero exit (2=DEAD, 4=DEGRADED) is a correct alert,
+            #    NOT a broken script. We relabel it so Frank is told the
+            #    verdict (verbatim body) instead of "script failed". This is the
+            #    t_6d8fe41c fix: the watchdog caught a masked incident and must
+            #    not be double-noised as a failure.
+            #  - Everything else (missing file, traceback, exit 1) is a genuine
+            #    failure and keeps the "script failed" alert below.
+            if _is_watchdog_output(output):
+                exit_code = _extract_watchdog_exit_code(output)
+                label = _watchdog_label_for_exit(exit_code)
+                alert = (
+                    f"\U0001f6a8 Cron watchdog '{job_name}' \u2014 {label}\n\n"
+                    f"{output}\n\n"
+                    f"Time: {now_iso}"
+                )
+                doc = (
+                    f"# Cron Job: {job_name}\n\n"
+                    f"**Job ID:** {job_id}\n"
+                    f"**Run Time:** {now_iso}\n"
+                    f"**Mode:** no_agent (script)\n"
+                    f"**Status:** watchdog {label}\n\n"
+                    f"{output}\n"
+                )
+                return False, doc, alert, output
+
+            # Genuine failure. Deliver the error so the user knows the watchdog
+            # itself broke -- silent failure for an alerting job is the
+            # worst-case outcome.
             alert = (
-                f"⚠ Cron watchdog '{job_name}' script failed\n\n"
+                f"\u26a0 Cron watchdog '{job_name}' script failed\n\n"
                 f"{output}\n\n"
                 f"Time: {now_iso}"
             )
@@ -3114,9 +3235,15 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
 
         success, output, final_response, error = run_job(job)
 
-        output_file = save_job_output(job["id"], output)
+        output_file = _save_job_output_resilient(job, output)
         if verbose:
-            logger.info("Output saved to: %s", output_file)
+            if output_file is not None:
+                logger.info("Output saved to: %s", output_file)
+            else:
+                logger.info(
+                    "Output not saved for job %s due to transient BrokenPipeError/EPIPE",
+                    job["id"],
+                )
 
         # Deliver the final response to the origin/target chat.
         # If the agent responded with [SILENT], skip delivery (but
@@ -3176,6 +3303,51 @@ def _notify_provider_jobs_changed() -> None:
         resolve_cron_scheduler().on_jobs_changed()
     except Exception as e:
         logger.debug("on_jobs_changed notify failed: %s", e)
+
+
+def _is_broken_pipe_error(exc: BaseException) -> bool:
+    """Return True for SIGPIPE/EPIPE write-side failures.
+
+    Cron jobs can fan out in bursts after a recovered breaker releases the
+    dispatcher. During those bursts, a short-lived writer owned by the ticker
+    may see a transient SIGPIPE even though the job itself completed. Treat
+    only that narrow error class as benign; provider/model errors that merely
+    mention a broken pipe inside the agent response still flow through the
+    normal job-failure path.
+    """
+    if isinstance(exc, BrokenPipeError):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.EPIPE:
+        return True
+    return False
+
+
+def _save_job_output_resilient(job: dict, output: str):
+    """Save cron output, retrying one transient SIGPIPE without failing the job."""
+    job_id = job["id"]
+    job_name = job.get("name", job_id)
+    try:
+        return save_job_output(job_id, output)
+    except BaseException as exc:
+        if not _is_broken_pipe_error(exc):
+            raise
+        logger.warning(
+            "Job '%s': cron output writer hit BrokenPipeError/EPIPE; "
+            "retrying once and treating the transient pipe close as non-fatal",
+            job_name,
+        )
+        try:
+            return save_job_output(job_id, output)
+        except BaseException as retry_exc:
+            if not _is_broken_pipe_error(retry_exc):
+                raise
+            logger.warning(
+                "Job '%s': cron output writer still saw BrokenPipeError/EPIPE "
+                "after retry; continuing without marking the job failed",
+                job_name,
+                exc_info=(type(retry_exc), retry_exc, retry_exc.__traceback__),
+            )
+            return None
 
 
 def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> int:
