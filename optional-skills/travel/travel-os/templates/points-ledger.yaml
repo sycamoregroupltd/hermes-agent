@@ -1,0 +1,26 @@
+last_updated: null
+balances:
+  amex_membership_rewards:
+    balance: 195000
+    owner: Frank
+    flexible: true
+    expiry: null
+  british_airways_avios:
+    balance: null
+    owner: Frank
+    flexible: false
+    expiry: null
+  virgin_points:
+    balance: null
+    owner: Frank
+    flexible: false
+    expiry: null
+  flying_blue_miles:
+    balance: null
+    owner: Frank
+    flexible: false
+    expiry: null
+  hotel_points: []
+transfers: []
+notes:
+  - Do not move Amex Membership Rewards without a verified redemption.
