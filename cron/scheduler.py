@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 # fcntl is Unix-only; on Windows use msvcrt for file locking
 try:
@@ -449,6 +450,110 @@ def _get_parallel_pool(max_workers: Optional[int]) -> concurrent.futures.ThreadP
         )
         _parallel_pool_max_workers = max_workers
     return _parallel_pool
+
+
+# Teardown sentinel. Set True once the interpreter begins shutdown so the
+# ticker can short-circuit rather than invoking ThreadPoolExecutor.submit()
+# after CPython has flipped its process-wide ``_shutdown`` flag. Submitting in
+# that window raises ``RuntimeError('cannot schedule new futures after
+# interpreter shutdown')`` — which, uncaught, aborts the whole tick() and
+# pollutes EVERY due job's last_error (the 2026-07-10 06:39 fleet outage).
+# We set this from an atexit hook registered at import time.
+_interpreter_shutting_down: bool = False
+
+# Debounce for the teardown-guard #critical-alerts blast. The interpreter only
+# shuts down once per process, so flipping this to True after the first alert
+# suppresses repeat blasts (one per due job would be noisy). Reset only on a
+# fresh process. See t_dfd9b303 / t_b1cab8f4.
+_teardown_alert_emitted: bool = False
+
+
+def _emit_teardown_alert(tracking_id: str = "t_dfd9b303") -> None:
+    """Emit a single LOUD #critical-alerts blast for an interpreter-teardown skip.
+
+    The native-cron interpreter-teardown guard swallows the
+    ``RuntimeError('cannot schedule new futures after interpreter shutdown')`` at
+    two sites (``_submit_to_pool`` and the ``_deliver_result`` standalone
+    fallback) so jobs are skipped rather than crashing the tick. That swallowing
+    used to be SILENT (``logger.warning`` only). This helper makes the skip LOUD:
+    it routes one blast to the Discord #critical-alerts channel via the existing
+    ``_alert_critical_alerts`` helper (which degrades to ``logger.critical``),
+    naming the event, that affected jobs re-fire on their next tick, and the
+    tracking id.
+
+    Debounced by ``_teardown_alert_emitted`` so a single teardown window emits at
+    most ONE alert, not one per due job. See t_dfd9b303 / t_b1cab8f4.
+    """
+    global _teardown_alert_emitted
+    if _teardown_alert_emitted:
+        return
+    _teardown_alert_emitted = True
+    _alert_critical_alerts(
+        "WARNING: interpreter teardown — cron submissions skipped. Due jobs "
+        "were skipped during interpreter shutdown and will re-fire on their next "
+        f"scheduled tick. Tracking: {tracking_id} (t_dfd9b303)."
+    )
+
+
+def _register_shutdown_sentinel() -> None:
+    """Flip ``_interpreter_shutting_down`` at interpreter teardown.
+
+    Registered via ``atexit`` at module import so it always runs before the
+    ``concurrent.futures`` atexit hook that flips the internal ``_shutdown``
+    flag — atexit callbacks fire in reverse registration order, and the cron
+    module is imported well before the first pool is ever submitted to.
+    """
+    global _interpreter_shutting_down
+    _interpreter_shutting_down = True
+
+
+atexit.register(_register_shutdown_sentinel)
+
+
+def _submit_to_pool(pool, fn, *args, swallow_non_teardown_runtime_error=False, **kwargs):
+    """Guarded ``ThreadPoolExecutor.submit`` for the native cron pools.
+
+    Returns the future, or ``None`` when submission is impossible because the
+    interpreter is shutting down. The ``RuntimeError('cannot schedule new
+    futures after interpreter shutdown')`` raised by ``submit`` during teardown
+    is swallowed: the process is already dying, so the job cannot run, and
+    raising here would both abort the tick() and record a misleading
+    interpreter-teardown error on every due job's ``last_error``.
+
+    Why swallow instead of re-raise: the job will simply run on its next
+    scheduled tick (recurring jobs re-fire naturally; at-most-once semantics
+    for one-shots are preserved by ``claim_dispatch``). Surfacing a teardown
+    error as a job failure conflates "process is being torn down" with "the
+    job's code broke" and erodes trust in real failures. See t_dfd9b303.
+    """
+    if _interpreter_shutting_down:
+        # Interpreter is going down — submission is futile and would raise.
+        return None
+    try:
+        return pool.submit(fn, *args, **kwargs)
+    except RuntimeError as exc:
+        if "interpreter shutdown" in str(exc) or "interpreter teardown" in str(exc):
+            # Previously a SILENT logger.warning. Now LOUD: emit a single
+            # #critical-alerts blast so a future teardown is never silent again.
+            # The job is still skipped (returns None) — it re-fires on its next
+            # tick. Debounced to one blast per teardown window. See t_dfd9b303 /
+            # t_b1cab8f4.
+            _emit_teardown_alert("t_dfd9b303")
+            return None
+        if swallow_non_teardown_runtime_error:
+            logger.warning("Cron pool submit raised (non-teardown): %s", exc)
+            return None
+        raise
+
+
+def _safe_submit_threadpool(pool, fn, *args, **kwargs):
+    """Thin wrapper: submit to any ``ThreadPoolExecutor``, swallowing ONLY the
+    interpreter-teardown RuntimeError (returns ``None``). Any other error
+    propagates. Used by the standalone delivery fallback, where a teardown-time
+    submit must not escape ``_deliver_result`` and abort the delivery loop.
+    See t_dfd9b303.
+    """
+    return _submit_to_pool(pool, fn, *args, **kwargs)
 
 
 def _get_sequential_pool() -> concurrent.futures.ThreadPoolExecutor:
@@ -1782,16 +1887,42 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 # continues to the next target.
                 try:
                     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                    try:
-                        future = pool.submit(asyncio.run, _send_to_platform(platform, pconfig, chat_id, cleaned_delivery_content, thread_id=thread_id, media_files=media_files))
-                        result = future.result(timeout=30)
-                    finally:
-                        pool.shutdown(wait=False)
+                    # Guarded submit: during interpreter teardown (gateway
+                    # restart/upgrade) ThreadPoolExecutor.submit raises
+                    # "cannot schedule new futures after interpreter shutdown"
+                    # — the SAME class of error as the 2026-07-10 06:39 fleet
+                    # outage. _safe_submit_threadpool swallows that and returns
+                    # None so we skip this target instead of letting the
+                    # RuntimeError escape _deliver_result and crash the whole
+                    # delivery loop (skipping every remaining target, #47163).
+                    # See t_dfd9b303.
+                    future = _safe_submit_threadpool(
+                        pool,
+                        asyncio.run,
+                        _send_to_platform(
+                            platform, pconfig, chat_id,
+                            cleaned_delivery_content,
+                            thread_id=thread_id, media_files=media_files,
+                        ),
+                    )
+                    if future is None:
+                        # Interpreter teardown — submit was skipped.
+                        # Previously SILENT. Now LOUD: emit a single
+                        # #critical-alerts blast (debounced) so the teardown is
+                        # never silent again. The job is still skipped (continue)
+                        # — it re-fires on its next tick. See t_dfd9b303 /
+                        # t_b1cab8f4.
+                        _emit_teardown_alert("t_dfd9b303")
+                        continue
+                    result = future.result(timeout=30)
                 except Exception as e:
                     msg = f"delivery to {platform_name}:{chat_id} failed: {e}"
                     logger.error("Job '%s': %s", job["id"], msg, exc_info=True)
                     target_errors.extend([msg])
                     delivery_errors.extend(target_errors)
+                    continue
+                finally:
+                    pool.shutdown(wait=False)
                     continue
             except Exception as e:
                 msg = f"delivery to {platform_name}:{chat_id} failed: {e}"
@@ -1857,6 +1988,80 @@ def _get_script_timeout() -> int:
     return _DEFAULT_SCRIPT_TIMEOUT
 
 
+# --- Missing-script startup preflight -------------------------------------
+# A cron job whose ``script`` path does not exist on disk fails *silently* in
+# production: ``_run_job_script`` hard-fails per run (``Script not found``) but
+# the error is only delivered to the job's own (often ``local`` / silent)
+# deliver target — never to a noise channel. The result is a black hole: a job
+# can error every tick for days (the elon preflight caught 3 jarvis jobs doing
+# exactly this for ~2 days) with no operator alert. We close that by asserting
+# at scheduler load / fleet startup that every enabled, script-bearing cron
+# job can actually resolve its script, and by routing any misses to
+# #critical-alerts (Discord). This is the structural complement to the existing
+# per-run error — it makes the failure LOUD on startup instead of silent.
+#
+# Classification mirrors the prior cron-doctor discipline: this is the
+# "missing-script" (black-hole) class — distinct from a *genuine* script
+# runtime error or a *designed* health-watchdog sentinel ([DQSH-WATCHDOG]),
+# which are handled separately in ``run_one_job``.
+_CRITICAL_ALERTS_CHANNEL_ID = "1521973787363508325"  # #critical-alerts (Discord)
+# Minimum gap between repeated #critical-alerts preflight blasts so a broken
+# job does not spam the channel every 60s tick. ~6h keeps it loud without
+# noisome.
+_SCRIPT_PREFLIGHT_COOLDOWN_SECONDS = 6 * 60 * 60
+# Module-level timestamp of the last preflight blast — keyed by job id so each
+# broken job re-alerts on its own cooldown, not globally.
+_script_preflight_last_alert_at: dict[str, float] = {}
+# Whether the startup (force) preflight has fired since this scheduler process
+# loaded. The first tick that acquires the lock runs the forced assertion; all
+# later ticks use cooldown-gated re-alerts. Reset on module reload (hermes
+# update) which is exactly the startup we want to re-assert.
+_script_preflight_startup_done: bool = False
+
+
+def _resolve_script_path(script_path: str) -> tuple[bool, "Path | None", "str | None"]:
+    """Resolve a cron job ``script`` value to a concrete on-disk path.
+
+    Shared by the per-run executor (``_run_job_script``) and the startup
+    preflight (``_run_cron_script_preflight``) so both validate against the
+    *exact* same rules — no divergence between "does it run" and
+    "will it run at startup".
+
+    Returns:
+        ``(ok, resolved_path, error)`` where ``ok`` is True when the path is
+        inside ``HERMES_HOME/scripts`` and exists as a regular file. On failure
+        ``error`` carries the human-readable reason (one of the
+        ``Script not found`` / ``Blocked`` / ``not a file`` messages) and
+        ``resolved_path`` is None.
+    """
+    scripts_dir = _get_hermes_home() / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    scripts_dir_resolved = scripts_dir.resolve()
+
+    raw = Path(script_path).expanduser()
+    if raw.is_absolute():
+        path = raw.resolve()
+    else:
+        path = (scripts_dir / raw).resolve()
+
+    # Guard against path traversal, absolute path injection, and symlink
+    # escape — scripts MUST reside within HERMES_HOME/scripts/.
+    try:
+        path.relative_to(scripts_dir_resolved)
+    except ValueError:
+        return False, None, (
+            f"Blocked: script path resolves outside the scripts directory "
+            f"({scripts_dir_resolved}): {script_path!r}"
+        )
+
+    if not path.exists():
+        return False, None, f"Script not found: {path}"
+    if not path.is_file():
+        return False, None, f"Script path is not a file: {path}"
+
+    return True, path, None
+
+
 def _run_job_script(script_path: str) -> tuple[bool, str]:
     """Execute a cron job's data-collection script and capture its output.
 
@@ -1888,30 +2093,10 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
         (success, output) — on failure *output* contains the error message so the
         LLM can report the problem to the user.
     """
-    scripts_dir = _get_hermes_home() / "scripts"
-    scripts_dir.mkdir(parents=True, exist_ok=True)
-    scripts_dir_resolved = scripts_dir.resolve()
-
-    raw = Path(script_path).expanduser()
-    if raw.is_absolute():
-        path = raw.resolve()
-    else:
-        path = (scripts_dir / raw).resolve()
-
-    # Guard against path traversal, absolute path injection, and symlink
-    # escape — scripts MUST reside within HERMES_HOME/scripts/.
-    try:
-        path.relative_to(scripts_dir_resolved)
-    except ValueError:
-        return False, (
-            f"Blocked: script path resolves outside the scripts directory "
-            f"({scripts_dir_resolved}): {script_path!r}"
-        )
-
-    if not path.exists():
-        return False, f"Script not found: {path}"
-    if not path.is_file():
-        return False, f"Script path is not a file: {path}"
+    ok, path, error = _resolve_script_path(script_path)
+    if not ok:
+        return False, error
+    assert path is not None  # guaranteed by _resolve_script_path on success
 
     script_timeout = _get_script_timeout()
 
@@ -2978,7 +3163,17 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         # env passthrough registrations) when the cron run hops into the worker
         # thread used for inactivity timeout monitoring.
         _cron_context = contextvars.copy_context()
-        _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
+        # Guarded submit: during interpreter teardown (gateway restart/upgrade)
+        # this raises "cannot schedule new futures after interpreter shutdown".
+        # Swallow it as an abort instead of crashing the whole job run, which
+        # would otherwise also pollute CronJob.last_error. See t_dfd9b303.
+        try:
+            _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
+        except RuntimeError as exc:
+            if "interpreter shutdown" in str(exc) or "interpreter teardown" in str(exc):
+                logger.warning("Cron agent run skipped during interpreter teardown: %s", exc)
+                return False, "", "", "skipped: interpreter teardown in progress"
+            raise
         _inactivity_timeout = False
         try:
             if _cron_inactivity_limit is None:
@@ -3350,6 +3545,159 @@ def _save_job_output_resilient(job: dict, output: str):
             return None
 
 
+def _alert_critical_alerts(message: str) -> None:
+    """Best-effort delivery of ``message`` to the #critical-alerts Discord channel.
+
+    This is the LOUD escape hatch for scheduler-level faults that must never
+    sit silent (the missing-script black-hole class). It prefers the gateway's
+    live Discord adapter when available (E2EE-safe, no extra network round
+    trip), then falls back to the standalone send path used by normal cron
+    deliveries. If Discord is not configured/enabled the alert degrades to
+    ``logger.critical`` rather than raising — the operator still sees it in the
+    scheduler log, and the failure to alert is itself logged.
+
+    Fail-safe by design: a broken alert path must NEVER crash the scheduler
+    tick or prevent due jobs from running.
+    """
+    try:
+        from gateway.config import load_gateway_config, Platform
+        from tools.send_message_tool import _send_to_platform
+
+        config = load_gateway_config()
+        platform = Platform.DISCORD
+        pconfig = config.platforms.get(platform)
+        if pconfig and getattr(pconfig, "enabled", False):
+            # _send_to_platform is a coroutine that needs a running loop. The
+            # preflight runs from the cron ticker thread (no running loop) so we
+            # run it in a fresh one below; if a loop IS running (gateway/async
+            # context) we schedule on it instead so delivery uses the live
+            # adapter (E2EE-safe).
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            async def _emit() -> None:
+                await _send_to_platform(
+                    "discord",
+                    pconfig,
+                    _CRITICAL_ALERTS_CHANNEL_ID,
+                    message,
+                )
+
+            if loop is not None and loop.is_running():
+                # Gateway/async context: schedule on the running loop so the
+                # send is delivered via the live adapter (E2EE-safe).
+                asyncio.ensure_future(_emit())
+            else:
+                try:
+                    asyncio.run(_emit())
+                except RuntimeError:
+                    # Interpreter teardown / nested loop — best-effort thread.
+                    def _run() -> None:
+                        try:
+                            asyncio.run(_emit())
+                        except Exception:
+                            logger.exception("critical-alerts preflight send failed")
+                    try:
+                        concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(_run)
+                    except Exception:
+                        logger.exception("critical-alerts preflight send failed")
+            return
+        else:
+            logger.warning(
+                "Discord not enabled — cannot route #critical-alerts preflight; "
+                "emitting via logger.critical instead"
+            )
+    except Exception:
+        logger.exception("Failed to deliver #critical-alerts preflight; logging instead")
+
+    # Hard fallback: the alert is always visible in the scheduler log even if
+    # Discord delivery is unavailable.
+    logger.critical("%s", message)
+
+
+def _run_cron_script_preflight(force: bool = False) -> list[dict]:
+    """Startup assertion: every enabled, script-bearing job must resolve its script.
+
+    Scans the per-profile ``jobs.json`` (the same store ``tick`` reads) for
+    enabled jobs that declare a ``script`` which does NOT exist on disk, and
+    returns the list of failures. When ``force`` is True (scheduler load /
+    fleet startup) AND there are failures, it immediately blasts a single
+    consolidated #critical-alerts message naming each job id + missing path.
+
+    On subsequent (periodic) ticks ``force`` is False, so the blast is gated by
+    a per-job cooldown (``_SCRIPT_PREFLIGHT_COOLDOWN_SECONDS``) — a broken job
+    re-alerts ~every 6h instead of every 60s tick, while a *fresh* break at
+    startup is still loud immediately.
+
+    Returns the list of failure dicts (empty when all good) so callers/tests
+    can assert on it directly. Never raises — a preflight must not take down
+    the scheduler.
+
+    Classification (mirrors the prior cron-doctor discipline): this is the
+    "missing-script" black-hole class. A *genuine* runtime error or a
+    *designed* health-watchdog sentinel is handled in ``run_one_job``, not
+    here — we only assert script *existence*, which is a load-time invariant.
+    """
+    failures: list[dict] = []
+    try:
+        from cron.jobs import load_jobs
+        jobs = load_jobs()
+    except Exception as e:
+        logger.error("script-preflight: failed to load jobs.json: %s", e)
+        return failures
+
+    now = time.time()
+    for job in jobs:
+        if not job.get("enabled", True):
+            continue
+        script_path = job.get("script")
+        if not script_path:
+            continue
+        ok, _resolved, error = _resolve_script_path(script_path)
+        if ok:
+            continue
+        job_id = job.get("id", "<unknown>")
+        failures.append({
+            "job_id": job_id,
+            "name": job.get("name"),
+            "script": script_path,
+            "error": error or f"Script not found: {script_path}",
+        })
+
+    if not failures:
+        return failures
+
+    # Decide whether to blast now.
+    due: list[dict] = []
+    for f in failures:
+        last = _script_preflight_last_alert_at.get(f["job_id"])
+        if force or last is None or (now - last) >= _SCRIPT_PREFLIGHT_COOLDOWN_SECONDS:
+            due.append(f)
+
+    if due:
+        lines = [
+            "🚨 CRON STARTUP PREFLIGHT — missing script(s) (jobs will error every tick):",
+        ]
+        for f in due:
+            lines.append(
+                f"  • job_id={f['job_id']} name={f.get('name')!r} "
+                f"script={f['script']!r} → {f['error']}"
+            )
+        lines.append(
+            "Fix: restore/relink the script into the profile's scripts dir, "
+            "or disable the job."
+        )
+        message = "\n".join(lines)
+        logger.error("%s", message)
+        _alert_critical_alerts(message)
+        for f in due:
+            _script_preflight_last_alert_at[f["job_id"]] = now
+
+    return failures
+
+
 def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> int:
     """
     Check and run all due jobs.
@@ -3384,6 +3732,20 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
 
     try:
         due_jobs = get_due_jobs()
+
+        # --- Startup missing-script preflight assertion (loud, not silent) ---
+        # The first tick that acquires the lock after a scheduler/gateway load
+        # is treated as the startup assertion: it forces a #critical-alerts
+        # blast for any enabled script-bearing job whose script is missing
+        # (the black-hole class elon caught — 3 jarvis jobs errored hourly for
+        # ~2 days with no alert). Every later tick re-runs the scan but only
+        # re-alerts per broken job on its cooldown
+        # (_SCRIPT_PREFLIGHT_COOLDOWN_SECONDS), so a long-lived broken job
+        # keeps blaring ~every 6h instead of spamming every 60s or going
+        # silent. Wrapped so a preflight failure can NEVER block due jobs.
+        global _script_preflight_startup_done
+        _run_cron_script_preflight(force=not _script_preflight_startup_done)
+        _script_preflight_startup_done = True
 
         if verbose and not due_jobs:
             logger.info("%s - No jobs due", _hermes_now().strftime('%H:%M:%S'))
@@ -3468,7 +3830,7 @@ def tick(verbose: bool = True, adapters=None, loop=None, sync: bool = True) -> i
                     with _running_lock:
                         _running_job_ids.discard(j["id"])
 
-            return pool.submit(_run_and_release)
+            return _submit_to_pool(pool, _run_and_release)
 
         # Sequential pass for env-mutating (workdir) jobs.
         # Queued to a persistent single-thread pool so they run one at a time

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt, _resolve_cron_enabled_toolsets, _merge_mcp_into_per_job_toolsets
+from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt, _resolve_cron_enabled_toolsets, _merge_mcp_into_per_job_toolsets, _run_cron_script_preflight, _SCRIPT_PREFLIGHT_COOLDOWN_SECONDS, _CRITICAL_ALERTS_CHANNEL_ID
 from tools.env_passthrough import clear_env_passthrough
 from tools.credential_files import clear_credential_files
 
@@ -4467,3 +4467,175 @@ class TestMultiTargetDeliveryContinuesOnFailure:
         assert "a@example.com" in result
         assert "b@example.com" in result
         assert mock_pool.submit.call_count == 2
+
+
+class TestScriptPreflight:
+    """Startup missing-script preflight must alert #critical-alerts LOUDLY, not
+    silently repeat ``Script not found`` (the black-hole class)."""
+
+    def _patch_jobs(self, monkeypatch, jobs):
+        monkeypatch.setattr("cron.jobs.load_jobs", lambda: jobs)
+
+    def test_force_true_alerts_on_missing_script(self, monkeypatch, tmp_path):
+        """When the startup assertion (force=True) runs, a missing script
+        must produce a #critical-alerts alert naming the job id + path."""
+        self._patch_jobs(monkeypatch, [
+            {"id": "deadbeef0001", "name": "broken-watchdog",
+             "enabled": True, "script": "does_not_exist.py"},
+        ])
+        monkeypatch.setattr("cron.scheduler._hermes_home", tmp_path)
+        alerted = []
+        monkeypatch.setattr(
+            "cron.scheduler._alert_critical_alerts",
+            lambda msg: alerted.append(msg),
+        )
+        monkeypatch.setattr("cron.scheduler._script_preflight_startup_done", False)
+
+        failures = _run_cron_script_preflight(force=True)
+
+        assert len(failures) == 1
+        assert failures[0]["job_id"] == "deadbeef0001"
+        assert "Script not found" in failures[0]["error"]
+        assert len(alerted) == 1
+        # The alert must name the job id AND the missing script path.
+        assert "deadbeef0001" in alerted[0]
+        assert "does_not_exist.py" in alerted[0]
+        assert "#critical-alerts" in alerted[0] or "CRON STARTUP PREFLIGHT" in alerted[0]
+
+    def test_enabled_false_is_skipped(self, monkeypatch, tmp_path):
+        """Disabled jobs must NOT be flagged even if their script is missing."""
+        self._patch_jobs(monkeypatch, [
+            {"id": "deadbeef0002", "name": "paused",
+             "enabled": False, "script": "gone.py"},
+        ])
+        monkeypatch.setattr("cron.scheduler._hermes_home", tmp_path)
+        alerted = []
+        monkeypatch.setattr(
+            "cron.scheduler._alert_critical_alerts",
+            lambda msg: alerted.append(msg),
+        )
+        failures = _run_cron_script_preflight(force=True)
+        assert failures == []
+        assert alerted == []
+
+    def test_present_script_passes(self, monkeypatch, tmp_path):
+        """A job whose script exists on disk must not be flagged."""
+        good = tmp_path / "scripts"
+        good.mkdir()
+        (good / "exists.py").write_text("#!/usr/bin/env python3\n")
+        self._patch_jobs(monkeypatch, [
+            {"id": "deadbeef0003", "name": "ok",
+             "enabled": True, "script": "exists.py"},
+        ])
+        monkeypatch.setattr("cron.scheduler._hermes_home", tmp_path)
+        alerted = []
+        monkeypatch.setattr(
+            "cron.scheduler._alert_critical_alerts",
+            lambda msg: alerted.append(msg),
+        )
+        failures = _run_cron_script_preflight(force=True)
+        assert failures == []
+        assert alerted == []
+
+    def test_cooldown_suppresses_realert_when_not_forced(self, monkeypatch, tmp_path):
+        """After a forced startup alert, a non-forced (periodic) tick must NOT
+        re-alert again until the cooldown elapses — prevents 60s spam."""
+        self._patch_jobs(monkeypatch, [
+            {"id": "deadbeef0004", "name": "still-broken",
+             "enabled": True, "script": "missing2.py"},
+        ])
+        monkeypatch.setattr("cron.scheduler._hermes_home", tmp_path)
+        alerted = []
+        monkeypatch.setattr(
+            "cron.scheduler._alert_critical_alerts",
+            lambda msg: alerted.append(msg),
+        )
+        monkeypatch.setattr("cron.scheduler._script_preflight_startup_done", False)
+
+        # Forced startup assertion fires once.
+        f1 = _run_cron_script_preflight(force=True)
+        assert len(f1) == 1
+        assert len(alerted) == 1
+
+        # Immediate periodic tick (not forced) must be suppressed by cooldown.
+        alerted.clear()
+        f2 = _run_cron_script_preflight(force=False)
+        assert len(f2) == 1  # still detected
+        assert alerted == []  # but not re-alerted
+
+    def test_cooldown_expiry_realerts(self, monkeypatch, tmp_path):
+        """When the cooldown has elapsed, a periodic tick re-alerts."""
+        self._patch_jobs(monkeypatch, [
+            {"id": "deadbeef0005", "name": "broken-cooldown",
+             "enabled": True, "script": "missing3.py"},
+        ])
+        monkeypatch.setattr("cron.scheduler._hermes_home", tmp_path)
+        alerted = []
+        monkeypatch.setattr(
+            "cron.scheduler._alert_critical_alerts",
+            lambda msg: alerted.append(msg),
+        )
+        monkeypatch.setattr("cron.scheduler._script_preflight_startup_done", False)
+
+        # Use a mutable clock so time.time() works for every internal call
+        # (logger.error, alert send) and the cooldown check. First assertion
+        # at t=0 (forced); second call is past the cooldown.
+        clock = {"t": 0.0}
+        monkeypatch.setattr("cron.scheduler.time.time", lambda: clock["t"])
+
+        _run_cron_script_preflight(force=True)
+        assert len(alerted) == 1
+        alerted.clear()
+        clock["t"] = _SCRIPT_PREFLIGHT_COOLDOWN_SECONDS + 10
+        f = _run_cron_script_preflight(force=False)
+        assert len(f) == 1
+        assert len(alerted) == 1  # re-alerted after cooldown
+
+    def test_alert_targets_critical_alerts_channel(self, monkeypatch, tmp_path):
+        """The alert send must target the #critical-alerts Discord channel id."""
+        self._patch_jobs(monkeypatch, [
+            {"id": "deadbeef0006", "name": "broken-chan",
+             "enabled": True, "script": "missing4.py"},
+        ])
+        monkeypatch.setattr("cron.scheduler._hermes_home", tmp_path)
+        captured = {}
+        from unittest.mock import AsyncMock
+
+        async def fake_send(platform, pconfig, chat_id, message, **kw):
+            captured["platform"] = platform
+            captured["chat_id"] = chat_id
+            captured["message"] = message
+            return {"success": True}
+
+        monkeypatch.setattr(
+            "tools.send_message_tool._send_to_platform", fake_send
+        )
+        from gateway.config import Platform
+
+        pconfig = MagicMock()
+        pconfig.enabled = True
+        mock_cfg = MagicMock()
+        mock_cfg.platforms = {Platform.DISCORD: pconfig}
+        monkeypatch.setattr(
+            "gateway.config.load_gateway_config", lambda: mock_cfg
+        )
+        monkeypatch.setattr("asyncio.run", lambda coro: _safe_await(coro))
+        monkeypatch.setattr("cron.scheduler._script_preflight_startup_done", False)
+
+        _run_cron_script_preflight(force=True)
+
+        assert captured.get("platform") == "discord"
+        assert captured.get("chat_id") == _CRITICAL_ALERTS_CHANNEL_ID
+        assert "deadbeef0006" in (captured.get("message") or "")
+
+
+def _safe_await(coro):
+    """Drive a coroutine to completion synchronously (stand-in for asyncio.run)."""
+    import asyncio
+
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
