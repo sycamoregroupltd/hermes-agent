@@ -1,0 +1,44 @@
+home_market: UK
+home_region: Surrey, England
+preferred_departure_airports:
+  - LHR
+  - LGW
+  - LCY
+  - STN
+  - LTN
+  - MAN
+nearby_positioning_airports:
+  - MAD
+  - AMS
+  - CDG
+  - DUB
+  - FRA
+household:
+  adults:
+    - Frank
+    - Cecily
+  children: []
+travel_style:
+  priorities:
+    - strong_real_world_value
+    - premium_cabins
+    - family_convenience
+    - flexible_cancellation
+  avoid:
+    - speculative_transfers
+    - excessive_surcharges
+    - fragile_self_connections
+  cabin_preferences:
+    long_haul: business
+    short_haul: economy
+  hotel_preferences:
+    - luxury
+    - family_friendly
+spend:
+  combined_monthly_gbp: 10000
+  business_monthly_gbp: null
+  personal_monthly_gbp: null
+research_preferences:
+  notify_only_when_actionable: true
+  minimum_opportunity_score: 70
+  minimum_value_per_point_pence: 1.2
