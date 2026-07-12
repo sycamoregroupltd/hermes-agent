@@ -32,6 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 import json
+import re
 import time
 
 
@@ -117,6 +118,48 @@ class Diagnostic:
         }
 
 
+@dataclass(frozen=True)
+class FailureClassification:
+    """Pure read-only classifier result for kanban worker failures."""
+
+    failure_class: str
+    confidence: str
+    evidence_markers: list[str]
+    safe_recovery_hint: str
+
+    def to_dict(self) -> dict:
+        return {
+            "failure_class": self.failure_class,
+            "confidence": self.confidence,
+            "evidence_markers": list(self.evidence_markers),
+            "safe_recovery_hint": self.safe_recovery_hint,
+        }
+
+
+FAILURE_CLASSIFIER_VERSION = "kanban-failure-classifier-v1"
+
+FAILURE_CLASSES = (
+    "provider_error",
+    "provider_pre_reasoning",
+    "skill_preload_crash",
+    "protocol_violation",
+    "pid_not_alive_or_nonzero_crash",
+    "workspace_spawn_config_failure",
+    "ready_but_not_spawned",
+    "queue_metadata_leak_or_stale_active_run",
+    "dependency_time_gate",
+    "indeterminate",
+)
+
+
+_PROVIDER_PATTERNS = (
+    r"\b(?:API call failed|RateLimitError|PermissionDeniedError|AuthenticationError)\b",
+    r"\bHTTP\s+(?:401|402|403|429|5\d\d)\b",
+    r"\b(?:insufficient_quota|quota|billing|rate[- ]?limit|weekly limit|too many requests)\b",
+    r"\b(?:not logged in|not logged|invalid api key|unauthorized|forbidden)\b",
+)
+
+
 # ---------------------------------------------------------------------------
 # Rule helpers
 # ---------------------------------------------------------------------------
@@ -167,6 +210,259 @@ def _event_kind(ev) -> str:
 def _event_ts(ev) -> int:
     t = _task_field(ev, "created_at", 0)
     return int(t or 0)
+
+
+def _stringify_payload(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return str(value)
+
+
+def _add_marker(markers: list[str], marker: str, *, limit: int = 10) -> None:
+    marker = " ".join(str(marker).split())
+    if not marker:
+        return
+    if len(marker) > 220:
+        marker = marker[:217] + "..."
+    if marker not in markers and len(markers) < limit:
+        markers.append(marker)
+
+
+def _row_text(row: Any, fields: Iterable[str]) -> str:
+    parts: list[str] = []
+    for field in fields:
+        value = _task_field(row, field, None)
+        if value is not None:
+            parts.append(str(value))
+    return "\n".join(parts)
+
+
+def _recent_failed_runs(runs: list[Any]) -> list[Any]:
+    return [
+        r for r in sorted(runs, key=lambda rr: int(_task_field(rr, "id", 0) or 0), reverse=True)
+        if _task_field(r, "outcome")
+        in {"crashed", "timed_out", "spawn_failed", "gave_up", "provider_error_pre_reasoning"}
+        or _task_field(r, "status") in {"crashed", "timed_out", "failed"}
+    ]
+
+
+def _latest_run_outcome(runs: list[Any]) -> Optional[str]:
+    ordered = sorted(runs, key=lambda rr: int(_task_field(rr, "id", 0) or 0), reverse=True)
+    return _task_field(ordered[0], "outcome", None) if ordered else None
+
+
+def _matches_any(text: str, patterns: Iterable[str]) -> Optional[str]:
+    for pattern in patterns:
+        m = re.search(pattern, text, flags=re.IGNORECASE)
+        if m:
+            return m.group(0)
+    return None
+
+
+def classify_kanban_failure(
+    task: Any,
+    events: Optional[list[Any]] = None,
+    runs: Optional[list[Any]] = None,
+    *,
+    log_excerpt: str = "",
+    dispatch_context: Optional[dict[str, Any]] = None,
+    now: Optional[int] = None,
+) -> FailureClassification:
+    """Classify a kanban worker failure without mutating queue state.
+
+    The helper is intentionally conservative and side-effect free. It uses
+    only supplied task, event, run, log-excerpt, and dispatcher context data,
+    ignores instructional task title/body text, and returns a safe hint rather
+    than an executable recovery action. ``now`` is accepted for callers that
+    need deterministic fixture construction; this classifier does not read the
+    live clock.
+    """
+    del now  # The classifier is deterministic from caller-supplied evidence.
+    events = events or []
+    runs = runs or []
+    dispatch_context = dispatch_context or {}
+    markers: list[str] = []
+
+    # Classify from observed queue/runtime evidence only. Task titles/bodies
+    # often contain instructions or taxonomy names (for example a task asking
+    # us to implement ``dependency_time_gate``), so they are not crash evidence.
+    task_text = _row_text(task, (
+        "id", "status", "assignee", "workspace_kind", "workspace_path",
+        "block_kind", "last_failure_error", "result", "current_run_id",
+        "started_at", "last_heartbeat_at", "claim_lock",
+    ))
+    run_text = "\n".join(
+        _row_text(r, ("id", "status", "outcome", "summary", "error", "metadata", "ended_at"))
+        for r in runs
+    )
+    event_text = "\n".join(
+        f"{_event_kind(e)} {_stringify_payload(_parse_payload(e))}"
+        for e in events
+    )
+    dispatch_text = _stringify_payload(dispatch_context)
+    combined = "\n".join([task_text, run_text, event_text, dispatch_text, log_excerpt or ""])
+
+    latest_outcome = _latest_run_outcome(runs)
+    if latest_outcome == "completed":
+        return FailureClassification(
+            "indeterminate", "low",
+            ["latest run outcome=completed; prior failure evidence auto-cleared"],
+            "No active failure classification; inspect history only if an operator asks.",
+        )
+
+    status = str(_task_field(task, "status", "") or "")
+    block_kind = str(_task_field(task, "block_kind", "") or "")
+    current_run_id = _task_field(task, "current_run_id", None)
+
+    # Contract precedence: specific pre-worker/pre-reasoning causes first.
+    if _matches_any(combined, (
+        r"workspace_kind=worktree but no workspace_path",
+        r"workspace_kind\s*=?\s*worktree[^\n]*(?:no workspace_path|default_workdir)",
+        r"no default_workdir", r"invalid workspace", r"non-absolute workspace",
+        r"resolve_workspace", r"spawn failure before worker log",
+    )):
+        hit = _matches_any(combined, (r"workspace_kind[^\n]*", r"no default_workdir[^\n]*", r"invalid workspace[^\n]*", r"non-absolute workspace[^\n]*"))
+        if hit:
+            _add_marker(markers, hit)
+        _add_marker(markers, f"workspace_kind={_task_field(task, 'workspace_kind', None)} workspace_path={_task_field(task, 'workspace_path', None)}")
+        return FailureClassification(
+            "workspace_spawn_config_failure", "high", markers,
+            "Workspace spawn configuration is invalid; validate exact absolute workspace/repo path and recreate or patch only through reviewed task metadata handling.",
+        )
+
+    if _matches_any(combined, (r"Error:\s*Unknown skill\(s\)", r"Unknown skill\(s\):")):
+        hit = _matches_any(combined, (r"Unknown skill\(s\):[^\n]*",))
+        if hit:
+            _add_marker(markers, hit)
+        return FailureClassification(
+            "skill_preload_crash", "high", markers,
+            "Skill preload failed before reasoning; repair/reroute forced-skill visibility with dispatcher-shaped smoke instead of retrying the same crash loop.",
+        )
+
+    provider_hit = _matches_any(combined, _PROVIDER_PATTERNS)
+    if provider_hit:
+        _add_marker(markers, provider_hit)
+        pre_reasoning_hit = _matches_any(combined, (
+            r"Messages:\s*1\s*\(1 user,\s*0 tool calls\)",
+            r"0 tool calls", r"before any tool calls", r"prevented kanban lifecycle",
+            r"Query:\s*work kanban task", r"Initializing agent",
+            r"provider_error_pre_reasoning",
+        ))
+        terminal_lifecycle_seen = _matches_any(event_text, (r"\bcompleted\b", r"\bblocked\b"))
+        if pre_reasoning_hit and not terminal_lifecycle_seen:
+            _add_marker(markers, pre_reasoning_hit)
+            return FailureClassification(
+                "provider_pre_reasoning", "high", markers,
+                "Pre-reasoning provider failure; preserve lifecycle gate, avoid SOUL edits, and route cooldown/provider-owner evidence before retry.",
+            )
+        return FailureClassification(
+            "provider_error", "medium", markers,
+            "Provider/API failure evidence found; avoid product-code blame and retry only after cooldown or owner/provider packet evidence.",
+        )
+
+    if (
+        block_kind == "dependency"
+        or status == "scheduled"
+        or _matches_any(combined, (r"\btime[- ]?gate", r"\bnot due\b", r"\bparent(?:s)? (?:open|not done|blocked)", r"\bcron\b.*\bscheduled\b"))
+    ):
+        _add_marker(markers, f"status={status or '?'} block_kind={block_kind or '?'}")
+        hit = _matches_any(combined, (r"time[- ]?gated?[^\n]*", r"not due[^\n]*", r"parent(?:s)? [^\n]*"))
+        if hit:
+            _add_marker(markers, hit)
+        return FailureClassification(
+            "dependency_time_gate",
+            "high" if block_kind == "dependency" or status == "scheduled" else "medium",
+            markers,
+            "Dependency/time gate is still authoritative; revalidate exact parent or UTC boundary and promote only when due.",
+        )
+
+    terminal_status = status in {"done", "archived", "blocked"}
+    open_runs = [r for r in runs if _task_field(r, "ended_at", None) is None and _task_field(r, "status", None) == "running"]
+    if (
+        (terminal_status and current_run_id)
+        or (terminal_status and open_runs)
+        or (status in {"todo", "ready"} and current_run_id)
+        or (
+            status != "running"
+            and _matches_any(combined, (r"stale active run", r"run still active", r"stale current_run_id", r"archived.*active"))
+        )
+    ):
+        _add_marker(markers, f"status={status or '?'} current_run_id={current_run_id}")
+        if open_runs:
+            _add_marker(markers, f"open task_runs ids={[ _task_field(r, 'id') for r in open_runs ]}")
+        hit = _matches_any(combined, (r"task archived with run still active", r"stale active run", r"archived[^\n]*active"))
+        if hit:
+            _add_marker(markers, hit)
+        return FailureClassification(
+            "queue_metadata_leak_or_stale_active_run",
+            "high" if current_run_id or open_runs else "medium",
+            markers,
+            "Queue metadata mismatch found; emit dry-run CAS repair plan only, requiring reviewer approval and before/after row proof before any write.",
+        )
+
+    if status == "ready" and _matches_any(combined, (
+        r"respawn_guarded", r"skipped_nonspawnable", r"skipped_unassigned",
+        r"skipped_locked", r"claim_lost", r"skipped_per_profile_capped",
+        r"per[-_ ]profile cap", r"global cap", r"global_cap_deferred",
+        r"spawned\s*[:=]\s*0", r'"spawned"\s*:\s*0',
+    )):
+        for pattern in (
+            r"respawn_guarded[^\n,}]*", r"skipped_nonspawnable[^\n,}]*",
+            r"skipped_unassigned[^\n,}]*", r"skipped_locked[^\n,}]*",
+            r"skipped_per_profile_capped[^\n,}]*", r"global_cap_deferred[^\n,}]*",
+            r"claim_lost[^\n,}]*", r"spawned\s*[:=]\s*0[^\n]*", r'"spawned"\s*:\s*0',
+        ):
+            hit = _matches_any(combined, (pattern,))
+            if hit:
+                _add_marker(markers, hit)
+        return FailureClassification(
+            "ready_but_not_spawned", "high" if dispatch_context else "medium",
+            markers or ["ready task has dispatcher skip-bucket markers"],
+            "Ready row is intentionally deferred; show the exact skip bucket and do not mutate queue state until the guard/cap/assignment condition clears.",
+        )
+
+    if _matches_any(combined, (
+        r"worker exited cleanly \(rc=0\) without calling kanban_complete or kanban_block",
+        r"without calling kanban_complete or kanban_block",
+        r"protocol_violation",
+    )):
+        hit = _matches_any(combined, (r"worker exited cleanly[^\n]*", r"protocol_violation[^\n]*"))
+        if hit:
+            _add_marker(markers, hit)
+        return FailureClassification(
+            "protocol_violation", "high", markers,
+            "True lifecycle exit suspected; keep the completion/block gate and require log inspection or explicit retry instructions before unblocking.",
+        )
+
+    if _matches_any(combined, (
+        r"pid\s+\d+\s+not alive", r"exited with code\s+\d+", r"nonzero_exit",
+        r"killed by signal\s+\d+", r"signaled", r"outcome['\"]?\s*[:=]\s*['\"]?crashed",
+    )):
+        for pattern in (r"pid\s+\d+\s+not alive", r"exited with code\s+\d+", r"killed by signal\s+\d+", r"nonzero_exit", r"signaled"):
+            hit = _matches_any(combined, (pattern,))
+            if hit:
+                _add_marker(markers, hit)
+        return FailureClassification(
+            "pid_not_alive_or_nonzero_crash", "medium",
+            markers or ["latest failed run outcome=crashed"],
+            "Worker process crash evidence found; count toward breaker, inspect logs, and route replacement/review evidence if the original lane is superseded.",
+        )
+
+    failed = _recent_failed_runs(runs)
+    if failed or _task_field(task, "last_failure_error", None):
+        _add_marker(markers, f"failed_runs={[ _task_field(r, 'id') for r in failed[:3] ]}")
+        last_error = _task_field(task, "last_failure_error", None)
+        if last_error:
+            _add_marker(markers, str(last_error))
+    return FailureClassification(
+        "indeterminate", "low", markers,
+        "Insufficient decisive evidence; collect latest run row, event tail, worker log excerpt, dispatch bucket, and parent/time context before recovery.",
+    )
 
 
 def _active_hallucination_events(
@@ -220,6 +516,56 @@ def _generic_recovery_actions(task: Any, *, running: bool) -> list[DiagnosticAct
 # shape — for test convenience).
 
 RuleFn = Callable[[Any, list[Any], list[Any], int, dict], list[Diagnostic]]
+
+
+def _rule_failure_classifier(task, events, runs, now, cfg) -> list[Diagnostic]:
+    """Surface the read-only failure classifier in diagnostics output."""
+    if not cfg.get("enable_failure_classifier"):
+        return []
+    classification = classify_kanban_failure(
+        task,
+        events,
+        runs,
+        log_excerpt=str(cfg.get("log_excerpt") or ""),
+    )
+    failureish = bool(
+        _recent_failed_runs(runs)
+        or _task_field(task, "last_failure_error", None)
+        or _task_field(task, "status", None) in {"scheduled"}
+        or _task_field(task, "block_kind", None) == "dependency"
+    )
+    if classification.failure_class == "indeterminate" and not failureish:
+        return []
+
+    severity = {"high": "error", "medium": "warning", "low": "warning"}.get(
+        classification.confidence, "warning"
+    )
+    task_id = _task_field(task, "id")
+    actions: list[DiagnosticAction] = []
+    if task_id:
+        actions.append(DiagnosticAction(
+            kind="cli_hint",
+            label=f"Inspect task runs/logs for {task_id}",
+            payload={"command": f"hermes kanban show {task_id} --json && hermes kanban log {task_id} --tail 12000"},
+            suggested=True,
+        ))
+    return [Diagnostic(
+        kind="failure_classifier",
+        severity=severity,
+        title=(
+            f"Failure classifier: {classification.failure_class} "
+            f"({classification.confidence})"
+        ),
+        detail=classification.safe_recovery_hint,
+        actions=actions,
+        first_seen_at=now,
+        last_seen_at=now,
+        count=1,
+        data={
+            **classification.to_dict(),
+            "classifier_version": FAILURE_CLASSIFIER_VERSION,
+        },
+    )]
 
 
 def _aux_slot_explicit(slot: Any) -> bool:
@@ -1003,6 +1349,7 @@ def _rule_stranded_in_ready(task, events, runs, now, cfg) -> list[Diagnostic]:
 # Registry — order matters: rules higher on the list render first when
 # severity ties. Add new rules here.
 _RULES: list[RuleFn] = [
+    _rule_failure_classifier,
     _rule_hallucinated_cards,
     _rule_triage_aux_unavailable,
     _rule_prose_phantom_refs,
@@ -1017,6 +1364,7 @@ _RULES: list[RuleFn] = [
 # Known kinds (for the UI's filter / legend / i18n keys). Update when
 # rules are added.
 DIAGNOSTIC_KINDS = (
+    "failure_classifier",
     "hallucinated_cards",
     "triage_aux_unavailable",
     "prose_phantom_refs",
