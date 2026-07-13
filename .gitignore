@@ -50,8 +50,11 @@
 /scripts/strategy_discovery.py
 
 # Profile crontabs (dispatch config) — track ONLY jobs.json, exclude profile runtime/state.
+# Re-include chain must keep every ancestor dir non-excluded (git rule).
 !/profiles/
 /profiles/*
+!/profiles/*/
+/profiles/*/*
 !/profiles/*/cron/
 /profiles/*/cron/*
 !/profiles/*/cron/jobs.json
