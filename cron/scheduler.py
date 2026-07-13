@@ -1303,6 +1303,141 @@ def _scan_assembled_cron_prompt(
     return assembled
 
 
+# Channel id for the #critical-alerts Discord channel, the structural
+# complement to #critical-alerts: scheduler-level faults that must never sit
+# silent (the missing-script "dead-pin" black-hole class) are routed here.
+# Reused by the dead-pin guard below. Do not invent a new channel — this is
+# the one the dqsh_audit_watchdog cron (0ead099b5eac) and other critical
+# alerts already target.
+_CRITICAL_ALERTS_CHANNEL_ID = "1521973787363508325"  # #critical-alerts (Discord)
+
+
+def _is_missing_script_error(script_output: str) -> bool:
+    """Return True if a ``_run_job_script`` failure is the missing-file class.
+
+    The missing-file class is ``"Script not found: <path>"`` (file absent) or
+    ``"Script path is not a file: <path>"`` (path exists but is not a regular
+    file, e.g. a directory). These are *permanent* misconfigurations — the job
+    will never run until the operator fixes the path — so they warrant an
+    auto-pause. Transient failures (non-zero exit, timeout, execution error)
+    are deliberately excluded: a script that exists but crashed this tick
+    should keep firing so a fixed version resumes and so we don't mask a real
+    error behind a paused job.
+    """
+    if not script_output:
+        return False
+    lowered = script_output.lower()
+    return "script not found" in lowered or "not a file" in lowered
+
+
+def _alert_critical_alerts(message: str) -> None:
+    """Best-effort delivery of ``message`` to the #critical-alerts Discord channel.
+
+    This is the LOUD escape hatch for scheduler-level faults that must never
+    sit silent (the missing-script black-hole class). It prefers the gateway's
+    live Discord adapter when available, then falls back to ``logger.critical``
+    rather than raising — the operator still sees it in the scheduler log, and
+    the failure to alert is itself logged.
+
+    Fail-safe by design: a broken alert path must NEVER crash the scheduler
+    tick or prevent due jobs from running.
+    """
+    try:
+        from gateway.config import load_gateway_config, Platform
+        from tools.send_message_tool import _send_to_platform
+
+        config = load_gateway_config()
+        platform = Platform.DISCORD
+        pconfig = config.platforms.get(platform)
+        if pconfig and getattr(pconfig, "enabled", False):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            async def _emit() -> None:
+                await _send_to_platform(
+                    "discord",
+                    pconfig,
+                    _CRITICAL_ALERTS_CHANNEL_ID,
+                    message,
+                )
+
+            if loop is not None and loop.is_running():
+                asyncio.ensure_future(_emit())
+            else:
+                try:
+                    asyncio.run(_emit())
+                except RuntimeError:
+                    def _run() -> None:
+                        try:
+                            asyncio.run(_emit())
+                        except Exception:
+                            logger.exception("critical-alerts preflight send failed")
+                    try:
+                        concurrent.futures.ThreadPoolExecutor(max_workers=1).submit(_run)
+                    except Exception:
+                        logger.exception("critical-alerts preflight send failed")
+            return
+        else:
+            logger.warning(
+                "Discord not enabled — cannot route #critical-alerts preflight; "
+                "emitting via logger.critical instead"
+            )
+    except Exception:
+        logger.exception("Failed to deliver #critical-alerts preflight; logging instead")
+
+    # Hard fallback: the alert is always visible in the scheduler log even if
+    # Discord delivery is unavailable.
+    logger.critical("%s", message)
+
+
+def _handle_cron_dead_pin(job: dict, script_path: str, script_output: str) -> None:
+    """Alert #critical-alerts and auto-pause a job whose script is missing.
+
+    Called from both the no_agent and LLM fire paths when ``_run_job_script``
+    fails with the missing-file class. Only missing-file failures auto-pause;
+    transient failures (non-zero exit, timeout) alert (via the caller's normal
+    error path) but keep firing.
+
+    The job's schedule is left untouched — only the broken job is paused,
+    pending operator fix + resume. This is the structural fix for the
+    silent-dead-pin incident class (e.g. a job failing for days with no alert).
+    """
+    job_id = job["id"]
+    job_name = str(job.get("name") or job.get("prompt") or job_id or "cron job")
+    now_iso = _hermes_now().strftime("%Y-%m-%d %H:%M:%S")
+
+    alert = (
+        f"⚠ Cron dead-pin: job '{job_name}' references a script that does not exist.\n\n"
+        f"Job ID: {job_id}\n"
+        f"Script: {script_path}\n"
+        f"Script error: {script_output}\n\n"
+        f"Time: {now_iso}\n\n"
+        f"The job has been AUTO-PAUSED to stop the silent failure. Fix the script "
+        f"path (or restore the file) and resume it with "
+        f"cronjob(action='update', job_id='{job_id}', script='<correct path>') "
+        f"or cronjob(action='resume', job_id='{job_id}')."
+    )
+    _alert_critical_alerts(alert)
+
+    reason = f"dead-pin: script not found: {script_path}"
+    try:
+        from cron.jobs import pause_job
+        paused = pause_job(job_id, reason=reason)
+        if paused is None:
+            logger.warning(
+                "Dead-pin auto-pause: job '%s' not found (already removed?)", job_id
+            )
+        else:
+            logger.warning(
+                "Dead-pin auto-pause: job '%s' (%s) paused — %s", job_id, job_name, reason
+            )
+    except Exception as e:
+        # Never let a pause failure crash the tick; the alert already fired.
+        logger.error("Dead-pin auto-pause failed for job '%s': %s", job_id, e)
+
+
 def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
     """
     Execute a single cron job.
@@ -1378,6 +1513,11 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
                 f"**Status:** script failed\n\n"
                 f"{output}\n"
             )
+            # Dead-pin guard: a missing script (not a transient crash) must not
+            # fail silently forever. Alert #critical-alerts AND auto-pause the
+            # broken job so the operator sees it and fixes it.
+            if _is_missing_script_error(output):
+                _handle_cron_dead_pin(job, script_path, output)
             return False, doc, alert, output
 
         # Honour the wakeAgent gate as a silent signal — `wakeAgent: false`
@@ -1442,6 +1582,14 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
     if script_path:
         prerun_script = _run_job_script(script_path)
         _ran_ok, _script_output = prerun_script
+        if _is_missing_script_error(_script_output):
+            # Dead-pin guard (LLM path): the script is missing. The prompt
+            # builder will still inject a "## Script Error" block so the agent
+            # reports it, but a missing-file failure must ALSO escalate:
+            # alert #critical-alerts and auto-pause the job so it stops
+            # silently failing. We fire it once here (on the pre-check run)
+            # rather than inside _build_job_prompt to avoid double-handling.
+            _handle_cron_dead_pin(job, script_path, _script_output)
         if _ran_ok and not _parse_wake_gate(_script_output):
             logger.info(
                 "Job '%s' (ID: %s): wakeAgent=false, skipping agent run",
