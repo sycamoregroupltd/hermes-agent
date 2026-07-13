@@ -636,3 +636,108 @@ class TestRunJobEnvVarCleanup:
         assert os.environ.get("HERMES_SESSION_PLATFORM") is None
         assert os.environ.get("HERMES_SESSION_CHAT_ID") is None
         assert os.environ.get("HERMES_SESSION_CHAT_NAME") is None
+
+
+class TestRunJobDeadPinFireTime:
+    """Fire-time dead-pin behavior: a missing script auto-pauses the job;
+    a transient failure (non-zero exit) alerts but does NOT auto-pause.
+
+    These exercise the real ``run_job`` entry point (no_agent path) so the
+    acceptance criteria are proven end-to-end, not just the helper.
+    """
+
+    def _make_job(self, cron_env, monkeypatch, script, no_agent=True):
+        import json as _json
+        from tools.cronjob_tools import cronjob
+
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        # Create time uses the enable-time guard, so seed an existing script.
+        (cron_env / "scripts" / "seed.py").write_text('print("ok")\n')
+        created = _json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="probe",
+            script="seed.py",
+            no_agent=no_agent,
+        ))
+        job_id = created["job_id"]
+        # Now point the job at the (possibly missing) script directly in the
+        # persisted store, bypassing the enable-time guard, and read it back.
+        from cron.jobs import update_job, get_job
+        update_job(job_id, {"script": script, "no_agent": no_agent})
+        job = get_job(job_id)
+        assert job is not None
+        return job
+
+    def test_missing_script_autopauses_no_agent(self, cron_env, monkeypatch):
+        from cron.scheduler import run_job
+        from cron.jobs import get_job
+
+        job = self._make_job(cron_env, monkeypatch, "vanished.py", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert "Script not found" in err
+
+        paused = get_job(job_id)
+        assert paused["enabled"] is False
+        assert paused["state"] == "paused"
+        assert paused["paused_reason"].startswith("dead-pin: script not found:")
+        # Schedule is untouched — only the broken job is paused.
+        assert paused["schedule"] is not None
+
+    def test_not_a_file_autopauses(self, cron_env, monkeypatch):
+        from cron.scheduler import run_job
+        from cron.jobs import get_job
+
+        # Create a directory at the target path so it "exists but is not a file".
+        (cron_env / "scripts" / "adir").mkdir()
+        job = self._make_job(cron_env, monkeypatch, "adir", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert "not a file" in err
+
+        paused = get_job(job_id)
+        assert paused["enabled"] is False
+        assert paused["state"] == "paused"
+
+    def test_transient_failure_does_not_autopause(self, cron_env, monkeypatch):
+        from cron.scheduler import run_job
+        from cron.jobs import get_job
+
+        script = cron_env / "scripts" / "boom.py"
+        script.write_text("import sys\nsys.exit(3)\n")
+        job = self._make_job(cron_env, monkeypatch, "boom.py", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert "exited with code 3" in err
+
+        still_enabled = get_job(job_id)
+        # Transient failure must NOT auto-pause: the job keeps firing.
+        assert still_enabled["state"] != "paused"
+        assert still_enabled["enabled"] is True
+
+    def test_missing_script_autopauses_llm_path(self, cron_env, monkeypatch):
+        """LLM path (no_agent=False) also auto-pauses on a missing script."""
+        from cron.scheduler import run_job
+        from cron.jobs import get_job
+
+        job = self._make_job(cron_env, monkeypatch, "gone.py", no_agent=False)
+        job_id = job["id"]
+
+        # LLM path will fail downstream (no model), but the dead-pin guard
+        # must have already fired during the pre-check script run.
+        try:
+            run_job(job)
+        except Exception:
+            pass
+
+        paused = get_job(job_id)
+        assert paused["enabled"] is False
+        assert paused["state"] == "paused"
+        assert paused["paused_reason"].startswith("dead-pin: script not found:")
