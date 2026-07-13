@@ -220,6 +220,9 @@ class TestCronjobToolScript:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        # Dead-pin guard: the script file must exist on disk at create time.
+        (cron_env / "scripts" / "monitor.py").write_text('print("ok")\n')
+
         result = json.loads(cronjob(
             action="create",
             schedule="every 1h",
@@ -240,6 +243,9 @@ class TestCronjobToolScript:
         ))
         job_id = create_result["job_id"]
 
+        # Dead-pin guard: the new script must exist on disk at update time.
+        (cron_env / "scripts" / "new_script.py").write_text('print("ok")\n')
+
         update_result = json.loads(cronjob(
             action="update",
             job_id=job_id,
@@ -251,6 +257,9 @@ class TestCronjobToolScript:
     def test_clear_script(self, cron_env, monkeypatch):
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
+
+        # Dead-pin guard: the initial script must exist on disk at create time.
+        (cron_env / "scripts" / "some_script.py").write_text('print("ok")\n')
 
         create_result = json.loads(cronjob(
             action="create",
@@ -271,6 +280,9 @@ class TestCronjobToolScript:
     def test_list_shows_script(self, cron_env, monkeypatch):
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
+
+        # Dead-pin guard: the script must exist on disk at create time.
+        (cron_env / "scripts" / "data_collector.py").write_text('print("ok")\n')
 
         cronjob(
             action="create",
@@ -439,6 +451,9 @@ class TestCronjobToolScriptValidation:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        # Dead-pin guard: the script file must exist on disk at create time.
+        (cron_env / "scripts" / "monitor.py").write_text('print("ok")\n')
+
         result = json.loads(cronjob(
             action="create",
             schedule="every 1h",
@@ -472,6 +487,9 @@ class TestCronjobToolScriptValidation:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        # Dead-pin guard: the initial script must exist on disk at create time.
+        (cron_env / "scripts" / "monitor.py").write_text('print("ok")\n')
+
         create_result = json.loads(cronjob(
             action="create",
             schedule="every 1h",
@@ -499,6 +517,84 @@ class TestCronjobToolScriptValidation:
             script="C:\\Users\\evil\\script.py",
         ))
         assert result["success"] is False
+
+
+class TestDeadPinGuardEnableTime:
+    """Dead-pin guard (enable-time): a script file that does not exist on disk
+    must be rejected at create/update time with a clear error.
+
+    This closes the silent-failure class where a job is created pointing at a
+    non-existent script and then fails every tick with no operator feedback.
+    """
+
+    def test_create_rejects_nonexistent_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+            script="does_not_exist.py",
+        ))
+        assert result["success"] is False
+        # Clear, actionable error naming the dead-pin.
+        err = result["error"].lower()
+        assert "not found" in err or "not exist" in err or "dead-pin" in err
+
+    def test_update_rejects_nonexistent_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        create_result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+        ))
+        job_id = create_result["job_id"]
+
+        update_result = json.loads(cronjob(
+            action="update",
+            job_id=job_id,
+            script="vanished.py",
+        ))
+        assert update_result["success"] is False
+        err = update_result["error"].lower()
+        assert "not found" in err or "not exist" in err or "dead-pin" in err
+
+    def test_update_rejects_nonexistent_subdir_script(self, cron_env, monkeypatch):
+        """A missing script nested in a subdir must also be rejected."""
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        create_result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+        ))
+        job_id = create_result["job_id"]
+
+        update_result = json.loads(cronjob(
+            action="update",
+            job_id=job_id,
+            script="monitors/vanished.py",
+        ))
+        assert update_result["success"] is False
+
+    def test_create_allows_existing_script(self, cron_env, monkeypatch):
+        """A script that exists on disk is accepted (no regression)."""
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        (cron_env / "scripts" / "exists.py").write_text('print("ok")\n')
+        result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+            script="exists.py",
+        ))
+        assert result["success"] is True
+        assert result["job"]["script"] == "exists.py"
 
 
 class TestRunJobEnvVarCleanup:
