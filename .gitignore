@@ -1,18 +1,61 @@
-# === Hermes config repo: DEFAULT-DENY ===
-# Ignore everything at the root...
+# === Hermes config + automation repo: DEFAULT-DENY ===
+# Ignore everything at the root by default...
 /*
+
 # ...then re-include ONLY non-secret config worth versioning.
 !/.gitignore
 !/config.yaml
 !/profile.yaml
-!/profile.yaml
 !/SOUL.md
 !/shell-hooks-allowlist.json
 !/context_length_cache.yaml
+
 # cron: descend into dir, but track only the job definitions
 !/cron/
 /cron/*
 !/cron/jobs.json
+
+# === Automation source-of-truth (task t_376ecb33, 2026-07-13) ===
+# Track durable automation scripts (the governor/probe fleet substrate).
+# Default-deny keeps all secret/runtime material out unless explicitly re-included.
+!/scripts/
+/scripts/*
+!/scripts/*.py
+!/scripts/*.sh
+!/scripts/*.md
+
+# Deny scratch / runtime / cache subdirs under scripts/
+/scripts/archive/
+/scripts/backups/
+/scripts/logs/
+/scripts/state/
+/scripts/.tmp-backups/
+/scripts/staging/
+/scripts/__pycache__/
+/scripts/.pytest_cache/
+/scripts/.ruff_cache/
+
+# SECURITY GATE: deny files containing HARDCODED SECRETS.
+# These are real credentials committed in source and must NOT enter version control.
+# A remediation task (see runbook) externalizes them to env/secret store.
+#   gen_admin_jwt.py            -> hardcoded JWT signing SECRET
+#   pnl_tracker.py              -> hardcoded X-Sycode-Token
+#   dgx_nous_proxy_watchdog.py  -> static Bearer hermes-watchdog
+#   macro_regime_adaptor.py     -> hardcoded DB_PASSWORD
+#   strategy_discovery.py       -> hardcoded DB_PASSWORD
+/scripts/gen_admin_jwt.py
+/scripts/pnl_tracker.py
+/scripts/dgx_nous_proxy_watchdog.py
+/scripts/macro_regime_adaptor.py
+/scripts/strategy_discovery.py
+
+# Profile crontabs (dispatch config) — track ONLY jobs.json, exclude profile runtime/state.
+!/profiles/
+/profiles/*
+!/profiles/*/cron/
+/profiles/*/cron/*
+!/profiles/*/cron/jobs.json
+
 # NEVER track (belt-and-suspenders against future allowlist edits):
 auth.json
 auth.json.*

@@ -1,0 +1,1 @@
+/home/frank/.hermes/scripts/sycode-token-safe-curl.sh

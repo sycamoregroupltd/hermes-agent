@@ -1,0 +1,1 @@
+/home/frank/sycode-trading/data-lake/run-export.sh

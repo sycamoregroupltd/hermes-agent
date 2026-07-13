@@ -1,0 +1,49 @@
+{
+  "jobs": [
+    {
+      "id": "6fa28fbe5d76",
+      "name": "signal_fingerprints_incremental_refresh",
+      "prompt": "Run the no_agent script signal_fingerprints_incremental_refresh.py to incrementally insert missing public.signal_fingerprints rows from public.signal_journeys. Paper/data-only additive refresh; no deletes, updates, live trading, or deploys. Script stdout is the user-facing report; empty stdout means no-op/silent.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "signal_fingerprints_incremental_refresh.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null,
+        "completed": 2
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-03T21:05:01.258850+01:00",
+      "paused_reason": "t_564bdeab: db-architect profile-local cron store is not live; duplicated/live elsewhere, so disabled to prevent registered-but-not-ticking false safety",
+      "created_at": "2026-06-25T22:56:27.795294+01:00",
+      "next_run_at": "2026-07-01T20:34:52.795537+01:00",
+      "last_run_at": "2026-07-01T20:19:52.795537+01:00",
+      "last_status": "error",
+      "last_error": "Script timed out after 120s: /home/frank/.hermes/profiles/db-architect/scripts/signal_fingerprints_incremental_refresh.py",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_93272f80",
+      "fire_claim": null,
+      "disabled_by": "t_564bdeab",
+      "disabled_reason": "t_564bdeab: db-architect profile-local cron store is not live; duplicated/live elsewhere, so disabled to prevent registered-but-not-ticking false safety"
+    }
+  ],
+  "updated_at": "2026-07-03T21:05:01.258850+01:00"
+}

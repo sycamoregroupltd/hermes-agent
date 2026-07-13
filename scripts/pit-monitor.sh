@@ -1,0 +1,1 @@
+/home/frank/.hermes/profiles/sycode-trading-pm/scripts/pit-monitor.sh

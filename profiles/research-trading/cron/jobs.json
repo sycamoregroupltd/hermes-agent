@@ -1,0 +1,47 @@
+{
+  "jobs": [
+    {
+      "id": "bb5b654e7533",
+      "name": "vpin-daily-compute",
+      "prompt": "Run the VPIN (Volume-Synchronized Probability of Informed Trading) daily computation for monitoring crypto order flow toxicity.\n\nUse the trading-ml venv (source ~/.hermes/venvs/trading-ml/bin/activate) and run:\n  cd /home/frank/sycode-trading\n  python execution/vpin_calculator.py --symbols BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT --timeframe 5m --lookback 60 --buckets 50 --window 50 --calibrate\n\nReport:\n1. Current VPIN values for each symbol (latest bar)\n2. Any ENTRY signals detected (VPIN > 0.113 AND Volume Z > 2)\n3. Trends in VPIN over the past week (rising/falling)\n4. Calibration comparison with historical baseline\n\nRead and summarize the combined summary JSON from /home/frank/trading-data/vpin/vpin_combined_5m.json and the calibration file from /home/frank/trading-data/vpin/vpin_calibration_5m.json after the run completes. Deliver a clean daily briefing.",
+      "skills": [
+        "trading-data-analysis"
+      ],
+      "skill": "trading-data-analysis",
+      "model": "tencent/hy3:free",
+      "provider": "nous",
+      "provider_snapshot": "openai-codex",
+      "model_snapshot": "gpt-5.5",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 6 * * *",
+        "display": "0 6 * * *"
+      },
+      "schedule_display": "0 6 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 2
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T09:31:52.709701+01:00",
+      "next_run_at": "2026-07-14T06:00:00+01:00",
+      "last_run_at": "2026-07-13T06:02:44.358039+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-13T06:02:44.358302+01:00"
+}

@@ -1,0 +1,1 @@
+/home/frank/.hermes/profiles/jarvis/scripts/deploy_sycodeserver.sh

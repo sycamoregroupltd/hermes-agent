@@ -1,0 +1,45 @@
+{
+  "jobs": [
+    {
+      "id": "d698b31d6e9a",
+      "name": "ETH term inversion paper monitor (every 15m)",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "run_eth_term_inversion_monitor.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null,
+        "completed": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T00:26:10.608266+01:00",
+      "next_run_at": "2026-07-05T00:41:15.108656+01:00",
+      "last_run_at": "2026-07-05T00:26:15.108656+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-05T00:30:22.799873+01:00"
+}

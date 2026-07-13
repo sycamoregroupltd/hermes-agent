@@ -1,0 +1,126 @@
+{
+  "jobs": [
+    {
+      "id": "5914a0f93c34",
+      "name": "arena-24h-monitor-watchdog",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "arena-24h-monitor-gate.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": 48,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-04T15:14:48.587341+01:00",
+      "next_run_at": "2026-07-04T15:44:48.587605+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "2a5a0f58b815",
+      "name": "arena-24h-monitor-closeout",
+      "prompt": "## Arena 24h Monitoring Closeout \u2014 t_90058b15\n\nThis is the FINAL closeout of the Arena ML activation 24h monitoring window (started ~2026-07-04T13:55Z, now completed). You are replacing the original nervous-system-engineer worker.\n\n### Background\n\nThe Arena scheduler was activated at SHA 205c21f4 with new env flags: ENABLE_PROMPT_EVOLUTION=true, ML_DATA_MINING_ENABLED=true, ENABLE_ARENA_ML_GATE_BYPASS=true. The task is to produce a 24h monitoring summary with metrics, anomalies, rollback decision, and evidence the pipeline remained paper-only.\n\n### Required Checks (read-only)\n\n1. **Runtime health**: curl http://localhost:3001/ready, /health, /version\n2. **Rollback triggers**: 0 live trade_intents, 0 closed-loop strategies with liveTradingApproved=true, healthy /ready\n3. **Arena activity**: policy snapshots, arena decisions, strategy outcomes, used_for_rating counts\n4. **ML registration**: new strategies with source=arena_ml_closed_loop, paper_autotrader versions, prompt runs, prompt drafts\n5. **Data miner**: new mining runs, actionable pattern count\n6. **Trade intents**: live=0, paper counts, any approved/executed since activation\n\n### DB Queries\n\nUse PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres. Key tables:\n- strategy_policy_snapshots (created_at, version)\n- strategy_arena_decisions (decided_at, winner_strategy_id)\n- strategy_decision_logs (created_at, would_trade)\n- strategy_outcomes (created_at, was_executed, is_simulated, used_for_rating)\n- strategies (created_at, trading_mode, meta->>source)\n- trade_intents (created_at, trading_mode, status)\n- ml_mining_runs (created_at, patterns_discovered, actionable_patterns)\n\n### Decision\n\n- If ANY rollback trigger is hit (live trading, live trade_intents, closed-loop promotion), block the final closeout and escalate.\n- If the pipeline remained paper-only with 0 live activity, produce the final summary and mark the task complete.\n- If no ML candidates were accepted (0 new arena_ml_closed_loop strategies), note this as a gap but do NOT block the task \u2014 this is the known upstream bottleneck.\n\n### Output\n\n1. Persist a final monitoring note to Obsidian: /home/frank/obsidian/quant-team/devops/2026-07-05-arena-24h-monitor-closeout-t_90058b15.md\n2. Produce the final evidence artifact in the workspace\n3. Complete the kanban task",
+      "skills": [
+        "hermes-agent",
+        "obsidian-knowledge-management"
+      ],
+      "skill": "hermes-agent",
+      "model": "tencent/hy3:free",
+      "provider": "nous",
+      "provider_snapshot": "openai-codex",
+      "model_snapshot": "gpt-5.5",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-07-05T14:00:00+01:00",
+        "display": "once at 2026-07-05 14:00"
+      },
+      "schedule_display": "once at 2026-07-05 14:00",
+      "repeat": {
+        "times": 1,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-04T15:15:04.949904+01:00",
+      "next_run_at": "2026-07-05T14:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "42b6cee6e53b",
+      "name": "persistence-health-watch",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "persistence-health-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 5,
+        "display": "every 5m"
+      },
+      "schedule_display": "every 5m",
+      "repeat": {
+        "times": null,
+        "completed": 4
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-04T16:03:16.660541+01:00",
+      "next_run_at": "2026-07-04T19:34:42.977469+01:00",
+      "last_run_at": "2026-07-04T19:29:42.977469+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-09T05:25:51.677212+00:00"
+}

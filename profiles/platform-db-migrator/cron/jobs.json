@@ -1,0 +1,83 @@
+{
+  "jobs": [
+    {
+      "id": "4af7d6428165",
+      "name": "signal-pnl-orphan-monitor",
+      "prompt": "Run the orphan monitoring script to check if the signal_pnl_points orphan count is stable after FK application. Report whether orphan count is stable (no new orphans) or still growing.",
+      "skills": [],
+      "skill": null,
+      "model": "tencent/hy3:free",
+      "provider": "nous",
+      "provider_snapshot": "openai-codex",
+      "model_snapshot": "gpt-5.5",
+      "base_url": null,
+      "script": "monitor-signal-pnl-orphans.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": 4,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-04T18:48:10.055429+01:00",
+      "next_run_at": "2026-07-05T00:48:10.087112+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "5df549e0d570",
+      "name": "catalyst-bridge-to-market-news",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "bridge-catalyst.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T17:11:04.318453+01:00",
+      "next_run_at": "2026-07-05T17:41:04.318548+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    }
+  ],
+  "updated_at": "2026-07-09T05:25:51.822058+00:00"
+}

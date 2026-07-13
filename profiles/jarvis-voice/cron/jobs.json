@@ -1,0 +1,166 @@
+{
+  "jobs": [
+    {
+      "id": "08a1595d21e4",
+      "name": "kanban-voice-escalation",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "kanban_voice_escalation.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 65
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-06-18T14:34:52.828297+01:00",
+      "paused_reason": null,
+      "created_at": "2026-06-17T08:43:46.301314+01:00",
+      "next_run_at": "2026-06-18T15:00:00+01:00",
+      "last_run_at": "2026-06-18T14:30:05.653483+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "810f6acab7fa",
+      "name": "gateway-liveness-cross-watch",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "oob_gateway_liveness_probe.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null,
+        "completed": 1401
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-02T15:50:04.273285+01:00",
+      "next_run_at": "2026-07-13T17:34:48.153194+01:00",
+      "last_run_at": "2026-07-13T17:24:48.153194+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "7b9f44d6c2a1",
+      "name": "cron-registered-ticking-detector",
+      "prompt": "No-agent detector for enabled profile-local cron jobs that are registered but not ticking: scans ~/.hermes/profiles/*/cron/jobs.json for enabled jobs, requires fresh ticker_heartbeat evidence, and flags enabled jobs whose last_run_at is older than 2x schedule. Empty stdout is healthy; non-empty stdout alerts Discord #critical-alerts. Created by t_564bdeab.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "cron_registered_ticking_detector.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null,
+        "completed": 1235
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T21:05:01.258850+01:00",
+      "next_run_at": "2026-07-13T17:37:48.155601+01:00",
+      "last_run_at": "2026-07-13T17:27:48.155601+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "7a015214c66a",
+      "name": "deterministic-verdict-router",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "verdict_router.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null,
+        "completed": 1106
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-04T16:23:16.048095+01:00",
+      "next_run_at": "2026-07-13T17:42:48.240064+01:00",
+      "last_run_at": "2026-07-13T17:32:48.240064+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-13T17:32:48.240134+01:00"
+}
