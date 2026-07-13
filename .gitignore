@@ -36,18 +36,11 @@
 /scripts/.ruff_cache/
 
 # SECURITY GATE: deny files containing HARDCODED SECRETS.
-# These are real credentials committed in source and must NOT enter version control.
-# A remediation task (see runbook) externalizes them to env/secret store.
-#   gen_admin_jwt.py            -> hardcoded JWT signing SECRET
-#   pnl_tracker.py              -> hardcoded X-Sycode-Token
-#   dgx_nous_proxy_watchdog.py  -> static Bearer hermes-watchdog
-#   macro_regime_adaptor.py     -> hardcoded DB_PASSWORD
-#   strategy_discovery.py       -> hardcoded DB_PASSWORD
-/scripts/gen_admin_jwt.py
-/scripts/pnl_tracker.py
-/scripts/dgx_nous_proxy_watchdog.py
-/scripts/macro_regime_adaptor.py
-/scripts/strategy_discovery.py
+# These were real credentials committed in source and previously blocked the
+# automation version-control commit (runbook t_376ecb33). Remediation task
+# t_238b41fd externalized all 5 to env / the existing secret store; they now pass
+# the pre-commit secret scan (runbook section 6) and are tracked like other
+# automation source. The deny list is kept empty on purpose — see runbook.
 
 # Profile crontabs (dispatch config) — track ONLY jobs.json, exclude profile runtime/state.
 # Re-include chain must keep every ancestor dir non-excluded (git rule).
