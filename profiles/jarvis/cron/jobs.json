@@ -5765,6 +5765,42 @@
       "workdir": "/home/frank/.hermes/profiles/jarvis/scripts",
       "disabled_by": "t_5b07664c",
       "disabled_reason": "t_5b07664c: staged for review in disabled/paused state. To activate: review, then set enabled=true AND (separately) arm LIVE=true per the staging runbook. Rehomed from devops store (t_c8241b86 GATE B) to jarvis live store."
+    },
+    {
+      "id": "eaf7ec9955df",
+      "name": "board-pm-triage-sycode-trading",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "board_pm_triage_sycode_trading.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-14T20:00:00+01:00",
+      "paused_reason": "registered inactive pending review (task t_2ee87d1b); enable only after guardian approval",
+      "created_at": "2026-07-04T07:24:09.388425+01:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
     }
   ],
   "updated_at": "2026-07-29T06:10:58.954209+01:00"
