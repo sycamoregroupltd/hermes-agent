@@ -5886,6 +5886,44 @@
         "delegation"
       ],
       "workdir": null
+    },
+    {
+      "id": "5be00afb4791",
+      "name": "dgx-board-staleness-dispatch-gap",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "base_url": null,
+      "script": "dgx_board_sweep_staleness.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 */4 * * *",
+        "display": "0 */4 * * *"
+      },
+      "schedule_display": "0 */4 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": false,
+      "state": "review_required",
+      "paused_at": null,
+      "paused_reason": "REVIEW-REQUIRED (ADR t_05773565 Card 1, t_4057c1bc): no-agent dispatch-gap probe. os-reviewer must approve before enabling. Observability-only; reuses existing discord:#fleet-reports channel, no new credential.",
+      "created_at": "2026-07-14T09:34:16.758873+00:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
     }
   ],
   "updated_at": "2026-07-13T17:33:46.696211+01:00"
