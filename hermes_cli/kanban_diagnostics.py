@@ -126,6 +126,22 @@ class FailureClassification:
     confidence: str
     evidence_markers: list[str]
     safe_recovery_hint: str
+    # INVARIANT: a failure classifier result NEVER carries ``needs_input``.
+    # ``needs_input`` is reserved for an *explicit* worker ``kanban_block(
+    # kind="needs_input")`` call (Frank gate / credential / deploy /
+    # irreversible DDL). Technical-failure recurrences are retryable and must
+    # be routed as ``transient`` (or ``dependency``), so routing/escalation
+    # cannot collapse them into a human-input gate. ``suggested_block_kind``
+    # is derived from ``failure_class`` and is guaranteed never to be
+    # ``needs_input`` (see ``_derive_suggested_block_kind`` below).
+    suggested_block_kind: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.suggested_block_kind:
+            object.__setattr__(
+                self, "suggested_block_kind",
+                _derive_suggested_block_kind(self.failure_class),
+            )
 
     def to_dict(self) -> dict:
         return {
@@ -133,10 +149,55 @@ class FailureClassification:
             "confidence": self.confidence,
             "evidence_markers": list(self.evidence_markers),
             "safe_recovery_hint": self.safe_recovery_hint,
+            "suggested_block_kind": self.suggested_block_kind,
         }
 
 
-FAILURE_CLASSIFIER_VERSION = "kanban-failure-classifier-v1"
+# Every technical-failure class maps to a typed, auto-recoverable block kind.
+# The circuit breaker uses this to stamp ``block_kind`` on the auto-block so
+# routing/escalation can treat it correctly. ``needs_input`` is deliberately
+# absent: only an explicit worker ``kanban_block(kind="needs_input")`` may set
+# that. ``dependency_time_gate`` becomes ``dependency`` (waits in ``todo``,
+# never a human gate); everything else is ``transient`` (retryable crash/
+# provider/quota recurrence).
+_FAILURE_CLASS_TO_BLOCK_KIND = {
+    "provider_error": "transient",
+    "provider_pre_reasoning": "transient",
+    "skill_preload_crash": "transient",
+    "protocol_violation": "transient",
+    "pid_not_alive_or_nonzero_crash": "transient",
+    "workspace_spawn_config_failure": "transient",
+    "ready_but_not_spawned": "transient",
+    "queue_metadata_leak_or_stale_active_run": "transient",
+    "dependency_time_gate": "dependency",
+    "budget_exhausted": "transient",
+    "indeterminate": "transient",
+}
+
+
+# Canonical set of auto-assignable block kinds (anything a classifier/breaker
+# may stamp without an explicit human decision).
+_AUTO_BLOCK_KINDS = {"transient", "dependency"}
+
+
+def _derive_suggested_block_kind(failure_class: str) -> str:
+    """Map a failure class to its typed block kind, never ``needs_input``.
+
+    Falls back to ``transient`` for unknown classes so the breaker always
+    stamps a typed, auto-recoverable block rather than an un-typed one that
+    routing would otherwise collapse to a generic human gate.
+    """
+    return _FAILURE_CLASS_TO_BLOCK_KIND.get(failure_class, "transient")
+
+
+def suggested_block_kind_for(failure_class: str) -> str:
+    """Public helper: typed block kind for a failure class (never needs_input)."""
+    kind = _derive_suggested_block_kind(failure_class)
+    # Defense in depth: refuse to ever suggest a human-input gate.
+    return kind if kind in _AUTO_BLOCK_KINDS else "transient"
+
+
+FAILURE_CLASSIFIER_VERSION = "kanban-failure-classifier-v2"
 
 FAILURE_CLASSES = (
     "provider_error",
@@ -148,6 +209,7 @@ FAILURE_CLASSES = (
     "ready_but_not_spawned",
     "queue_metadata_leak_or_stale_active_run",
     "dependency_time_gate",
+    "budget_exhausted",
     "indeterminate",
 )
 
@@ -451,6 +513,60 @@ def classify_kanban_failure(
             "pid_not_alive_or_nonzero_crash", "medium",
             markers or ["latest failed run outcome=crashed"],
             "Worker process crash evidence found; count toward breaker, inspect logs, and route replacement/review evidence if the original lane is superseded.",
+        )
+
+    # --- recoverable iteration-budget exhaustion (dispatcher goal-mode kill) ---
+    # When a goal-mode worker exhausts its iteration budget the dispatcher stamps
+    # ``last_failure_error`` with the exact prefix below and emits a ``gave_up``
+    # (or ``timed_out``) event carrying ``budget_used``/``budget_max``.
+    # This is *recoverable*: clearing the stale error + resetting the dispatcher
+    # failure counter and re-queuing lets the next dispatch attempt resume or
+    # retry. It must NOT be classified as ``indeterminate`` (which silently
+    # strands the card with a no-op recovery hint). It must NOT auto-promote
+    # either — see ``budget_exhausted_recovery`` rules below.
+    _budget_patterns = (
+        r"Iteration budget exhausted\s*\(",
+        r"budget used\s*=\s*\d+\s*,\s*budget_max\s*=",
+        r"effective_limit",
+    )
+    _budget_hit = _matches_any(combined, _budget_patterns)
+    if _budget_hit or any(
+        _parse_payload(e).get("budget_used") is not None
+        for e in events
+    ):
+        _add_marker(markers, _budget_hit or "event.payload.budget_used present")
+        # Look at the most recent run/event to decide auto-retry vs escalate.
+        # A single exhaustion with no deeper crash error is a candidate for an
+        # automatic bounded-retry reset; repeated exhaustion (consecutive
+        # failures already > 1) or an embedded genuine error is escalated to a
+        # human with a verdict instead of being silently re-stranded.
+        cf = _task_field(task, "consecutive_failures", 0) or 0
+        embedded_error = (
+            _matches_any(combined, _PROVIDER_PATTERNS)
+            or _matches_any(combined, (
+                r"pid\s+\d+\s+not alive",
+                r"exited with code\s+\d+",
+                r"killed by signal",
+            ))
+        )
+        if embedded_error or int(cf) > 1:
+            action = (
+                "ESCALATE: iteration budget exhausted repeatedly or with an "
+                "embedded provider/crash error. Assign a named reviewer; do NOT "
+                "auto-retry (it would re-strand). Clear the stale error only "
+                "after the reviewer records a verdict, then re-queue once."
+            )
+        else:
+            action = (
+                "AUTO-RECOVER (bounded): clear last_failure_error, reset the "
+                "dispatcher failure counter, and re-queue once with a bounded "
+                "backoff. If it re-exhausts, escalate to a human with a verdict."
+            )
+        return FailureClassification(
+            "budget_exhausted",
+            "high" if (embedded_error or int(cf) > 1) else "medium",
+            markers,
+            action,
         )
 
     failed = _recent_failed_runs(runs)
