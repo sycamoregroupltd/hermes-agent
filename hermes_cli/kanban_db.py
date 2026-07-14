@@ -99,7 +99,21 @@ _log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_STATUSES = {"triage", "todo", "scheduled", "ready", "running", "blocked", "review", "done", "archived"}
+VALID_STATUSES = {"triage", "todo", "scheduled", "ready", "running", "blocked",
+                   "review", "done", "archived", "completed_pending_review"}
+
+# A worker exited rc=0 while its task was still ``running`` — it answered
+# conversationally without calling ``kanban_complete`` / ``kanban_block``.
+# Overwhelmingly the *work* succeeded and only the paperwork was skipped, so
+# this is NOT a task failure and must never ride into the circuit-breaker
+# auto-block path (that generated 9+ perpetual "clean-exit sweep" cards that
+# were themselves not a fix — see jarvis-os t_83fbc6f2). When the bounded
+# protocol-violation retry streak is exhausted, the task reconciles to
+# ``completed_pending_review``: it is excluded from ready/review dispatch (so
+# the dispatcher never respawns it and never trips the breaker), but a worker
+# (or human) can still ``kanban_complete`` / ``kanban_block`` it to finish or
+# to escalate. The state carries no failure counter increment.
+PENDING_REVIEW_STATUSES = {"completed_pending_review"}
 VALID_INITIAL_STATUSES = {"running", "blocked"}
 
 # Typed block reasons. Distinguishes the two fundamentally different things a
@@ -5241,7 +5255,7 @@ def complete_task(
                        block_kind   = NULL,
                        block_recurrences = 0
                  WHERE id = ?
-                   AND status IN ('running', 'ready', 'blocked')
+                   AND status IN ('running', 'ready', 'blocked', 'completed_pending_review')
                 """,
                 (result, now, task_id),
             )
@@ -6009,7 +6023,7 @@ def block_task(
                        worker_pid    = NULL,
                        block_kind    = ?
                  WHERE id = ?
-                   AND status IN ('running', 'ready')
+                   AND status IN ('running', 'ready', 'completed_pending_review')
                 """ + ("" if expected_run_id is None else " AND current_run_id = ?"),
                 (kind, task_id) if expected_run_id is None
                 else (kind, task_id, int(expected_run_id)),
@@ -6063,7 +6077,7 @@ def block_task(
                        block_kind    = ?,
                        block_recurrences = ?
                  WHERE id = ?
-                   AND status IN ('running', 'ready')
+                   AND status IN ('running', 'ready', 'completed_pending_review')
                 """ + ("" if expected_run_id is None else " AND current_run_id = ?"),
                 (kind, recurrences, task_id) if expected_run_id is None
                 else (kind, recurrences, task_id, int(expected_run_id)),
@@ -7871,9 +7885,18 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     When the reap registry shows the worker exited cleanly (rc=0) but
     the task was still ``running`` in the DB, treat it as a protocol
     violation (worker answered conversationally without calling
-    ``kanban_complete`` / ``kanban_block``) and trip the circuit breaker
-    on the first occurrence — retrying a worker whose CLI keeps
-    returning 0 without a terminal transition just loops forever.
+    ``kanban_complete`` / ``kanban_block``). A bounded retry (the
+    per-task ``max_retries`` override or
+    ``_PROTOCOL_VIOLATION_FAILURE_LIMIT``) is allowed because the work
+    usually completed and only the paperwork was skipped. When the retry
+    streak is exhausted the task reconciles to ``completed_pending_review``
+    — a terminal-ish, review-queued state that is excluded from ready /
+    review dispatch and carries NO failure-counter increment, so the
+    dispatcher never respawns it and never trips the circuit breaker.
+    This is the structural fix for the perpetual "clean-exit sweep" churn
+    (jarvis-os t_83fbc6f2): the card surfaces for human/worker review
+    instead of looping through blocked + breaker (which only spawned more
+    sweep cards).
 
     When the reap registry shows the worker exited with the rate-limit
     sentinel (``KANBAN_RATE_LIMIT_EXIT_CODE``), the worker bailed on a
@@ -7886,6 +7909,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     """
     crashed: list[str] = []
     rate_limited: list[str] = []
+    completed_pending_review: list[str] = []
     # Per-crash details collected inside the main txn, used after it
     # closes to run ``_record_task_failure`` (which needs its own
     # write_txn so can't nest). ``protocol_violation`` flags the
@@ -8079,28 +8103,23 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     # failure budget, just as other failure kinds don't
                     # consume this one.
                     continue
-                # Streak reached the bound: trip the breaker. ``force_trip``
-                # skips the threshold resolution inside
-                # ``_record_task_failure`` because the decision — including
-                # the per-task ``max_retries`` override — was already made
-                # against the violation streak above.
-                tripped = _record_task_failure(
+                # Streak reached the bound. Previously this force-tripped the
+                # breaker (ready -> blocked), which only fed the perpetual
+                # "clean-exit sweep" churn (jarvis-os t_83fbc6f2). The work
+                # almost certainly completed; only the terminal kanban call
+                # was skipped. Reconcile to ``completed_pending_review``
+                # instead: excluded from ready/review dispatch (no respawn,
+                # no breaker trip) yet still reconcilable by a worker via
+                # ``kanban_complete`` / ``kanban_block`` and visible for
+                # human review. No ``consecutive_failures`` increment.
+                reconcile_completed_pending_review(
                     conn, tid,
                     error=error_text,
-                    outcome="crashed",
-                    failure_limit=violation_limit,
-                    force_trip=True,
-                    release_claim=False,
-                    end_run=False,
-                    event_payload_extra={
-                        "pid": pid,
-                        "claimer": claimer,
-                        "protocol_violations": streak,
-                        "protocol_violation_limit": violation_limit,
-                    },
+                    pid=pid, claimer=claimer,
+                    violations=streak, violation_limit=violation_limit,
                 )
-                if tripped:
-                    auto_blocked.append(tid)
+                completed_pending_review.append(tid)
+                detect_crashed_workers._last_completed_pending_review.append(tid)
                 continue
             fp = _error_fingerprint(error_text)
             is_systemic = _fp_counts.get(fp, 0) >= 3
@@ -8123,7 +8142,83 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # Same side-channel for rate-limited requeues — these did NOT count a
     # failure and are NOT crashes, so they stay out of the ``crashed`` return.
     detect_crashed_workers._last_rate_limited = rate_limited  # type: ignore[attr-defined]
+    # Side-channel for clean-exit reconciliations: ids whose bounded
+    # protocol-violation streak was exhausted this tick and which were
+    # moved to ``completed_pending_review`` (not auto-blocked). The
+    # dispatch loop reads this so it can include them in diagnostics
+    # without treating them as crashes or auto-blocks.
+    detect_crashed_workers._last_completed_pending_review = (  # type: ignore[attr-defined]
+        completed_pending_review
+    )
     return crashed
+
+
+def reconcile_completed_pending_review(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    error: str,
+    pid: int,
+    claimer: str,
+    violations: int,
+    violation_limit: int,
+) -> None:
+    """Move a clean-exit-no-signal task to ``completed_pending_review``.
+
+    Called by :func:`detect_crashed_workers` once a task's bounded
+    protocol-violation streak (per-task ``max_retries`` or
+    ``_PROTOCOL_VIOLATION_FAILURE_LIMIT``) is exhausted. The worker exited
+    rc=0 while its task was still ``running`` — it answered conversationally
+    without calling ``kanban_complete`` / ``kanban_block``. Empirically the
+    *work* almost always completed; only the terminal kanban call was skipped.
+
+    This is the structural end to the perpetual "clean-exit sweep" churn
+    (jarvis-os t_83fbc6f2): instead of force-tripping the circuit breaker
+    (``ready`` → ``blocked`` → ``gave_up``), which only spawned more sweep
+    cards, the task reconciles to ``completed_pending_review``:
+
+    * excluded from ready- and review-column dispatch, so the dispatcher
+      never respawns it and never trips the breaker;
+    * carries NO ``consecutive_failures`` increment (this is not a failure);
+    * still reconcilable by a worker via ``kanban_complete`` /
+      ``kanban_block``, and visible for human review on the board.
+
+    Runs in its own write txn (the caller is already outside the main txn).
+    """
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE tasks SET status = 'completed_pending_review', "
+            "claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, "
+            "last_failure_error = ? "
+            "WHERE id = ? AND status IN ('ready', 'running')",
+            (error[:500], task_id),
+        )
+        if cur.rowcount != 1:
+            return
+        run_id = _end_run(
+            conn, task_id,
+            outcome="completed_pending_review",
+            status="completed_pending_review",
+            error=error[:500],
+            metadata={
+                "pid": pid,
+                "claimer": claimer,
+                "protocol_violations": violations,
+                "protocol_violation_limit": violation_limit,
+                "reconciled_from": "clean_exit_no_signal",
+            },
+        )
+        _append_event(
+            conn, task_id, "completed_pending_review",
+            {
+                "pid": pid,
+                "claimer": claimer,
+                "protocol_violations": violations,
+                "protocol_violation_limit": violation_limit,
+                "error": error[:500],
+            },
+            run_id=run_id,
+        )
 
 
 def _record_task_failure(

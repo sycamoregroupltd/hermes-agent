@@ -39,6 +39,8 @@ _STATUS_ICONS = {
     "running":  "●",
     "scheduled":"⏱",
     "blocked":  "⊘",
+    "review":   "🔍",
+    "completed_pending_review": "✓?",
     "done":     "✓",
     "archived": "—",
 }
