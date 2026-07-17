@@ -4398,16 +4398,18 @@ def test_detect_crashed_workers_increments_counter(kanban_home):
         conn.close()
 
 
-def test_detect_crashed_workers_protocol_violation_auto_blocks(kanban_home):
-    """A worker that exited rc=0 while its task was still ``running``
-    is a protocol violation (agent answered conversationally without
-    calling kanban_complete / kanban_block). Retrying will just loop,
-    so auto-block immediately instead of waiting for the breaker to
-    trip at ``DEFAULT_FAILURE_LIMIT``.
+def test_detect_crashed_workers_completion_skip_redrives_then_blocks(kanban_home):
+    """A worker that exited rc=0 while its task was still ``running`` with
+    NO provider-stage evidence is a genuine completion-skip. The engine no
+    longer hard-blocks on the first occurrence (that was the t_24fb987b
+    false-block class). Instead it re-drives via the normal failure counter;
+    the breaker trips at ``DEFAULT_FAILURE_LIMIT`` (== 2), i.e. re-drive
+    exactly once before blocking.
 
-    Regression test for the respawn-loop-after-completion bug reported
-    against small local models (gemma4-e2b q4) where the model writes
-    the answer as plain text and the CLI exits rc=0 cleanly.
+    Regression test for the engine-fix that removed the ``protocol_violation``
+    force-trip: a clean exit without provider evidence must NOT produce a
+    permanent phantom ``blocked`` card on first occurrence, and a
+    ``protocol_violation`` event must no longer be emitted.
     """
     import hermes_cli.kanban_db as _kb
     conn = kb.connect()
@@ -4415,43 +4417,134 @@ def test_detect_crashed_workers_protocol_violation_auto_blocks(kanban_home):
         tid = kb.create_task(conn, title="quiet", assignee="worker")
         host_prefix = _kb._claimer_id().split(":", 1)[0]
         lock = f"{host_prefix}:mock"
-        kb.claim_task(conn, tid, claimer=lock)
-        fake_pid = 999998
-        kb._set_worker_pid(conn, tid, fake_pid)
 
-        # Simulate the reap loop having recorded a clean exit for this pid.
-        # os.W_EXITCODE(status=0, signal=0) == 0 on POSIX.
-        _kb._record_worker_exit(fake_pid, 0)
-        # Force liveness check to say "dead" for the fake pid.
-        original_alive = _kb._pid_alive
-        _kb._pid_alive = lambda p: False
-        try:
-            result_crashed = kb.detect_crashed_workers(conn)
-        finally:
-            _kb._pid_alive = original_alive
+        def reap_once(pid: int) -> None:
+            kb.claim_task(conn, tid, claimer=lock)
+            kb._set_worker_pid(conn, tid, pid)
+            _kb._record_worker_exit(pid, 0)
+            orig = _kb._pid_alive
+            _kb._pid_alive = lambda p: False
+            try:
+                kb.detect_crashed_workers(conn)
+            finally:
+                _kb._pid_alive = orig
 
-        assert tid in result_crashed, "should be detected as crashed"
+        # First clean exit with no provider evidence -> re-drive (ready),
+        # NOT a hard block.
+        first_pid = 999998
+        reap_once(first_pid)
         task = kb.get_task(conn, tid)
-        assert task.status == "blocked", (
-            f"protocol violation should auto-block on first occurrence, "
+        assert task.status == "ready", (
+            f"first clean-exit completion-skip should re-drive to ready, "
             f"got status={task.status}"
         )
-        assert "kanban_complete" in (task.last_failure_error or ""), (
-            f"expected protocol-violation message, got {task.last_failure_error!r}"
+        assert task.consecutive_failures == 1, (
+            f"should count one failure, got {task.consecutive_failures}"
         )
-
+        assert "completion_skip" in (task.last_failure_error or ""), (
+            f"expected completion_skip label, got {task.last_failure_error!r}"
+        )
         events = kb.list_events(conn, tid)
         kinds = [e.kind for e in events]
-        assert "protocol_violation" in kinds, (
-            f"expected 'protocol_violation' event, got {kinds}"
+        assert "completion_skip" in kinds, (
+            f"expected 'completion_skip' event, got {kinds}"
         )
-        # The ``crashed`` event would be misleading here — the worker
-        # didn't crash, it returned 0.
-        assert "crashed" not in kinds, (
-            f"should NOT emit 'crashed' event on clean exit, got {kinds}"
+        assert "protocol_violation" not in kinds, (
+            f"protocol_violation event must no longer be emitted, got {kinds}"
         )
-        assert "gave_up" in kinds, (
-            f"breaker should trip, expected 'gave_up' event, got {kinds}"
+        assert "gave_up" not in kinds, (
+            f"breaker should NOT trip on first clean exit, got {kinds}"
+        )
+
+        # Second occurrence trips the breaker -> blocked with a typed
+        # (auto-recoverable) block_kind, never needs_input.
+        second_pid = 999997
+        reap_once(second_pid)
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked", (
+            f"breaker should trip after DEFAULT_FAILURE_LIMIT clean exits, "
+            f"got status={task.status}"
+        )
+        assert task.block_kind in ("transient", "dependency"), (
+            f"auto-block must be typed, got {task.block_kind!r}"
+        )
+        assert task.block_kind != "needs_input", "breaker must never emit needs_input"
+    finally:
+        conn.close()
+
+
+def test_detect_crashed_workers_provider_stage_death_redrives_not_blocks(kanban_home):
+    """A clean rc=0 exit whose evidence shows a provider-stage death
+    (``provider_pre_reasoning`` / ``provider_error`` failure-classifier
+    comment, or a quota-wall error) must be re-driven WITHOUT counting a
+    failure — never hard-blocked. This is the dominant t_74c6693e /
+    t_24fb987b false-block class.
+
+    Regression test: provider instability must not become a permanent
+    phantom block that inflates the queue and masks real stalls.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    def reap_clean_exit(tid: int, pid: int) -> None:
+        host = _kb._claimer_id().split(":", 1)[0]
+        kb.claim_task(conn, tid, claimer=f"{host}:mock")
+        kb._set_worker_pid(conn, tid, pid)
+        _kb._record_worker_exit(pid, 0)
+        orig = _kb._pid_alive
+        _kb._pid_alive = lambda p: False
+        try:
+            kb.detect_crashed_workers(conn)
+        finally:
+            _kb._pid_alive = orig
+
+    conn = kb.connect()
+    try:
+        # Case A: a FAILURE-CLASSIFIER-AUTO comment asserts provider_pre_reasoning.
+        tid_a = kb.create_task(conn, title="provider-death-a", assignee="worker")
+        # Make it look like a real worker ran: a closed run + the classifier comment.
+        conn.execute(
+            "INSERT INTO task_runs (task_id, status, outcome, started_at, ended_at, error) "
+            "VALUES (?, 'crashed', 'crashed', ?, ?, 'model API 429 quota wall')",
+            (tid_a, int(time.time()) - 10, int(time.time()) - 5),
+        )
+        conn.execute(
+            "INSERT INTO task_comments (task_id, author, body, created_at) "
+            "VALUES (?, 'kanban-failure-classifier-cron', "
+            "'FAILURE-CLASSIFIER-AUTO event#1 (blocked): failure_class=provider_pre_reasoning "
+            "confidence=high safe_recovery_hint=pre-reasoning provider failure', ?)",
+            (tid_a, int(time.time())),
+        )
+        reap_clean_exit(tid_a, 999991)
+        task_a = kb.get_task(conn, tid_a)
+        assert task_a.status == "ready", (
+            f"provider-stage death must re-drive to ready, got {task_a.status}"
+        )
+        assert task_a.consecutive_failures == 0, (
+            f"provider-stage death must NOT count a failure, got "
+            f"{task_a.consecutive_failures}"
+        )
+        assert "provider-stage death" in (task_a.last_failure_error or ""), (
+            f"expected provider-stage death label, got {task_a.last_failure_error!r}"
+        )
+        events_a = kb.list_events(conn, tid_a)
+        assert "completion_skip" not in [e.kind for e in events_a], (
+            "must NOT be classified as completion_skip"
+        )
+
+        # Case B: quota-wall text in last_failure_error (no classifier comment).
+        tid_b = kb.create_task(conn, title="provider-death-b", assignee="worker")
+        conn.execute(
+            "UPDATE tasks SET last_failure_error=? WHERE id=?",
+            ("HTTP 429 rate limit — balance is too low", tid_b),
+        )
+        reap_clean_exit(tid_b, 999990)
+        task_b = kb.get_task(conn, tid_b)
+        assert task_b.status == "ready", (
+            f"quota-wall clean exit must re-drive to ready, got {task_b.status}"
+        )
+        assert task_b.consecutive_failures == 0, (
+            f"quota-wall clean exit must NOT count a failure, got "
+            f"{task_b.consecutive_failures}"
         )
     finally:
         conn.close()

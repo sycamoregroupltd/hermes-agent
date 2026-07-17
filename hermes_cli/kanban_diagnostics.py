@@ -488,17 +488,44 @@ def classify_kanban_failure(
             "Ready row is intentionally deferred; show the exact skip bucket and do not mutate queue state until the guard/cap/assignment condition clears.",
         )
 
+    # --- provider-stage death vs genuine completion-skip -----------------
+    # Engine fix t_24fb987b re-labeled the clean-exit-without-signal case.
+    # A provider_stage_death (dominant, transient provider instability) is
+    # re-driven without counting a failure; a genuine completion_skip is
+    # re-driven via the normal failure counter. Neither is the old
+    # "protocol_violation" misclassification. Route by evidence so the
+    # breaker stamps the right typed block_kind.
     if _matches_any(combined, (
-        r"worker exited cleanly \(rc=0\) without calling kanban_complete or kanban_block",
-        r"without calling kanban_complete or kanban_block",
-        r"protocol_violation",
+        r"provider[-_]stage[-_]death",
+        r"subclass[\"']?\s*[:=]\s*[\"']?provider_stage_death",
+        r"provider_pre_reasoning",
+        r"provider_error",
+        r"quota/billing wall",
+        r"requeued without counting a failure",
     )):
-        hit = _matches_any(combined, (r"worker exited cleanly[^\n]*", r"protocol_violation[^\n]*"))
+        hit = _matches_any(combined, (
+            r"provider[-_]stage[-_]death[^\\n]*",
+            r"provider_pre_reasoning[^\\n]*",
+            r"provider_error[^\\n]*",
+        ))
         if hit:
             _add_marker(markers, hit)
         return FailureClassification(
-            "protocol_violation", "high", markers,
-            "True lifecycle exit suspected; keep the completion/block gate and require log inspection or explicit retry instructions before unblocking.",
+            "provider_error", "high", markers,
+            "Provider-stage death (pre-reasoning / API auth / quota wall): the worker died at the provider boundary before executing task logic. Re-drive; do not treat as a lifecycle/code defect, and route cooldown/provider-owner evidence before retry.",
+        )
+
+    if _matches_any(combined, (
+        r"completion_skip",
+        r"without a terminal kanban signal",
+        r"re-driven; breaker trips at DEFAULT_FAILURE_LIMIT",
+    )):
+        hit = _matches_any(combined, (r"completion_skip[^\\n]*", r"without a terminal kanban signal[^\\n]*"))
+        if hit:
+            _add_marker(markers, hit)
+        return FailureClassification(
+            "protocol_violation", "medium", markers,
+            "Genuine completion-skip: worker executed task logic then exited cleanly with no terminal kanban_complete/kanban_block. Re-drive once (breaker trips at DEFAULT_FAILURE_LIMIT); inspect logs if it recurs before unblocking.",
         )
 
     if _matches_any(combined, (

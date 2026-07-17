@@ -35,7 +35,12 @@ def _init_git_repo(repo: Path) -> None:
     subprocess.run(["git", "-C", str(repo), "config", "user.name", "Kanban Test"], check=True, capture_output=True, text=True)
     (repo / "README.md").write_text("hello\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True, capture_output=True, text=True)
-    subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], check=True, capture_output=True, text=True)
+    _st = subprocess.run(["git", "-C", str(repo), "status", "--short"], capture_output=True, text=True)
+    print("DEBUG git status before commit:", repr(_st.stdout), repr(_st.stderr))
+    r = subprocess.run(["git", "-C", str(repo), "commit", "-m", "init"], capture_output=True, text=True)
+    print("DEBUG commit rc", r.returncode, "OUT", repr(r.stdout), "ERR", repr(r.stderr))
+    if r.returncode != 0:
+        raise RuntimeError(f"DEBUG commit failed: {r.stdout!r} {r.stderr!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -979,6 +984,124 @@ def test_real_crash_still_counts_and_trips_breaker(kanban_home, monkeypatch):
         assert task.status == "blocked", (
             f"genuine crashes should still trip the breaker, got {task.status}"
         )
+
+
+def test_classify_budget_exhausted_is_recoverable_not_indeterminate(kanban_home):
+    """Regression for t_01b14940: a dispatcher iteration-budget kill must
+    classify as ``budget_exhausted`` (recoverable) and never fall through to
+    ``indeterminate`` (which silently stranded cards).
+
+    A single exhaustion with no deeper error is the auto-recover path; a
+    repeated one (consecutive_failures > 1) escalates.
+    """
+    import hermes_cli.kanban_db as _kb
+    import hermes_cli.kanban_diagnostics as _kd
+
+    with kb.connect() as conn:
+        # Single-shot exhaustion -> AUTO-RECOVER (medium).
+        a = kb.create_task(conn, title="budget-a", assignee="a")
+        conn.execute(
+            "UPDATE tasks SET status='blocked', consecutive_failures=1, "
+            "last_failure_error='Iteration budget exhausted (90/90) — task "
+            "could not complete within the allowed iterations' WHERE id=?",
+            (a,),
+        )
+        ta = kb.get_task(conn, a)
+        ca = _kd.classify_kanban_failure(
+            ta, kb.list_events(conn, a), kb.list_runs(conn, a))
+        assert ca.failure_class == "budget_exhausted", ca.failure_class
+        assert ca.confidence == "medium", ca.confidence
+        assert "AUTO-RECOVER" in ca.safe_recovery_hint
+
+        # Repeated exhaustion -> ESCALATE (high).
+        b = kb.create_task(conn, title="budget-b", assignee="b")
+        conn.execute(
+            "UPDATE tasks SET status='blocked', consecutive_failures=2, "
+            "last_failure_error='Iteration budget exhausted (90/90) — task "
+            "could not complete within the allowed iterations' WHERE id=?",
+            (b,),
+        )
+        tb = kb.get_task(conn, b)
+        cb = _kd.classify_kanban_failure(
+            tb, kb.list_events(conn, b), kb.list_runs(conn, b))
+        assert cb.failure_class == "budget_exhausted", cb.failure_class
+        assert cb.confidence == "high", cb.confidence
+        assert "ESCALATE" in cb.safe_recovery_hint
+
+
+def test_classify_budget_exhausted_no_false_positive_on_real_crash(kanban_home):
+    """Same error prefix but with an embedded genuine crash must NOT be papered
+    over as a simple auto-recover — it escalates (embedded error wins)."""
+    import hermes_cli.kanban_db as _kb
+    import hermes_cli.kanban_diagnostics as _kd
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="budget-crash", assignee="c")
+        conn.execute(
+            "UPDATE tasks SET status='blocked', consecutive_failures=1, "
+            "result='pid 12345 not alive' WHERE id=?",
+            (t,),
+        )
+        tt = kb.get_task(conn, t)
+        ct = _kd.classify_kanban_failure(
+            tt, kb.list_events(conn, t), kb.list_runs(conn, t))
+        # Embedded pid-not-alive is a stronger signal than the budget prefix.
+        assert ct.failure_class != "budget_exhausted", (
+            f"embedded crash should win, got {ct.failure_class}"
+        )
+
+
+def test_classify_provider_stage_death_vs_completion_skip(kanban_home):
+    """Engine fix t_24fb987b re-labeled the clean-exit-without-signal case.
+
+    The failure classifier must route the new honest error strings to the
+    right class:
+      * ``provider_stage_death`` / quota-wall text -> ``provider_error``
+        (transient, re-drive; NOT a code/lifecycle defect).
+      * ``completion_skip`` / "without a terminal kanban signal" ->
+        ``protocol_violation`` (medium; genuine completion-skip, re-drive
+        once via the breaker).
+    Neither must fall through to the old high-confidence ``protocol_violation``
+    misclassification of provider instability.
+    """
+    import hermes_cli.kanban_db as _kb
+    import hermes_cli.kanban_diagnostics as _kd
+    from types import SimpleNamespace
+
+    def task_with(error: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            id="t_x", status="blocked", assignee="a",
+            workspace_kind="scratch", workspace_path=None,
+            block_kind="transient", last_failure_error=error,
+            result=None, current_run_id=None, started_at=0,
+            last_heartbeat_at=None, claim_lock=None,
+        )
+
+    # Provider-stage death evidence -> provider_error (transient re-drive).
+    prov = _kd.classify_kanban_failure(
+        task_with(
+            "worker exited cleanly (rc=0) after a provider-stage death "
+            "(provider_pre_reasoning/provider_error evidence) — requeued "
+            "without counting a failure"
+        ),
+        [], [],
+    )
+    assert prov.failure_class == "provider_error", prov.failure_class
+    assert prov.confidence == "high", prov.confidence
+
+    # Genuine completion-skip evidence -> protocol_violation (medium; re-drive once).
+    skip = _kd.classify_kanban_failure(
+        task_with(
+            "worker exited cleanly (rc=0) without a terminal kanban signal "
+            "(completion_skip) — re-driven; breaker trips at DEFAULT_FAILURE_LIMIT"
+        ),
+        [], [],
+    )
+    assert skip.failure_class == "protocol_violation", skip.failure_class
+    assert skip.confidence == "medium", skip.confidence
+
+
+
 
 
 def test_respawn_guard_defers_rate_limited_within_cooldown(
@@ -2247,7 +2370,106 @@ def test_worktree_workspace_explicit_target_materializes_linked_worktree(kanban_
     assert f"branch refs/heads/{branch}" in listed
 
 
-def test_dispatch_worktree_task_persists_materialized_workspace_and_branch(kanban_home, tmp_path, monkeypatch):
+def test_worktree_root_redirects_outside_repo(kanban_home, tmp_path):
+    """GAP1 guard: when a board sets ``worktree_root``, a worktree task
+    anchored on the board's default_workdir materializes OUTSIDE the
+    production checkout (``<worktree_root>/<repo>/.worktrees/<id>``) — never
+    under ``<repo>/.worktrees/`` — while still being a linked worktree of
+    the same git object store.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    iso_root = tmp_path / "iso-worktrees"
+    kb.create_board(
+        "iso-board", default_workdir=str(repo), worktree_root=str(iso_root)
+    )
+    with kb.connect(board="iso-board") as conn:
+        t = kb.create_task(
+            conn, title="ship", workspace_kind="worktree", board="iso-board"
+        )
+        task = kb.get_task(conn, t)
+        assert task is not None
+        ws = kb.resolve_workspace(task, board="iso-board")
+
+    expected = iso_root / "repo" / ".worktrees" / t
+    assert ws == expected
+    assert ws.exists()
+    # The worktree must NOT live inside the production checkout.
+    assert not str(expected).startswith(str(repo / ".worktrees"))
+    # It must still be a linked worktree of the real repo.
+    repo_common = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse",
+         "--path-format=absolute", "--git-common-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    ws_common = subprocess.run(
+        ["git", "-C", str(ws), "rev-parse",
+         "--path-format=absolute", "--git-common-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert ws_common == repo_common
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    assert f"worktree {expected}" in listed
+
+
+def test_worktree_root_explicit_repo_anchor_redirects_outside(kanban_home, tmp_path):
+    """Same isolation guarantee when the worktree_path names the repo root
+    explicitly (the inherited-default_workdir path hit via create_task).
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    iso_root = tmp_path / "iso-worktrees"
+    kb.create_board("iso-board2", worktree_root=str(iso_root))
+    with kb.connect(board="iso-board2") as conn:
+        t = kb.create_task(
+            conn, title="ship", workspace_kind="worktree",
+            workspace_path=str(repo), board="iso-board2",
+        )
+        task = kb.get_task(conn, t)
+        ws = kb.resolve_workspace(task, board="iso-board2")
+    expected = iso_root / "repo" / ".worktrees" / t
+    assert ws == expected
+    assert ws.exists()
+    assert not str(expected).startswith(str(repo / ".worktrees"))
+
+
+def test_clearing_worktree_root_returns_to_in_repo(kanban_home, tmp_path):
+    """Clearing the board's ``worktree_root`` restores in-repo placement."""
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    iso_root = tmp_path / "iso-worktrees"
+    kb.create_board(
+        "iso-board3", default_workdir=str(repo), worktree_root=str(iso_root)
+    )
+    kb.write_board_metadata("iso-board3", worktree_root=None)
+    with kb.connect(board="iso-board3") as conn:
+        t = kb.create_task(
+            conn, title="ship", workspace_kind="worktree", board="iso-board3"
+        )
+        task = kb.get_task(conn, t)
+        ws = kb.resolve_workspace(task, board="iso-board3")
+    assert ws == repo / ".worktrees" / t
+    assert ws.exists()
+
+
+def test_worktree_root_non_absolute_rejected(kanban_home, tmp_path):
+    """A relative ``worktree_root`` must fail loudly, not scatter worktrees."""
+    repo = tmp_path / "repo-abs"
+    _init_git_repo(repo)
+    kb.create_board(
+        "iso-bad", default_workdir=str(repo), worktree_root="relative/dir"
+    )
+    with kb.connect(board="iso-bad") as conn:
+        t = kb.create_task(
+            conn, title="ship", workspace_kind="worktree", board="iso-bad"
+        )
+        task = kb.get_task(conn, t)
+        with pytest.raises(ValueError, match="absolute"):
+            kb.resolve_workspace(task, board="iso-bad")
+
     repo = tmp_path / "repo"
     _init_git_repo(repo)
     kb.create_board("worktree-board", default_workdir=str(repo))

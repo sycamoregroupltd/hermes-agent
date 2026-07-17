@@ -5909,9 +5909,15 @@ def _classify_worker_exit(pid: int) -> "tuple[str, Optional[int]]":
     Returns ``(kind, code)`` where ``kind`` is one of:
 
     * ``"clean_exit"`` — ``WIFEXITED`` with ``WEXITSTATUS == 0``. When the
-      task is still ``running`` in the DB, this is a protocol violation
-      (worker exited without calling ``kanban_complete`` / ``kanban_block``)
-      and should be auto-blocked immediately — retrying will just loop.
+      task is still ``running`` in the DB, the historical label was a
+      "protocol violation" (worker exited without calling
+      ``kanban_complete`` / ``kanban_block``) — but that misclassified the
+      dominant provider-stage-death cause. ``detect_crashed_workers`` now
+      inspects failure-classifier / quota-wall evidence and re-drives
+      provider-stage deaths instead of auto-blocking them (see
+      :func:`_is_provider_stage_death`). A genuine completion-skip is
+      re-driven via the normal failure counter (breaker trips at
+      ``DEFAULT_FAILURE_LIMIT``).
     * ``"rate_limited"`` — ``WIFEXITED`` with status
       ``KANBAN_RATE_LIMIT_EXIT_CODE``. The worker bailed because the
       provider rate-limited / exhausted quota, NOT because the task failed.
@@ -6464,6 +6470,102 @@ def _error_fingerprint(error_text: str) -> str:
     return fp.lower().strip()
 
 
+def _is_quota_wall_exit(error_text: Optional[str]) -> bool:
+    """True if ``error_text`` looks like a provider quota/billing wall.
+
+    Two signal classes reach here as a ``clean_exit`` (rc=0):
+      1. The worker exited after exhausting primary + fallback providers
+         (all retries failed with HTTP 404 billing / HTTP 429 throttle).
+      2. The dispatcher recorded a prior rate-limit / billing marker.
+
+    Both are clean-exit false-positives for ``protocol_violation``; release
+    the task back to ``ready`` without tripping the circuit breaker so the
+    quota window can clear.
+    """
+    if not error_text or not isinstance(error_text, str):
+        return False
+    haystack = error_text.lower()
+    signals = (
+        "http 429",
+        "429:",
+        "rate limit",
+        "rate_limit",
+        "credits",
+        "insufficient funds",
+        "insufficient credits",
+        "balance is too low",
+        "account balance",
+        "payment required",
+        "out of funds",
+        "balance_depleted",
+        "no usable credits",
+        "billing",
+        "quota",
+        "hold up",
+        "exceeded the rate limit",
+        "model requires available credits",
+        "free tier",
+        "free-tier",
+        "not available on the free tier",
+    )
+    return any(s in haystack for s in signals)
+
+
+def _is_provider_stage_death(
+    conn: sqlite3.Connection, task_id: str, last_failure_error: Optional[str],
+) -> bool:
+    """True if a clean-exit (rc=0) without a terminal kanban signal was caused
+    by a PROVIDER-STAGE death rather than a genuine completion-skip.
+
+    A provider-stage death means the worker died at the provider boundary
+    (API auth / quota / rate wall, pre-reasoning or mid-call) BEFORE executing
+    task logic. It is transient provider instability, NOT "finished but forgot
+    to complete". Such tasks must be re-driven (deferred by the respawn guard)
+    until the provider recovers, never hard-blocked.
+
+    Evidence (any match -> True):
+
+    1. Quota / billing wall text in ``last_failure_error`` (``_is_quota_wall_exit``).
+    2. A ``FAILURE-CLASSIFIER-AUTO`` comment authored by
+       ``kanban-failure-classifier-cron`` whose body asserts
+       ``failure_class=provider_pre_reasoning`` or
+       ``failure_class=provider_error``.
+    3. The most recent closed run carries provider/quota evidence in its
+       ``error`` / ``metadata`` (the worker logged the provider wall before
+       dying).
+
+    When none of these hold, the clean exit is treated as a genuine
+    completion-skip (or unknown) and re-driven via the normal failure counter.
+    """
+    # 1. Quota / billing wall captured in the task's last failure error.
+    if _is_quota_wall_exit(last_failure_error):
+        return True
+    # 2. Failure-classifier auto comment marks a provider-stage failure.
+    for c in conn.execute(
+        "SELECT author, body FROM task_comments WHERE task_id = ? "
+        "ORDER BY created_at DESC LIMIT 15",
+        (task_id,),
+    ).fetchall():
+        if (c["author"] or "") == "kanban-failure-classifier-cron" and re.search(
+            r"failure_class=(provider_pre_reasoning|provider_error)\b",
+            c["body"] or "",
+        ):
+            return True
+    # 3. Latest closed run carries provider/quota evidence.
+    run = conn.execute(
+        "SELECT error, metadata FROM task_runs WHERE task_id = ? "
+        "AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    if run is not None:
+        blob = " ".join(str(run[k]) for k in ("error", "metadata") if run[k])
+        if _is_quota_wall_exit(blob) or re.search(
+            r"failure_class=(provider_pre_reasoning|provider_error)\b", blob or ""
+        ):
+            return True
+    return False
+
+
 def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     """Reclaim ``running`` tasks whose worker PID is no longer alive.
 
@@ -6477,11 +6579,29 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     dispatcher (the whole design is single-host).
 
     When the reap registry shows the worker exited cleanly (rc=0) but
-    the task was still ``running`` in the DB, treat it as a protocol
-    violation (worker answered conversationally without calling
-    ``kanban_complete`` / ``kanban_block``) and trip the circuit breaker
-    on the first occurrence — retrying a worker whose CLI keeps
-    returning 0 without a terminal transition just loops forever.
+    the task was still ``running`` in the DB, the prior label was
+    "protocol violation" — that implied malice / wrong code and, worse,
+    hard-blocked on the first occurrence. In reality the dominant cause
+    (root cause t_74c6693e / t_24fb987b) is a PROVIDER-STAGE DEATH: the
+    worker died at the provider boundary (API auth / quota / rate wall,
+    pre-reasoning or mid-call) BEFORE executing task logic. Such tasks
+    are re-driven, not blocked — hard-blocking transient provider
+    instability turns it into permanent phantom blocks that mask real
+    stalls. We distinguish the two via :func:`_is_provider_stage_death`:
+
+    * provider-stage death -> released to ``ready`` WITHOUT counting a
+      failure (like the rate-limited path) and stamped with a
+      quota/provider-blocker error so ``check_respawn_guard`` defers the
+      respawn until the provider recovers. Emits a ``rate_limited`` event
+      with ``subclass="provider_stage_death"``.
+    * genuine completion-skip (or unknown clean exit with no provider
+      evidence) -> re-driven via the normal failure counter; the breaker
+      trips at ``DEFAULT_FAILURE_LIMIT`` (== 2), i.e. re-drive exactly
+      once before blocking. Emits a ``completion_skip`` event.
+
+    "protocol_violation" is deliberately no longer emitted: it was a
+    misclassification of provider instability, not a real lifecycle
+    defect (see the engine-fix note in the fleet vault).
 
     When the reap registry shows the worker exited with the rate-limit
     sentinel (``KANBAN_RATE_LIMIT_EXIT_CODE``), the worker bailed on a
@@ -6503,7 +6623,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # (task_id, pid, claimer, protocol_violation, error_text)
     with write_txn(conn):
         rows = conn.execute(
-            "SELECT id, worker_pid, claim_lock, started_at FROM tasks "
+            "SELECT id, worker_pid, claim_lock, started_at, last_failure_error FROM tasks "
             "WHERE status = 'running' AND worker_pid IS NOT NULL"
         ).fetchall()
         host_prefix = f"{_claimer_id().split(':', 1)[0]}:"
@@ -6529,19 +6649,68 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
             if kind == "clean_exit":
                 # Worker subprocess returned 0 but its task is still
                 # ``running`` in the DB — it exited without calling
-                # ``kanban_complete`` / ``kanban_block``. Retrying won't
-                # help.
-                protocol_violation = True
-                error_text = (
-                    "worker exited cleanly (rc=0) without calling "
-                    "kanban_complete or kanban_block — protocol violation"
-                )
-                event_kind = "protocol_violation"
-                event_payload = {
-                    "pid": pid,
-                    "claimer": row["claim_lock"],
-                    "exit_code": code,
-                }
+                # ``kanban_complete`` / ``kanban_block``. This is NOT
+                # automatically a protocol violation (malice / wrong code).
+                # Two distinct causes, with very different dispositions:
+                #
+                #   (a) PROVIDER-STAGE DEATH (dominant; root cause
+                #       t_74c6693e / t_24fb987b): the worker died at the
+                #       provider boundary — BEFORE executing task logic —
+                #       because the model API auth / quota / rate wall
+                #       killed it. The failure classifier marks this
+                #       ``provider_pre_reasoning`` / ``provider_error`` and
+                #       the quota-wall text shows up in the error context.
+                #       It is NOT "finished but forgot to complete." Hard-
+                #       blocking converts transient provider instability
+                #       into permanent phantom blocks. Treat it like the
+                #       rate-limited path: reset to ``ready``, stamp an
+                #       honest error, do NOT count a failure, so the respawn
+                #       guard defers until the provider recovers.
+                #
+                #   (b) GENUINE COMPLETION-SKIP: the worker actually
+                #       executed task logic and then exited cleanly without
+                #       a terminal signal. This is the rare true lifecycle
+                #       defect. Even here we do NOT hard-block on the first
+                #       occurrence — we re-drive it via the normal failure
+                #       counter (the breaker trips at ``DEFAULT_FAILURE_LIMIT``
+                #       == 2, i.e. re-drive exactly once before blocking).
+                if _is_provider_stage_death(
+                    conn, row["id"], row["last_failure_error"] if "last_failure_error" in row.keys() else None
+                ):
+                    protocol_violation = False
+                    rate_limited_exit = True
+                    error_text = (
+                        "worker exited cleanly (rc=0) after a provider-stage "
+                        "death (provider_pre_reasoning/provider_error evidence) "
+                        "— requeued without counting a failure"
+                    )
+                    event_kind = "rate_limited"
+                    event_payload = {
+                        "pid": pid,
+                        "claimer": row["claim_lock"],
+                        "exit_code": code,
+                        "subclass": "provider_stage_death",
+                    }
+                else:
+                    # Genuine completion-skip (or unknown clean exit with no
+                    # provider evidence). Re-drive via the normal failure
+                    # counter; the breaker trips at ``DEFAULT_FAILURE_LIMIT``
+                    # so we re-drive once before blocking rather than looping
+                    # forever or blocking on the first occurrence.
+                    protocol_violation = False
+                    rate_limited_exit = False
+                    error_text = (
+                        "worker exited cleanly (rc=0) without a terminal kanban "
+                        "signal (completion_skip) — re-driven; breaker trips at "
+                        "DEFAULT_FAILURE_LIMIT"
+                    )
+                    event_kind = "completion_skip"
+                    event_payload = {
+                        "pid": pid,
+                        "claimer": row["claim_lock"],
+                        "exit_code": code,
+                        "subclass": "completion_skip",
+                    }
             elif kind == "rate_limited":
                 # Worker bailed because the provider rate-limited / exhausted
                 # quota (EX_TEMPFAIL sentinel). This is NOT a task failure —
