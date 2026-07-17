@@ -133,6 +133,11 @@ VALID_BLOCK_KINDS = {"dependency", "needs_input", "capability", "transient"}
 # not dispatcher spawn/crash/timeout failures.
 BLOCK_RECURRENCE_LIMIT = 2
 VALID_WORKSPACE_KINDS = {"scratch", "worktree", "dir"}
+# Sentinel used to distinguish "argument not supplied" from an explicit value
+# such as None / "" at the create_task boundary (e.g. so an explicit
+# ``workspace_kind="scratch"`` is honoured but an omitted kind can fall back
+# to the board's ``default_workspace_kind``).
+_MISSING = object()
 KNOWN_TOOLSET_NAMES = frozenset(name.casefold() for name in get_toolset_names())
 _IS_WINDOWS = sys.platform == "win32"
 KANBAN_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
@@ -648,6 +653,7 @@ def read_board_metadata(board: Optional[str] = None) -> dict:
         "icon": "",
         "color": "",
         "default_workdir": None,
+        "worktree_root": None,
         "created_at": None,
         "archived": False,
     }
@@ -675,6 +681,7 @@ def write_board_metadata(
     color: Optional[str] = None,
     archived: Optional[bool] = None,
     default_workdir: Optional[str] = None,
+    worktree_root: "Any" = _MISSING,
 ) -> dict:
     """Create / update ``board.json`` for ``board``.
 
@@ -698,6 +705,18 @@ def write_board_metadata(
         meta["archived"] = bool(archived)
     if default_workdir is not None:
         meta["default_workdir"] = str(default_workdir) if default_workdir else None
+    if worktree_root is not _MISSING:
+        if worktree_root:
+            # A relative isolation root would scatter worktrees against the
+            # dispatcher's CWD; fail loudly rather than guess.
+            if not Path(str(worktree_root)).expanduser().is_absolute():
+                raise ValueError(
+                    f"worktree_root {worktree_root!r} is not absolute; "
+                    "use an absolute path outside the git repo"
+                )
+            meta["worktree_root"] = str(worktree_root)
+        else:
+            meta["worktree_root"] = None
     if not meta.get("created_at"):
         meta["created_at"] = int(time.time())
     path = board_metadata_path(slug)
@@ -718,6 +737,7 @@ def create_board(
     icon: Optional[str] = None,
     color: Optional[str] = None,
     default_workdir: Optional[str] = None,
+    worktree_root: Optional[str] = None,
 ) -> dict:
     """Create a new board directory + DB + metadata. Idempotent.
 
@@ -735,6 +755,7 @@ def create_board(
         icon=icon,
         color=color,
         default_workdir=default_workdir,
+        worktree_root=worktree_root if worktree_root is not None else _MISSING,
     )
     # Touch the DB so list_boards() sees it immediately.
     init_db(board=normed)
@@ -2391,7 +2412,7 @@ def create_task(
     body: Optional[str] = None,
     assignee: Optional[str] = None,
     created_by: Optional[str] = None,
-    workspace_kind: str = "scratch",
+    workspace_kind: "Any" = _MISSING,
     workspace_path: Optional[str] = None,
     branch_name: Optional[str] = None,
     tenant: Optional[str] = None,
@@ -2439,7 +2460,23 @@ def create_task(
         raise ValueError(
             f"initial_status must be one of {sorted(VALID_INITIAL_STATUSES)}"
         )
-    if workspace_kind not in VALID_WORKSPACE_KINDS:
+    # Resolve the effective workspace kind. An omitted ``workspace_kind``
+    # (the ``_MISSING`` sentinel — i.e. the caller did not request a specific
+    # kind) falls back to the board's ``default_workspace_kind`` when the board
+    # opts in (e.g. a trading board that wants every card dispatched into an
+    # isolated repo worktree instead of the shared production checkout). This
+    # keeps the historical ``scratch`` default for boards that don't set it.
+    if workspace_kind is _MISSING:
+        _board_slug = board if board else get_current_board()
+        _board_default_kind = (
+            read_board_metadata(_board_slug).get("default_workspace_kind") or ""
+        ).strip()
+        workspace_kind = (
+            _board_default_kind
+            if _board_default_kind in VALID_WORKSPACE_KINDS
+            else "scratch"
+        )
+    elif workspace_kind not in VALID_WORKSPACE_KINDS:
         raise ValueError(
             f"workspace_kind must be one of {sorted(VALID_WORKSPACE_KINDS)}, "
             f"got {workspace_kind!r}"
@@ -5778,8 +5815,37 @@ def _resolve_worktree_workspace(
     working directory (which is whatever directory the gateway happened to be
     launched from, e.g. the Hermes checkout). If no anchor is configured
     anywhere, we fail loudly rather than guess.
+
+    Isolation guard (GAP1): if the board opts in with ``worktree_root`` and a
+    worktree would otherwise be materialized *inside* the production checkout
+    (the ``<repo>/.worktrees/<id>`` position), the worktree is instead placed
+    **outside** the repo at ``<worktree_root>/<repo-basename>/.worktrees/<id>``.
+    The worktree is still a *linked* checkout of the same git object store, so
+    branch commits and WIP live in the real repo and ``HEAD`` of the production
+    checkout is never touched. This prevents worker/reviewer git ops from
+    clobbering untracked WIP that lives in a shared production checkout.
     """
     branch_name = (task.branch_name or "").strip() or f"wt/{task.id}"
+
+    def _anchor_target(board_slug: str, repo_root: Path) -> Path:
+        """Pick the worktree target for a repo-anchored worktree.
+
+        Returns a path *outside* ``repo_root`` when the board has opted into
+        ``worktree_root`` isolation, otherwise the historical in-repo position.
+        """
+        board_meta = read_board_metadata(board_slug)
+        iso = (board_meta.get("worktree_root") or "").strip()
+        if iso:
+            iso_root = Path(iso).expanduser()
+            if not iso_root.is_absolute():
+                raise ValueError(
+                    f"board {board_slug!r} worktree_root {iso!r} is not absolute; "
+                    "use an absolute path outside the git repo"
+                )
+            # <worktree_root>/<repo-basename>/.worktrees/<id>
+            return iso_root / repo_root.name / ".worktrees" / task.id
+        return repo_root / ".worktrees" / task.id
+
     if not task.workspace_path:
         # Anchor on the board's configured default_workdir, not Path.cwd().
         # The dispatcher's CWD is incidental (gateway launch dir) and using it
@@ -5805,7 +5871,7 @@ def _resolve_worktree_workspace(
                 f"task {task.id} has workspace_kind=worktree but board "
                 f"{board_slug!r} default_workdir {board_default!r} is not inside a git repo"
             )
-        target = repo_root / ".worktrees" / task.id
+        target = _anchor_target(board_slug, repo_root)
         _ensure_git_worktree(repo_root, target, branch_name)
         return target, branch_name
 
@@ -5823,7 +5889,7 @@ def _resolve_worktree_workspace(
 
     repo_root = _git_toplevel(requested)
     if repo_root is not None and requested_resolved == repo_root:
-        target = repo_root / ".worktrees" / task.id
+        target = _anchor_target(board if board else get_current_board(), repo_root)
         _ensure_git_worktree(repo_root, target, branch_name)
         return target, branch_name
 

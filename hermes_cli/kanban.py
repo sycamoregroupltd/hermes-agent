@@ -310,9 +310,9 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
     p_create.add_argument("--assignee", default=None, help="Profile name to assign")
     p_create.add_argument("--parent", action="append", default=[],
                           help="Parent task id (repeatable)")
-    p_create.add_argument("--workspace", default="scratch",
+    p_create.add_argument("--workspace", default=None,
                           help="scratch | worktree | worktree:<path> | dir:<path> "
-                               "(default: scratch)")
+                               "(default: board's default_workspace_kind, else scratch)")
     p_create.add_argument("--branch", default=None,
                           help="Branch name for worktree tasks, e.g. wt/t6-wire")
     p_create.add_argument("--project", default=None,
@@ -1324,6 +1324,7 @@ def _cmd_assignees(args: argparse.Namespace) -> int:
 
 
 def _cmd_create(args: argparse.Namespace) -> int:
+    _explicit_ws = getattr(args, "workspace", None) is not None
     try:
         ws_kind, ws_path = _parse_workspace_flag(args.workspace)
         branch_name = _parse_branch_flag(getattr(args, "branch", None))
@@ -1353,7 +1354,9 @@ def _cmd_create(args: argparse.Namespace) -> int:
             body=args.body,
             assignee=args.assignee,
             created_by=args.created_by or _profile_author(),
-            workspace_kind=ws_kind,
+            # Pass the module sentinel when the user did not specify --workspace,
+            # so create_task can fall back to the board's default_workspace_kind.
+            workspace_kind=(ws_kind if _explicit_ws else kb._MISSING),
             workspace_path=ws_path,
             branch_name=branch_name,
             project_id=getattr(args, "project", None),

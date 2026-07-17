@@ -1086,11 +1086,16 @@ def _handle_create(args: dict, **kw) -> str:
     # dir:/worktree project that spawns a follow-up child keeps the child
     # in that project instead of a throwaway scratch dir. Orchestrators
     # (kanban toolset, no HERMES_KANBAN_TASK) and CLI/dashboard callers
-    # fall back to scratch as before. Explicit None path stays None.
+    # fall back to the board's default_workspace_kind (create_task honors it
+    # via the _MISSING sentinel) and ultimately scratch. Explicit None path
+    # stays None.
     workspace_kind = args.get("workspace_kind")
     workspace_path = args.get("workspace_path")
     project_id = args.get("project") or args.get("project_id")
     _inherit_workspace = workspace_kind is None and workspace_path is None
+    # Track whether an explicit kind was supplied so we can forward the
+    # sentinel (rather than a hard "scratch") when nothing was requested.
+    _explicit_ws_kind = workspace_kind is not None
     if workspace_kind is None:
         workspace_kind = "scratch"
     triage, bool_error = _parse_bool_arg(args, "triage")
@@ -1130,6 +1135,9 @@ def _handle_create(args: dict, **kw) -> str:
                     if _self_task is not None and _self_task.workspace_kind:
                         workspace_kind = _self_task.workspace_kind
                         workspace_path = _self_task.workspace_path
+                        # An inherited kind is an explicit decision — don't let
+                        # it fall through to the board default / scratch.
+                        _explicit_ws_kind = True
                         # Keep follow-up children inside the same project so the
                         # whole subtree shares one repo + branch convention.
                         if project_id is None and _self_task.project_id:
@@ -1142,7 +1150,6 @@ def _handle_create(args: dict, **kw) -> str:
                 parents=tuple(parents),
                 tenant=tenant,
                 priority=int(priority) if priority is not None else 0,
-                workspace_kind=str(workspace_kind),
                 workspace_path=workspace_path,
                 project_id=project_id,
                 triage=triage,
@@ -1159,6 +1166,13 @@ def _handle_create(args: dict, **kw) -> str:
                 initial_status=str(initial_status),
                 created_by=os.environ.get("HERMES_PROFILE") or "worker",
                 session_id=session_id,
+                # Forward the board-default sentinel when the caller did not
+                # request an explicit workspace kind; create_task then honors
+                # the board's default_workspace_kind (e.g. isolated worktrees
+                # for trading cards) instead of forcing scratch.
+                workspace_kind=(
+                    str(workspace_kind) if _explicit_ws_kind else kb._MISSING
+                ),
             )
             new_task = kb.get_task(conn, new_tid)
             subscribed = _maybe_auto_subscribe(conn, new_tid)

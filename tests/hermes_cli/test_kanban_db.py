@@ -2347,6 +2347,104 @@ def test_dispatch_worktree_task_rerun_reuses_existing_linked_worktree_and_branch
 
 
 # ---------------------------------------------------------------------------
+# Isolated worktree dispatch (GAP1) + board default_workspace_kind
+# ---------------------------------------------------------------------------
+
+def test_worktree_root_redirects_outside_repo(kanban_home, tmp_path):
+    """GAP1 guard: when a board sets ``worktree_root``, a worktree task
+    anchors *outside* the production checkout
+    (``<worktree_root>/<repo>/.worktrees/<id>``) — never inside
+    ``<repo>/.worktrees/<id>`` — so worker git ops can't touch the
+    production checkout's HEAD or untracked WIP.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    iso_root = tmp_path / "iso-worktrees"
+    kb.create_board("iso-board", default_workdir=str(repo), worktree_root=str(iso_root))
+    with kb.connect(board="iso-board") as conn:
+        t = kb.create_task(
+            conn,
+            title="ship",
+            assignee="sentinel",
+            workspace_kind="worktree",
+            board="iso-board",
+        )
+        task = kb.get_task(conn, t)
+        ws = kb.resolve_workspace(task, board="iso-board")
+
+    expected = iso_root / repo.name / ".worktrees" / t
+    assert ws == expected
+    assert ws.exists()
+    # The worktree must NOT live inside the production checkout.
+    assert repo not in list(ws.parents)
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert f"worktree {expected}" in listed
+    assert f"worktree {repo / '.worktrees' / t}" not in listed
+
+
+def test_default_workspace_kind_enforced_at_creation(kanban_home, tmp_path):
+    """A board that sets ``default_workspace_kind`` has trading cards
+    dispatched into that kind when the caller omits ``workspace_kind``
+    (sentinel), instead of the historical ``scratch`` default.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    kb.create_board(
+        "trading-board",
+        default_workdir=str(repo),
+        worktree_root=str(tmp_path / "iso"),
+    )
+    # Mimic board.json's default_workspace_kind by writing it directly.
+    kb.write_board_metadata("trading-board", **{})
+    meta = kb.read_board_metadata("trading-board")
+    meta["default_workspace_kind"] = "worktree"
+    import json
+
+    board_json = (
+        kb.board_metadata_path("trading-board")
+    )
+    board_json.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+    with kb.connect(board="trading-board") as conn:
+        # Omitted workspace_kind -> must resolve to the board default.
+        t = kb.create_task(conn, title="trade", assignee="sentinel", board="trading-board")
+        task = kb.get_task(conn, t)
+        assert task.workspace_kind == "worktree"
+
+        # Explicit scratch must still be honoured.
+        t2 = kb.create_task(
+            conn,
+            title="scratchy",
+            assignee="sentinel",
+            workspace_kind="scratch",
+            board="trading-board",
+        )
+        task2 = kb.get_task(conn, t2)
+        assert task2.workspace_kind == "scratch"
+
+
+def test_default_workspace_kind_falls_back_to_scratch_without_board_default(kanban_home, tmp_path):
+    """Boards without ``default_workspace_kind`` keep the scratch default."""
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="plain", assignee="sentinel")
+        task = kb.get_task(conn, t)
+        assert task.workspace_kind == "scratch"
+
+
+def test_worktree_root_non_absolute_rejected(kanban_home, tmp_path):
+    """A relative ``worktree_root`` must fail loudly, not scatter worktrees."""
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    with pytest.raises(ValueError, match="not absolute"):
+        kb.create_board("iso-bad", default_workdir=str(repo), worktree_root="relative/dir")
+
+
+# ---------------------------------------------------------------------------
 # Scratch cleanup containment (#28818)
 # ---------------------------------------------------------------------------
 
