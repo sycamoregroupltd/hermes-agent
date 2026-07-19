@@ -2346,6 +2346,187 @@ def test_dispatch_worktree_task_rerun_reuses_existing_linked_worktree_and_branch
     assert f"branch refs/heads/{actual_branch}" in listed
 
 
+def test_worktree_no_path_honors_board_worktree_root(kanban_home, tmp_path):
+    """When a board declares ``worktree_root``, worktree tasks are
+    materialized under that isolated path — OUTSIDE the production
+    checkout (default_workdir) — instead of ``<repo>/.worktrees/<id>``.
+
+    This is the guard that prevents a worker's branch checkout / WIP from
+    ever touching HEAD in the shared production repo.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    isolated_root = tmp_path / "isolated-worktrees"
+    kb.create_board(
+        "wt-isolated-board",
+        default_workdir=str(repo),
+        worktree_root=str(isolated_root),
+    )
+    with kb.connect(board="wt-isolated-board") as conn:
+        t = kb.create_task(
+            conn, title="ship", workspace_kind="worktree", board="wt-isolated-board"
+        )
+        task = kb.get_task(conn, t)
+        assert task is not None
+        ws = kb.resolve_workspace(task, board="wt-isolated-board")
+
+    # Outside the production checkout, under the board's isolated root.
+    expected = isolated_root / "wt-isolated-board" / t
+    assert ws == expected
+    assert ws.exists()
+    assert repo.resolve() not in [p.resolve() for p in ws.resolve().parents]
+    assert ws.parent == isolated_root / "wt-isolated-board"
+    # Confirmed a real linked worktree of the production repo.
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert f"worktree {expected}" in listed
+    assert f"branch refs/heads/wt/{t}" in listed
+
+
+def test_worktree_no_path_without_worktree_root_stays_in_repo(kanban_home, tmp_path):
+    """Boards WITHOUT a ``worktree_root`` keep the legacy behavior
+    (``<repo>/.worktrees/<id>``), preserving backward compatibility for
+    boards that intentionally colocate worktrees with the repo.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    kb.create_board("wt-inrepo-board", default_workdir=str(repo))
+    with kb.connect(board="wt-inrepo-board") as conn:
+        t = kb.create_task(
+            conn, title="ship", workspace_kind="worktree", board="wt-inrepo-board"
+        )
+        task = kb.get_task(conn, t)
+        ws = kb.resolve_workspace(task, board="wt-inrepo-board")
+    assert ws == repo / ".worktrees" / t
+    assert ws.exists()
+
+
+def test_dispatch_worktree_task_keeps_production_head_unchanged(
+    kanban_home, tmp_path, monkeypatch
+):
+    """End-to-end proof of the acceptance criterion: dispatching a
+    worktree trading card on a board with an isolated ``worktree_root``
+    creates a separate worktree and leaves the production checkout HEAD
+    (and the main worktree) untouched.
+
+    The production repo's checked-out branch/commit must be identical
+    before and after the worker's worktree + branch operations.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    isolated_root = tmp_path / "isolated-worktrees"
+    kb.create_board(
+        "wt-prod-board",
+        default_workdir=str(repo),
+        worktree_root=str(isolated_root),
+    )
+    import hermes_cli.profiles as profiles
+
+    monkeypatch.setattr(profiles, "profile_exists", lambda _name: True)
+    spawns: list[tuple[str, str]] = []
+
+    def fake_spawn(task, workspace, board=None):
+        spawns.append((task.id, workspace))
+        return None
+
+    def _head(path: Path) -> str:
+        return subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def _branch(path: Path) -> str:
+        return subprocess.run(
+            ["git", "-C", str(path), "branch", "--show-current"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    head_before = _head(repo)
+    branch_before = _branch(repo)
+    assert branch_before == "main"
+
+    with kb.connect(board="wt-prod-board") as conn:
+        tid = kb.create_task(
+            conn,
+            title="ship",
+            assignee="sentinel",
+            workspace_kind="worktree",
+            board="wt-prod-board",
+        )
+        result = kb.dispatch_once(conn, spawn_fn=fake_spawn, board="wt-prod-board")
+        task = kb.get_task(conn, tid)
+
+    # Worker worktree lives outside the production checkout.
+    expected = isolated_root / "wt-prod-board" / tid
+    assert result.spawned == [(tid, "sentinel", str(expected))]
+    assert task.workspace_path == str(expected)
+    assert task.branch_name == f"wt/{tid}"
+
+    # Now simulate the worker checking out its feature branch in the
+    # isolated worktree — this must NOT disturb the production HEAD.
+    subprocess.run(
+        ["git", "-C", str(expected), "checkout", "-B", f"feature/{tid}", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # Add WIP commit in the isolated worktree.
+    (expected / "wip.txt").write_text("wip\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(expected), "add", "wip.txt"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(expected), "commit", "-m", "wip"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert _head(repo) == head_before, "production checkout HEAD changed!"
+    assert _branch(repo) == branch_before, "production checkout branch changed!"
+    # The production worktree list still has exactly the main checkout;
+    # the new linked worktree is separate and not nested under the repo.
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "worktree " + str(repo) in listed
+    assert str(expected) in listed
+    assert f"worktree {repo}/.worktrees/{tid}" not in listed
+
+
+def test_boards_set_worktree_root_glue(kanban_home, tmp_path):
+    """``write_board_metadata(worktree_root=...)`` persists the field so
+    the resolver can read it back via board metadata.
+    """
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    kb.create_board("wt-glue-board", default_workdir=str(repo))
+    root = tmp_path / "wt-root"
+    meta = kb.write_board_metadata("wt-glue-board", worktree_root=str(root))
+    assert meta.get("worktree_root") == str(root)
+    # Read back through the same path the resolver uses.
+    assert (
+        kb.read_board_metadata("wt-glue-board").get("worktree_root") == str(root)
+    )
+    # Clearing works too.
+    meta2 = kb.write_board_metadata("wt-glue-board", worktree_root="")
+    assert meta2.get("worktree_root") in (None, "")
+
+
 # ---------------------------------------------------------------------------
 # Scratch cleanup containment (#28818)
 # ---------------------------------------------------------------------------

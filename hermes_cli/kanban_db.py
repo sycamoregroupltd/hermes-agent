@@ -675,6 +675,7 @@ def write_board_metadata(
     color: Optional[str] = None,
     archived: Optional[bool] = None,
     default_workdir: Optional[str] = None,
+    worktree_root: Optional[str] = None,
 ) -> dict:
     """Create / update ``board.json`` for ``board``.
 
@@ -698,6 +699,8 @@ def write_board_metadata(
         meta["archived"] = bool(archived)
     if default_workdir is not None:
         meta["default_workdir"] = str(default_workdir) if default_workdir else None
+    if worktree_root is not None:
+        meta["worktree_root"] = str(worktree_root) if worktree_root else None
     if not meta.get("created_at"):
         meta["created_at"] = int(time.time())
     path = board_metadata_path(slug)
@@ -718,6 +721,7 @@ def create_board(
     icon: Optional[str] = None,
     color: Optional[str] = None,
     default_workdir: Optional[str] = None,
+    worktree_root: Optional[str] = None,
 ) -> dict:
     """Create a new board directory + DB + metadata. Idempotent.
 
@@ -735,6 +739,7 @@ def create_board(
         icon=icon,
         color=color,
         default_workdir=default_workdir,
+        worktree_root=worktree_root,
     )
     # Touch the DB so list_boards() sees it immediately.
     init_db(board=normed)
@@ -5766,6 +5771,47 @@ def _ensure_git_worktree(repo_root: Path, target: Path, branch_name: str) -> Non
         )
 
 
+def _board_worktree_root(board: Optional[str]) -> Optional[Path]:
+    """Return the board-configured isolated worktree root, if any.
+
+    A board may declare ``worktree_root`` in ``board.json`` to keep worker
+    worktrees out of the production checkout (``default_workdir``). When set,
+    worktree tasks are materialized there instead of under
+    ``<repo>/.worktrees/<id>``. Returns ``None`` when the board has no
+    isolated worktree root configured (legacy default: inside the repo).
+    """
+    slug = board if board else get_current_board()
+    root = (read_board_metadata(slug).get("worktree_root") or "").strip()
+    if not root:
+        return None
+    p = Path(root).expanduser()
+    if not p.is_absolute():
+        return None
+    return p
+
+
+def _worktree_target_for_board(
+    task_id: str, *, board: Optional[str], repo_for_branch: Path
+) -> Optional[Path]:
+    """Resolve an isolated per-task worktree path under the board's
+    ``worktree_root`` (if configured), and create its parent dir.
+
+    Returns ``None`` when the board has no ``worktree_root`` (caller falls
+    back to the legacy ``<repo>/.worktrees/<id>`` behavior). When a root is
+    configured, the worktree is placed at ``<worktree_root>/<board>/<id>`` so
+    a single shared root can serve multiple boards without collisions, and the
+    worktree is linked against ``repo_for_branch`` (the production repo) so its
+    commits/branches stay attributed to the real project repo.
+    """
+    root = _board_worktree_root(board)
+    if root is None:
+        return None
+    slug = _normalize_board_slug(board) or get_current_board() or "default"
+    target = root / slug / task_id
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 def _resolve_worktree_workspace(
     task: Task, *, board: Optional[str] = None
 ) -> tuple[Path, str]:
@@ -5805,6 +5851,16 @@ def _resolve_worktree_workspace(
                 f"task {task.id} has workspace_kind=worktree but board "
                 f"{board_slug!r} default_workdir {board_default!r} is not inside a git repo"
             )
+        # When the board declares an isolated worktree_root, keep worker
+        # worktrees OUT of the production checkout (default_workdir) so a
+        # worker's branch checkout / WIP never touches HEAD there. Linked
+        # against repo_root so commits stay attributed to the real project.
+        isolated = _worktree_target_for_board(
+            task.id, board=board_slug, repo_for_branch=repo_root
+        )
+        if isolated is not None:
+            _ensure_git_worktree(repo_root, isolated, branch_name)
+            return isolated, branch_name
         target = repo_root / ".worktrees" / task.id
         _ensure_git_worktree(repo_root, target, branch_name)
         return target, branch_name
@@ -5823,6 +5879,15 @@ def _resolve_worktree_workspace(
 
     repo_root = _git_toplevel(requested)
     if repo_root is not None and requested_resolved == repo_root:
+        # Honor an isolated board worktree_root when configured (keeps
+        # worker worktrees out of the production checkout). Otherwise fall
+        # back to the legacy in-repo `.worktrees/<id>` location.
+        isolated = _worktree_target_for_board(
+            task.id, board=board, repo_for_branch=repo_root
+        )
+        if isolated is not None:
+            _ensure_git_worktree(repo_root, isolated, branch_name)
+            return isolated, branch_name
         target = repo_root / ".worktrees" / task.id
         _ensure_git_worktree(repo_root, target, branch_name)
         return target, branch_name

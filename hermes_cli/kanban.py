@@ -267,6 +267,17 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
                           help="Switch to the new board after creating it")
     b_create.add_argument("--default-workdir", default=None,
                           help="Default workspace path for tasks created on this board")
+    b_create.add_argument("--worktree-root", default=None,
+                          help="Isolated root for worker git worktrees (keeps them out of "
+                               "default_workdir); if unset, worktrees land inside the repo")
+
+    b_wt_root = boards_sub.add_parser(
+        "set-worktree-root",
+        help="Set/clear the isolated worker worktree root for a board",
+    )
+    b_wt_root.add_argument("slug", help="Board slug")
+    b_wt_root.add_argument("path", nargs="?",
+                           help="Absolute path for isolated worktrees, or empty to clear")
 
     b_rm = boards_sub.add_parser(
         "rm", aliases=["remove", "delete"],
@@ -1055,6 +1066,8 @@ def _dispatch_boards(args: argparse.Namespace) -> int:
         return _cmd_boards_rename(args)
     if sub == "set-default-workdir":
         return _cmd_boards_set_default_workdir(args)
+    if sub == "set-worktree-root":
+        return _cmd_boards_set_worktree_root(args)
     print(f"kanban boards: unknown action {sub!r}", file=sys.stderr)
     return 2
 
@@ -1126,6 +1139,7 @@ def _cmd_boards_create(args: argparse.Namespace) -> int:
         icon=args.icon,
         color=args.color,
         default_workdir=args.default_workdir,
+        worktree_root=args.worktree_root,
     )
     verb = "already exists" if already else "created"
     print(f"Board {meta['slug']!r} {verb}.")
@@ -1227,6 +1241,27 @@ def _cmd_boards_set_default_workdir(args: argparse.Namespace) -> int:
         print(f"Board {normed!r} default workdir set to {new_val!r}.")
     else:
         print(f"Board {normed!r} default workdir cleared.")
+    return 0
+
+
+def _cmd_boards_set_worktree_root(args: argparse.Namespace) -> int:
+    try:
+        normed = kb._normalize_board_slug(args.slug)
+    except ValueError as exc:
+        print(f"kanban boards set-worktree-root: {exc}", file=sys.stderr)
+        return 2
+    if not normed or not kb.board_exists(normed):
+        print(f"kanban boards set-worktree-root: board {args.slug!r} does not exist",
+              file=sys.stderr)
+        return 1
+    meta = kb.write_board_metadata(normed, worktree_root=args.path)
+    new_val = meta.get("worktree_root")
+    if new_val:
+        print(f"Board {normed!r} isolated worktree root set to {new_val!r}.")
+        print("  New worktree tasks will be materialized there (outside default_workdir).")
+    else:
+        print(f"Board {normed!r} isolated worktree root cleared "
+              f"(worktrees will land inside the repo as before).")
     return 0
 
 
