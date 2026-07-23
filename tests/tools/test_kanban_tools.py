@@ -2036,6 +2036,139 @@ def test_board_param_routes_link_to_alt_board(multi_board_env):
         assert b in kb.child_ids(conn, a)
 
 
+@pytest.fixture
+def worker_db_pinned_multi_board_env(monkeypatch, tmp_path):
+    """Two boards after dispatcher-style origin DB/workspace env pins.
+
+    This reproduces the native-tool regression where a worker on one board
+    inherits HERMES_KANBAN_DB/HERMES_KANBAN_BOARD for its origin board, then a
+    tool call passes board="target". Explicit board must win; otherwise the
+    call silently lands on origin or reports the target task as unknown.
+    """
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_PROFILE", "origin-worker")
+    monkeypatch.delenv("HERMES_KANBAN_DB", raising=False)
+    monkeypatch.delenv("HERMES_KANBAN_WORKSPACES_ROOT", raising=False)
+    monkeypatch.delenv("HERMES_KANBAN_BOARD", raising=False)
+    monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    from pathlib import Path as _Path
+    monkeypatch.setattr(_Path, "home", lambda: tmp_path)
+
+    from hermes_cli import kanban_db as kb
+    kb._INITIALIZED_PATHS.clear()
+    kb.create_board("origin")
+    kb.create_board("target")
+    with kb.connect(board="origin") as conn:
+        origin_seed = kb.create_task(conn, title="origin-seed", assignee="origin-worker")
+        kb.claim_task(conn, origin_seed)
+    with kb.connect(board="target") as conn:
+        target_seed = kb.create_task(conn, title="target-seed", assignee="target-worker")
+        target_parent = kb.create_task(conn, title="target-parent", assignee="target-worker")
+
+    origin_db = kb.kanban_db_path(board="origin")
+    target_db = kb.kanban_db_path(board="target")
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(origin_db))
+    monkeypatch.setenv(
+        "HERMES_KANBAN_WORKSPACES_ROOT",
+        str(kb.workspaces_root(board="origin")),
+    )
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "origin")
+    monkeypatch.setenv("HERMES_KANBAN_TASK", origin_seed)
+    return {
+        "origin_seed": origin_seed,
+        "target_seed": target_seed,
+        "target_parent": target_parent,
+        "origin_db": origin_db,
+        "target_db": target_db,
+    }
+
+
+def test_worker_db_pin_does_not_override_board_create(worker_db_pinned_multi_board_env):
+    from hermes_cli import kanban_db as kb
+    from tools import kanban_tools as kt
+
+    out = kt._handle_create({
+        "title": "target-created-under-worker-pin",
+        "assignee": "target-worker",
+        "board": "target",
+    })
+    d = json.loads(out)
+    assert d["ok"] is True, d
+    new_tid = d["task_id"]
+
+    with kb.connect(board="target") as conn:
+        task = kb.get_task(conn, new_tid)
+        assert task is not None
+        assert task.title == "target-created-under-worker-pin"
+    with kb.connect(db_path=worker_db_pinned_multi_board_env["origin_db"]) as conn:
+        assert kb.get_task(conn, new_tid) is None
+
+
+def test_worker_db_pin_does_not_override_board_show_comment_and_link(worker_db_pinned_multi_board_env):
+    from hermes_cli import kanban_db as kb
+    from tools import kanban_tools as kt
+
+    target_seed = worker_db_pinned_multi_board_env["target_seed"]
+    target_parent = worker_db_pinned_multi_board_env["target_parent"]
+
+    shown = json.loads(kt._handle_show({"task_id": target_seed, "board": "target"}))
+    assert shown["task"]["title"] == "target-seed"
+
+    commented = json.loads(kt._handle_comment({
+        "task_id": target_seed,
+        "body": "target comment under origin worker pin",
+        "board": "target",
+    }))
+    assert commented["ok"] is True, commented
+
+    linked = json.loads(kt._handle_link({
+        "parent_id": target_parent,
+        "child_id": target_seed,
+        "board": "target",
+    }))
+    assert linked["ok"] is True, linked
+
+    with kb.connect(board="target") as conn:
+        comments = kb.list_comments(conn, target_seed)
+        assert [c.body for c in comments] == ["target comment under origin worker pin"]
+        assert target_seed in kb.child_ids(conn, target_parent)
+    with kb.connect(db_path=worker_db_pinned_multi_board_env["origin_db"]) as conn:
+        assert kb.get_task(conn, target_seed) is None
+        assert kb.child_ids(conn, target_parent) == []
+
+
+def test_worker_db_pin_does_not_override_board_block(monkeypatch, worker_db_pinned_multi_board_env):
+    """Block also honors explicit board under DB pins.
+
+    We drop HERMES_KANBAN_TASK because task-scoped workers may only block their
+    own task id; this isolates the board-resolution regression from the
+    separate ownership guard.
+    """
+    monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    from hermes_cli import kanban_db as kb
+    from tools import kanban_tools as kt
+
+    target_seed = worker_db_pinned_multi_board_env["target_seed"]
+    with kb.connect(board="target") as conn:
+        kb.claim_task(conn, target_seed)
+
+    blocked = json.loads(kt._handle_block({
+        "task_id": target_seed,
+        "reason": "target block under origin DB pin",
+        "board": "target",
+    }))
+    assert blocked["ok"] is True, blocked
+
+    with kb.connect(board="target") as conn:
+        task = kb.get_task(conn, target_seed)
+        assert task is not None
+        assert task.status == "blocked"
+    with kb.connect(db_path=worker_db_pinned_multi_board_env["origin_db"]) as conn:
+        assert kb.get_task(conn, target_seed) is None
+
+
 def test_board_param_none_falls_back_to_env(worker_env):
     """When ``board`` is omitted or None, behaviour is unchanged from
     before this feature — calls land on whatever the env resolves to.
