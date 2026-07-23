@@ -8,6 +8,13 @@ Runs daily via cron. Writes to Obsidian."""
 import subprocess, json, os, sys
 from datetime import datetime, timedelta
 
+# Secret scrubber — never persist a captured token (see redact() docstring).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from secret_redact import redact
+def safe_err(label, proc):
+    """Return a redacted stderr string safe to log/persist (token masked)."""
+    return f"{label}: {redact((proc.stderr or '')[:2000])}"
+
 from second_brain_writer import write_markdown_atomic
 
 OC = "http://localhost:3001/api/openclaw"
@@ -37,6 +44,11 @@ def db_rows(sql):
 r = subprocess.run(["curl", "-s", "--connect-timeout", "5", "--max-time", "15",
     "-H", f"X-Sycode-Token:{TOKEN}", f"{OC}/signals/journey/stats"],
     capture_output=True, text=True, timeout=20)
+if r.returncode != 0:
+    # Failure leaks the argv repr (embedding the token) into stderr. Mask it
+    # before logging so the cron job's persisted last_error stays secret-free.
+    print(safe_err("OPENCLAW_STATS_FAILED", r), file=sys.stderr)
+    sys.exit(1)
 stats = json.loads(r.stdout) if r.stdout else {}
 
 # 2. Paper trader performance from DB

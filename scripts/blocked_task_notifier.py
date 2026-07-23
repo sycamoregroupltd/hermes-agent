@@ -160,32 +160,55 @@ def alert_tier(age_seconds: float, delivered_tiers: list[str]) -> str | None:
 
 
 WA_FALLBACK = os.environ.get('BLOCKED_TASK_WA_FALLBACK', 'whatsapp:Frank')
+# Hard send timeout per attempt. The notifier runs every 15m; a single attempt must not
+# block the whole run for longer than this, and must never raise into main().
+SEND_TIMEOUT = int(os.environ.get('BLOCKED_TASK_SEND_TIMEOUT', '60'))
+# Primary (discord) retry count before failing over to WhatsApp. Transient egress blips
+# (e.g. DGX IPv6 frame-drop) are intermittent, so one quick retry maximizes discord delivery.
+PRIMARY_RETRIES = int(os.environ.get('BLOCKED_TASK_PRIMARY_RETRIES', '2'))
 
-def send_alert(message: str) -> tuple[bool, str]:
+
+def _run_hermes_send(target: str, subject: str, message: str, timeout: int) -> tuple[int | None, str]:
+    """Invoke `hermes send` and return (returncode, detail).
+
+    Never raises: a timeout or spawn error is reported as (None, detail) so the caller can
+    fail over instead of crashing the notifier (root cause of t_36a16eb1 DEAD status).
+    """
     env = os.environ.copy()
     env['HERMES_HOME'] = '/home/frank/.hermes'
-    result = subprocess.run(
-        [HERMES, 'send', '-q', '-t', ALERT_TARGET, '-s', 'Frank-critical kanban blocker', message],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-    )
-    detail = (result.stdout + '\n' + result.stderr).strip().replace('\n', ' ')[:300]
-    success = result.returncode == 0
-    if not success:
-        # WhatsApp fallback — cross-channel failover
-        wa_result = subprocess.run(
-            [HERMES, 'send', '-q', '-t', WA_FALLBACK, '-s', '🔁 FAILOVER: Frank-critical kanban blocker', message],
+    try:
+        result = subprocess.run(
+            [HERMES, 'send', '-q', '-t', target, '-s', subject, message],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
             env=env,
         )
-        wa_ok = wa_result.returncode == 0
-        wa_detail = (wa_result.stdout + '\n' + wa_result.stderr).strip().replace('\n', ' ')[:200]
-        detail += f" | wa-fallback={'ok' if wa_ok else 'failed'} {wa_detail}"
-    return success, f'rc={result.returncode} {detail}'.strip()
+        detail = (result.stdout + '\n' + result.stderr).strip().replace('\n', ' ')[:300]
+        return result.returncode, detail
+    except subprocess.TimeoutExpired:
+        return None, f'timed out after {timeout}s'
+    except Exception as exc:  # pexpect/EOFError/spawn failures must not kill the notifier
+        return None, f'exception: {type(exc).__name__}: {str(exc)[:200]}'
+
+
+def send_alert(message: str) -> tuple[bool, str]:
+    # Primary channel: discord:#critical-alerts (named consumer — Frank critical response path).
+    # Retry a transient hang/blip before failing over, so the primary channel is preferred.
+    last_rc, last_detail = None, ''
+    for attempt in range(1, PRIMARY_RETRIES + 1):
+        rc, detail = _run_hermes_send(ALERT_TARGET, 'Frank-critical kanban blocker', message, timeout=SEND_TIMEOUT)
+        last_rc, last_detail = rc, detail
+        if rc == 0:
+            return True, f'rc={rc} {detail}'.strip()
+        last_detail += f' [attempt {attempt}/{PRIMARY_RETRIES}: rc={rc}]'
+    # Primary failed (non-zero rc, timeout, or exception). Cross-channel failover to WhatsApp.
+    wa_rc, wa_detail = _run_hermes_send(WA_FALLBACK, '🔁 FAILOVER: Frank-critical kanban blocker', message, timeout=SEND_TIMEOUT)
+    wa_ok = wa_rc == 0
+    detail = f'{last_detail} | wa-fallback={"ok" if wa_ok else "failed"} {wa_detail}'
+    # The notifier's contract is "alert reaches Frank". A successful WhatsApp failover
+    # satisfies that, so it counts as delivered (prevents 15m re-alert spam on discord blips).
+    return wa_ok, f'rc={last_rc} {detail}'.strip()
 
 
 def format_message(tier: str, pageable: list[dict], now_epoch: int) -> str:

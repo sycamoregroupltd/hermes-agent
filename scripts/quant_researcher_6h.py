@@ -350,9 +350,11 @@ def gate_cohort(n_clean_fresh, wr_clean_fresh_v, clean_stale_share,
     Pure, side-effect-free decision used by main() so the early-epoch ramp
     logic is unit-testable without a DB. The fresh-N gate uses N_THRESH_EARLY
     during the first EARLY_EPOCH_DAYS of the open clean epoch; WR and stale
-    gates stay strict. early_epoch_only is True only when the cohort passed
-    the ramped gate but would NOT clear the full N_THRESH gate (segregated
-    from VALIDATED).
+    gates stay strict. early_epoch_only is True whenever the cohort passes the gate
+    while in_early_epoch is True -- segregated from VALIDATED regardless of
+    sample size. This enforces the blind-period contract: NO cohort may be
+    labelled VALIDATED while the clean epoch is younger than EARLY_EPOCH_DAYS,
+    even one whose fresh N already clears the full N_THRESH floor.
 
     CRITICAL (t_ef1d2490): the gate is decided on the clean-epoch subset ONLY.
     The scan window is clamped to the open clean epoch by the `triggered_at >=
@@ -372,7 +374,13 @@ def gate_cohort(n_clean_fresh, wr_clean_fresh_v, clean_stale_share,
         and (clean_stale_share <= STALE_THRESH)
         and (not kill_listed)
     )
-    early_epoch_only = in_early_epoch and pass_gate and (n_clean_fresh < N_THRESH)
+    # BLIND-PERIOD CONTRACT (t_26cdaf62): while the clean epoch is younger than
+    # EARLY_EPOCH_DAYS NO cohort may be VALIDATED regardless of sample size. Any
+    # cohort that passes the (softened) gate during the blind period is tagged
+    # EARLY-EPOCH only -- never routed to the VALIDATED bucket. This honours the
+    # t_4df5351d blind-period contract (VALIDATED_EDGE_STATUS stays
+    # INSUFFICIENT_SAMPLE; a blind-period "edge" is never a confirmed edge).
+    early_epoch_only = in_early_epoch and pass_gate
     return pass_gate, early_epoch_only
 
 
@@ -659,6 +667,7 @@ def main():
     # ---- Build report ----
     out = []
     out.append(f"# Quantitative Research: 6-Hour Systematic Edge & Carry Sweep")
+    out.append(f"**Cadence:** every 6 hours (cron `15 */6 * * *`, 4 runs/day) — matches the '6h' contract.")
     out.append(f"**Date:** {run_label}")
     out.append(f"**Job ID:** 13c1f9279025 (deterministic no_agent script)")
     out.append(f"**Data window:** {win_label} | signals scanned: {n_sig:,} | joined: {df.height:,}")
@@ -686,17 +695,31 @@ def main():
                    "below and excluded from validated claims. Do not recalibrate the engine or fire MCE/edge alerts from this report.")
         out.append("")
     else:
-        if any_validated:
+        if any_validated and not in_early_epoch:
+            # DEFENSE-IN-DEPTH (t_26cdaf62): the blind-period contract forbids
+            # ANY validated cohort before the clean epoch reaches EARLY_EPOCH_DAYS.
+            # gate_cohort() already routes every blind-period passing cohort to
+            # EARLY-EPOCH, so any_validated is False during the blind period by
+            # construction; this guard is a second latch so the "Validated
+            # Cohorts (Passed All Gates)" header can never be emitted while
+            # in_early_epoch is True even if that routing is later changed.
             out.append("## Validated Cohorts (Passed All Gates — strictly within clean-candidate-599f58e7e epoch)")
             out.append("")
-            out.append("| TF | Dir | Vol | Macro | Fav | AllN | AllWR | FreshN | FreshWR | CleanN | CleanWR | Clean_stale | Contam? | Kill? | lag_min | fresh_window_min | fresh_lag | stale_share |")
-            out.append("|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|")
+            out.append("> **label_basis=forward-synthetic** — not realized-exit confirmed; not a live edge until realized-exit N>=300. "
+                       "Cohorts below are validated on a SYNTHETIC-FORWARD label basis "
+                       "(`join_asof(strategy='forward')` over all `signal_journeys`), NOT executed/realized-exit pnl. "
+                       "Per t_a04368da measurement-integrity guard this is a CANDIDATE, not a confirmed live edge; "
+                       "the authoritative realized-exit basis (fusion-calibration) independently reports "
+                       "VALIDATED_EDGE_STATUS=INSUFFICIENT_SAMPLE.")
+            out.append("")
+            out.append("| TF | Dir | Vol | Macro | Fav | AllN | AllWR | FreshN | FreshWR | CleanN | CleanWR | Clean_stale | Contam? | Kill? | lag_min | fresh_window_min | fresh_lag | stale_share | label_basis |")
+            out.append("|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|")
             for r in validated.sort("wr_clean_fresh", descending=True).to_dicts():
                 out.append(f"| {r['timeframe']} | {r['direction']} | {r['volatility']} | {r['macro_regime']} | {str(r['fav'])} | "
                            f"{r['n_all']:,} | {r['wr_all']}% | {r['n_fresh']:,} | {r['wr_fresh']}% | "
                            f"{r['n_clean_fresh']:,} | {r['wr_clean_fresh']}% | {r['clean_stale_share']}% | "
                            f"{'YES' if r['contaminated'] else 'NO'} | {'YES' if r['kill_listed'] else 'NO'} | "
-                           f"{r['lag_min_med']} | {r['fresh_window_min']} | {r['fresh_lag_med']} | {r['stale_share']}% |")
+                           f"{r['lag_min_med']} | {r['fresh_window_min']} | {r['fresh_lag_med']} | {r['stale_share']}% | forward-synthetic |")
             out.append("")
         if any_early:
             # Segregated lower-confidence section (t_4cc128ea AC #3) -- NEVER a
@@ -892,6 +915,7 @@ def quiet_starving(run_label, run_date, n_sig, win_label, clean_epoch_start,
     # Compact dated note (keeps validator markers; never asserts a validated edge).
     note = []
     note.append("# Quantitative Research: 6-Hour Systematic Edge & Carry Sweep (STARVING)")
+    note.append(f"**Cadence:** every 6 hours (cron `15 */6 * * *`, 4 runs/day) — matches the '6h' contract.")
     note.append(f"**Date:** {run_label}")
     note.append(f"**Job ID:** 13c1f9279025 (deterministic no_agent script)")
     note.append(f"**Data window:** {win_label} | signals scanned: {n_sig:,} | joined: {joined_n:,}")
@@ -977,6 +1001,7 @@ def quiet_starving(run_label, run_date, n_sig, win_label, clean_epoch_start,
 def fail_closed(run_label, run_date, n_sig, reason):
     body = (
         f"# Quantitative Research: 6-Hour Systematic Edge & Carry Sweep\n"
+        f"**Cadence:** every 6 hours (cron `15 */6 * * *`, 4 runs/day) — matches the '6h' contract.\n"
         f"**Date:** {run_label}\n"
         f"**Job ID:** 13c1f9279025 (deterministic no_agent script)\n"
         f"**Data window scanned:** {n_sig:,} signals\n\n"

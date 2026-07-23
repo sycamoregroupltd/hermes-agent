@@ -188,12 +188,14 @@ def detect_operator_term(*parts: str) -> str | None:
 
 
 def scope_class(task: dict[str, Any], parsed: VerdictParse) -> tuple[str, str | None]:
-    latest_body = str(parsed.comment.get("body", "")) if parsed.comment else ""
+    # C2 fix (t_8874b97b / t_9a0af491): operator-gate detection scans ONLY the
+    # task title/body scope — NOT the reviewer comment prose and NOT the
+    # block_reason. A verdict that *denies* a gate ("no prod, no creds",
+    # "A3-safe") must not strand an approved card. This matches the production
+    # router's operator_gate_terms(title, body) contract.
     term = detect_operator_term(
         str(task.get("title", "")),
         str(task.get("body", "")),
-        str(task.get("block_reason", "")),
-        latest_body,
     )
     if term:
         return "operator_gated", term

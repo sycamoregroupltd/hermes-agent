@@ -40,6 +40,36 @@ from second_brain_writer import write_markdown_atomic
 MCE_THRESHOLD_PP = 15  # Mean Calibration Error threshold in percentage points
 TRAILING_DAYS = 7       # Lookback window
 MIN_BUCKET_SIZE = 5     # Minimum samples per bucket to include in MCE
+# Tier-1 validated-edge floor (t_ef700332 / t_b4c824c7 / t_016ac4e4). The
+# monitoring layer MUST NOT raise a flag/card or recalibrate the engine until
+# the Tier-1 realized-exit sample reaches n >= 300. Below this floor the
+# VALIDATED_EDGE_STATUS is INSUFFICIENT_SAMPLE and any MCE breach is reported
+# for accumulation tracking only — never as an alert and never as a
+# recalibration trigger.
+TIER1_VALIDATION_FLOOR = 300
+# Epoch-bounded Tier-1 realized-exit count (MUST match
+# fusion_calibration_report_v2.py / tier1_sample_gate.py exactly: bounded to
+# the certified clean epoch `clean-candidate-599f58e7e` AND a rolling 30d window
+# on outcome resolution time, synthetic Tier-2 rows excluded). Without the
+# epoch bound this returns the whole 30d population (hundreds of thousands),
+# which would falsely satisfy the floor. Counts DISTINCT journeys like the
+# report's dedup_rows CTE.
+TIER1_FLOOR_QUERY = (
+    "WITH epoch AS ("
+    "SELECT starts_at::text AS s FROM data_epoch_registry "
+    "WHERE name = 'clean-candidate-599f58e7e' LIMIT 1) "
+    "SELECT COUNT(DISTINCT sj.id) FROM signal_journeys sj "
+    "JOIN decision_outcomes d ON d.journey_id = sj.id "
+    "LEFT JOIN trade_setups ts ON ts.signal_id = sj.id::text "
+    "CROSS JOIN epoch "
+    "WHERE d.outcome_class IN ('WIN','LOSS') "
+    "AND d.contaminated = false "
+    "AND d.is_counterfactual = false "
+    "AND d.label_source NOT IN ('interim_1h','interim_4h') "
+    "AND abs(d.pnl_percent::numeric) <= 1000 "
+    "AND COALESCE(d.finalized_at, d.decided_at, d.created_at) >= epoch.s::timestamp "
+    "AND COALESCE(d.finalized_at, d.decided_at, d.created_at) >= now() - interval '30 days';"
+)
 KANBAN_BOARD = "sycode-trading"
 OUTPUT_DIR = os.path.expanduser("~/obsidian/quant-team/governance")
 PARENT_TASK = "t_b4a6dbda"  # This task id — for child task linking
@@ -494,34 +524,58 @@ def main():
     }
 
     # ── 8. Escalate if MCE > threshold ──────────────────────────────────
+    # Hard gate (t_ef700332 / t_b4c824c7): the monitoring layer MUST NOT raise
+    # a flag/card or recalibrate the engine until the Tier-1 realized-exit
+    # sample reaches n >= 300 (VALIDATED_EDGE_STATUS sufficient to claim an
+    # edge). Below that floor the breach is reported as INSUFFICIENT_SAMPLE for
+    # accumulation tracking only — never as an alert, never as a recalibration
+    # trigger. Recalibration is a Frank/PM-governed change (t_016ac4e4 review
+    # path); this monitor never calls run_calibration().
     stdout_lines = []
 
     low_sample = stats.get("labeled_with_pwin", 0) < 100
 
     if mce_pp > MCE_THRESHOLD_PP:
-        if low_sample:
-            stdout_lines.append(f"[CALIBRATION MONITOR] MCE = {mce_pp}pp (threshold: {MCE_THRESHOLD_PP}pp) but clean sample size {stats.get('labeled_with_pwin', 0)} < 100 (LOW SAMPLES) — escalation bypassed.")
-        else:
-            # ── 8a. Trigger out-of-schedule calibration ────────────────────
-            cal_success, cal_output = run_calibration()
-            cal_status = "✅ Calibration completed" if cal_success else "⚠️ Calibration FAILED (degraded)"
-            stdout_lines.append(f"[CALIBRATION DRIFT] MCE = {mce_pp}pp (threshold: {MCE_THRESHOLD_PP}pp)")
-            stdout_lines.append(f"  Calibration: {cal_status}")
-            if cal_output:
-                for line in cal_output.split("\n"):
-                    stdout_lines.append(f"    {line}")
+        # Fetch the authoritative Tier-1 realized-exit sample size once.
+        try:
+            _tier1_raw = db_query(TIER1_FLOOR_QUERY)
+            tier1_n = safe_int(_tier1_raw) if _tier1_raw is not None else None
+        except Exception:
+            tier1_n = None
+        floor_met = tier1_n is not None and tier1_n >= TIER1_VALIDATION_FLOOR
 
-            # ── 8b. Create kanban triage task ──────────────────────────────
-            if cal_success:
-                stats["calibration_triggered"] = True
-                stats["calibration_output"] = cal_output[:300] if cal_output else ""
+        if floor_met:
+            # Confident-sample breach (n >= 300): surface + triage card, but
+            # NEVER auto-recalibrate (HOLD stays governed; t_b4c824c7).
+            stdout_lines.append(
+                f"[CALIBRATION DRIFT] MCE = {mce_pp}pp (threshold: {MCE_THRESHOLD_PP}pp)")
+            stdout_lines.append(
+                f"  Tier-1 realized-exit n={tier1_n} >= {TIER1_VALIDATION_FLOOR} "
+                f"(validated-edge floor met). MCE breach is on a confident sample.")
+            stdout_lines.append(
+                "  RECALIBRATION HOLD (t_b4c824c7): no auto-recalibration performed; "
+                "escalate for Frank/PM-governed review.")
             ticket_result = create_calibration_review_task(stats)
-            stdout_lines.append(f"  Labeled journeys: {overview.get('labeled', 0)} (w/ p_win: {overview.get('labeled_with_pwin', 0)})")
+            stdout_lines.append(
+                f"  Labeled journeys: {overview.get('labeled', 0)} (w/ p_win: {overview.get('labeled_with_pwin', 0)})")
             stdout_lines.append(f"  Overall bias: {overall.get('overall_bias_pp', '?')}pp")
             stdout_lines.append(f"  Qualifying buckets: {mce_qual}/{mce_total}")
             stdout_lines.append(f"  Report: {report_path}")
             stdout_lines.append(f"  Kanban: {ticket_result}")
             stdout_lines.append("")
+        else:
+            # Below the validated-edge floor: report INSUFFICIENT_SAMPLE for
+            # accumulation tracking. NO card, NO recalibration, NO run_calibration().
+            stdout_lines.append(
+                f"[CALIBRATION DRIFT] MCE = {mce_pp}pp (threshold: {MCE_THRESHOLD_PP}pp) "
+                f"but Tier-1 realized-exit n={tier1_n} "
+                f"< {TIER1_VALIDATION_FLOOR} (INSUFFICIENT_SAMPLE).")
+            stdout_lines.append(
+                "  VALIDATED_EDGE_STATUS: INSUFFICIENT_SAMPLE — NO alert/flag card raised "
+                "(t_ef700332) and NO recalibration performed (t_b4c824c7).")
+            stdout_lines.append(
+                "  Accumulate more Tier-1 realized-exit outcomes until n >= "
+                f"{TIER1_VALIDATION_FLOOR} before any recalibration decision.")
     else:
         # Silent: no stdout unless verbose
         if verbose:

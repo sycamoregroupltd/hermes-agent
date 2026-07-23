@@ -20,8 +20,28 @@ if [[ ! -d "${SERVER_DIR}" ]]; then
   exit 1
 fi
 if [[ ! -f "${PROJECT_SCRIPT}" ]]; then
-  echo "ERROR: project sync script missing: ${PROJECT_SCRIPT}" >&2
-  exit 1
+  # SELF-HEAL (2026-07-13, t_a842317d): the deploy working tree can drift off
+  # origin/main (e.g. checked out on a feature branch), in which case this script
+  # disappears and the cron hard-fails every 360m -> pattern_win_rate_registry goes
+  # stale past its 26h SLO (recurred 2026-07-12 + 2026-07-13). Restore the canonical
+  # blob from origin/main WITHOUT switching the working-tree branch. Only acts when
+  # the blob exists on origin/main; any other error still fails loudly.
+  # PROJECT_SCRIPT is <repo>/server/scripts/...; git paths are relative to repo root.
+  REPO_ROOT="$(dirname "${SERVER_DIR}")"
+  BLOB_PATH="${PROJECT_SCRIPT#"${REPO_ROOT}/"}"   # -> server/scripts/sync-pattern-win-rate-registry.ts
+  echo "WARN: project sync script missing at ${PROJECT_SCRIPT}; attempting self-heal from origin/main (${BLOB_PATH})" >&2
+  if command -v git >/dev/null 2>&1 && git -C "${REPO_ROOT}" cat-file -e "origin/main:${BLOB_PATH}" 2>/dev/null; then
+    mkdir -p "$(dirname "${PROJECT_SCRIPT}")"
+    if git -C "${REPO_ROOT}" show "origin/main:${BLOB_PATH}" >"${PROJECT_SCRIPT}"; then
+      echo "SELF-HEAL: restored ${PROJECT_SCRIPT} from origin/main" >&2
+    else
+      echo "ERROR: self-heal restore failed for ${PROJECT_SCRIPT}" >&2
+      exit 1
+    fi
+  else
+    echo "ERROR: project sync script missing and not recoverable from origin/main: ${PROJECT_SCRIPT}" >&2
+    exit 1
+  fi
 fi
 if [[ ! -x "${BUN_BIN}" ]]; then
   echo "ERROR: bun not executable at ${BUN_BIN}" >&2

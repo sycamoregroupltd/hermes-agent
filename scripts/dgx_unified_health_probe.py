@@ -50,6 +50,18 @@ CRON_STALE_MIN = 35          # cron ticker considered stale past this
 CANARY_STALE_MIN = 40        # last health_canary.jsonl write considered stale past this
 CRASH_LOOKBACK_MIN = 60      # kanban crash/gave_up window
 
+# Repeat-BLOCK hard-alert escalation (t_7a97ba51 proposal #3 / t_cafc1119 C3).
+# If the canary re-emits BLOCK >= CRITICAL_ALERT_MIN_COUNT times within
+# CRITICAL_ALERT_WINDOW_H hours, escalate BEYOND #fleet-reports to
+# #critical-alerts. This closes the gap where a recurring crash class (e.g. the
+# rc=0-no-signal worker-exit class owned by t_61f0e7e6) re-BLOCKs the canary
+# every cycle without ever reaching a higher-severity channel. Read-only except
+# for a small append-only JSON state file (same dir as the other canary logs).
+CRITICAL_ALERT_TARGET = "discord:#critical-alerts"
+CRITICAL_ALERT_WINDOW_H = 24      # rolling window for repeat detection
+CRITICAL_ALERT_MIN_COUNT = 3      # >= this many BLOCKs in window => escalate
+CRITICAL_ALERT_STATE = CRON_OUTPUT / "unified_health_block_history.jsonl"
+
 # Fork pressure mitigation — absorb transient EAGAIN fork() failures.
 # On Linux, a fork()/clone() under memory/swap pressure (or PID/cgroup
 # accounting saturation) can raise BlockingIOError/Resource temporarily
@@ -254,6 +266,54 @@ def check_mechanism_matrix() -> dict[str, Any]:
 # resolved task — a crash/gave_up on it is a *historical* event, not a live
 # infra failure, and must not pin the global verdict.
 ACTIVE_TASK_STATES = ("running", "ready")
+
+
+# --- Repeat-BLOCK hard-alert escalation (t_7a97ba51 #3 / t_cafc1119 C3) -------
+def record_block_event(ts: dt.datetime) -> int:
+    """Persist this BLOCK event to the rolling state file and return the
+    number of BLOCKs recorded within the trailing CRITICAL_ALERT_WINDOW_H.
+
+    Append-only + read-only resilience: a write failure must never break the
+    probe, and a read failure degrades to 'unknown' (count 0) rather than
+    crashing. Called exactly once per BLOCK verdict.
+    """
+    try:
+        CRITICAL_ALERT_STATE.parent.mkdir(parents=True, exist_ok=True)
+        with CRITICAL_ALERT_STATE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": ts.isoformat()}) + "\n")
+    except Exception:
+        pass
+    return _count_recent_blocks(ts)
+
+
+def _count_recent_blocks(now: dt.datetime) -> int:
+    """Count BLOCK events within CRITICAL_ALERT_WINDOW_H hours of `now`."""
+    cutoff = now.timestamp() - CRITICAL_ALERT_WINDOW_H * 3600
+    count = 0
+    try:
+        if not CRITICAL_ALERT_STATE.exists():
+            return 0
+        for line in CRITICAL_ALERT_STATE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+                ev_ts = dt.datetime.fromisoformat(ev["ts"]).timestamp()
+            except Exception:
+                continue
+            if ev_ts >= cutoff:
+                count += 1
+    except Exception:
+        return count
+    return count
+
+
+def critical_alert_due(now: dt.datetime) -> bool:
+    """True once BLOCK has re-occurred >= CRITICAL_ALERT_MIN_COUNT times in the
+    trailing window — i.e. a crash class is re-BLOCKing the canary repeatedly.
+    """
+    return record_block_event(now) >= CRITICAL_ALERT_MIN_COUNT
 
 
 def check_kanban_crashes() -> tuple[int, list[str], int]:
@@ -534,13 +594,39 @@ def main() -> int:
               % (send["rc"], send["timeout"], alert_file), file=sys.stderr)
         return 1
 
+    # REPEAT-BLOCK HARD-ALERT ESCALATION (t_7a97ba51 #3 / t_cafc1119 C3).
+    # If the same crash class has re-BLOCKed the canary >= CRITICAL_ALERT_MIN_COUNT
+    # times within CRITICAL_ALERT_WINDOW_H, escalate beyond #fleet-reports to
+    # #critical-alerts. This is additive: the #fleet-reports send above always
+    # happens; the #critical-alerts send only fires on a sustained recurrence.
+    # critical_alert_due() also records this BLOCK event into the rolling state.
+    escalated_critical = False
+    try:
+        if critical_alert_due(now):
+            critical_body = (
+                "🚨 CRITICAL REPEAT-ALERT (canary re-BLOCK >= "
+                f"{CRITICAL_ALERT_MIN_COUNT}x/{CRITICAL_ALERT_WINDOW_H}h)\n"
+                + alert
+            )
+            csend = run([HERMES, "send", "-t", CRITICAL_ALERT_TARGET,
+                         critical_body], timeout=30)
+            escalated_critical = (csend["rc"] == 0 and not csend["timeout"])
+            if not escalated_critical:
+                print("BLOCK critical-alert send FAILED rc=%s timeout=%s "
+                      "— local artifact holds evidence."
+                      % (csend["rc"], csend["timeout"]), file=sys.stderr)
+    except Exception as exc:  # never let the escalation break the probe
+        print(f"BLOCK critical-alert escalation exception: {exc}",
+              file=sys.stderr)
+
     # escalated-OK: probe ran correctly AND delivery succeeded. This is NOT a
     # probe bug, so we return 0 — the scheduler must NOT label it "script
     # failed" (task t_7b1ceb0f criterion 4). The BLOCK verdict is faithfully
     # recorded in unified_health_canary.jsonl + unified_health_alert.last +
     # unified_health_alerts.jsonl and delivered to discord; the exit code now
     # reflects PROBE health, not infra verdict.
-    print(f"BLOCK escalated OK to {ALERT_TARGET}: "
+    print(f"BLOCK escalated OK to {ALERT_TARGET} "
+          f"(critical_alerts={'YES' if escalated_critical else 'n/a'}): "
           f"{[c['name'] for c in infra_failed]}"
           f"{(' + mechanism RED ' + str(mech.get('dead_keys'))) if mech_red else ''}")
     return 0

@@ -3,16 +3,15 @@
     {
       "id": "35606b3d2436",
       "name": "tournament-daily-evaluation",
-      "prompt": "Daily tournament evaluation cron session for Sycode Trading (PAPER-ONLY; not a kanban worker): do not call kanban_show/kanban_complete/kanban_block unless an explicit HERMES_KANBAN_TASK or task id is provided in this prompt.\n\nHard safety boundary: paper-mode only. Do not enable live trading, create/modify trade_intents, deploy/restart production services, edit credentials/secrets/provider auth, alter billing/spend, or run irreversible DB/data operations. The tournament proposes; the canonical gates dispose.\n\nRequired context and source-of-truth checks:\n1. Confirm this harness design file exists and read the relevant promotion/kill gates before scoring: /home/frank/sycode-wt/candle-full-universe/docs/strategy-tournament/PAPER_ARENA_HARNESS_DESIGN.md.\n2. Reference strategy-profile-pack.json if present in /home/frank/sycode-wt/candle-full-universe.\n3. Use read-only DB/data access where possible and fail visibly if a data/query/pipeline step is unavailable.\n\nEvaluation contract:\n1. Query strategy outcomes and paper trading results for all active tournament strategies.\n2. Compute metrics net-of-fees and leak-free at signal time: Win Rate (WR), Sharpe ratio, Profit Factor (PF), Max Drawdown (MDD), sample size, temporal/OOS stability where available, and statistical confidence/p-value where available.\n3. Apply the promotion/kill gates from PAPER_ARENA_HARNESS_DESIGN.md, including at minimum: Sharpe>=1.0, WR>50% with n>=30, PF>1.5, MDD<15%, p<0.05 for promotion candidates; kill/eliminate conditions such as MDD>=20%, 7 consecutive losses, or documented harness kill conditions.\n4. Treat clean small-sample wins as suspect; do not recommend promotion without sufficient samples and temporal stability.\n\nDurable output contract (mandatory every run):\n1. Write the full report to the fixed quant-vault path /home/frank/obsidian/quant-team/strategy-performance/tournament/YYYY-MM-DD.md, where YYYY-MM-DD is the local run date. Create parent directories if needed.\n2. Include YAML frontmatter with title, date, type: tournament-daily-evaluation, status, source_job_id: 35606b3d2436, safety: paper-only, and tags including strategy-tournament and paper-trading.\n3. Include sections: Summary, Data Sources, Metric Method, Candidate Scores, Promote/Eliminate Recommendations, Kanban Routing, Safety Notes, and Raw/Source Provenance.\n4. Update /home/frank/obsidian/quant-team/index.md and /home/frank/obsidian/quant-team/log.md with a short link to the daily report if the link is not already present.\n\nDecision routing contract (mandatory; zero unrouted decisions):\nFor every promote or eliminate recommendation, file idempotency-keyed kanban cards so the decision cannot rot in a local cron file:\n1. Create or reuse a PM triage card assigned to sycode-trading-pm with idempotency_key = tournament-daily-evaluation-YYYY-MM-DD-<strategy_id>-<decision>. The card body must include the daily report path, metrics, the exact proposed decision, paper-only boundary, and acceptance criteria for PM triage to accept/reject/route it. Do not assign these follow-ups to yourself inside the current cron session except via the card assignee field.\n2. Create or reuse a risk gate card assigned to trading-risk-reviewer with idempotency_key = tournament-risk-gate-YYYY-MM-DD-<strategy_id>-<decision>. Link it to the PM triage card as a parent when the kanban_create return id is available; otherwise include the PM triage id/key in the body. The risk gate must explicitly require the canonical promotionQuality gate for promotions and a false-kill/overfit/sampling review for eliminations. Promotions remain subject to the canonical promotionQuality gate; this cron must never directly promote a strategy.\n3. In the daily report's Kanban Routing section, list every created/reused card id or idempotency key and mark any failed card creation as a visible failure. If any promote/eliminate recommendation cannot be routed, the final response must say ROUTING_FAILED with the exact strategy/decision and error.\n\nFinal response contract:\nReturn a concise report with: report path, Discord delivery target, number of strategies scored, number of promote/eliminate recommendations, number of kanban PM triage cards filed/reused, number of trading-risk-reviewer gate cards filed/reused, harness doc path check, and any failures. If no promote/eliminate recommendations exist, explicitly say zero unrouted decisions because no decisions were recommended.\n\nDiscord delivery mechanism (t_739e699a correction, 2026-07-04): scheduler-level deliver is intentionally LOCAL for this job because sycode-trading-pm must not open a second Discord gateway websocket. After the report markdown file is written and verified, you MUST send the report via bot-token REST using the already-running Jarvis profile (no gateway websocket is started by this command):\n\n    env HERMES_HOME=/home/frank/.hermes/profiles/jarvis HERMES_PROFILE=jarvis /home/frank/.local/bin/hermes send -t discord:#quant-reports \"Tournament report: MEDIA:<report_path>\"\n\nTreat a nonzero exit from that command as DELIVERY_FAILED and include stderr/stdout in the final response. The final response must include `discord_rest_send=ok` only after the command exits 0. Do not rely on cron `deliver=discord:#quant-reports`; it is deliberately disabled for this job.\n\n\nImportant Discord size guard: tournament reports exceed Discord message length; use `MEDIA:<report_path>` rather than `--file/-f <report_path>` so the report is delivered as an attachment.\n",
+      "prompt": "Daily tournament evaluation cron session for Sycode Trading (PAPER-ONLY; not a kanban worker): do not call kanban_show/kanban_complete/kanban_block unless an explicit HERMES_KANBAN_TASK or task id is provided in this prompt.\n\nHard safety boundary: paper-mode only. Do not enable live trading, create/modify trade_intents, deploy/restart production services, edit credentials/secrets/provider auth, alter billing/spend, or run irreversible DB/data operations. The tournament proposes; the canonical gates dispose.\n\nRequired context and source-of-truth checks:\n1. Load and follow the obsidian-knowledge-management skill before any durable knowledge write. Resolve Sycode Trading through /home/frank/obsidian-fleet-vault/Projects/Portfolio/registry.yaml, then read the registered MOC plus the owning vault AGENTS.md and SCHEMA.md. Search compiled knowledge before claiming current state. Inspect the registered tracker and runtime.\n2. Confirm /home/frank/sycode-wt/candle-full-universe/docs/strategy-tournament/PAPER_ARENA_HARNESS_DESIGN.md exists and read its promotion/kill gates. SCORING-SOURCE GUARD (t_392e518a): use strategy_outcomes joined via strategies.strategy_pool_id, never the dead trade_outcomes table. If about to query trade_outcomes, STOP and fail visibly.\n3. Reference strategy-profile-pack.json if present in the workdir.\n4. Probe http://localhost:3001/ready and read .proof. Retry a probe-shape failure once. Use read-only DB/data access and fail visibly when unavailable.\n\nEvaluation contract:\n1. Query strategy outcomes and paper trading results for every active tournament strategy.\n2. Compute net-of-fee, signal-time-only, leak-free metrics: WR, Sharpe, PF, capital-based MDD, sample size, temporal/OOS stability, and confidence/p-value where available.\n3. Apply PAPER_ARENA_HARNESS_DESIGN.md gates, including Sharpe>=1.0, WR>50% with n>=30, PF>1.5, MDD<15%, p<0.05 for promotion; and canonical documented kill conditions. Treat small clean samples as suspect.\n\nMANDATORY CORRELATION-SPACE AND WIRING-EVIDENCE GATE (kanban:t_c6ead070; correction from kanban:t_72d6b78d and kanban:t_9f029bd7):\n1. Before upgrading any stale-arm HOLD to ELIMINATE/KILL, classify the evidence space. Arena/tournament tables strategy_arena_decisions -> strategy_decision_logs -> strategy_outcomes are rating/counterfactual evidence. ArenaStreamDispatcher deliberately receives both validator-APPROVED and validator-REJECTED signals when the unfiltered Arena is enabled; rejected Arena rows are not expected to create TradeIntent rows. The actual approved paper execution path is SignalHandler -> StrategyEngine -> trade_intents -> managed_positions. signal_intent_decisions may provide live-path terminal telemetry when rows exist. There is no public.signal_intents table in the current schema.\n2. For every stale-arm candidate, resolve each recent Arena correlation against signal_journeys/validation state before interpreting missing intents. Count APPROVED versus REJECTED source signals. A validator-REJECTED Arena winner is counterfactual and has no winner->intent obligation.\n3. NEVER join Arena/tournament correlation IDs to trade_intents correlation IDs and infer a break merely from non-overlap. Arena IDs and approved execution lineage are separate evidence spaces; cross-space non-overlap is expected and is not a wiring defect.\n4. Query by strategy UUID: recent strategy_decision_logs would_trade rows; validator-APPROVED and validator-REJECTED source counts; simulated strategy_outcomes; executed strategy_outcomes; non-null actual_pnl rows; persisted trade_intents; managed_positions; and signal_intent_decisions. Report exact counts plus evidence_class for every stale-arm decision.\n5. Allowed evidence classes: REALIZED_OUTCOME_EVIDENCE; LIVE_PATH_PRESENT_UNSCORABLE; SIMULATED_ONLY_UNSCORABLE; ARENA_ONLY_UNSCORABLE; LIVE_WIRING_GAP; NO_CONTRADICTORY_EVIDENCE.\n6. If executed_outcomes=0 or non-null actual_pnl rows=0 while current evidence is simulated/counterfactual, verdict is UNSCORABLE HOLD. Historical trade_intents/managed_positions prove prior approved paper-path activity, not that the current tournament sample is realized. Never print KILL from a 0/n realized sample.\n7. If activity is only Arena simulation and live-path trade_intents/managed_positions are zero, classify SIMULATED_ONLY_UNSCORABLE and HOLD. Do not describe this as a wiring defect or decision-to-intent break.\n8. LIVE_WIRING_GAP is allowed only when validator-APPROVED live-path evidence or signal_intent_decisions establishes an intent-creation obligation and no durable trade_intent or first-class terminal pipeline audit exists. Arena would_trade rows alone can never justify this label.\n9. Pool 35 / Macro Regime Cycle regression anchor (strategy f951f84e-9fad-47b8-8394-ad8d557ea2cb): verified on 2026-07-19: 8 Arena correlations, all 8 validator-REJECTED; 2 historical paper trade_intents; 1 managed_position; 0 Arena-to-intent overlap; 3 simulated outcomes; 0 executed outcomes; 0 non-null actual_pnl. Correct classification is LIVE_PATH_PRESENT_UNSCORABLE; HOLD. The 0/8 join is expected because rejected unfiltered-Arena inputs do not create intents, and the eight rows are additionally contaminated by a separate fail-open filter-contract defect. Link [[Reviews/2026-07-19-pool35-macro-regime-cycle-false-kill-hold-t_72d6b78d]], [[Reviews/2026-07-19-pool35-filter-contract-and-arena-lineage-t_9f029bd7]], and kanban:t_c6ead070 when relevant.\n10. Every proposed ELIMINATE must include evidence_class and exact counts/queries. Any UNSCORABLE class forces HOLD and prohibits an eliminate card.\n\nDurable output contract:\n1. Write /home/frank/obsidian/quant-team/strategy-performance/tournament/YYYY-MM-DD.md using local date and existing path casing.\n2. Follow SCHEMA.md: required title, type, status, created, updated, confidence, tags, sources. Use type: task-evidence, status: review, confidence: high|medium|low|unknown, source_job_id: 35606b3d2436, safety: paper-only. Never use evidence or eval-evidence as confidence.\n3. Include Summary, Data Sources, Metric Method, Correlation-Space / Wiring Evidence, Candidate Scores, Promote/Eliminate Recommendations, Kanban Routing, Safety Notes, Raw/Source Provenance.\n4. Update index.md and log.md with a link if absent; run the vault validator and validate modified links/frontmatter.\n\nDecision routing contract \u2014 zero unrouted decisions:\n1. For each accepted promote/eliminate recommendation, create/reuse the canonical sycode-trading PM lane assigned sycode-trading-pm using stable key tournament-daily-pm. Put strategy UUID/report date/current evidence in body/comment; do not create date-suffixed clones.\n2. Create/reuse canonical risk lane assigned trading-risk-reviewer using stable key tournament-daily-risk and link to PM lane where possible. Promotions require promotionQuality; eliminations require independent false-kill/overfit/sampling review. This cron never promotes/retires directly.\n3. List all created/reused IDs/keys and visible failures. ROUTING_FAILED must name exact strategy/decision/error.\n4. Simulated-only or otherwise unscorable HOLD is not an eliminate recommendation: create no eliminate/retirement card. Record HOLD and only reuse/comment the PM lane when genuine action exists.\n\nDelivery and final response:\n1. After report validation, send via the already-running Jarvis bot-token REST command (no second gateway websocket): env HERMES_HOME=/home/frank/.hermes/profiles/jarvis HERMES_PROFILE=jarvis /home/frank/.local/bin/hermes send -t discord:#quant-reports \"Tournament report: MEDIA:<report_path>\". MEDIA is required for report size. Nonzero exit is DELIVERY_FAILED with stdout/stderr. Scheduler delivery remains local intentionally.\n2. Return report path, Discord target, strategies scored, promote/eliminate counts, PM/risk cards created/reused, harness doc check, correlation-space gate status, and failures. Say zero unrouted decisions when none were recommended. Include discord_rest_send=ok only after exit 0.\n\nEvidence provenance: source correction kanban:t_c6ead070; risk/PM corrections kanban:t_72d6b78d and kanban:t_9f029bd7. Repository source changes require independent review/landing before becoming canonical.",
       "skills": [
         "obsidian-knowledge-management"
       ],
       "skill": "obsidian-knowledge-management",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
       "provider_snapshot": null,
       "model_snapshot": null,
-      "base_url": null,
       "script": null,
       "no_agent": false,
       "context_from": null,
@@ -24,15 +23,15 @@
       "schedule_display": "0 9 * * *",
       "repeat": {
         "times": null,
-        "completed": 11
+        "completed": 21
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T14:08:40.869002+01:00",
-      "next_run_at": "2026-07-14T09:00:00+01:00",
-      "last_run_at": "2026-07-13T09:10:34.763660+01:00",
+      "next_run_at": "2026-07-24T09:00:00+01:00",
+      "last_run_at": "2026-07-23T09:12:44.436756+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -90,11 +89,10 @@
         "obsidian-knowledge-management"
       ],
       "skill": "obsidian-knowledge-management",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
       "provider_snapshot": null,
       "model_snapshot": null,
-      "base_url": null,
       "script": null,
       "no_agent": false,
       "context_from": null,
@@ -106,15 +104,15 @@
       "schedule_display": "0 * * * *",
       "repeat": {
         "times": null,
-        "completed": 225
+        "completed": 434
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T20:31:51.805288+01:00",
-      "next_run_at": "2026-07-13T18:00:00+01:00",
-      "last_run_at": "2026-07-13T17:04:55.484997+01:00",
+      "next_run_at": "2026-07-23T14:00:00+01:00",
+      "last_run_at": "2026-07-23T13:07:20.106925+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -152,15 +150,15 @@
       "schedule_display": "0 8 * * 1",
       "repeat": {
         "times": null,
-        "completed": 3
+        "completed": 4
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:23:21.654671+01:00",
-      "next_run_at": "2026-07-20T08:00:00+01:00",
-      "last_run_at": "2026-07-13T08:00:34.242548+01:00",
+      "next_run_at": "2026-07-27T08:00:00+01:00",
+      "last_run_at": "2026-07-20T08:00:38.029110+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -192,15 +190,15 @@
       "schedule_display": "30 9 * * 1",
       "repeat": {
         "times": null,
-        "completed": 2
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T09:48:32.278962+01:00",
-      "next_run_at": "2026-07-20T09:30:00+01:00",
-      "last_run_at": "2026-07-13T09:30:35.031784+01:00",
+      "next_run_at": "2026-07-27T09:30:00+01:00",
+      "last_run_at": "2026-07-20T09:30:38.135536+01:00",
       "last_status": "error",
       "last_error": "Script exited with code 2\nstdout:\n/home/frank/.hermes/venvs/trading-ml/bin/python: can't open file '/home/frank/sycode-trading/execution/multi_sleeve_book.py': [Errno 2] No such file or directory",
       "last_delivery_error": null,
@@ -232,15 +230,15 @@
       "schedule_display": "every 360m",
       "repeat": {
         "times": null,
-        "completed": 33
+        "completed": 69
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T17:42:44.805827+01:00",
-      "next_run_at": "2026-07-13T19:01:34.506746+01:00",
-      "last_run_at": "2026-07-13T13:01:34.506746+01:00",
+      "next_run_at": "2026-07-23T15:18:32.708478+01:00",
+      "last_run_at": "2026-07-23T09:18:32.708478+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -272,15 +270,15 @@
       "schedule_display": "0 6 * * *",
       "repeat": {
         "times": null,
-        "completed": 8
+        "completed": 18
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:17:01.403083+01:00",
-      "next_run_at": "2026-07-14T06:00:00+01:00",
-      "last_run_at": "2026-07-13T06:00:31.704490+01:00",
+      "next_run_at": "2026-07-24T06:00:00+01:00",
+      "last_run_at": "2026-07-23T06:00:04.320561+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -312,15 +310,15 @@
       "schedule_display": "0 9 * * 0",
       "repeat": {
         "times": null,
-        "completed": 2
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:20:27.072617+01:00",
-      "next_run_at": "2026-07-19T09:00:00+01:00",
-      "last_run_at": "2026-07-12T09:00:58.695219+01:00",
+      "next_run_at": "2026-07-26T09:00:00+01:00",
+      "last_run_at": "2026-07-19T09:00:55.879358+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -352,17 +350,17 @@
       "schedule_display": "every 360m",
       "repeat": {
         "times": null,
-        "completed": 28
+        "completed": 64
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T10:38:31.731457+01:00",
-      "next_run_at": "2026-07-13T19:01:34.524197+01:00",
-      "last_run_at": "2026-07-13T13:01:34.524197+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nERROR: project sync script missing: /home/frank/sycode-trading/server/scripts/sync-pattern-win-rate-registry.ts",
+      "next_run_at": "2026-07-23T15:18:32.925455+01:00",
+      "last_run_at": "2026-07-23T09:18:32.925455+01:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -392,15 +390,15 @@
       "schedule_display": "0 10 * * 0",
       "repeat": {
         "times": null,
-        "completed": 2
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T22:45:34.230778+01:00",
-      "next_run_at": "2026-07-19T10:00:00+01:00",
-      "last_run_at": "2026-07-12T10:01:09.502591+01:00",
+      "next_run_at": "2026-07-26T10:00:00+01:00",
+      "last_run_at": "2026-07-19T10:00:29.876068+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": "platform 'discord' not configured/enabled",
@@ -432,15 +430,15 @@
       "schedule_display": "every 15m",
       "repeat": {
         "times": null,
-        "completed": 189
+        "completed": 953
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T13:40:47.293690+01:00",
-      "next_run_at": "2026-07-13T17:46:41.674627+01:00",
-      "last_run_at": "2026-07-13T17:31:41.674627+01:00",
+      "next_run_at": "2026-07-23T13:38:01.594496+01:00",
+      "last_run_at": "2026-07-23T13:23:01.594496+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -475,15 +473,15 @@
       "schedule_display": "0 6 * * *",
       "repeat": {
         "times": null,
-        "completed": 3
+        "completed": 13
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:19:58.389214+01:00",
-      "next_run_at": "2026-07-14T06:00:00+01:00",
-      "last_run_at": "2026-07-13T06:04:58.185107+01:00",
+      "next_run_at": "2026-07-24T06:00:00+01:00",
+      "last_run_at": "2026-07-23T06:07:32.946600+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -494,46 +492,90 @@
       "fire_claim": null
     },
     {
-      "id": "8a1c579632d4",
-      "name": "clean-epoch-day14-graduation",
-      "prompt": "You are executing the day-14 clean-epoch blind-period graduation gate for Sycode Trading (armed gate card t_af99cb12; parent/arm card t_7b2710d8). This is a PAPER-ONLY governance action. Do NOT invent context \u2014 follow these steps exactly.\n\nCONTEXT:\n- Clean epoch clean-candidate-599f58e7e opened 2026-07-05 22:08Z; the blind period ends 2026-07-19 22:08Z. Today should be day-14 or later.\n- The deployed 6h sweep (quant_researcher_6h.py) already auto-applies the full N>=300 gate after day-14, but nothing AUTOMATES the promote/kill/hold DECISION or the funnel/reviewer handoff. That is your job.\n- Single source of truth gate: qr.gate_cohort \u2014 full gate = (n_clean_fresh>=300 AND wr_clean_fresh>=53.0% AND clean_stale_share<=5.0% AND NOT kill_listed). Reused by the script.\n\nSTEPS:\n1. Run the deterministic graduation script in DECISION mode (post-boundary):\n   cd /home/frank/.hermes/profiles/sycode-trading-pm/scripts && /home/frank/.hermes/venvs/trading-ml/bin/python clean_epoch_day14_graduation.py 2>/dev/null\n   Capture its full stdout.\n2. SAFETY CHECK \u2014 if stdout contains \"PRE-BOUNDARY NO-OP\" or \"Refusing to issue\" (the script's boundary guard fired):\n   the day-14 boundary has NOT arrived (cron fired early / clock skew). DO NOT proceed.\n   Call kanban_block(kind='transient', reason='day-14 graduation boundary not yet reached (script refused: PRE-BOUNDARY NO-OP). Re-run after 2026-07-19 22:08Z.', task_id='t_af99cb12') and STOP. Leave t_7b2710d8 as-is.\n3. If stdout contains \"ERROR\" or the script exited non-zero (DB unreachable): call kanban_block(kind='dependency', reason='day-14 graduation script failed: <err>; manual fallback required', task_id='t_af99cb12') and STOP.\n4. Otherwise (post-boundary, decision made): read the target-cohort decision from stdout / the JSON verdict file (2026-07-19-clean-epoch-day14-verdict.json). Target cohort = 15m SHORT LOW RISK_OFF fav=True.\n5. HANDOFF by decision:\n   - VALIDATED_CANDIDATE: create a promotion-packet child card assigned to trading-risk-reviewer, parents=[t_af99cb12, t_7b2710d8], workspace_kind='scratch', priority=80, title like \"PROMOTION PACKET: 15m SHORT LOW RISK_OFF (clean-epoch day-14 graduation)\". Body MUST carry: exact gate evidence (n_clean_fresh, wr_clean_fresh, clean_stale_share, kill_listed), epoch tag clean-candidate-599f58e7e, the triple-gate + leak-free + net-of-cost contract from t_f5c7ca86, and the explicit note that PromotionGate is OFF until Frank approval \u2014 this is a funnel REVIEW candidate, NOT an engine activation. Link t_8a18afed (funnel) and t_f5c7ca86 (reviewer contract).\n   - KILL or HELD: confirm the script appended to /home/frank/obsidian/quant-team/governance/clean-epoch-graduation-killhold-log.md; comment the path on t_af99cb12.\n6. Complete the gate card and report on the parent/arm card (do NOT kanban_complete t_7b2710d8 \u2014 it was already closed when the watch was armed; just comment the outcome):\n   - kanban_unblock(task_id='t_af99cb12')\n   - kanban_complete(task_id='t_af99cb12', summary='day-14 graduation executed: target cohort <decision>; <handoff>', created_cards=[<child packet id if any>])\n   - kanban_comment(task_id='t_7b2710d8', body='DAY-14 EXECUTED (<run time>): target 15m SHORT LOW RISK_OFF -> <decision>. <handoff/evidence>. Watch armed 2026-07-13; promotion gated by trading-risk-reviewer sign-off (t_f5c7ca86), PromotionGate OFF until Frank approval.')\n\nGATES (hard, violate = abort and block):\n- Paper-only. NO live trading, NO trade_intents, NO prod deploy, NO DB DDL/DML/backfill, NO credential change.\n- A VALIDATED_CANDIDATE is a funnel review candidate only \u2014 must NOT activate any trading engine; trading-risk-reviewer sign-off (t_f5c7ca86) required before any funnel promotion; PromotionGate OFF until Frank approval.\n- No premature promotion: you only run because the boundary (2026-07-19 22:08Z) has passed (confirmed by absence of the PRE-BOUNDARY no-op message).\n\nPersist a short execution note to /home/frank/obsidian/quant-team/governance/2026-07-19-clean-epoch-day14-graduation-execution.md recording decision, evidence, handoff, then report concisely.",
+      "id": "45e0b154b41c",
+      "name": "sycode-candle-per-symbol-freshness",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_candle_per_symbol_freshness.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 412
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-14T10:26:05.602781+01:00",
+      "next_run_at": "2026-07-23T13:30:00+01:00",
+      "last_run_at": "2026-07-23T13:00:18.500173+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstdout:\nCANDLE PER-SYMBOL FRESHNESS @ 2026-07-23T12:00:18.475068+00:00\n  [OK] 1m: fresh=10 floor=10 baseline=10\n  [OK] 5m: fresh=10 floor=10 baseline=10\n  [OK] 15m: fresh=265 floor=250 baseline=273\n  [OK] 1h: fresh=10 floor=10 baseline=10\n  [XX] 4h: fresh=413 floor=414 baseline=n/a tradeable_universe=414\n  [OK] 1D: fresh=10 floor=10 baseline=10\nVERDICT: DEGRADED \u2014 1 timeframe(s) below coverage SLO\nRED-ALERT: candle coverage dropped (silent-writer-death check):\n  \ud83d\udd34 candles[4h]: only 413/414 tradeable symbols fresh (floor=414, budget=8h) \u2014 writer dead/eroded\nCheck the owning ingestion producer/subscription (CandleIngestionService + KlineFeed subscription set).",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "361710e3dc14",
+      "name": "Fusion MCE Weekly Monitor (t_b2abbb7b) [sycode-trading-pm]",
+      "prompt": "You are running the Fusion MCE Weekly Monitor (root monitor card kanban:t_b2abbb7b) for the Sycode-Trading paper-only Fusion Engine calibration.\n\nMANDATORY FIRST STEP: load the `obsidian-knowledge-management` skill and follow its write rules (canonical sycode vault, 8-property closed-enum envelope, no secret/credential writes).\n\nGOAL: weekly check of Tier-1 realized-exit sample `n` and sample-weighted MCE in the Fusion Calibration Report; log to Obsidian; at `n >= 300` author the explicit go/no-go and escalate a validated breach.\n\nSTEPS:\n1. Read `/home/frank/obsidian/sycode-trading/devops/latest-fusion-calibration-report.md`.\n   - Capture the report's `Generated:` timestamp. If it is older than 48h, still proceed but FLAG staleness in the log entry.\n   - Parse: Tier-1 realized-exit clean `n` (the authoritative value, e.g. from \"Tier-1 clean unique journeys (realized-exit, authoritative) | <n>\"), and `Sample-weighted MCE` (Tier-1 only, e.g. \"19.10pp\"). Also read `VALIDATED_EDGE_STATUS`.\n   - Do NOT use the MERGED `n` or MERGED win rate \u2014 those are synthetic Tier-2 context only (runbook \u00a72).\n2. Open the running log `/home/frank/obsidian/sycode-trading/devops/fusion-mce-weekly-monitor-log.md`. Read its `## Check log` section and find the most recent prior check's `n` and MCE.\n3. DECISION:\n   A) If `n < 300`: status = INVESTIGATE / INSUFFICIENT_SAMPLE.\n      - Append a one-line entry under `## Check log` dated today (YYYY-MM-DD), recording report-generated time, n, MCE, VALIDATED_EDGE_STATUS, and status.\n      - If (n changed by >0 vs last check) OR (MCE crossed 15pp direction) OR (this is the first check in >10 days), also write a dated detail note `devops/YYYY-MM-DD-t_b2abbb7b-fusion-mce-weekly-monitor-check-NN.md` (increment NN from the latest existing check note) following the schema of the existing check-01 note (type: task-evidence, status: active, confidence: high, tags include fusion-engine/calibration/monitoring/investigate/insufficient-sample/task-evidence/paper-only, sources include the live report + runbook + t_f9f36dd6 + t_cab6f5c1, project: sycode-trading, kanban_task: t_b2abbb7b, kanban_board: sycode-trading, alert_status: INVESTIGATE, validated_edge_status: INSUFFICIENT_SAMPLE, tier1_n, sample_weighted_mce_pp). If no material change, the compact log line suffices \u2014 do NOT spam detail notes.\n      - Do NOT recalibrate, do NOT change the 15pp threshold, do NOT create kanban cards.\n   B) If `n >= 300`: this is the go/no-go gate (task acceptance).\n      - Re-evaluate per runbook \u00a73/\u00a76. If MCE > 15pp \u2192 status BREACH (confident-sample). Write the go/no-go detail note AND create a kanban card: assignee `sycode-trading-pm`, board `sycode-trading`, title \"Fusion Tier-1 MCE BREACH validated at n>=300 (t_b2abbb7b)\", body linking the standing investigation `devops/2026-07-13-t_b0494b88-fusion-calibration-breach-incident` and `operations/runbooks/fusion-calibration-alert-runbook`, parents=[t_b2abbb7b]. Report the go/no-go verdict explicitly in the log.\n      - If MCE <= 15pp \u2192 status RESOLVED/VALIDATED; write the go/no-go note recording the all-clear and that no recalibration is required.\n4. Update the running log's frontmatter `updated:` to today and keep `validated_edge_floor_n: 300` and `mce_threshold_pp: 15.0`.\n5. Keep all writes read-only to the report/DB; never touch live trading, credentials, deploys, or payment.\n\nOUTPUT: a terse summary of this run (date, n, MCE, status, action taken). On the INVESTIGATE path this is routine \u2014 keep it quiet; the durable record is the Obsidian log.",
       "skills": [
         "obsidian-knowledge-management"
       ],
       "skill": "obsidian-knowledge-management",
       "model": null,
       "provider": null,
-      "provider_snapshot": "nous",
-      "model_snapshot": "tencent/hy3:free",
+      "provider_snapshot": null,
+      "model_snapshot": null,
       "base_url": null,
       "script": null,
       "no_agent": false,
       "context_from": null,
       "schedule": {
-        "kind": "once",
-        "run_at": "2026-07-19T22:15:00+00:00",
-        "display": "once at 2026-07-19 22:15"
+        "kind": "cron",
+        "expr": "0 6 * * 1",
+        "display": "0 6 * * 1"
       },
-      "schedule_display": "once at 2026-07-19 22:15",
+      "schedule_display": "0 6 * * 1",
       "repeat": {
-        "times": 1,
-        "completed": 0
+        "times": null,
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
-      "created_at": "2026-07-13T00:55:32.897720+01:00",
-      "next_run_at": "2026-07-19T22:15:00+00:00",
-      "last_run_at": null,
-      "last_status": null,
+      "created_at": "2026-07-17T02:59:15.241306+01:00",
+      "next_run_at": "2026-07-27T06:00:00+01:00",
+      "last_run_at": "2026-07-20T06:12:57.281457+01:00",
+      "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
+      "enabled_toolsets": [
+        "file",
+        "kanban"
+      ],
+      "workdir": null,
+      "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-13T17:31:41.674711+01:00"
+  "updated_at": "2026-07-23T13:23:01.594610+01:00"
 }

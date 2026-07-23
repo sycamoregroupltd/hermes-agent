@@ -20,11 +20,37 @@
 # Usage: sycode-deploy-pristine.sh [--holder <id>] [-- <extra deploy_sycodeserver.py args>]
 set -euo pipefail
 
+PATH="${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH
 SHARED=/home/frank/sycode-trading
 TREE=/home/frank/.hermes/deploy-state/build-tree
 BRANCH=sycode-deploy-build
 LOCKWRAP=/home/frank/.hermes/scripts/sycode-deploy-locked.sh
 HOLDER=claude-fable-dgx
+
+# Deterministic preflight: cron PATH does not inherit interactive shell rc files,
+# so bun at ~/.local/bin/bun is invisible unless we export PATH explicitly.
+# This check is REQUIRED for the migrate.sh preflight path (drizzle-kit).
+bun_path="${BUN_BIN:-$(command -v bun || true)}"
+if [[ -z "${bun_path}" ]]; then
+  echo "[pristine] FAIL_CLOSED: bun not found on PATH (PATH=${PATH})" >&2
+  # surface as a deploy-state receipt, not a silent exit
+  mkdir -p /home/frank/.hermes/deploy-state
+  printf '{"timestamp":"%s","bun_path":"%s","ok":false,"error":"bun not found on PATH"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${bun_path}" \
+    > /home/frank/.hermes/deploy-state/pristine-bun-preflight.json
+  exit 5
+fi
+
+# Self-test/regression switch for the bun-path proof: verify we can resolve bun,
+# then exit 0 without invoking the deploy lane.
+if [[ "${1:-}" == "--self-test-bun-path" ]]; then
+  echo "[pristine] bun_path=${bun_path}"
+  printf '{"timestamp":"%s","bun_path":"%s","ok":true}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${bun_path}" \
+    > /home/frank/.hermes/deploy-state/pristine-bun-preflight.json
+  exit 0
+fi
 
 # gitignored runtime files `docker compose up` + the host-side migrate.sh preflight need but a
 # fresh git worktree lacks. NOTE: server/.env.prod is REQUIRED — migrate.sh (running on the HOST)

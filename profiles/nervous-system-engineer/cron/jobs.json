@@ -48,11 +48,10 @@
         "obsidian-knowledge-management"
       ],
       "skill": "hermes-agent",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
       "provider_snapshot": "openai-codex",
       "model_snapshot": "gpt-5.5",
-      "base_url": null,
       "script": null,
       "no_agent": false,
       "context_from": null,
@@ -122,5 +121,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-09T05:25:51.677212+00:00"
+  "updated_at": "2026-07-17T05:24:11.530405+01:00"
 }

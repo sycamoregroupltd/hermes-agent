@@ -42,6 +42,12 @@
 # the pre-commit secret scan (runbook section 6) and are tracked like other
 # automation source. The deny list is kept empty on purpose — see runbook.
 
+# Hooks are part of the automation-source surface. Keep runtime hook logs/state
+# denied by the root default-deny unless explicitly re-included here.
+!/agent-hooks/
+/agent-hooks/*
+!/agent-hooks/*
+
 # Profile crontabs (dispatch config) — track ONLY jobs.json, exclude profile runtime/state.
 # Re-include chain must keep every ancestor dir non-excluded (git rule).
 !/profiles/

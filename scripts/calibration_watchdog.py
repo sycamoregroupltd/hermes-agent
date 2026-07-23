@@ -27,6 +27,15 @@ WIN_RATE_THRESHOLD = 40.0
 PNL_THRESHOLD = 0.0
 MCE_THRESHOLD = 15.0
 MIN_CLEAN_N = 100
+# Tier-1 investigate floor (t_e9d0be69 / t_31b59fa7 F3 hardening).
+# MIN_CLEAN_N(100) only gates statistical stability of the watchdog's own
+# alert. The calibration report's own validation floor for a *validated edge*
+# is n >= 300 (VALIDATED_EDGE_STATUS: INSUFFICIENT_SAMPLE below 300). A Tier-1
+# breach with 100 <= n < 300 is therefore a statistically real miscalibration
+# signal but MUST NOT be surfaced as a confident, validated calibration failure
+# — it is surfaced as INVESTIGATE instead. This matches the report's own floor
+# and prevents the 112-row Tier-1 breach from being mis-read as conclusive.
+TIER1_INVESTIGATE_FLOOR = 300
 MIN_SOURCE_PARSE_N = 10
 MIN_NEWS_MONITOR_META_N = 100
 
@@ -60,6 +69,8 @@ def parse_metrics(output: str) -> dict:
     """Parse key metrics from the report output using robust regex."""
     metrics = {
         "n": None,
+        "merged_n": None,
+        "tier1_clean_n": None,
         "win_rate": None,
         "avg_pnl": None,
         "weighted_mce": None,
@@ -74,36 +85,53 @@ def parse_metrics(output: str) -> dict:
         "news_nonnull_sentiment": None,
     }
 
-    # Extract sample size n.
-    # PRIORITY (Tier-2): the pinned v2 report emits the MERGED clean unique
-    # journeys count (Tier-1 realized-exit + Tier-2 trajectory augmentation),
-    # which is the sample that actually clears the n>=100 confidence gate.
-    # It no longer emits the pre-Tier-2 "Clean unique journeys (deduped)" label,
-    # so matching that would leave n=None and silence the monitor forever.
-    # We match both the Section-1 summary table form and the Section-7
-    # observations text form (same underlying merged_n value).
-    n_match = re.search(
+    # --- Sample size: TWO distinct populations (t_fb422737 / t_016ac4e4) -----
+    # merged_n      = Tier-1 realized-exit + Tier-2 synthetic candle-replay.
+    #                 Headline `**MERGED clean unique journeys (n)**` row; large
+    #                 (thousands) but NOT the calibration sample.
+    # tier1_clean_n = Tier-1 realized-exit ONLY — the exact sample the
+    #                 sample-weighted MCE is computed on (report Sections 2-3
+    #                 weight calibration buckets by tier1 clean_n, never
+    #                 merged_n). The confidence gate and the alert label MUST
+    #                 use this value, or the alert silently mis-reports the
+    #                 sample the miscalibration was measured on.
+    merged_n_match = re.search(
         r'\|\s*\*\*MERGED clean unique journeys \(n\)\*\*\s*\|\s*\*\*([\d,]+)\*\*\s*\|', output
     )
-    if n_match:
-        metrics["n"] = int(n_match.group(1).replace(",", ""))
+    if merged_n_match:
+        metrics["merged_n"] = int(merged_n_match.group(1).replace(",", ""))
     else:
-        n_match_txt = re.search(
+        _m_txt = re.search(
             r'-\s*\*\*MERGED clean unique journeys \(Tier-1 \+ Tier-2 trajectory\): n=([\d,]+)\*\*', output
         )
-        if n_match_txt:
-            metrics["n"] = int(n_match_txt.group(1).replace(",", ""))
-        else:
-            # Legacy pre-Tier-2 fallback (last resort, for old pinned reports)
-            n_match_legacy = re.search(
-                r'\|\s*\*\*Clean unique journeys \(deduped\)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|', output
-            )
-            if n_match_legacy:
-                metrics["n"] = int(n_match_legacy.group(1))
-            else:
-                n_match_legacy_7 = re.search(r'-\s*\*\*Clean unique journeys:\s*n=(\d+)\*\*', output)
-                if n_match_legacy_7:
-                    metrics["n"] = int(n_match_legacy_7.group(1))
+        if _m_txt:
+            metrics["merged_n"] = int(_m_txt.group(1).replace(",", ""))
+
+    # Tier-1 realized-exit clean unique journeys (authoritative calibration n).
+    # Match both the Section-1 summary-table form and the Section-7 observation
+    # text form (identical underlying tier1_clean_n value).
+    tier1_match = re.search(
+        r'\|\s*\*\*Tier-1 clean unique journeys \(realized-exit, authoritative\)\*\*\s*\|\s*\*\*([\d,]+)\*\*\s*\|', output
+    )
+    if tier1_match:
+        metrics["tier1_clean_n"] = int(tier1_match.group(1).replace(",", ""))
+    else:
+        _t_txt = re.search(
+            r'-\s*\*\*Tier-1 clean unique journeys \(realized-exit\): n=([\d,]+)\*\*', output
+        )
+        if _t_txt:
+            metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
+
+    # n = the calibration-sample identity (Tier-1). Fall back to merged_n ONLY
+    # when the Tier-1 line is absent (legacy/pre-Tier-2 reports) so the monitor
+    # never goes silently blind — but the MCE is always measured on
+    # tier1_clean_n, so labelling the alert with merged_n is wrong and is the
+    # root-cause defect fixed by t_016ac4e4.
+    metrics["n"] = (
+        metrics["tier1_clean_n"]
+        if metrics["tier1_clean_n"] is not None
+        else metrics["merged_n"]
+    )
 
     # Extract win rate
     wr_match = re.search(r'\|\s*\*\*Clean win rate\*\*\s*\|\s*\*\*([0-9.]+)%\*\*\s*\|', output)
@@ -309,6 +337,434 @@ def create_kanban_task(title: str, body: str, id_key: str):
     except Exception as e:
         print(f"Warning: Failed to create kanban triage task: {e}", file=sys.stderr)
 
+def decide_alert(metrics: dict) -> dict | None:
+    """Pure, side-effect-free alert classifier.
+
+    Takes the parsed metric set (same keys produced by ``parse_metrics`` plus
+    optional ``avg_pnl`` computed by ``compute_clean_avg_pnl``) and returns the
+    alert decision the watchdog should act on, OR ``None`` (no alert / silent).
+
+    Returned dict shape::
+
+        {
+            "kind": "INVESTIGATE" | "BREACH" | "THIN_SAMPLE",
+            "card": bool,        # whether a kanban triage card should be opened
+            "card_title": str,   # title for the triage card ("" when card=False)
+            "card_body": str,    # body for the triage card ("" when card=False)
+            "stdout_lines": [str, ...],  # verbatim cron notification lines
+        }
+
+    Design rules (hardened by t_7223ef5b against the t_d8ccf4bd false-positive):
+
+    * INVESTIGATE is emitted ONLY when a *genuine* breach exists on a thin
+      (100 <= n < 300) Tier-1 sample. A genuine MCE breach means
+      ``weighted_mce > MCE_THRESHOLD``. Previously INVESTIGATE fired for every
+      thin sample and unconditionally claimed an MCE breach even when MCE was
+      healthy (e.g. n=150, MCE=10.0pp) — that is the defect this closes.
+    * A thin-sample INVESTIGATE (100 <= n < 300) MUST NOT open a kanban card
+      or raise any flag (t_ef700332). The monitoring layer only raises a
+      flag/alert once the Tier-1 sample reaches the validated-edge floor
+      (n >= 300), owned by ``tier1_sample_gate.py`` (READY_FOR_VALIDATION /
+      BREACH) and this watchdog's own n >= 300 BREACH path. The thin-sample
+      INVESTIGATE instead reports the current ``n`` and marks
+      INSUFFICIENT_SAMPLE for accumulation tracking only.
+    * A thin sample with *healthy* metrics returns ``THIN_SAMPLE``: it logs the
+      four monitored metrics (no breach claim, no card) so sample accumulation
+      is still tracked rather than blind.
+    * n < MIN_CLEAN_N: also ``THIN_SAMPLE`` but logs explicitly that the sample
+      is too thin to gauge (still emits the four metrics, no card). This closes
+      the silent n<100 gap from t_d8ccf4bd finding #4.
+    * n >= 300 (confident sample): emit BREACH only when at least one of the
+      three thresholds is actually breached. Never claim a breach that did not
+      occur.
+
+    The watchdog never mutates the engine, trade_intents, or any DB here — it
+    only prints + optionally opens a triage card. That invariant is preserved.
+    """
+    n = metrics.get("n")
+    win_rate = metrics.get("win_rate")
+    avg_pnl = metrics.get("avg_pnl")
+    weighted_mce = metrics.get("weighted_mce")
+
+    def fmt(v, suffix=""):
+        return f"{v:.1f}{suffix}" if isinstance(v, (int, float)) else "--"
+
+    def monitored_block():
+        return [
+            f"- Tier-1 clean unique journeys (n): {n if n is not None else '--'}",
+            f"- Sample-weighted MCE: {fmt(weighted_mce, 'pp')}",
+            f"- Win Rate: {fmt(win_rate, '%')}",
+            f"- Average PnL%: {fmt(avg_pnl, '%')}",
+        ]
+
+    # Sample too small for any confident statistic — log metrics, never alert.
+    if n is None or n < MIN_CLEAN_N:
+        lines = [
+            "🔎 FUSION CALIBRATION — THIN SAMPLE (below MIN_CLEAN_N) 🔎",
+            f"Tier-1 realized-exit sample (n={n}) is too thin to gauge calibration health.",
+            "No breach claim is made. Metrics are logged for accumulation tracking only.\n",
+            "[Monitored Metrics]",
+        ] + monitored_block()
+        lines += [
+            "",
+            "Living Dashboard: [[devops/latest-fusion-calibration-report.md]]",
+        ]
+        return {
+            "kind": "THIN_SAMPLE",
+            "card": False,
+            "card_title": "",
+            "card_body": "",
+            "stdout_lines": lines,
+        }
+
+    # Genuine breaches (used by both thin-sample INVESTIGATE and confident BREACH).
+    breaches = []
+    if win_rate is not None and win_rate < WIN_RATE_THRESHOLD:
+        breaches.append(f"Win Rate: {win_rate:.1f}% (Threshold: < {WIN_RATE_THRESHOLD:.1f}%)")
+    if avg_pnl is not None and avg_pnl < PNL_THRESHOLD:
+        breaches.append(f"Average PnL%: {avg_pnl:.2f}% (Threshold: < {PNL_THRESHOLD:.2f}%)")
+    if weighted_mce is not None and weighted_mce > MCE_THRESHOLD:
+        breaches.append(f"Sample-weighted MCE: {weighted_mce:.1f}pp (Threshold: > {MCE_THRESHOLD:.1f}pp)")
+
+    # --- SAMPLE ACCUMULATION TRACKER (t_e79f6568) ---
+    # Track cumulative Tier-1 realized-exit outcomes and surface accumulation
+    # progress toward the VALIDATED_EDGE floor (n >= TIER1_INVESTIGATE_FLOOR = 300,
+    # the report's own VALIDATED_EDGE_STATUS: INSUFFICIENT_SAMPLE threshold).
+    # Emitted whenever there is NO breach, for BOTH the accumulation regime
+    # (MIN_CLEAN_N <= n < 300) and once the floor is reached (n >= 300). This
+    # is a SAMPLE-READINESS status ONLY: it NEVER opens a card and NEVER
+    # triggers recalibration (the watchdog has no recalibration code path; the
+    # HOLD is governed by t_b4c824c7 / fusion_recalibration_hold_monitor.py).
+    if not breaches:
+        floor_reached = (n is not None and n >= TIER1_INVESTIGATE_FLOOR)
+        if floor_reached:
+            state = f"validated-edge floor REACHED (n={n} >= {TIER1_INVESTIGATE_FLOOR})"
+        else:
+            state = f"accumulating (n={n} / threshold={TIER1_INVESTIGATE_FLOOR})"
+        lines = [
+            "📈 FUSION CALIBRATION — SAMPLE_ACCUMULATING 📈",
+            f"Tier-1 realized-exit cumulative outcomes are {state}.",
+            "Recalibration remains a governed Frank/PM change (t_b4c824c7); "
+            "this monitor does NOT auto-trigger recalibration.\n",
+            "[Monitored Metrics]",
+        ] + monitored_block() + [
+            "",
+            "Living Dashboard: [[devops/latest-fusion-calibration-report.md]]",
+        ]
+        return {
+            "kind": "SAMPLE_ACCUMULATING",
+            "card": False,
+            "card_title": "",
+            "card_body": "",
+            "stdout_lines": lines,
+        }
+
+    # Thin but statistically-usable sample (100 <= n < 300).
+    if n < TIER1_INVESTIGATE_FLOOR:
+        if not breaches:
+            # Thin AND healthy: log metrics, do NOT claim a breach.
+            lines = [
+                "🔎 FUSION CALIBRATION — THIN SAMPLE (healthy) 🔎",
+                f"Tier-1 realized-exit sample (n={n}) is below the report's validated-edge floor "
+                f"({TIER1_INVESTIGATE_FLOOR}) but no monitored metric breached its threshold.",
+                "No breach claim is made. Accumulate more Tier-1 outcomes before any recalibration decision.\n",
+                "[Monitored Metrics]",
+            ] + monitored_block()
+            lines += [
+                "",
+                "Living Dashboard: [[devops/latest-fusion-calibration-report.md]]",
+            ]
+            return {
+                "kind": "THIN_SAMPLE",
+                "card": False,
+                "card_title": "",
+                "card_body": "",
+                "stdout_lines": lines,
+            }
+        # Thin AND genuinely breaching: report as an INSUFFICIENT_SAMPLE
+        # investigate-state, NOT a validated failure and NOT an alert/flag.
+        # Per t_ef700332 the monitoring layer MUST NOT raise a flag/card until
+        # the Tier-1 sample reaches the validated-edge floor (n >= 300). The
+        # breach signal is real in direction but statistically imprecise at this
+        # n (VALIDATED_EDGE_STATUS: INSUFFICIENT_SAMPLE), so we report the
+        # current n and mark INSUFFICIENT_SAMPLE, then accumulate — but we do
+        # NOT open a kanban card / raise an alert. The n>=300 flag is owned by
+        # tier1_sample_gate.py (READY_FOR_VALIDATION / BREACH) and this
+        # watchdog's own n>=300 BREACH path. No recalibration is triggered.
+        mce_breach = any("MCE" in b for b in breaches)
+        breach_summary = "\n".join(f"- {b}" for b in breaches)
+        lines = [
+            "🔎 FUSION CALIBRATION — INVESTIGATE / INSUFFICIENT_SAMPLE (thin Tier-1 sample, genuine breach) 🔎",
+            f"A genuine breach was detected on a statistically thin Tier-1 sample (n={n} < {TIER1_INVESTIGATE_FLOOR}).",
+            f"VALIDATED_EDGE_STATUS: INSUFFICIENT_SAMPLE — this is NOT a validated/confirmed "
+            f"calibration failure and NO alert/flag card is raised (t_ef700332). Accumulate more "
+            f"Tier-1 realized-exit outcomes until n >= {TIER1_INVESTIGATE_FLOOR} before any "
+            f"recalibration decision.\n",
+            "[Breached Metrics]",
+        ] + [f"- {b}" for b in breaches] + [
+            "",
+            "[Monitored Metrics]",
+        ] + monitored_block() + [
+            "",
+            "Living Dashboard: [[devops/latest-fusion-calibration-report.md]]",
+            "Response Runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]",
+        ]
+        return {
+            "kind": "INVESTIGATE",
+            "card": False,   # t_ef700332: no flag/alert below the validated-edge floor
+            "card_title": "",
+            "card_body": "",
+            "stdout_lines": lines,
+        }
+
+    # Confident sample (n >= 300) with a breach: emit BREACH.
+    breach_summary = "\n".join(f"- {b}" for b in breaches)
+    body = (
+        f"The Fusion Engine Calibration watchdog detected one or more performance/calibration "
+        f"breaches on a confident sample (n={n}):\n\n"
+        f"{breach_summary}\n\n"
+        f"[All Monitored Metrics]\n"
+        f"- Clean Unique Journeys (n): {n}\n"
+        f"- Win Rate: {fmt(win_rate, '%')}\n"
+        f"- Average PnL%: {fmt(avg_pnl, '%')}\n"
+        f"- Sample-weighted MCE: {fmt(weighted_mce, 'pp')}\n\n"
+        f"Please refer to the response runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]\n"
+        f"See detailed report in Obsidian: [[devops/latest-fusion-calibration-report.md]]"
+    )
+    title = f"Sample-weighted Calibration Threshold Breach: MCE={fmt(weighted_mce, 'pp')}"
+    lines = [
+        "🚨 FUSION CALIBRATION THRESHOLD BREACH ALERT 🚨",
+        "At least one key performance or calibration metric has breached safety thresholds on a confident sample.\n",
+        "[Breached Metrics]",
+    ] + [f"- {b}" for b in breaches] + [
+        "",
+        "[All Monitored Metrics]",
+        f"- Clean Unique Journeys (n): {n}",
+        f"- Win Rate: {fmt(win_rate, '%')}",
+        f"- Average PnL%: {fmt(avg_pnl, '%')}",
+        f"- Sample-weighted MCE: {fmt(weighted_mce, 'pp')}",
+        "",
+        "Living Dashboard: [[devops/latest-fusion-calibration-report.md]]",
+        "Response Runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]",
+    ]
+    return {
+        "kind": "BREACH",
+        "card": True,
+        "card_title": title,
+        "card_body": body,
+        "stdout_lines": lines,
+    }
+
+
+def regression_test() -> int:
+    """Deterministic, DB-free assertions pinning the t_d8ccf4bd fixes.
+
+    Returns 0 when all assertions pass, 1 otherwise. Run via
+    ``calibration_watchdog.py --regression-test`` (no DB / report / Obsidian /
+    kanban side effects).
+    """
+    failures = []
+
+    def check(name, cond):
+        if cond:
+            print(f"  PASS  {name}")
+        else:
+            print(f"  FAIL  {name}")
+            failures.append(name)
+
+    # (A) Healthy thin sample must NOT claim a breach / open a card; it emits
+    #     the SAMPLE_ACCUMULATING tracker (t_e79f6568) with no card.
+    d = decide_alert({"n": 150, "win_rate": 52.0, "avg_pnl": 0.4, "weighted_mce": 10.0})
+    check("n=150, MCE=10pp -> SAMPLE_ACCUMULATING (no false breach)",
+          d is not None and d["kind"] == "SAMPLE_ACCUMULATING")
+    check("n=150 -> SAMPLE_ACCUMULATING opens NO card", d is not None and d["card"] is False)
+    check("n=150 -> emits current n + threshold",
+          d is not None and "n=150" in " ".join(d["stdout_lines"])
+          and "300" in " ".join(d["stdout_lines"]))
+
+    # (B) Real thin-sample MCE breach -> INVESTIGATE, NO card (t_ef700332: no
+    #     alert/flag below the validated-edge floor). Honest INSUFFICIENT_SAMPLE.
+    d = decide_alert({"n": 124, "win_rate": 50.0, "avg_pnl": 0.1, "weighted_mce": 20.07})
+    check("n=124, MCE=20.07pp -> INVESTIGATE", d is not None and d["kind"] == "INVESTIGATE")
+    check("n=124, MCE=20.07pp -> NO card raised (t_ef700332: floor not reached)",
+          d is not None and d["card"] is False)
+    check("n=124, MCE=20.07pp -> reports INSUFFICIENT_SAMPLE",
+          "INSUFFICIENT_SAMPLE" in " ".join(d["stdout_lines"]))
+    check("n=124, MCE=20.07pp -> does NOT claim a validated failure",
+          "validated" not in " ".join(d["stdout_lines"]).lower()
+          or "not a validated" in " ".join(d["stdout_lines"]).lower())
+
+    # (C) n<100 silent gap closed: metrics logged, no card, no breach claim.
+    d = decide_alert({"n": 42, "win_rate": 51.0, "avg_pnl": 0.2, "weighted_mce": 9.0})
+    check("n=42 -> THIN_SAMPLE (logs metrics, no card)", d is not None and d["kind"] == "THIN_SAMPLE" and d["card"] is False)
+    check("n=42 -> logs Tier-1 n", "n=42" in " ".join(d["stdout_lines"]))
+    check("n=42 -> logs MCE metric", "Sample-weighted MCE" in " ".join(d["stdout_lines"]))
+
+    # (D) Confident healthy sample -> SAMPLE_ACCUMULATING (floor reached), no card,
+    #     no recalibration side-effect. This is the t_e79f6568 accumulation status
+    #     emitted once the validated-edge floor is met.
+    d = decide_alert({"n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 8.0})
+    check("n=400, healthy -> SAMPLE_ACCUMULATING (floor reached, no breach card)",
+          d is not None and d["kind"] == "SAMPLE_ACCUMULATING" and d["card"] is False)
+
+    # (E) Confident MCE breach -> BREACH + card.
+    d = decide_alert({"n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 18.0})
+    check("n=400, MCE=18pp -> BREACH", d is not None and d["kind"] == "BREACH" and d["card"] is True)
+
+    # (F) Thin win-rate breach -> INVESTIGATE (not BREACH), honest.
+    d = decide_alert({"n": 200, "win_rate": 35.0, "avg_pnl": -0.5, "weighted_mce": 9.0})
+    check("n=200, WR=35% -> INVESTIGATE (thin genuine breach)", d is not None and d["kind"] == "INVESTIGATE")
+    check("n=200, WR=35% -> no false MCE-breach claim", "mce breach" not in " ".join(d["stdout_lines"]).lower())
+
+    # (G) SAMPLE_ACCUMULATING guarantees: explicitly no recalibration wording and
+    #     that the status string is present exactly once in stdout.
+    d = decide_alert({"n": 260, "win_rate": 54.0, "avg_pnl": 0.6, "weighted_mce": 11.0})
+    check("n=260 -> SAMPLE_ACCUMULATING status present",
+          d is not None and d["kind"] == "SAMPLE_ACCUMULATING"
+          and any("SAMPLE_ACCUMULATING" in ln for ln in d["stdout_lines"]))
+    check("n=260 -> no recalibration side-effect / no card",
+          d is not None and d["card"] is False
+          and "recalibrat" in " ".join(d["stdout_lines"]).lower())
+
+    # (H) Below-floor delivery suppression (t_5c238cc5 defect 2): when the
+    # Tier-1 sample is below the validated-edge floor (n < 300), the watchdog
+    # must NOT emit any outbound stdout (no Discord/alert delivery) and must NOT
+    # open a card. Accumulation evidence persists only via the living dashboard
+    # (save_to_obsidian, run every tick at line 640) which is bypassed here in a
+    # DB-free harness so this test has no Obsidian / kanban / DB side effects.
+    global run_report, save_to_obsidian, parse_metrics
+    import io as _io, contextlib as _cl
+    _orig_run, _orig_save, _orig_parse = run_report, save_to_obsidian, parse_metrics
+    try:
+        run_report = lambda: (0, "")
+        save_to_obsidian = lambda c: None
+        parse_metrics = lambda out: {
+            "n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
+            "weighted_mce": 19.4, "has_integrity_warning": False,
+            "sql_errors": 0, "epoch_start": "2026-07-05",
+        }
+        _buf = _io.StringIO()
+        with _cl.redirect_stdout(_buf):
+            _rc = main()
+        _stdout = _buf.getvalue()
+        check("below floor (n=127): NO outbound stdout delivered",
+              _stdout.strip() == "")
+        check("below floor (n=127): main returns 0",
+              _rc == 0)
+    finally:
+        run_report, save_to_obsidian, parse_metrics = (
+            _orig_run, _orig_save, _orig_parse)
+
+    # (I) LIVE-PATH n<100 gap (t_7223ef5b acceptance #2): the live main() must
+    # route a numeric n<100 through decide_alert() so the THIN_SAMPLE verdict
+    # (four monitored metrics + explicit "too thin to gauge" note) is PERSISTED
+    # to the living dashboard, while staying silent on outbound stdout and
+    # opening NO card (below-floor suppression preserved). This is the actual
+    # defect closed by this task: previously main() early-returned `return 0`
+    # for n<MIN_CLEAN_N and the THIN_SAMPLE verdict was dead code in the live
+    # path, so the smallest samples were a blind spot on the dashboard.
+    _orig_run, _orig_save, _orig_parse = run_report, save_to_obsidian, parse_metrics
+    _dash = {}
+    try:
+        run_report = lambda: (0, "RAW-REPORT")
+        save_to_obsidian = lambda c: _dash.update(content=c)
+        parse_metrics = lambda out: {
+            "n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
+            "weighted_mce": 9.0, "has_integrity_warning": False,
+            "sql_errors": 0, "epoch_start": "2026-07-05",
+        }
+        _buf = _io.StringIO()
+        with _cl.redirect_stdout(_buf):
+            _rc = main()
+        _stdout = _buf.getvalue()
+        _dash_c = _dash.get("content", "")
+        check("live n=42: main returns 0", _rc == 0)
+        check("live n=42: NO outbound stdout (below-floor suppression)",
+              _stdout.strip() == "")
+        check("live n=42: dashboard persisted THIN_SAMPLE verdict",
+              "too thin to gauge" in _dash_c.lower())
+        check("live n=42: dashboard logged Tier-1 n=42",
+              "n=42" in _dash_c)
+        check("live n=42: dashboard logged Sample-weighted MCE metric",
+              "Sample-weighted MCE" in _dash_c)
+        check("live n=42: dashboard logged Win Rate metric",
+              "Win Rate" in _dash_c)
+        check("live n=42: dashboard logged Average PnL% metric",
+              "Average PnL%" in _dash_c)
+        check("live n=42: NO breach CLAIM made (THIN_SAMPLE, no MCE breach line)",
+              "MCE breach" not in _dash_c.lower()
+              and "Sample-weighted MCE: 9.0pp (Threshold" not in _dash_c)
+    finally:
+        run_report, save_to_obsidian, parse_metrics = (
+            _orig_run, _orig_save, _orig_parse)
+
+    # (J) LIVE-PATH n=None stays fully silent (runbook §5 taxonomy): no
+    # verdict persisted, no stdout, no card.
+    _orig_run, _orig_save, _orig_parse = run_report, save_to_obsidian, parse_metrics
+    _dash_none = {}
+    try:
+        run_report = lambda: (0, "RAW-REPORT")
+        save_to_obsidian = lambda c: _dash_none.update(content=c)
+        parse_metrics = lambda out: {
+            "n": None, "win_rate": None, "avg_pnl": None,
+            "weighted_mce": None, "has_integrity_warning": False,
+            "sql_errors": 0, "epoch_start": "2026-07-05",
+        }
+        _buf = _io.StringIO()
+        with _cl.redirect_stdout(_buf):
+            _rc = main()
+        _stdout = _buf.getvalue()
+        check("live n=None: main returns 0", _rc == 0)
+        check("live n=None: NO outbound stdout", _stdout.strip() == "")
+        check("live n=None: NO dashboard verdict persisted",
+              "too thin" not in _dash_none.get("content", "").lower()
+              and "BREACH" not in _dash_none.get("content", ""))
+    finally:
+        run_report, save_to_obsidian, parse_metrics = (
+            _orig_run, _orig_save, _orig_parse)
+
+    if failures:
+        print(f"\nREGRESSION FAILED: {len(failures)} assertion(s) failed: {failures}")
+        return 1
+    print("\nREGRESSION PASSED: all t_d8ccf4bd / t_7223ef5b assertions hold.")
+    return 0
+
+
+def emit_verdict(decision: dict | None, n: int | None) -> int:
+    """Persist an alert decision to the living dashboard and deliver it.
+
+    Single post-classification sink for the live path. Records the verdict
+    (including THIN_SAMPLE / SAMPLE_ACCUMULATING accumulation notes) to the
+    living dashboard so the four monitored metrics are always observable,
+    then delivers to stdout ONLY when the Tier-1 sample has reached the
+    validated-edge floor (n >= TIER1_INVESTIGATE_FLOOR). Below the floor the
+    evidence persists via the dashboard but must NOT raise an outbound alert /
+    flag / card (t_ef700332 + t_5c238cc5). The watchdog never mutates the
+    engine, trade_intents, or DB here.
+
+    ``n`` is passed explicitly because decide_alert()'s returned dict does not
+    carry the sample size; the floor check depends on it.
+    """
+    if decision is None:
+        return 0
+    # Persist the verdict to the living dashboard on every tick so the
+    # four monitored metrics (and the thin-sample note) remain observable
+    # even when stdout delivery is suppressed below the validated-edge floor.
+    save_to_obsidian("\n".join(decision["stdout_lines"]))
+    below_floor = (n is not None and n < TIER1_INVESTIGATE_FLOOR)
+    if below_floor:
+        return 0
+    for line in decision["stdout_lines"]:
+        print(line)
+    if decision["card"]:
+        id_key = (
+            f"calibration-{decision['kind'].lower()}-"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H')}"
+        )
+        create_kanban_task(decision["card_title"], decision["card_body"], id_key)
+    return 0
+
+
 def main() -> int:
     exit_code, report_output = run_report()
 
@@ -356,57 +812,35 @@ def main() -> int:
         return 0
 
     # 2. Check sample confidence size.
-    # If clean unique journeys (n) is less than 100, we suppress performance/calibration alerts
-    # as they are statistically unstable and would cause alert-channel crowding.
-    if n is None or n < MIN_CLEAN_N:
-        # Stay completely silent on low-confidence clean samples. The no-agent
-        # cron only delivers non-empty stdout, so this prevents false-positive
-        # alert-channel crowding while post-fix outcomes accrue.
+    # n is now the Tier-1 realized-exit calibration sample (NOT the MERGED
+    # Tier-1+Tier-2 synthetic count) — see parse_metrics / t_016ac4e4.
+    if n is None:
+        # Unparseable sample: stay completely silent. The no_agent cron only
+        # delivers non-empty stdout, and runbook §5 taxonomizes n=None as
+        # "(silent)" — no verdict, no card. (The t<100 THIN_SAMPLE verdict is
+        # handled by decide_alert() below and IS persisted to the dashboard.)
         return 0
 
-    # 3. Check performance and calibration breaches (only on confident samples)
-    breaches = []
-    if win_rate is not None and win_rate < WIN_RATE_THRESHOLD:
-        breaches.append(f"Win Rate: {win_rate:.1f}% (Threshold: < {WIN_RATE_THRESHOLD:.1f}%)")
-    if avg_pnl is not None and avg_pnl < PNL_THRESHOLD:
-        breaches.append(f"Average PnL%: {avg_pnl:.2f}% (Threshold: < {PNL_THRESHOLD:.2f}%)")
-    if weighted_mce is not None and weighted_mce > MCE_THRESHOLD:
-        breaches.append(f"Sample-weighted MCE: {weighted_mce:.1f}pp (Threshold: > {MCE_THRESHOLD:.1f}pp)")
-
-    if breaches:
-        id_key = f"calibration-threshold-breach-{datetime.now(timezone.utc).strftime('%Y%m%dT%H')}"
-        title = f"Sample-weighted Calibration Threshold Breach: MCE={weighted_mce or '--'}pp"
-        
-        breach_summary_text = "\n".join([f"- {b}" for b in breaches])
-        body = (
-            f"The Fusion Engine Calibration watchdog detected one or more performance/calibration breaches on a confident sample (n={n}):\n\n"
-            f"{breach_summary_text}\n\n"
-            f"[All Monitored Metrics]\n"
-            f"- Clean Unique Journeys (n): {n}\n"
-            f"- Win Rate: {win_rate or '--'}%\n"
-            f"- Average PnL%: {avg_pnl or '--'}%\n"
-            f"- Sample-weighted MCE: {weighted_mce or '--'}pp\n\n"
-            f"Please refer to the response runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]\n"
-            f"See detailed report in Obsidian: [[devops/latest-fusion-calibration-report.md]]"
-        )
-
-        # Print alert to stdout (verbatim cron notification)
-        print("🚨 FUSION CALIBRATION THRESHOLD BREACH ALERT 🚨")
-        print("At least one key performance or calibration metric has breached safety thresholds on a confident sample.\n")
-        print("[Breached Metrics]")
-        for b in breaches:
-            print(f"- {b}")
-        print("\n[All Monitored Metrics]")
-        print(f"- Clean Unique Journeys (n): {n}")
-        print(f"- Win Rate: {win_rate:.1f}%" if win_rate is not None else "- Win Rate: --")
-        print(f"- Average PnL%: {avg_pnl:.2f}%" if avg_pnl is not None else "- Average PnL%: --")
-        print(f"- Sample-weighted MCE: {weighted_mce:.1f}pp" if weighted_mce is not None else "- Sample-weighted MCE: --")
-        print(f"\nLiving Dashboard: [[devops/latest-fusion-calibration-report.md]]")
-        print(f"Response Runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]")
-
-        create_kanban_task(title, body, id_key)
-
-    return 0
+    # 2b. Route EVERY numeric sample through the hardened, regression-tested
+    # alert classifier — the single source of truth for classification
+    # (THIN_SAMPLE / SAMPLE_ACCUMULATING / INVESTIGATE / BREACH / None). This
+    # embeds the t_7223ef5b / t_d8ccf4bd hardening: no false INVESTIGATE on a
+    # healthy thin sample, the SAMPLE_ACCUMULATING tracker (t_e79f6568), the
+    # closed n<100 THIN_SAMPLE gap (four metrics + explicit thin note emitted
+    # for the smallest samples instead of silence), and NO recalibration
+    # side-effects (the watchdog has no recalibration code path; the HOLD is
+    # governed by t_b4c824c7 / fusion_recalibration_hold_monitor.py).
+    #
+    # Previously the live path early-returned `return 0` for n < MIN_CLEAN_N,
+    # which silently dropped decide_alert()'s correct THIN_SAMPLE verdict
+    # (t_7223ef5b defect 2): the four metrics + "too thin to gauge" note never
+    # reached the dashboard exactly when the sample was smallest. Routing all
+    # numeric n through decide_alert() -> emit_verdict() closes that gap while
+    # preserving below-floor stdout suppression (t_ef700332 + t_5c238cc5):
+    # emit_verdict() persists the verdict to the living dashboard on every tick
+    # but only prints/opens a card above the validated-edge floor.
+    decision = decide_alert(metrics)
+    return emit_verdict(decision, n)
 
 def self_test() -> None:
     global OBSIDIAN_PATH
@@ -428,5 +862,10 @@ if __name__ == "__main__":
     if "--self-test" in sys.argv:
         self_test()
         print('{"status":"pass","writer":"calibration_watchdog.py"}')
+    elif "--regression-test" in sys.argv:
+        # DB-free assertion suite pinning the t_d8ccf4bd / t_7223ef5b /
+        # t_e79f6568 alert-classification contract. Never touches the report,
+        # Obsidian, or kanban.
+        sys.exit(regression_test())
     else:
         sys.exit(main())

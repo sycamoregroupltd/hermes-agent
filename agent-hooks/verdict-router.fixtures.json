@@ -548,5 +548,208 @@
       "result": "skipped",
       "mutations": []
     }
+  },
+  {
+    "name": "nonnumeric-older-created-at-does-not-outrank-newer-numeric-verdict",
+    "description": "A corrupt older task_comments.created_at literal must sort as 0 so a newer numeric reviewer verdict wins latest-comment selection.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000019",
+      "status": "blocked",
+      "title": "Source-only card with corrupt comment timestamp",
+      "body": "Source-only tests and patch evidence.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": 120,
+          "author": "os-reviewer",
+          "created_at": "%s",
+          "body": "REVIEW_VERDICT=CHANGES_REQUESTED\nTarget: t_a0000019\nBlocking finding: stale corrupt timestamp verdict must not outrank the newer numeric approval."
+        },
+        {
+          "id": 121,
+          "author": "os-reviewer",
+          "created_at": 1783110020,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000019\nSource patch approved by the newer numeric timestamp."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "source_docs_spec_test_only",
+      "action": "complete",
+      "result": "would_complete",
+      "mutations": ["complete"],
+      "comment_prefix": null
+    }
+  },
+  {
+    "name": "nonnumeric-comment-id-percent-s-is-skipped-with-log",
+    "description": "A corrupt task_comments.id literal '%s' must be skipped with a log entry and must not abort the scan.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000020",
+      "status": "blocked",
+      "title": "Source-only card with corrupt comment id",
+      "body": "Source-only tests and patch evidence.",
+      "block_reason": "review-required",
+      "comments": [
+        {
+          "id": "%s",
+          "author": "os-reviewer",
+          "created_at": 1783110020,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000020\nThis corrupt comment id must be skipped instead of crashing."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": null,
+      "target_validation": "not-applicable",
+      "scope_class": "unknown",
+      "action": "skip",
+      "result": "skipped",
+      "mutations": [],
+      "router_log_contains": ["skip-nonnumeric-int context=jarvis-os/t_a0000020:task_comments.id value='%s'"]
+    }
+  },
+  {
+    "name": "scan-continues-after-nonnumeric-comment-id",
+    "description": "A corrupt '%s' comment id on one task must not prevent a later valid numeric comment_id from being parsed and processed.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000021",
+      "status": "blocked",
+      "title": "Source-only card after corrupt peer",
+      "body": "Source-only tests and patch evidence.",
+      "block_reason": "review-required",
+      "created_at": 1783110021,
+      "comments": [
+        {
+          "id": 122,
+          "author": "os-reviewer",
+          "created_at": 1783110021,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000021\nValid numeric comment id must still be routed."
+        }
+      ]
+    },
+    "extra_tasks": [
+      {
+        "id": "t_a0000022",
+        "status": "blocked",
+        "title": "Source-only corrupt peer scanned first",
+        "body": "Source-only tests and patch evidence.",
+        "block_reason": "review-required",
+        "created_at": 1783110019,
+        "comments": [
+          {
+            "id": "%s",
+            "author": "os-reviewer",
+            "created_at": 1783110019,
+            "body": "REVIEW_VERDICT=APPROVED\nTarget: t_a0000022\nCorrupt peer must be skipped so scan reaches t_a0000021."
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "source_docs_spec_test_only",
+      "action": "complete",
+      "result": "would_complete",
+      "mutations": ["complete"],
+      "comment_prefix": null,
+      "router_log_contains": ["skip-nonnumeric-int context=jarvis-os/t_a0000022:task_comments.id value='%s'"]
+    }
+  },
+  {
+    "name": "repeated-unblock-rework-idempotent-skips-existing-key",
+    "description": "Repeated CHANGES_REQUESTED unblock_rework with existing idempotency marker skips duplicate unblock planning.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_a0000023",
+      "status": "blocked",
+      "title": "Source-only card already rework-routed once",
+      "body": "Source-only tests.",
+      "block_reason": "review-required",
+      "existing_idempotency_keys": [
+        "verdict-router:v1:jarvis-os:t_a0000023:comment:123:action:unblock_rework"
+      ],
+      "comments": [
+        {
+          "id": 123,
+          "author": "os-reviewer",
+          "created_at": 1783110023,
+          "body": "REVIEW_VERDICT=CHANGES_REQUESTED\nTarget: t_a0000023\nBlocking finding: rework idempotency test needs simulated edge condition."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "CHANGES_REQUESTED",
+      "target_validation": "same-card",
+      "scope_class": "source_docs_spec_test_only",
+      "action": "skip",
+      "result": "skipped_idempotent",
+      "mutations": []
+    }
+  },
+  {
+    "name": "c1-gate-denial-reviewer-prose-approved-completes",
+    "description": "C1 (t_8874b97b / t_9a0af491): an APPROVED card whose reviewer comment *denies* operator gates ('A3 gates intact; no credential, prod, or DB change; REVIEW_VERDICT=APPROVED') on a SOURCE/TEST-only card MUST complete through the router, and the gate-denial nouns in reviewer prose must not operator-gate the card.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_c1a0b1e2",
+      "status": "blocked",
+      "title": "Add unit tests for tenant id injection",
+      "body": "Source/test-only change. Tenant coverage.",
+      "block_reason": "review-required: tests pass; needs reviewer verdict",
+      "comments": [
+        {
+          "id": 124,
+          "author": "os-reviewer",
+          "created_at": 1783110024,
+          "body": "REVIEW_VERDICT=APPROVED\nA3 gates intact; no credential, prod, or DB change;\nTarget: t_c1a0b1e2. Source/test-only, approvable."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "source_docs_spec_test_only",
+      "action": "complete",
+      "result": "would_complete",
+      "mutations": ["complete"],
+      "comment_prefix": null
+    }
+  },
+  {
+    "name": "c3-genuine-prod-db-credential-operator-gated-needs-operator",
+    "description": "C3 (t_8874b97b / t_9a0af491): a card whose task title/body genuinely indicates deploy, DB, credential, A3, or operator-gated scope MUST still emit needs_operator and NOT auto-complete — even if the reviewer comment also says 'approved'.",
+    "board": "jarvis-os",
+    "task": {
+      "id": "t_c3operator1",
+      "status": "blocked",
+      "title": "Run production DB migration and live runtime deploy",
+      "body": "Scope includes schema migration, live data write, production deploy, and gateway restart.",
+      "block_reason": "review-required: migration plan ready for operator gate",
+      "comments": [
+        {
+          "id": 125,
+          "author": "os-reviewer",
+          "created_at": 1783110025,
+          "body": "REVIEW_VERDICT=APPROVED\nTarget: t_c3operator1\nMigration plan reviewed; deploy/live/DB scope remains operator gated, do not auto-complete."
+        }
+      ]
+    },
+    "expect": {
+      "verdict_value": "APPROVED",
+      "target_validation": "same-card",
+      "scope_class": "operator_gated",
+      "action": "needs_operator",
+      "result": "would_comment",
+      "mutations": ["comment"],
+      "forbid_mutations": ["complete", "unblock"],
+      "comment_prefix": "NEEDS-OPERATOR: verdict-router operator-gated"
+    }
   }
 ]

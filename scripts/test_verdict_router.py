@@ -316,6 +316,278 @@ class VerdictRouterRegressionTests(unittest.TestCase):
             self.assertEqual(decision.scope_class, "operator_gated")
             self.assertEqual(decision.action, "needs_operator")
 
+    def test_c1_reviewer_gatedenial_prose_does_not_strand_approved_card(self) -> None:
+        """C1 (t_8874b97b / t_9a0af491): an APPROVED card whose reviewer comment
+        *denies* operator gates ('A3 gates intact; no credential, prod, or DB
+        change; REVIEW_VERDICT=APPROVED') on a SOURCE/TEST-only card MUST complete
+        through the router. The forbidden nouns live only in reviewer prose, not in
+        the task's own title/body, so they must not gate the card.
+
+        NOTE: the task title/body deliberately avoid frontend/app trigger words
+        (middleware/component/page.tsx/...) so this fixture isolates the operator-
+        gate detector (C2) and is not entangled with the unrelated frontend-app
+        VERIFY_PASS heuristic.
+        """
+        task_id = "t_c1a0b1e2"
+        tmp, board = self.make_board()
+        with tmp:
+            con = sqlite3.connect(board.db)
+            con.execute(
+                "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    task_id,
+                    "Add unit tests for tenant id injection",
+                    "Source/test-only change. Tenant coverage.",
+                    "devops",
+                    "blocked",
+                    10,
+                    int(time.time()),
+                ),
+            )
+            con.commit()
+            con.close()
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "REVIEW_VERDICT=APPROVED\n"
+                "A3 gates intact; no credential, prod, or DB change; "
+                "Target: t_c1a0b1e2. Source/test-only, approvable.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.verdict, "APPROVED")
+            self.assertNotEqual(
+                decision.scope_class,
+                "operator_gated",
+                "reviewer gate-denial prose must not operator-gate the card",
+            )
+            self.assertEqual(decision.action, "complete")
+            self.assertEqual(decision.scope_class, "source_docs_spec_test_only")
+
+    def test_c2_database_token_in_proper_noun_title_not_gated(self) -> None:
+        """C2 regression for t_9b29dfe8: the bare 'database' token must not match a
+        proper noun in the title (`@sycode/database-tenant`) nor gate-denial prose.
+        Only a genuine database-migration/write/schema phrase may gate.
+
+        This fixture asserts the C2 guarantee: the operator-gate detector no longer
+        fires on the proper-noun `database` in the title. The card's REAL title also
+        contains the word 'middleware', which (separately, OUT OF SCOPE for this C2
+        fix) trips the frontend-app VERIFY_PASS heuristic and routes to needs_pm.
+        That residual is a distinct detector and is intentionally NOT weakened here;
+        it is tracked separately so the card's remaining block is not mistaken for
+        the operator-gate defect this task fixes.
+        """
+        task_id = "t_9b29dfe8"
+        tmp, board = self.make_board()
+        with tmp:
+            con = sqlite3.connect(board.db)
+            con.execute(
+                "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    task_id,
+                    "FIX: add tenantId-injection middleware to @sycode/database-tenant (unblocks founding-member test)",
+                    "Source change for tenant injection. Adds test coverage.",
+                    "devops",
+                    "blocked",
+                    10,
+                    int(time.time()),
+                ),
+            )
+            con.commit()
+            con.close()
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "REVIEW_VERDICT=APPROVED\n"
+                "No credential, prod, or DB change needed; tenant change is source-only. "
+                "Target: t_9b29dfe8.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.verdict, "APPROVED")
+            self.assertNotEqual(
+                decision.scope_class,
+                "operator_gated",
+                "proper-noun 'database' in title + gate-denial prose must not gate",
+            )
+            self.assertNotEqual(
+                decision.action,
+                "needs_operator",
+                "the C2 operator-gate detector must no longer strand this card",
+            )
+
+    def test_c3_genuine_operator_gate_still_needs_operator(self) -> None:
+        """C3 (t_8874b97b / t_9a0af491): fail-closed preserved. A card whose
+        title/body genuinely indicates deploy/DB/credential/A3/operator scope MUST
+        still emit needs_operator and NOT auto-complete — even if the reviewer
+        comment also says 'deploy approved'.
+        """
+        task_id = "t_c3operator1"
+        tmp, board = self.make_board()
+        with tmp:
+            con = sqlite3.connect(board.db)
+            con.execute(
+                "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    task_id,
+                    "Run production DB migration and live runtime deploy",
+                    "Scope includes schema migration, live data write, production deploy, and gateway restart.",
+                    "devops",
+                    "blocked",
+                    10,
+                    int(time.time()),
+                ),
+            )
+            con.commit()
+            con.close()
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "REVIEW_VERDICT=APPROVED\n"
+                "Target: t_c3operator1\n"
+                "Migration plan reviewed; deploy/live/DB scope remains operator gated, do not auto-complete.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.scope_class, "operator_gated")
+            self.assertEqual(decision.action, "needs_operator")
+            self.assertNotEqual(decision.action, "complete")
+
+
+class VerdictRouterC4NegatedVerdictTests(VerdictRouterRegressionTests):
+    """C4 (t_c996e275): negation-aware verdict detection.
+
+    A negated / no-verdict REVIEW_VERDICT token must NOT enter the routing
+    pipeline (fail closed) and must NOT be parsed as an affirmative verdict.
+    Incident: sycode-trading/t_19901020 (comment_id=14406, shadow-log
+    2026-07-19T20:35:25Z) where "No REVIEW_VERDICT=APPROVED/CHANGES_REQUESTED"
+    and "NO REVIEW_VERDICT issued" were wrongly parsed as APPROVED.
+    """
+
+    def _blocked_task_with_comment(self, task_id: str, comment_body: str) -> tuple[tempfile.TemporaryDirectory[str], vr.Board]:
+        tmp, board = self.make_board()
+        self.insert_task(board, task_id)
+        self.add_comment(board, task_id, "os-reviewer", comment_body)
+        return tmp, board
+
+    def test_c4_no_review_verdict_approved_slash_changes_requested_is_not_a_candidate(self) -> None:
+        """The exact incident phrase: 'No REVIEW_VERDICT=APPROVED/CHANGES_REQUESTED'
+        must not become a routing candidate (fail closed — never enters pipeline).
+        """
+        task_id = "t_19901020"
+        tmp, board = self._blocked_task_with_comment(
+            task_id,
+            "NO REVIEW_VERDICT issued. No REVIEW_VERDICT=APPROVED/CHANGES_REQUESTED. "
+            "This review is not yet complete; leaving the card blocked.",
+        )
+        with tmp:
+            self.assertEqual(vr.candidates_for_board(board), [])
+            # And even if forced through, parse_verdict must not yield APPROVED.
+            self.assertIsNone(vr.parse_verdict("No REVIEW_VERDICT=APPROVED/CHANGES_REQUESTED"))
+
+    def test_c4_no_review_verdict_issued_is_not_a_candidate(self) -> None:
+        """'NO REVIEW_VERDICT issued' (denial subject) must not route."""
+        task_id = "t_c4noissued"
+        tmp, board = self._blocked_task_with_comment(
+            task_id,
+            "NO REVIEW_VERDICT issued. Holding for further review before any verdict.",
+        )
+        with tmp:
+            self.assertEqual(vr.candidates_for_board(board), [])
+            self.assertIsNone(vr.parse_verdict("NO REVIEW_VERDICT issued"))
+
+    def test_c4_do_not_post_review_verdict_approved_is_not_a_candidate(self) -> None:
+        """'do not post REVIEW_VERDICT=APPROVED' (instruction to withhold) must not route."""
+        task_id = "t_c4donotpost"
+        tmp, board = self._blocked_task_with_comment(
+            task_id,
+            "do not post REVIEW_VERDICT=APPROVED here; the review is still in progress.",
+        )
+        with tmp:
+            self.assertEqual(vr.candidates_for_board(board), [])
+            self.assertIsNone(vr.parse_verdict("do not post REVIEW_VERDICT=APPROVED"))
+
+    def test_c4_affirmative_verdict_in_separate_sentence_still_routes(self) -> None:
+        """Positive control: a genuine affirmative REVIEW_VERDICT in its own
+        sentence must still route, even if the comment contains a denial word
+        ('no' / 'not') in a *different* sentence.
+        """
+        task_id = "t_c4a1b2c3"
+        tmp, board = self.make_board()
+        with tmp:
+            con = sqlite3.connect(board.db)
+            con.execute(
+                "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    task_id,
+                    "Add unit tests for tenant id injection",
+                    "Source/test-only change. Tenant coverage.",
+                    "devops",
+                    "blocked",
+                    10,
+                    int(time.time()),
+                ),
+            )
+            con.commit()
+            con.close()
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "This is not a prod change and no DB migration is required.\n"
+                "REVIEW_VERDICT=APPROVED\n"
+                "Target: t_c4a1b2c3. Source/test-only, approvable.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.verdict, "APPROVED")
+            self.assertEqual(decision.action, "complete")
+            self.assertEqual(decision.scope_class, "source_docs_spec_test_only")
+
+    def test_c4_negated_and_affirmative_same_comment_routes_affirmative_only(self) -> None:
+        """If a comment denies one verdict and affirms another in separate
+        sentences, only the affirmative declaration counts (fail closed to one).
+        """
+        task_id = "t_c4d00d01"
+        tmp, board = self._blocked_task_with_comment(
+            task_id,
+            "No REVIEW_VERDICT=CHANGES_REQUESTED for this card.\n"
+            "REVIEW_VERDICT=APPROVED\n"
+            "Target: t_c4d00d01. Source patch approved.",
+        )
+        with tmp:
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.verdict, "APPROVED")
+            self.assertEqual(decision.action, "complete")
+
+    def test_c4_incident_text_t19901020_does_not_emit_needs_pm(self) -> None:
+        """End-to-end guard using the real t_19901020 reviewer phrasing: a card
+        whose latest reviewer comment only denies a verdict must produce NO
+        candidate and therefore emit no NEEDS-PM marker.
+        """
+        task_id = "t_19901020"
+        tmp, board = self._blocked_task_with_comment(
+            task_id,
+            "REVIEW_VERDICT gate: NO REVIEW_VERDICT issued. "
+            "No REVIEW_VERDICT=APPROVED/CHANGES_REQUESTED. "
+            "Manual PM routing required; do not auto-complete.",
+        )
+        with tmp:
+            self.assertEqual(vr.candidates_for_board(board), [])
+            self.assertIsNone(vr.parse_verdict(
+                "REVIEW_VERDICT gate: NO REVIEW_VERDICT issued. "
+                "No REVIEW_VERDICT=APPROVED/CHANGES_REQUESTED."
+            ))
+
 
 class VerdictRouterBoardExclusionTests(unittest.TestCase):
     """Regression: excluded boards are never returned by boards()."""

@@ -8,11 +8,10 @@
         "trading-data-analysis"
       ],
       "skill": "trading-data-analysis",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
       "provider_snapshot": "openai-codex",
       "model_snapshot": "gpt-5.5",
-      "base_url": null,
       "script": "q3q4_promotion_review.sh",
       "no_agent": false,
       "context_from": null,

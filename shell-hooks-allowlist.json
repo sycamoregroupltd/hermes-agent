@@ -65,6 +65,42 @@
       "command": "/home/frank/.hermes/agent-hooks/gate-kanban-complete.sh",
       "event": "pre_tool_call",
       "script_mtime_at_approval": "2026-06-15T18:02:15.550392Z"
+    },
+    {
+      "approved_at": "2026-07-17T07:33:57.447474Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-provider-governance.sh",
+      "event": "on_session_start",
+      "script_mtime_at_approval": "2026-07-11T09:08:49.058729Z"
+    },
+    {
+      "approved_at": "2026-07-17T07:33:57.448548Z",
+      "command": "/home/frank/.hermes/agent-hooks/inject-second-brain-contract.sh",
+      "event": "pre_llm_call",
+      "script_mtime_at_approval": "2026-07-13T06:02:26.129684Z"
+    },
+    {
+      "approved_at": "2026-07-17T07:33:57.449703Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-provider-governance.sh",
+      "event": "pre_llm_call",
+      "script_mtime_at_approval": "2026-07-11T09:08:49.058729Z"
+    },
+    {
+      "approved_at": "2026-07-17T07:33:57.451013Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-second-brain-writes.sh",
+      "event": "pre_tool_call",
+      "script_mtime_at_approval": "2026-07-13T06:02:26.125535Z"
+    },
+    {
+      "approved_at": "2026-07-17T07:33:57.452647Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-config-writes.sh",
+      "event": "pre_tool_call",
+      "script_mtime_at_approval": "2026-06-26T18:45:21.815068Z"
+    },
+    {
+      "approved_at": "2026-07-17T07:33:57.454096Z",
+      "command": "/home/frank/.hermes/agent-hooks/gate-kanban-dupe-create.sh",
+      "event": "pre_tool_call",
+      "script_mtime_at_approval": "2026-07-05T20:19:14.488875Z"
     }
   ]
 }

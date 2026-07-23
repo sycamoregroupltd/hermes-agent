@@ -518,7 +518,41 @@ REPEATED_NEEDS_OPERATOR_IDEMPOTENT_SKIPS_EXISTING_KEY = VerdictFixture(
     ),
 )
 
-# --- 12. cross-target-operator-gated-approval-needs-operator ---
+# --- 12. repeated-unblock-rework-idempotent-skips-existing-key (NEW) ---
+REPEATED_UNBLOCK_REWORK_IDEMPOTENT_SKIPS_EXISTING_KEY = VerdictFixture(
+    name="repeated-unblock-rework-idempotent-skips-existing-key",
+    description="Repeated CHANGES_REQUESTED unblock_rework with existing idempotency marker skips duplicate unblock planning.",
+    board="jarvis-os",
+    task=FixtureTask(
+        id="t_a0000023",
+        status="blocked",
+        title="Source-only card already rework-routed once",
+        body="Source-only tests.",
+        block_reason="review-required",
+        existing_idempotency_keys=(
+            "verdict-router:v1:jarvis-os:t_a0000023:comment:123:action:unblock_rework",
+        ),
+        comments=(
+            Comment(
+                id=123,
+                author="os-reviewer",
+                created_at=1783110023,
+                body="REVIEW_VERDICT=CHANGES_REQUESTED\nTarget: t_a0000023\nBlocking finding: rework idempotency test needs simulated edge condition.",
+            ),
+        ),
+    ),
+    expect=Expect(
+        verdict_value="CHANGES_REQUESTED",
+        target_validation="same-card",
+        scope_class="source_docs_spec_test_only",
+        action="skip",
+        result="skipped_idempotent",
+        mutations=(),
+        forbid_mutations=("comment", "unblock"),
+    ),
+)
+
+# --- 13. cross-target-operator-gated-approval-needs-operator ---
 CROSS_TARGET_OPERATOR_GATED_APPROVAL_NEEDS_OPERATOR = VerdictFixture(
     name="cross-target-operator-gated-approval-needs-operator",
     description="Cross-target approval on an operator-gated deploy/DB card preserves NEEDS-OPERATOR instead of downgrading to NEEDS-PM.",
@@ -866,9 +900,71 @@ SCAN_CONTINUES_AFTER_NONNUMERIC_COMMENT_ID = VerdictFixture(
     ),
 )
 
+# --- 22. c1_gate_denial_reviewer_prose_approved_completes ---
+C1_GATE_DENIAL_REVIEWER_PROSE_APPROVED_COMPLETES = VerdictFixture(
+    name="c1-gate-denial-reviewer-prose-approved-completes",
+    description="C1 (t_8874b97b / t_9a0af491): an APPROVED card whose reviewer comment *denies* operator gates ('A3 gates intact; no credential, prod, or DB change; REVIEW_VERDICT=APPROVED') on a SOURCE/TEST-only card MUST complete through the router, and the gate-denial nouns in reviewer prose must not operator-gate the card.",
+    board="jarvis-os",
+    task=FixtureTask(
+        id="t_c1a0b1e2",
+        status="blocked",
+        title="Add unit tests for tenant id injection",
+        body="Source/test-only change. Tenant coverage.",
+        block_reason="review-required: tests pass; needs reviewer verdict",
+        comments=(
+            Comment(
+                id=124,
+                author="os-reviewer",
+                created_at=1783110024,
+                body="REVIEW_VERDICT=APPROVED\nA3 gates intact; no credential, prod, or DB change;\nTarget: t_c1a0b1e2. Source/test-only, approvable.",
+            ),
+        ),
+    ),
+    expect=Expect(
+        verdict_value="APPROVED",
+        target_validation="same-card",
+        scope_class="source_docs_spec_test_only",
+        action="complete",
+        result="would_complete",
+        mutations=("complete",),
+    ),
+)
+
+# --- 23. c3_genuine_prod_db_credential_operator_gated_needs_operator ---
+C3_GENUINE_PROD_DB_CREDENTIAL_OPERATOR_GATED_NEEDS_OPERATOR = VerdictFixture(
+    name="c3-genuine-prod-db-credential-operator-gated-needs-operator",
+    description="C3 (t_8874b97b / t_9a0af491): a card whose task title/body genuinely indicates deploy, DB, credential, A3, or operator-gated scope MUST still emit needs_operator and NOT auto-complete — even if the reviewer comment also says 'approved'.",
+    board="jarvis-os",
+    task=FixtureTask(
+        id="t_c3operator1",
+        status="blocked",
+        title="Run production DB migration and live runtime deploy",
+        body="Scope includes schema migration, live data write, production deploy, and gateway restart.",
+        block_reason="review-required: migration plan ready for operator gate",
+        comments=(
+            Comment(
+                id=125,
+                author="os-reviewer",
+                created_at=1783110025,
+                body="REVIEW_VERDICT=APPROVED\nTarget: t_c3operator1\nMigration plan reviewed; deploy/live/DB scope remains operator gated, do not auto-complete.",
+            ),
+        ),
+    ),
+    expect=Expect(
+        verdict_value="APPROVED",
+        target_validation="same-card",
+        scope_class="operator_gated",
+        action="needs_operator",
+        result="would_comment",
+        mutations=("comment",),
+        forbid_mutations=("complete", "unblock"),
+        comment_prefix="NEEDS-OPERATOR: verdict-router operator-gated",
+    ),
+)
+
 # ── Aggregate exports ───────────────────────────────────────────────────────
 
-# All 21 cases in order — useful for iterating in parametrized tests
+# All 24 cases in order — useful for iterating in parametrized tests
 ALL_CASES: tuple[VerdictFixture, ...] = (
     APPROVED_SOURCE_CARD_COMPLETES,
     APPROVED_RUNTIME_A3_NEEDS_OPERATOR,
@@ -881,6 +977,7 @@ ALL_CASES: tuple[VerdictFixture, ...] = (
     REPEATED_RUN_IDEMPOTENT_SKIPS_EXISTING_KEY,
     REPEATED_NEEDS_PM_IDEMPOTENT_SKIPS_EXISTING_KEY,
     REPEATED_NEEDS_OPERATOR_IDEMPOTENT_SKIPS_EXISTING_KEY,
+    REPEATED_UNBLOCK_REWORK_IDEMPOTENT_SKIPS_EXISTING_KEY,
     CROSS_TARGET_OPERATOR_GATED_APPROVAL_NEEDS_OPERATOR,
     APPROVED_WITH_NO_TASK_ID_FAILS_CLOSED,
     CHANGES_REQUESTED_CROSS_TARGET_FAILS_CLOSED,
@@ -891,6 +988,8 @@ ALL_CASES: tuple[VerdictFixture, ...] = (
     NONNUMERIC_OLDER_CREATED_AT_DOES_NOT_OUTRANK,
     NONNUMERIC_COMMENT_ID_PERCENT_S_IS_SKIPPED,
     SCAN_CONTINUES_AFTER_NONNUMERIC_COMMENT_ID,
+    C1_GATE_DENIAL_REVIEWER_PROSE_APPROVED_COMPLETES,
+    C3_GENUINE_PROD_DB_CREDENTIAL_OPERATOR_GATED_NEEDS_OPERATOR,
 )
 
 # Map name → fixture for lookup
@@ -898,4 +997,4 @@ ALL_CASES_BY_NAME: dict[str, VerdictFixture] = {
     f.name: f for f in ALL_CASES
 }
 
-assert len(ALL_CASES) == 21, f"Expected 21 fixture cases, got {len(ALL_CASES)}"
+assert len(ALL_CASES) == 24, f"Expected 24 fixture cases, got {len(ALL_CASES)}"

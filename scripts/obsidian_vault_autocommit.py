@@ -16,6 +16,10 @@ VAULTS = [
     Path('/home/frank/obsidian/quant-team'),
 ]
 
+# A lock older than this cannot belong to a live run (a run commits in seconds),
+# so it was left behind by a crash/killed process and must not block commits forever.
+LOCK_STALE_SECONDS = 3600
+
 GITIGNORE = """# Obsidian local workspace/cache state
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
@@ -76,6 +80,18 @@ def autocommit(vault: Path) -> str | None:
     if not vault.exists():
         return f'MISSING {vault}'
     lock = vault / '.obsidian-git-autocommit.lock'
+    # Recover a stale lock: a lock older than LOCK_STALE_SECONDS cannot belong to
+    # a live run, so it was left by a crash/kill and must not block future commits.
+    if lock.exists():
+        try:
+            age = _dt.datetime.now().timestamp() - lock.stat().st_mtime
+        except OSError:
+            age = 0.0
+        if age > LOCK_STALE_SECONDS:
+            try:
+                lock.unlink()
+            except FileNotFoundError:
+                pass
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)

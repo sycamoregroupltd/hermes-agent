@@ -5,6 +5,13 @@ import subprocess, json, os, sys, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Secret scrubber — never persist a captured token (see redact() docstring).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from secret_redact import redact
+def safe_err(label, proc):
+    """Return a redacted stderr string safe to log/persist (token masked)."""
+    return f"{label}: {redact((proc.stderr or '')[:2000])}"
+
 # Sycode OpenClaw token — shared credential store (mirrors position_manager.py).
 _CRED_ENV_FILE = os.environ.get("SYCODE_CREDENTIAL_ENV_FILE", "/home/frank/.hermes/secrets/sycode-credential.env")
 if os.path.exists(_CRED_ENV_FILE):
@@ -25,6 +32,12 @@ DB = ["docker", "exec", "-i", "sycodetrading-supabase-db", "psql", "-U", "postgr
 r = subprocess.run(["curl","-s","--connect-timeout","10","--max-time","30",
     "-H", f"X-Sycode-Token:{SYCODE_TOKEN}",
     "http://localhost:3001/api/openclaw/status"], capture_output=True, text=True, timeout=35)
+if r.returncode != 0:
+    # Any failure (including timeout) leaks the argv repr — which embeds the
+    # token — into stderr. Mask it before logging so the cron job's persisted
+    # last_error never contains the secret.
+    print(safe_err("OPENCLAW_STATUS_FAILED", r), file=sys.stderr)
+    sys.exit(1)
 status = json.loads(r.stdout) if r.stdout else {}
 balance = status.get("balance", {}).get("total", 0)
 positions = status.get("openPositions", 0)

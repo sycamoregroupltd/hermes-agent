@@ -49,16 +49,27 @@ PIPELINES = {
     "pattern_win_rate_registry": ("last_updated", 26),
 }
 
-# Paired paper-execution freshness check: 0 fresh intents can be legitimate while
-# strategy quarantine is active, so do not alert on trade_intents/trade_outcomes
-# in isolation. Alert only when signal_journeys is fresh but execution-side tables
-# are both stale beyond the paired budget; include context so the operator can
-# distinguish expected quarantine from a broken post-signal write path.
+# Paired paper-execution freshness check — watches the OUTCOME FACTORY, the
+# NS-P3-critical write path (decision_outcomes / trade_close_events). Rationale
+# for the table choice (2026-07-17 outcome-factory-stall incident):
+#   * The old set {trade_intents, trade_outcomes} was blind to the failure that
+#     actually happens: trade_outcomes is a DEAD/empty table (always "stale"), and
+#     trade_intents is NOT a reliable liveness signal — the RandomEntryInjector
+#     opens via executeIntent() and never writes a trade_intents row (2026-07-14
+#     incident closeout), and main-funnel intents are legitimately sparse under the
+#     DQ deadlock. So the AND reduced to "trade_intents stale" — the weakest signal.
+#   * On 2026-07-17 signal_journeys flowed (~14k/24h) while decision_outcomes /
+#     trade_close_events had been frozen since 04:52Z (execution halted by the
+#     CircuitBreaker dailyPnLPercent bug, card t_572a120e) — the probe stayed GREEN.
+# Alert fires only when signal_journeys is fresh but the canonical outcome rails are
+# stale beyond budget: that means signals land but NS-P3 accrual has stopped (a
+# halt/drought OR a broken post-close write path). 0 fresh outcomes CAN be a
+# legitimate trading halt, so the message carries that context for the operator.
 PAIRED_SIGNAL_TABLE = "signal_journeys"
 PAIRED_SIGNAL_COLUMN = "created_at"
 PAIRED_EXECUTION_TABLES = {
-    "trade_intents": "created_at",
-    "trade_outcomes": "created_at",
+    "decision_outcomes": "created_at",
+    "trade_close_events": "created_at",
 }
 PAIRED_SIGNAL_FRESH_HOURS = 3
 PAIRED_EXECUTION_STALE_HOURS = 12
@@ -197,8 +208,9 @@ def paired_execution_freshness_alert():
             for t, age in execution_ages.items()
         )
         return (
-            "  🔴 paired execution freshness: signal_journeys fresh %.1fh but %s stale >%dh; "
-            "context: zero intents may be quarantine-expected, but fresh signals with stale intents/outcomes can indicate a broken post-signal write path"
+            "  🔴 outcome-factory stall: signal_journeys fresh %.1fh but canonical outcome rails %s stale >%dh; "
+            "NS-P3 accrual has stopped — a legitimate trading halt/drought is possible, but fresh signals with stale "
+            "decision_outcomes/trade_close_events can indicate a broken post-close write path (see CircuitBreaker t_572a120e)"
             % (signal_age, context, PAIRED_EXECUTION_STALE_HOURS)
         )
     return None
