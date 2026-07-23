@@ -77,6 +77,31 @@ class TestMatchUserDenyRule:
         deny_config(["git push --force*"])
         assert mod._match_user_deny_rule('git pu""sh --force origin main') is not None
 
+    def test_printf_quoted_prose_does_not_match_force_push_deny(self, deny_config):
+        """Text printed by printf is data, not the command being executed."""
+        deny_config(["*git push*--force*"])
+        command = "printf 'To push to this branch, use: git push --force origin feature'"
+        assert mod._match_user_deny_rule(command) is None
+
+    def test_bash_c_quoted_force_push_payload_still_matches_deny(self, deny_config):
+        """Execution-bearing quoted payloads are still surfaced separately."""
+        deny_config(["git push --force*"])
+        assert mod._match_user_deny_rule("bash -c 'git push --force origin main'") is not None
+
+
+class TestDangerousCommandQuotedProse:
+    def test_printf_quoted_prose_does_not_trigger_force_push_detection(self):
+        command = "printf 'To push to this branch, use: git push --force origin feature'"
+        assert mod.detect_dangerous_command(command) == (False, None, None)
+
+    def test_bash_c_quoted_force_push_payload_still_triggers_detection(self):
+        detected, key, description = mod.detect_dangerous_command(
+            "bash -c 'git push --force origin main'"
+        )
+        assert detected is True
+        assert key == "git force push (rewrites remote history)"
+        assert description == "git force push (rewrites remote history)"
+
 
 class TestDenyBeatsYolo:
     def test_deny_blocks_under_yolo_env(self, deny_config, clean_env, monkeypatch):

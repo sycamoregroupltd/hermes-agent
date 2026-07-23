@@ -1312,6 +1312,51 @@ def _grep_safe_detection_variant(command: str) -> tuple[str, bool]:
     return "".join(parts), False
 
 
+_TEXT_OUTPUT_COMMANDS = {"echo", "printf"}
+
+
+def _text_output_safe_detection_variant(command: str) -> str:
+    """Hide inert literal text printed by simple ``echo``/``printf`` commands.
+
+    The broad legacy dangerous regexes still inspect the whole command string,
+    so text-emitting helpers can be false positives when their *data* mentions a
+    dangerous command, e.g. ``printf 'use: git push --force ...'``.  Only mask
+    wholly single-quoted arguments owned by a simple top-level ``echo`` or
+    ``printf`` invocation.  Do not mask compound commands: printed text piped
+    into a shell or written and executed later is no longer mere prose.
+    """
+    segments = list(_iter_top_level_shell_segments(command))
+    if len(segments) != 1:
+        return command
+    segment = segments[0]
+    segment_at = command.find(segment)
+    if segment_at < 0:
+        return command
+
+    spans: list[tuple[int, int]] = []
+    for start, _, word in _iter_shell_command_word_spans(segment):
+        executable = os.path.basename(_deobfuscate_shell_word_for_detection(word)).lower()
+        if executable not in _TEXT_OUTPUT_COMMANDS:
+            continue
+        tokens = _shell_tokens_with_spans(segment, start)
+        if tokens is None:
+            return command
+        for _, token_start, token_end, quoted in tokens[1:]:
+            if quoted:
+                spans.append((segment_at + token_start, segment_at + token_end))
+        break
+
+    if not spans:
+        return command
+    parts = []
+    previous = 0
+    for start, end in spans:
+        parts.extend((command[previous:start], " " * (end - start)))
+        previous = end
+    parts.append(command[previous:])
+    return "".join(parts)
+
+
 def _interpreter_family(executable: str) -> str | None:
     name = os.path.basename(executable).lower()
     if re.fullmatch(r"py(?:\.exe)?|python[23]?(?:\.\d+)*(?:\.exe)?", name):
@@ -1915,8 +1960,9 @@ def _command_detection_variants(command: str):
     # Quote-aware grep parsing hides only structurally identified pattern
     # operands. Malformed/ambiguous input remains byte-for-byte intact.
     grep_safe, _ = _grep_safe_detection_variant(normalized)
-    seen = {grep_safe}
-    yield grep_safe
+    base_safe = _text_output_safe_detection_variant(grep_safe)
+    seen = {base_safe}
+    yield base_safe
     # Program-bearing options are parsed in their owning command's context.
     # Surfacing only their payload lets the hardline floor inspect the command
     # that will actually run without promoting similar flags or quoted prose.
