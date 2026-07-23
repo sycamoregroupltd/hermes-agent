@@ -575,7 +575,46 @@
       ],
       "workdir": null,
       "fire_claim": null
+    },
+    {
+      "id": "acf44ef06042",
+      "name": "sycode-tournament-provider-failure-guard",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "tournament_provider_failure_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/10 * * * *",
+        "display": "*/10 * * * *"
+      },
+      "schedule_display": "*/10 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-23T13:25:25.381080+01:00",
+      "next_run_at": "2026-07-23T13:30:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "discord:#critical-alerts",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ],
-  "updated_at": "2026-07-23T13:23:01.594610+01:00"
+  "updated_at": "2026-07-23T13:25:25.381747+01:00"
 }

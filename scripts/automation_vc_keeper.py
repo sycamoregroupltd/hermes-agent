@@ -153,6 +153,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="report what would be committed without committing/pushing")
     ap.add_argument("--include-untracked", action="store_true", help="include allowlisted untracked live files; use only after human review")
+    ap.add_argument("--report-skipped", action="store_true", help="on no-op, report allowlisted untracked files skipped for review")
     ap.add_argument("--message", default="chore(automation-vc): keeper catch-up sync (t_84980841)")
     args = ap.parse_args()
 
@@ -188,8 +189,8 @@ def main() -> int:
                     print("\n".join(sorted(skipped_untracked)[:200]))
                 return 0
             if not files:
-                # Stay quiet on cron no-op unless there is reviewed untracked drift to surface.
-                if skipped_untracked:
+                # Stay quiet on cron no-op by default; no-agent cron treats stdout as a delivery.
+                if args.report_skipped and skipped_untracked:
                     print(f"automation-vc keeper: no tracked drift; skipped {len(skipped_untracked)} allowlisted untracked files pending review")
                 return 0
             run(["git", "commit", "-m", args.message], cwd=wt, capture=False)
