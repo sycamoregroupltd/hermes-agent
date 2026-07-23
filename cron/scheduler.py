@@ -2200,7 +2200,7 @@ def _coerce_systemd_property_value(value: object) -> str:
 
 def _systemd_cron_context_argv(
     argv: list[str], *, exec_context: object, job_id: object = None
-) -> list[str]:
+) -> tuple[list[str], str | None]:
     """Wrap a cron script command in a transient user service when requested.
 
     ``systemd-run --user --scope`` cannot be combined with ``--wait`` on the
@@ -2210,12 +2210,12 @@ def _systemd_cron_context_argv(
     stdout/stderr capture and existing cron success/timeout semantics.
     """
     if not exec_context:
-        return argv
+        return argv, None
     if not isinstance(exec_context, dict):
         raise ValueError("cron exec_context must be an object")
     mode = str(exec_context.get("mode") or "").strip()
     if not mode:
-        return argv
+        return argv, None
     if mode != _CRON_SYSTEMD_CONTEXT_MODE:
         raise ValueError(
             f"unsupported cron exec_context mode {mode!r}; expected "
@@ -2253,7 +2253,59 @@ def _systemd_cron_context_argv(
             raise ValueError(f"unsupported cron exec_context systemd property {key_text!r}")
         wrapped.append(f"--property={key_text}={_coerce_systemd_property_value(raw_value)}")
 
-    return wrapped + argv
+    return wrapped + argv, unit
+
+
+def _cleanup_systemd_cron_unit(unit: str) -> str:
+    """Best-effort cleanup for a transient cron service after client timeout.
+
+    ``systemd-run --wait --pipe`` can be interrupted by the scheduler timeout
+    while the transient user service keeps running.  On that path, fail closed:
+    kill/stop/reset the exact generated unit name and return a non-empty error
+    summary if cleanup itself could not be verified.
+    """
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return "systemctl not found on PATH for cron exec_context cleanup"
+
+    commands = [
+        [systemctl, "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", unit],
+        [systemctl, "--user", "stop", unit],
+        [systemctl, "--user", "reset-failed", unit],
+    ]
+    failures: list[str] = []
+    benign_missing_markers = (
+        "not loaded",
+        "could not be found",
+        "not found",
+        "no such unit",
+    )
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            failures.append(f"{' '.join(command)} timed out")
+            continue
+        except Exception as exc:
+            failures.append(f"{' '.join(command)} failed: {exc}")
+            continue
+
+        if result.returncode == 0:
+            continue
+        combined = "\n".join(
+            part.strip() for part in (result.stderr or "", result.stdout or "") if part.strip()
+        )
+        if any(marker in combined.lower() for marker in benign_missing_markers):
+            continue
+        detail = combined or f"exit code {result.returncode}"
+        failures.append(f"{' '.join(command)} failed: {detail}")
+
+    return "; ".join(failures)
 
 
 def _run_job_script(
@@ -2349,6 +2401,7 @@ def _run_job_script(
         python_exe, env_overlay = _windows_cron_python_invocation(sys.executable)
         argv = [python_exe, str(path)]
 
+    systemd_unit: str | None = None
     try:
         from tools.environments.local import _sanitize_subprocess_env
 
@@ -2362,7 +2415,7 @@ def _run_job_script(
         env = _sanitize_subprocess_env(os.environ.copy())
         env.update(env_overlay)
         try:
-            argv = _systemd_cron_context_argv(
+            argv, systemd_unit = _systemd_cron_context_argv(
                 argv,
                 exec_context=exec_context,
                 job_id=job_id,
@@ -2402,7 +2455,15 @@ def _run_job_script(
         return True, stdout
 
     except subprocess.TimeoutExpired:
-        return False, f"Script timed out after {script_timeout}s: {path}"
+        message = f"Script timed out after {script_timeout}s: {path}"
+        if systemd_unit:
+            cleanup_error = _cleanup_systemd_cron_unit(systemd_unit)
+            if cleanup_error:
+                message = (
+                    f"{message}\n"
+                    f"Cron exec_context cleanup failed for unit {systemd_unit}: {cleanup_error}"
+                )
+        return False, message
     except Exception as exc:
         return False, f"Script execution failed: {exc}"
 
