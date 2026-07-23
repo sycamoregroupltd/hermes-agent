@@ -71,6 +71,7 @@ new locking.
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -6508,6 +6509,74 @@ DEFAULT_FAILURE_LIMIT = 2
 # Legacy alias — callers / tests still reference the old name.
 DEFAULT_SPAWN_FAILURE_LIMIT = DEFAULT_FAILURE_LIMIT
 
+# ---------------------------------------------------------------------------
+# Worker-spawn transient-failure (EAGAIN) resilience
+# ---------------------------------------------------------------------------
+#
+# Root cause of the 2026-07-14 sycode-trading stall cluster
+# (t_b31b1a77): ``subprocess.Popen(..., start_new_session=True)`` in
+# ``_default_spawn`` makes a single unretried ``fork()``/``clone()`` syscall.
+# Under a dispatcher spawn surge the kernel's per-cgroup clone limit
+# (``pids.max`` / ``tasks.max`` — distinct from ``ulimit -u`` and from
+# RAM/CPU exhaustion) answers the clone with ``EAGAIN``
+# (``[Errno 11] Resource temporarily unavailable``). The ``OSError``
+# propagated straight to ``_record_spawn_failure``, which incremented
+# ``consecutive_failures``; with the default ``DEFAULT_FAILURE_LIMIT == 2``
+# the circuit breaker then auto-blocked the task with the *stale* EAGAIN
+# error. 33 sycode-trading tasks stranded this way, and the same transient
+# surfaced as jarvis-os 'pid not alive' / 'worker exited without complete'
+# blocks.
+#
+# The fix lives at the spawn source: ``_default_spawn`` now retries the
+# ``Popen`` a small bounded number of times with exponential backoff, and
+# the active surge-cap (below) throttles the *rate* of clone bursts across
+# the fleet so a retry storm cannot itself re-trigger EAGAIN. A transient
+# EAGAIN is therefore absorbed with NO consecutive-failure increment; the
+# worker is started during the same tick once the transient pressure clears,
+# and the stranding is gone.
+
+# How many times to re-attempt the clone after a transient EAGAIN before
+# giving up and letting the normal spawn-failure path run. This must stay
+# small: each retry is a few hundred ms; a truly wedged host should fall
+# through to the circuit breaker, not hammer the kernel.
+SPAWN_EAGAIN_MAX_RETRIES = 5
+# Exponential backoff base (seconds) between clone retries; the actual
+# delay is ``base * (2 ** attempt)`` with a tiny jitter so a fleet of
+# gateways doesn't all re-clone in lockstep.
+SPAWN_EAGAIN_BACKOFF_BASE_SECONDS = 0.15
+SPAWN_EAGAIN_BACKOFF_MAX_SECONDS = 4.0
+
+# Live surge-cap: a global token bucket that bounds how many worker
+# clones the whole process may launch within a sliding window. The
+# dispatcher is normally quiet (one tick per minute), so the bucket refills
+# well before the next burst; but a backlog of N ready tasks on a tick would
+# otherwise attempt N simultaneous clones — exactly the surge that trips the
+# cgroup pids.max EAGAIN. The cap spreads clones out so the kernel's clone
+# accounting keeps up. ``None`` (or <= 0) disables the cap entirely.
+SPAWN_SURGE_CAP_PER_WINDOW = 12
+SPAWN_SURGE_WINDOW_SECONDS = 2.0
+# Per-attempt sleep when the surge token bucket is empty, so a blocked tick
+# yields rather than busy-spinning on clone.
+SPAWN_SURGE_CAP_YIELD_SECONDS = 0.2
+
+# Transient clone errors that MUST be retried rather than counted as a
+# spawn failure. ``EAGAIN`` (Errno 11) is the primary one; ``EWOULDBLOCK``
+# shares its value on Linux but is included for completeness, as are the
+# resource-pressure relatives that some kernels surface instead of EAGAIN
+# under cgroup pressure.
+_SPAWN_TRANSIENT_ERRNOS = frozenset(
+    {errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+     getattr(errno, "ENOMEM", 12), getattr(errno, "EAGAIN", 11)}
+)
+# Substrings that, if present in a clone failure message, mark it as a
+# transient resource-pressure error (belt-and-braces against platforms where
+# the errno is mangled). ``[Errno 11]`` is the canonical Linux form.
+_SPAWN_TRANSIENT_ERROR_SUBSTRINGS = (
+    "[errno 11]", "resource temporarily unavailable",
+    "resource deadlock avoided", "cannot allocate memory",
+    "out of memory", "fork:", "clone():",
+)
+
 # Max bytes to keep in a single worker log file. The dispatcher truncates
 # and rotates on spawn if the file is larger than this at spawn time.
 DEFAULT_LOG_ROTATE_BYTES = 2 * 1024 * 1024   # 2 MiB
@@ -6589,6 +6658,11 @@ class DispatchResult:
     """Task ids reclaimed because their worker PID disappeared."""
     auto_blocked: list[str] = field(default_factory=list)
     """Task ids auto-blocked by the spawn-failure circuit breaker."""
+    spawn_eagain_retries: int = 0
+    """Number of transient clone-pressure (EAGAIN) retries performed by
+    ``_default_spawn`` during this tick. Surfaced for telemetry so operators
+    can see spawn-pressure without it ever stranding a task — a non-zero
+    value means the surge-cap / backoff absorbed a clone-limit storm."""
     timed_out: list[str] = field(default_factory=list)
     """Task ids whose workers exceeded ``max_runtime_seconds``."""
     stale: list[str] = field(default_factory=list)
@@ -8437,6 +8511,11 @@ def _dispatch_once_locked(
             )
             if auto:
                 result.auto_blocked.append(claimed.id)
+    # Surface transient clone-pressure retries as a fleet-wide metric.
+    # A non-zero value means the surge-cap / backoff absorbed a clone-limit
+    # storm this tick WITHOUT stranding any task (previously these retries
+    # would have incremented consecutive_failures and auto-blocked cards).
+    result.spawn_eagain_retries = _spawn_eagain_retry_count()
     return result
 
 
@@ -8873,16 +8952,7 @@ def _default_spawn(
     # Use 'a' so a re-run on unblock appends rather than overwrites.
     log_f = open(log_path, "ab")
     try:
-        proc = subprocess.Popen(  # noqa: S603 -- argv is a fixed list built above
-            cmd,
-            cwd=workspace if os.path.isdir(workspace) else None,
-            stdin=subprocess.DEVNULL,
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-            env=env,
-            start_new_session=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
-        )
+        proc = _spawn_worker_with_retry(cmd, workspace, log_f, env, board=board)
     except FileNotFoundError:
         log_f.close()
         raise RuntimeError(
@@ -8895,6 +8965,151 @@ def _default_spawn(
     # reference goes out of scope and is GC'd, but the OS-level FD stays
     # open in the child until the child exits.
     return proc.pid
+
+
+def _spawn_is_transient_error(exc: BaseException) -> bool:
+    """True if ``exc`` is a transient clone-pressure failure worth retrying.
+
+    Covers ``EAGAIN`` / ``EWOULDBLOCK`` (the cgroup pids.max / tasks.max
+    clone-limit answers, including ``[Errno 11] Resource temporarily
+    unavailable``) plus the memory-pressure relatives that some kernels
+    surface instead of EAGAIN under cgroup pressure.
+    """
+    eno = getattr(exc, "errno", None)
+    if eno is not None and eno in _SPAWN_TRANSIENT_ERRNOS:
+        return True
+    msg = str(exc).lower()
+    # errno may be absent/garbled on some platforms; fall back to a
+    # substring match on the canonical transient forms.
+    return any(sub in msg for sub in _SPAWN_TRANSIENT_ERROR_SUBSTRINGS)
+
+
+# Process-wide token bucket for the surge-cap. Bounded, monotonic, and
+# lazily initialised so importing this module has no side effects.
+_SPAWN_BUCKET: "dict[str, Any]" = {}
+
+
+def _spawn_eagain_retry_count() -> int:
+    """Return the number of transient clone-pressure retries since last read.
+
+    ``_spawn_worker_with_retry`` increments this per retry attempt; the
+    dispatcher tick reads (and resets) it once per tick so the count lands
+    on ``DispatchResult.spawn_eagain_retries`` for telemetry. Monotonic and
+    process-global — safe across boards because the single-writer dispatch
+    lock serialises ticks on a given board, and cross-board counts are
+    additive (what we want for fleet-wide spawn-pressure visibility).
+    """
+    n = _SPAWN_BUCKET.get("_eagain_retries", 0)
+    _SPAWN_BUCKET["_eagain_retries"] = 0
+    return int(n)
+
+
+def _spawn_acquire_surge_token() -> None:
+    """Block (briefly, with yield) until a clone slot is available.
+
+    A token bucket limited to ``SPAWN_SURGE_CAP_PER_WINDOW`` clones per
+    ``SPAWN_SURGE_WINDOW_SECONDS`` sliding window. The bucket refills as
+    time passes, so a quiet dispatcher never notices it (slots accrue), but a
+    backlog of many ready tasks on one tick is spread out instead of firing
+    N simultaneous clones — which is what trips the kernel's cgroup
+    pids.max EAGAIN. Disabled when the cap is unset / non-positive.
+    """
+    cap = SPAWN_SURGE_CAP_PER_WINDOW
+    window = SPAWN_SURGE_WINDOW_SECONDS
+    if not cap or cap <= 0 or not window or window <= 0:
+        return
+    now = time.monotonic()
+    bucket = _SPAWN_BUCKET
+    last_refill, tokens = bucket.get("t", (0.0, 0.0))
+    # Refill: add (elapsed / window) * cap, capped at cap.
+    elapsed = now - last_refill
+    tokens = min(float(cap), tokens + (elapsed / window) * cap)
+    # If no token yet, wait (yielding) until the bucket has accrued one.
+    deadline = now + window
+    while tokens < 1.0:
+        time.sleep(SPAWN_SURGE_CAP_YIELD_SECONDS)
+        now = time.monotonic()
+        elapsed = now - last_refill
+        tokens = min(float(cap), tokens + (elapsed / window) * cap)
+        if now > deadline:
+            # Safety valve: never block a tick longer than one window.
+            break
+    # Consume one token (floor to keep fractional credit for next time).
+    bucket["t"] = (time.monotonic(), max(0.0, tokens - 1.0))
+
+
+def _spawn_worker_with_retry(
+    cmd: list,
+    workspace: str,
+    log_f,
+    env: dict,
+    *,
+    board: Optional[str] = None,
+) -> "subprocess.Popen":
+    """Clone a worker subprocess with transient-EAGAIN retry + surge-cap.
+
+    Wraps the underlying ``subprocess.Popen(..., start_new_session=True)``
+    with:
+      * a **surge-cap** so the *rate* of clones across a tick cannot itself
+        trigger the kernel's cgroup clone-limit EAGAIN; and
+      * **bounded exponential-backoff retry** on transient clone failures
+        (``EAGAIN`` / ``ENOMEM`` under pressure). A transient hit is
+        absorbed here and never reaches ``_record_spawn_failure`` — so the
+        task's ``consecutive_failures`` is NOT incremented and the worker can
+        start during the same tick once the transient pressure clears instead
+        of being stranded in ``blocked`` with a stale error.
+
+    Non-transient errors (e.g. ``FileNotFoundError`` for a missing
+    executable) propagate immediately so the caller's existing handling runs.
+    """
+    # Throttle the clone burst rate first — this is what prevents a surge of
+    # N ready tasks from all cloning at once and tripping EAGAIN together.
+    _spawn_acquire_surge_token()
+    max_retries = SPAWN_EAGAIN_MAX_RETRIES
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return subprocess.Popen(  # noqa: S603 -- argv is a fixed list built above
+                cmd,
+                cwd=workspace if os.path.isdir(workspace) else None,
+                stdin=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                env=env,
+                start_new_session=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            last_exc = exc
+            if not _spawn_is_transient_error(exc):
+                # Genuine spawn error (missing executable, bad cwd, etc.) —
+                # do not retry, let the caller's normal failure path handle it.
+                raise
+            if attempt >= max_retries:
+                break
+            # Count the absorbed transient hit for telemetry (never strands
+            # the task — the clone is retried locally in this same spawn).
+            _SPAWN_BUCKET["_eagain_retries"] = (
+                _SPAWN_BUCKET.get("_eagain_retries", 0) + 1
+            )
+            # Transient clone-pressure hit: back off and retry. Jitter so a
+            # fleet of gateways doesn't all re-clone in lockstep.
+            delay = min(
+                SPAWN_EAGAIN_BACKOFF_BASE_SECONDS * (2 ** attempt),
+                SPAWN_EAGAIN_BACKOFF_MAX_SECONDS,
+            )
+            delay += random.uniform(0, SPAWN_EAGAIN_BACKOFF_BASE_SECONDS)
+            _log.warning(
+                "worker spawn EAGAIN (transient clone-pressure Errno %s); "
+                "retry %d/%d after %.2fs backoff",
+                getattr(exc, "errno", "?"), attempt + 1, max_retries, delay,
+            )
+            time.sleep(delay)
+    # Exhausted retries on a still-transient error: surface it so the caller
+    # records it as a spawn failure — but this is the *persistent* case now,
+    # not the 1-in-a-1000 transient that stranded 33 tasks.
+    assert last_exc is not None
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
