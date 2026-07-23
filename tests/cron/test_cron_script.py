@@ -276,6 +276,152 @@ class TestRunJobScript:
         assert "encoding" not in captured["kwargs"]
         assert "errors" not in captured["kwargs"]
 
+    def test_systemd_exec_context_wraps_script_with_user_service(self, cron_env, monkeypatch):
+        from cron import scheduler as sched_mod
+        from cron.scheduler import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text('print("ok")\n')
+
+        captured = {}
+
+        def fake_run(argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+            return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+
+        monkeypatch.setattr(sched_mod.sys, "platform", "linux")
+        monkeypatch.setattr(sched_mod.shutil, "which", lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
+
+        success, output = _run_job_script(
+            "probe.py",
+            job_id="13c1f9279025",
+            exec_context={
+                "mode": "systemd-run-user-service",
+                "unit_prefix": "hermes-cron-heavy-native",
+                "properties": {"TasksMax": "4096", "Slice": "hermes-cron-heavy-native.slice"},
+            },
+        )
+
+        assert success is True
+        assert output == "ok"
+        argv = captured["argv"]
+        assert argv[:6] == [
+            "/usr/bin/systemd-run",
+            "--user",
+            "--wait",
+            "--pipe",
+            "--collect",
+            "--quiet",
+        ]
+        assert any(arg.startswith("--unit=hermes-cron-heavy-native-13c1f9279025-") for arg in argv)
+        assert "--property=Slice=hermes-cron-heavy-native.slice" in argv
+        assert "--property=TasksMax=4096" in argv
+        assert argv[-2:] == [sys.executable, str(script.resolve())]
+        assert captured["kwargs"]["cwd"] == str(script.parent)
+
+    def test_systemd_exec_context_rejects_unsupported_property(self, cron_env):
+        from cron.scheduler import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text('print("should not run")\n')
+
+        success, output = _run_job_script(
+            "probe.py",
+            exec_context={
+                "mode": "systemd-run-user-service",
+                "properties": {"Environment": "SECRET=x"},
+            },
+        )
+
+        assert success is False
+        assert "unsupported cron exec_context systemd property" in output
+
+    def test_systemd_exec_context_timeout_cleans_generated_unit(self, cron_env, monkeypatch):
+        from cron import scheduler as sched_mod
+        from cron.scheduler import _run_job_script
+
+        monkeypatch.setattr(sched_mod, "_SCRIPT_TIMEOUT", 7)
+        script = cron_env / "scripts" / "slow.py"
+        script.write_text("import time; time.sleep(30)\n")
+
+        calls = []
+
+        def fake_which(name):
+            return {
+                "systemd-run": "/usr/bin/systemd-run",
+                "systemctl": "/usr/bin/systemctl",
+            }.get(name)
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if argv[0] == "/usr/bin/systemd-run":
+                raise sched_mod.subprocess.TimeoutExpired(cmd=argv, timeout=7)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(sched_mod.sys, "platform", "linux")
+        monkeypatch.setattr(sched_mod.shutil, "which", fake_which)
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
+
+        success, output = _run_job_script(
+            "slow.py",
+            job_id="13c1f9279025",
+            exec_context={
+                "mode": "systemd-run-user-service",
+                "unit_prefix": "hermes-cron-heavy-native",
+            },
+        )
+
+        assert success is False
+        assert output == f"Script timed out after 7s: {script.resolve()}"
+        systemd_run_call = calls[0]
+        unit_arg = next(arg for arg in systemd_run_call if arg.startswith("--unit="))
+        unit = unit_arg.removeprefix("--unit=")
+        assert unit.startswith("hermes-cron-heavy-native-13c1f9279025-")
+        assert calls[1:] == [
+            ["/usr/bin/systemctl", "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", unit],
+            ["/usr/bin/systemctl", "--user", "stop", unit],
+            ["/usr/bin/systemctl", "--user", "reset-failed", unit],
+        ]
+
+    def test_systemd_exec_context_timeout_surfaces_cleanup_failure(self, cron_env, monkeypatch):
+        from cron import scheduler as sched_mod
+        from cron.scheduler import _run_job_script
+
+        monkeypatch.setattr(sched_mod, "_SCRIPT_TIMEOUT", 3)
+        script = cron_env / "scripts" / "slow.py"
+        script.write_text("import time; time.sleep(30)\n")
+
+        def fake_which(name):
+            return {
+                "systemd-run": "/usr/bin/systemd-run",
+                "systemctl": "/usr/bin/systemctl",
+            }.get(name)
+
+        def fake_run(argv, **kwargs):
+            if argv[0] == "/usr/bin/systemd-run":
+                raise sched_mod.subprocess.TimeoutExpired(cmd=argv, timeout=3)
+            if argv[2] == "kill":
+                return SimpleNamespace(returncode=1, stdout="", stderr="Access denied")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(sched_mod.sys, "platform", "linux")
+        monkeypatch.setattr(sched_mod.shutil, "which", fake_which)
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
+
+        success, output = _run_job_script(
+            "slow.py",
+            job_id="13c1f9279025",
+            exec_context={"mode": "systemd-run-user-service"},
+        )
+
+        assert success is False
+        assert output.startswith(f"Script timed out after 3s: {script.resolve()}")
+        assert "Cron exec_context cleanup failed for unit hermes-cron-13c1f9279025-" in output
+        assert "systemctl --user kill" in output
+        assert "Access denied" in output
+
     def test_script_empty_output(self, cron_env):
         from cron.scheduler import _run_job_script
 

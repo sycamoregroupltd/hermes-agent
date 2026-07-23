@@ -2074,6 +2074,16 @@ _DEFAULT_SCRIPT_TIMEOUT = 3600  # seconds (1 hour)
 # Backward-compatible module override used by tests and emergency monkeypatches.
 _SCRIPT_TIMEOUT = _DEFAULT_SCRIPT_TIMEOUT
 _RUN_CLAIM_HEARTBEAT_SECONDS = 60.0
+_CRON_SYSTEMD_CONTEXT_MODE = "systemd-run-user-service"
+_CRON_SYSTEMD_PROPERTY_ALLOWLIST = {
+    "CPUQuota",
+    "IOWeight",
+    "MemoryHigh",
+    "MemoryMax",
+    "Nice",
+    "Slice",
+    "TasksMax",
+}
 
 
 def _get_script_timeout() -> int:
@@ -2167,7 +2177,143 @@ def _windows_cron_python_invocation(python_exe: str) -> tuple[str, dict[str, str
     return str(interpreter), env_overlay
 
 
-def _run_job_script(script_path: str) -> tuple[bool, str]:
+def _sanitize_systemd_unit_fragment(value: object, *, default: str) -> str:
+    """Return a conservative unit-name fragment for transient cron services."""
+    raw = str(value or "").strip() or default
+    chars = []
+    for ch in raw:
+        if ch.isalnum() or ch in {"_", "-", "."}:
+            chars.append(ch)
+        else:
+            chars.append("-")
+    fragment = "".join(chars).strip("-.") or default
+    return fragment[:48]
+
+
+def _coerce_systemd_property_value(value: object) -> str:
+    """Constrain systemd property values to simple scalar tokens."""
+    text = str(value).strip()
+    if not text or len(text) > 128 or any(ch in text for ch in "\r\n\0"):
+        raise ValueError("systemd property values must be non-empty scalar strings")
+    return text
+
+
+def _systemd_cron_context_argv(
+    argv: list[str], *, exec_context: object, job_id: object = None
+) -> tuple[list[str], str | None]:
+    """Wrap a cron script command in a transient user service when requested.
+
+    ``systemd-run --user --scope`` cannot be combined with ``--wait`` on the
+    systemd version shipped on the DGX host, so the scheduler uses a transient
+    user service with ``--wait --pipe --collect``. That still moves the native
+    workload out of the gateway service cgroup while preserving synchronous
+    stdout/stderr capture and existing cron success/timeout semantics.
+    """
+    if not exec_context:
+        return argv, None
+    if not isinstance(exec_context, dict):
+        raise ValueError("cron exec_context must be an object")
+    mode = str(exec_context.get("mode") or "").strip()
+    if not mode:
+        return argv, None
+    if mode != _CRON_SYSTEMD_CONTEXT_MODE:
+        raise ValueError(
+            f"unsupported cron exec_context mode {mode!r}; expected "
+            f"{_CRON_SYSTEMD_CONTEXT_MODE!r}"
+        )
+    if sys.platform == "win32":
+        raise ValueError("systemd cron exec_context is not supported on Windows")
+
+    systemd_run = shutil.which("systemd-run")
+    if not systemd_run:
+        raise ValueError("systemd-run not found on PATH for cron exec_context")
+
+    prefix = _sanitize_systemd_unit_fragment(
+        exec_context.get("unit_prefix"),
+        default="hermes-cron",
+    )
+    safe_job = _sanitize_systemd_unit_fragment(job_id, default="job")
+    unit = f"{prefix}-{safe_job}-{os.getpid()}"
+    wrapped = [
+        systemd_run,
+        "--user",
+        "--wait",
+        "--pipe",
+        "--collect",
+        "--quiet",
+        f"--unit={unit}",
+    ]
+
+    properties = exec_context.get("properties") or {}
+    if not isinstance(properties, dict):
+        raise ValueError("cron exec_context.properties must be an object")
+    for key, raw_value in sorted(properties.items()):
+        key_text = str(key).strip()
+        if key_text not in _CRON_SYSTEMD_PROPERTY_ALLOWLIST:
+            raise ValueError(f"unsupported cron exec_context systemd property {key_text!r}")
+        wrapped.append(f"--property={key_text}={_coerce_systemd_property_value(raw_value)}")
+
+    return wrapped + argv, unit
+
+
+def _cleanup_systemd_cron_unit(unit: str) -> str:
+    """Best-effort cleanup for a transient cron service after client timeout.
+
+    ``systemd-run --wait --pipe`` can be interrupted by the scheduler timeout
+    while the transient user service keeps running.  On that path, fail closed:
+    kill/stop/reset the exact generated unit name and return a non-empty error
+    summary if cleanup itself could not be verified.
+    """
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return "systemctl not found on PATH for cron exec_context cleanup"
+
+    commands = [
+        [systemctl, "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", unit],
+        [systemctl, "--user", "stop", unit],
+        [systemctl, "--user", "reset-failed", unit],
+    ]
+    failures: list[str] = []
+    benign_missing_markers = (
+        "not loaded",
+        "could not be found",
+        "not found",
+        "no such unit",
+    )
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            failures.append(f"{' '.join(command)} timed out")
+            continue
+        except Exception as exc:
+            failures.append(f"{' '.join(command)} failed: {exc}")
+            continue
+
+        if result.returncode == 0:
+            continue
+        combined = "\n".join(
+            part.strip() for part in (result.stderr or "", result.stdout or "") if part.strip()
+        )
+        if any(marker in combined.lower() for marker in benign_missing_markers):
+            continue
+        detail = combined or f"exit code {result.returncode}"
+        failures.append(f"{' '.join(command)} failed: {detail}")
+
+    return "; ".join(failures)
+
+
+def _run_job_script(
+    script_path: str,
+    *,
+    exec_context: object = None,
+    job_id: object = None,
+) -> tuple[bool, str]:
     """Execute a cron job's data-collection script and capture its output.
 
     Scripts must reside within HERMES_HOME/scripts/.  Both relative and
@@ -2188,6 +2334,10 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
     Subprocess environment is passed through ``_sanitize_subprocess_env`` so
     provider credentials and other Hermes-managed secrets are not inherited
     (SECURITY.md §2.3), matching terminal and MCP child processes.
+
+    Jobs may opt into ``exec_context.mode: systemd-run-user-service`` to run the
+    script in a transient user service with dedicated/relaxed cgroup properties
+    while the scheduler still waits for and captures the script output.
 
     Args:
         script_path: Path to the script.  Relative paths are resolved
@@ -2251,6 +2401,7 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
         python_exe, env_overlay = _windows_cron_python_invocation(sys.executable)
         argv = [python_exe, str(path)]
 
+    systemd_unit: str | None = None
     try:
         from tools.environments.local import _sanitize_subprocess_env
 
@@ -2263,6 +2414,14 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
             }
         env = _sanitize_subprocess_env(os.environ.copy())
         env.update(env_overlay)
+        try:
+            argv, systemd_unit = _systemd_cron_context_argv(
+                argv,
+                exec_context=exec_context,
+                job_id=job_id,
+            )
+        except ValueError as exc:
+            return False, f"Cron exec_context error: {exc}"
         result = subprocess.run(
             argv,
             capture_output=True,
@@ -2296,7 +2455,15 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
         return True, stdout
 
     except subprocess.TimeoutExpired:
-        return False, f"Script timed out after {script_timeout}s: {path}"
+        message = f"Script timed out after {script_timeout}s: {path}"
+        if systemd_unit:
+            cleanup_error = _cleanup_systemd_cron_unit(systemd_unit)
+            if cleanup_error:
+                message = (
+                    f"{message}\n"
+                    f"Cron exec_context cleanup failed for unit {systemd_unit}: {cleanup_error}"
+                )
+        return False, message
     except Exception as exc:
         return False, f"Script execution failed: {exc}"
 
@@ -2324,7 +2491,11 @@ def _run_job_script_with_claim_heartbeat(
         and schedule.get("kind") == "once"
         and owner
     ):
-        return _run_job_script(script_path)
+        return _run_job_script(
+            script_path,
+            exec_context=job.get("exec_context"),
+            job_id=job.get("id"),
+        )
 
     job_id = str(job.get("id") or "")
     stop = threading.Event()
@@ -2355,10 +2526,18 @@ def _run_job_script_with_claim_heartbeat(
             job_id,
             exc_info=True,
         )
-        return _run_job_script(script_path)
+        return _run_job_script(
+            script_path,
+            exec_context=job.get("exec_context"),
+            job_id=job.get("id"),
+        )
 
     try:
-        return _run_job_script(script_path)
+        return _run_job_script(
+            script_path,
+            exec_context=job.get("exec_context"),
+            job_id=job.get("id"),
+        )
     finally:
         stop.set()
         # Event.wait() wakes immediately.  Keep completion bounded if the
