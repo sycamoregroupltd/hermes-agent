@@ -152,6 +152,7 @@ def normalize_cron_json(text: str) -> str:
         data = json.loads(text)
     except Exception:
         return text
+    data.pop("updated_at", None)
     jobs = data.get("jobs")
     if isinstance(jobs, list):
         for job in jobs:

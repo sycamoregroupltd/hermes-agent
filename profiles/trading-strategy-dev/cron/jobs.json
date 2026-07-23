@@ -35,6 +35,5 @@
       "disabled_by": "t_564bdeab",
       "disabled_reason": "t_564bdeab: trading-strategy-dev profile-local one-shot cron store is stale/dead; disabled after missed run so detector can stay clean"
     }
-  ],
-  "updated_at": "2026-07-03T21:05:01.258850+01:00"
+  ]
 }

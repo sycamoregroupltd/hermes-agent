@@ -37,6 +37,5 @@
       "disabled_by": "t_564bdeab",
       "disabled_reason": "t_564bdeab: db-architect profile-local cron store is not live; duplicated/live elsewhere, so disabled to prevent registered-but-not-ticking false safety"
     }
-  ],
-  "updated_at": "2026-07-03T21:05:01.258850+01:00"
+  ]
 }
