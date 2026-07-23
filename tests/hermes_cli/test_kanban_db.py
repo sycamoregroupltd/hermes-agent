@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import sqlite3
 import subprocess
@@ -786,6 +787,67 @@ def test_detect_crashed_workers_isolated_failure_normal_retry(
             assert task.status == "ready", (
                 f"task {tid} should stay ready (isolated), got {task.status}"
             )
+
+
+def test_detect_crashed_workers_reclaims_done_parent_orphan_without_failure_count(
+    kanban_home,
+):
+    """A running child whose current run already crashed after its parent is
+    done is stale bookkeeping, so reclaim it without burning retry budget."""
+    with kb.connect() as conn:
+        parent = kb.create_task(conn, title="parent", assignee="a")
+        kb.complete_task(conn, parent, result="ok")
+        child = kb.create_task(conn, title="child", assignee="a", parents=[parent])
+        claimed = kb.claim_task(conn, child, claimer="host:orphan")
+        assert claimed is not None
+        run_id = conn.execute(
+            "SELECT current_run_id FROM tasks WHERE id = ?", (child,),
+        ).fetchone()["current_run_id"]
+        ended = int(time.time())
+        conn.execute(
+            "UPDATE task_runs SET status='crashed', outcome='crashed', "
+            "ended_at=?, error='synthetic crash', claim_lock='host:orphan', "
+            "claim_expires=?, worker_pid=123456 WHERE id=?",
+            (ended, ended + 60, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET worker_pid=123456, consecutive_failures=1, "
+            "last_failure_error='prior failure' WHERE id=?",
+            (child,),
+        )
+        conn.commit()
+
+        assert kb.detect_crashed_workers(conn) == []
+
+        row = conn.execute(
+            "SELECT status, current_run_id, claim_lock, claim_expires, "
+            "worker_pid, consecutive_failures, last_failure_error "
+            "FROM tasks WHERE id = ?",
+            (child,),
+        ).fetchone()
+        assert row["status"] == "ready"
+        assert row["current_run_id"] is None
+        assert row["claim_lock"] is None
+        assert row["claim_expires"] is None
+        assert row["worker_pid"] is None
+        assert row["consecutive_failures"] == 1
+        assert row["last_failure_error"] == "prior failure"
+        run_row = conn.execute(
+            "SELECT claim_lock, claim_expires, worker_pid FROM task_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        assert run_row["claim_lock"] is None
+        assert run_row["claim_expires"] is None
+        assert run_row["worker_pid"] is None
+        event = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? "
+            "AND kind = 'resolved_parent_orphan_reclaimed'",
+            (child,),
+        ).fetchone()
+        assert event is not None
+        payload = json.loads(event["payload"])
+        assert payload["failure_budget_counted"] is False
+        assert payload["next_status"] == "ready"
 
 
 def test_detect_crashed_workers_skips_freshly_claimed_tasks(

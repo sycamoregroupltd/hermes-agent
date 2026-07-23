@@ -7198,6 +7198,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     """
     crashed: list[str] = []
     rate_limited: list[str] = []
+    resolved_parent_orphans: list[str] = []
     # Per-crash details collected inside the main txn, used after it
     # closes to run ``_record_task_failure`` (which needs its own
     # write_txn so can't nest). ``protocol_violation`` flags the
@@ -7207,6 +7208,73 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     crash_details: list[tuple[str, int, str, bool, str]] = []
     # (task_id, pid, claimer, protocol_violation, error_text)
     with write_txn(conn):
+        # A child can be left in tasks.status='running' even after its
+        # current run has already been closed as crashed/gave_up. When the
+        # parent is already resolved, this is stale bookkeeping, not fresh
+        # failing work: release the claim and make the child redispatchable
+        # according to dependency gating WITHOUT charging its failure budget.
+        orphan_rows = conn.execute(
+            """
+            SELECT t.id, t.current_run_id, t.worker_pid, t.claim_lock,
+                   COALESCE(r.outcome, r.status) AS run_outcome,
+                   r.ended_at,
+                   EXISTS (
+                       SELECT 1 FROM task_links l
+                       JOIN tasks p ON p.id = l.parent_id
+                       WHERE l.child_id = t.id AND p.status = 'done'
+                   ) AS has_done_parent,
+                   EXISTS (
+                       SELECT 1 FROM task_links l
+                       JOIN tasks p ON p.id = l.parent_id
+                       WHERE l.child_id = t.id AND p.status != 'done'
+                   ) AS has_unresolved_parent
+            FROM tasks t
+            JOIN task_runs r ON r.id = t.current_run_id
+            WHERE t.status = 'running'
+              AND t.current_run_id IS NOT NULL
+              AND r.ended_at IS NOT NULL
+              AND COALESCE(r.outcome, r.status) IN ('crashed', 'gave_up')
+            """
+        ).fetchall()
+        for orphan in orphan_rows:
+            if not orphan["has_done_parent"]:
+                continue
+            new_status = "todo" if orphan["has_unresolved_parent"] else "ready"
+            cur = conn.execute(
+                "UPDATE tasks SET status = ?, claim_lock = NULL, "
+                "claim_expires = NULL, worker_pid = NULL, "
+                "last_heartbeat_at = NULL, current_run_id = NULL "
+                "WHERE id = ? AND status = 'running' "
+                "  AND current_run_id = ?",
+                (new_status, orphan["id"], orphan["current_run_id"]),
+            )
+            if cur.rowcount != 1:
+                continue
+            conn.execute(
+                "UPDATE task_runs SET claim_lock = NULL, "
+                "claim_expires = NULL, worker_pid = NULL "
+                "WHERE id = ?",
+                (orphan["current_run_id"],),
+            )
+            payload = {
+                "reason": "resolved_parent_child_run_already_terminal",
+                "run_id": int(orphan["current_run_id"]),
+                "run_outcome": orphan["run_outcome"],
+                "run_ended_at": int(orphan["ended_at"]),
+                "next_status": new_status,
+                "prev_pid": int(orphan["worker_pid"]) if orphan["worker_pid"] else None,
+                "claimer": orphan["claim_lock"],
+                "failure_budget_counted": False,
+            }
+            _append_event(
+                conn,
+                orphan["id"],
+                "resolved_parent_orphan_reclaimed",
+                payload,
+                run_id=int(orphan["current_run_id"]),
+            )
+            resolved_parent_orphans.append(orphan["id"])
+
         rows = conn.execute(
             "SELECT id, worker_pid, claim_lock, started_at FROM tasks "
             "WHERE status = 'running' AND worker_pid IS NOT NULL"
@@ -7435,6 +7503,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # Same side-channel for rate-limited requeues — these did NOT count a
     # failure and are NOT crashes, so they stay out of the ``crashed`` return.
     detect_crashed_workers._last_rate_limited = rate_limited  # type: ignore[attr-defined]
+    detect_crashed_workers._last_resolved_parent_orphans = resolved_parent_orphans  # type: ignore[attr-defined]
     return crashed
 
 
