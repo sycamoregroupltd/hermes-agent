@@ -22,24 +22,17 @@
       },
       "schedule_display": "0 9 * * *",
       "repeat": {
-        "times": null,
-        "completed": 21
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T14:08:40.869002+01:00",
-      "next_run_at": "2026-07-24T09:00:00+01:00",
-      "last_run_at": "2026-07-23T09:12:44.436756+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-wt/candle-full-universe",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-wt/candle-full-universe"
     },
     {
       "id": "493f2d7f179b",
@@ -62,24 +55,17 @@
       },
       "schedule_display": "30 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 9
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:15.626536+01:00",
       "paused_reason": null,
       "created_at": "2026-07-03T12:21:56.657458+01:00",
-      "next_run_at": "2026-07-12T07:30:00+01:00",
-      "last_run_at": "2026-07-11T07:39:58.290371+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "5eea5079ff74",
@@ -103,19 +89,13 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 434
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T20:31:51.805288+01:00",
-      "next_run_at": "2026-07-23T14:00:00+01:00",
-      "last_run_at": "2026-07-23T13:07:20.106925+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -125,8 +105,7 @@
         "skills",
         "memory"
       ],
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "327083e3a0b0",
@@ -149,24 +128,17 @@
       },
       "schedule_display": "0 8 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:23:21.654671+01:00",
-      "next_run_at": "2026-07-27T08:00:00+01:00",
-      "last_run_at": "2026-07-20T08:00:38.029110+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "350b9809913b",
@@ -189,24 +161,17 @@
       },
       "schedule_display": "30 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T09:48:32.278962+01:00",
-      "next_run_at": "2026-07-27T09:30:00+01:00",
-      "last_run_at": "2026-07-20T09:30:38.135536+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstdout:\n/home/frank/.hermes/venvs/trading-ml/bin/python: can't open file '/home/frank/sycode-trading/execution/multi_sleeve_book.py': [Errno 2] No such file or directory",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4c8faff831c9",
@@ -229,24 +194,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 69
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T17:42:44.805827+01:00",
-      "next_run_at": "2026-07-23T15:18:32.708478+01:00",
-      "last_run_at": "2026-07-23T09:18:32.708478+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "6db455df07e6",
@@ -269,24 +227,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 18
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:17:01.403083+01:00",
-      "next_run_at": "2026-07-24T06:00:00+01:00",
-      "last_run_at": "2026-07-23T06:00:04.320561+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "66b39b558eb3",
@@ -309,24 +260,17 @@
       },
       "schedule_display": "0 9 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:20:27.072617+01:00",
-      "next_run_at": "2026-07-26T09:00:00+01:00",
-      "last_run_at": "2026-07-19T09:00:55.879358+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "84e3333b249e",
@@ -349,24 +293,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 64
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T10:38:31.731457+01:00",
-      "next_run_at": "2026-07-23T15:18:32.925455+01:00",
-      "last_run_at": "2026-07-23T09:18:32.925455+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "171790695c94",
@@ -389,24 +326,17 @@
       },
       "schedule_display": "0 10 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T22:45:34.230778+01:00",
-      "next_run_at": "2026-07-26T10:00:00+01:00",
-      "last_run_at": "2026-07-19T10:00:29.876068+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "d543688456a3",
@@ -429,27 +359,20 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 953
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T13:40:47.293690+01:00",
-      "next_run_at": "2026-07-23T13:38:01.594496+01:00",
-      "last_run_at": "2026-07-23T13:23:01.594496+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank/sycode-trading",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-trading"
     },
     {
       "id": "3228011cb8a3",
@@ -472,24 +395,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 13
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:19:58.389214+01:00",
-      "next_run_at": "2026-07-24T06:00:00+01:00",
-      "last_run_at": "2026-07-23T06:07:32.946600+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "45e0b154b41c",
@@ -512,24 +428,17 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 412
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-14T10:26:05.602781+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:00:18.500173+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstdout:\nCANDLE PER-SYMBOL FRESHNESS @ 2026-07-23T12:00:18.475068+00:00\n  [OK] 1m: fresh=10 floor=10 baseline=10\n  [OK] 5m: fresh=10 floor=10 baseline=10\n  [OK] 15m: fresh=265 floor=250 baseline=273\n  [OK] 1h: fresh=10 floor=10 baseline=10\n  [XX] 4h: fresh=413 floor=414 baseline=n/a tradeable_universe=414\n  [OK] 1D: fresh=10 floor=10 baseline=10\nVERDICT: DEGRADED \u2014 1 timeframe(s) below coverage SLO\nRED-ALERT: candle coverage dropped (silent-writer-death check):\n  \ud83d\udd34 candles[4h]: only 413/414 tradeable symbols fresh (floor=414, budget=8h) \u2014 writer dead/eroded\nCheck the owning ingestion producer/subscription (CandleIngestionService + KlineFeed subscription set).",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "361710e3dc14",
@@ -554,27 +463,20 @@
       },
       "schedule_display": "0 6 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 2
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-17T02:59:15.241306+01:00",
-      "next_run_at": "2026-07-27T06:00:00+01:00",
-      "last_run_at": "2026-07-20T06:12:57.281457+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "file",
         "kanban"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "acf44ef06042",
@@ -597,24 +499,17 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-23T13:25:25.381080+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:25:58.461251+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     }
   ],
   "updated_at": "2026-07-23T13:25:58.461552+01:00"

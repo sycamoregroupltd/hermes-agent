@@ -19,24 +19,17 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 2077
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T10:34:31.256482+00:00",
       "paused_reason": "Consolidated into dgx-unified-health-probe (t_39c29d42): single canonical probe + single escalation path.",
       "created_at": "2026-06-17T08:01:11.628279+01:00",
-      "next_run_at": "2026-07-11T11:45:00+01:00",
-      "last_run_at": "2026-07-11T11:30:29.159711+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "81a69dfea215",
@@ -57,24 +50,17 @@
       },
       "schedule_display": "0 3 * * *",
       "repeat": {
-        "times": null,
-        "completed": 36
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-17T08:01:12.100047+01:00",
-      "next_run_at": "2026-07-24T03:00:00+01:00",
-      "last_run_at": "2026-07-22T13:58:06.702274+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/dgx_skill_curator.py",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -97,24 +83,17 @@
       },
       "schedule_display": "0 */4 * * *",
       "repeat": {
-        "times": null,
-        "completed": 165
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-17T08:01:12.584592+01:00",
-      "next_run_at": "2026-07-23T16:00:00+01:00",
-      "last_run_at": "2026-07-23T04:57:12.940805+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/scripts/dgx_board_sweep.py\", line 6, in <module>\n    subprocess.run([\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2141, in _communicate\n    self.wait(timeout=self._remaining_time(endtime))\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1264, in wait\n    return self._wait(timeout=timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2045, in _wait\n    raise TimeoutExpired(self.args, timeout)\nsubprocess.TimeoutExpired: Command '['hermes', '-p', 'jarvis', '-m', 'grok-4.3', '--provider', 'xai-oauth', '-z', 'Board sweep. Check jarvis-os, upero, sycode-ai, sycode-trading, and yorkstone-supplies kanban boards for blocked/ready/running tasks older than 1 hour. Update STATUS.md artifacts at ~/jarvis/workspace/goals/upero/STATUS.md, ~/jarvis/workspace/goals/sycode-ai/STATUS.md, ~/jarvis/workspace/goals/sycode-trading/STATUS.md, and ~/jarvis/workspace/goals/yorkstone-supplies/STATUS.md when present. Write summary to /tmp/dgx_board_sweep_2026-07-23.txt. No autonomous runtime actions.']' timed out after 899.9999790559523 seconds",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "96b2923d206a",
@@ -135,24 +114,17 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 113
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-17T08:01:13.084407+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T00:12:48.429514+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/dgx_boris_reflection_with_harvest.py",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "3eddc6709f44",
@@ -176,19 +148,13 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 85
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:13.606169+01:00",
       "paused_reason": null,
       "created_at": "2026-06-18T23:54:35.535848+01:00",
-      "next_run_at": "2026-07-11T12:00:00+01:00",
-      "last_run_at": "2026-07-11T06:19:46.766310+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": {
         "platform": "whatsapp",
@@ -201,7 +167,6 @@
         "file"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -224,19 +189,13 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 104
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-19T08:19:21.538517+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T10:45:09.100740+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/agent_context_audit.py",
-      "last_delivery_error": null,
       "deliver": "discord:1521973783794155530",
       "origin": {
         "platform": "whatsapp",
@@ -245,8 +204,7 @@
         "thread_id": null
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "bf4fd963c988",
@@ -267,24 +225,17 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 98
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-20T21:44:18.540944+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T09:55:38.349738+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ae049639f334",
@@ -305,24 +256,17 @@
       },
       "schedule_display": "0 5 * * *",
       "repeat": {
-        "times": null,
-        "completed": 31
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-20T22:05:38.881058+01:00",
-      "next_run_at": "2026-07-24T05:00:00+01:00",
-      "last_run_at": "2026-07-22T15:24:17.581265+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "46b4535eb511",
@@ -342,19 +286,13 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 3403
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-22T11:47:20.304242+01:00",
-      "next_run_at": "2026-07-23T13:29:12.181011+01:00",
-      "last_run_at": "2026-07-23T13:24:12.181011+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -363,7 +301,6 @@
         "file"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -386,24 +323,17 @@
       },
       "schedule_display": "every 1m",
       "repeat": {
-        "times": null,
-        "completed": 12556
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-22T11:53:04.581245+01:00",
-      "next_run_at": "2026-07-23T13:26:31.666563+01:00",
-      "last_run_at": "2026-07-23T13:25:31.666563+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e51c9e2fa5df",
@@ -429,19 +359,13 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 3032
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-22T11:53:16.600446+01:00",
-      "next_run_at": "2026-07-23T13:26:31.099907+01:00",
-      "last_run_at": "2026-07-23T13:15:48.662698+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -453,8 +377,7 @@
       ],
       "workdir": "/home/frank/.hermes/profiles/elon",
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "e435af190e9e",
@@ -475,19 +398,13 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 1847
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T16:50:16.884720+01:00",
-      "next_run_at": "2026-07-23T13:25:36.624128+01:00",
-      "last_run_at": "2026-07-23T13:15:36.624128+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -497,8 +414,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "b91117332832",
@@ -519,26 +435,19 @@
       },
       "schedule_display": "0 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T18:01:26.221876+01:00",
-      "next_run_at": "2026-07-27T09:00:00+01:00",
-      "last_run_at": "2026-07-21T17:07:29.975977+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstdout:\nSECURITY_AUDIT_OPERATIONAL_FAILURE security audit feed/API unavailable after 3 retries: Command '['/home/frank/.local/bin/hermes', 'security', 'audit', '--fail-on', 'high']' timed out after 180 seconds",
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -561,26 +470,19 @@
       },
       "schedule_display": "0 4 * * *",
       "repeat": {
-        "times": null,
-        "completed": 28
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T18:53:01.985875+01:00",
-      "next_run_at": "2026-07-24T04:00:00+01:00",
-      "last_run_at": "2026-07-22T14:41:40.205124+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/hermes_quick_backup.sh",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -603,26 +505,19 @@
       },
       "schedule_display": "0 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T18:53:02.996416+01:00",
-      "next_run_at": "2026-07-27T09:00:00+01:00",
-      "last_run_at": "2026-07-21T17:03:55.948669+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -645,19 +540,13 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 83
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T18:53:04.008047+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T13:06:01.579412+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -665,7 +554,6 @@
         "file"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -688,26 +576,19 @@
       },
       "schedule_display": "0 */12 * * *",
       "repeat": {
-        "times": null,
-        "completed": 44
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T18:53:05.019788+01:00",
-      "next_run_at": "2026-07-24T00:00:00+01:00",
-      "last_run_at": "2026-07-23T00:13:42.702932+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -730,26 +611,19 @@
       },
       "schedule_display": "0 8 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T19:07:09.468324+01:00",
-      "next_run_at": "2026-07-27T08:00:00+01:00",
-      "last_run_at": "2026-07-21T14:47:34.573904+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": "live adapter send to discord:1521973775761936646 timed out before the coroutine was dispatched; delivery error: Discord send failed: ",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -771,26 +645,19 @@
       },
       "schedule_display": "0 5 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T19:15:08.616772+01:00",
-      "next_run_at": "2026-07-26T05:00:00+01:00",
-      "last_run_at": "2026-07-20T04:04:47.984213+01:00",
-      "last_status": "error",
-      "last_error": "TimeoutError: Cron job 'native-curator-backup' idle for 601s (limit 600s) \u2014 last activity: initializing",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "96a24b35be15",
@@ -811,26 +678,19 @@
       },
       "schedule_display": "0 10 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 2
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:14.412940+01:00",
       "paused_reason": null,
       "created_at": "2026-06-24T19:15:10.635724+01:00",
-      "next_run_at": "2026-07-13T10:00:00+01:00",
-      "last_run_at": "2026-07-06T10:02:44.846280+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "df22a92505cb",
@@ -850,19 +710,13 @@
       },
       "schedule_display": "0 8 * * *",
       "repeat": {
-        "times": null,
-        "completed": 28
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T19:15:20.738515+01:00",
-      "next_run_at": "2026-07-24T08:00:00+01:00",
-      "last_run_at": "2026-07-22T19:17:37.389623+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -870,7 +724,6 @@
         "file"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -895,19 +748,13 @@
       },
       "schedule_display": "0 2,8,14,20 * * *",
       "repeat": {
-        "times": null,
-        "completed": 61
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:15.028555+01:00",
       "paused_reason": null,
       "created_at": "2026-06-24T19:36:41.265467+01:00",
-      "next_run_at": "2026-07-11T14:00:00+01:00",
-      "last_run_at": "2026-07-11T08:09:30.451156+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -917,7 +764,6 @@
         "session_search"
       ],
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": "nous",
       "model_snapshot": "deepseek/deepseek-v4-flash"
     },
@@ -940,24 +786,17 @@
       },
       "schedule_display": "0 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T01:31:02.100596+01:00",
-      "next_run_at": "2026-07-27T09:00:00+01:00",
-      "last_run_at": "2026-07-21T17:12:21.038436+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "7c802db3ba38",
@@ -978,24 +817,17 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 427
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T03:09:14.092894+01:00",
-      "next_run_at": "2026-07-23T14:00:00+01:00",
-      "last_run_at": "2026-07-23T13:00:28.676153+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "13c1f9279025",
@@ -1018,24 +850,17 @@
       },
       "schedule_display": "15 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 87
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T11:48:15.265521+01:00",
-      "next_run_at": "2026-07-23T18:15:00+01:00",
-      "last_run_at": "2026-07-23T08:45:05.069895+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/quant_researcher_6h.py",
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/scripts",
-      "fire_claim": null
+      "workdir": "/home/frank/.hermes/scripts"
     },
     {
       "id": "dac3c580e9bb",
@@ -1058,24 +883,17 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 88
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T11:48:18.200143+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T09:46:59.701188+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/pro_trader_pipeline.py",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/scripts",
-      "fire_claim": null
+      "workdir": "/home/frank/.hermes/scripts"
     },
     {
       "id": "d52dfcc7cbf5",
@@ -1098,24 +916,17 @@
       },
       "schedule_display": "every 4320m",
       "repeat": {
-        "times": null,
-        "completed": 9
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T20:29:22.928026+01:00",
-      "next_run_at": "2026-07-23T21:20:53.485253+01:00",
-      "last_run_at": "2026-07-20T21:20:53.485253+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/scripts/dgx_guide_curator.py\", line 38, in <module>\n    subprocess.run(\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2141, in _communicate\n    self.wait(timeout=self._remaining_time(endtime))\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1264, in wait\n    return self._wait(timeout=timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2045, in _wait\n    raise TimeoutExpired(self.args, timeout)\nsubprocess.TimeoutExpired: Command '['hermes', '-p', 'jarvis', '-m', 'gpt-5.5', '--provider', 'openai-codex', '-z', 'Guide curator pass (DRY-RUN). Review markdown in /home/frank/obsidian-fleet-vault/Research/Guides (exclude .archive). Identify duplicate/superseded guides and stray research-draft notes (frontmatter status: research-draft) whose content is already captured by a published guide (type: research-guide, status: published). Keep only published guides as canonical; NEVER touch a guide with frontmatter pinned: true. Before archiving a duplicate, MERGE any unique content into the canonical guide and bump its version+changelog. REPORT what you WOULD archive superseded/duplicate files by MOVING them to /home/frank/obsidian-fleet-vault/Research/Guides/.archive (recoverable, never delete). Update /home/frank/obsidian-fleet-vault/Research/Guides/README.md index. Log results to /tmp/dgx_guide_curator_20260720.txt.']' timed out after 899.9999800960068 seconds",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b701186fa79f",
@@ -1138,24 +949,17 @@
       },
       "schedule_display": "every 120m",
       "repeat": {
-        "times": null,
-        "completed": 1180
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-26T06:18:03.382101+01:00",
-      "next_run_at": "2026-07-23T14:48:06.445386+01:00",
-      "last_run_at": "2026-07-23T05:50:46.958011+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ee57faa4538f",
@@ -1178,24 +982,17 @@
       },
       "schedule_display": "every 7m",
       "repeat": {
-        "times": null,
-        "completed": 2513
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-26T06:22:11.420893+01:00",
-      "next_run_at": "2026-07-23T13:28:38.496077+01:00",
-      "last_run_at": "2026-07-23T13:21:38.496077+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b563577e2300",
@@ -1218,24 +1015,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 1364
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-26T13:08:05.588781+01:00",
-      "next_run_at": "2026-07-23T13:35:31.563466+01:00",
-      "last_run_at": "2026-07-23T13:20:31.563466+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "d224c5b386b0",
@@ -1258,24 +1048,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 1323
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-26T13:12:42.268134+01:00",
-      "next_run_at": "2026-07-23T13:35:33.840525+01:00",
-      "last_run_at": "2026-07-23T13:20:33.840525+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "5f71a9e0462f",
@@ -1298,19 +1081,13 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 503
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T10:34:31.256482+00:00",
       "paused_reason": "Consolidated into dgx-unified-health-probe (t_39c29d42): single canonical probe + single escalation path.",
       "created_at": "2026-06-26T14:31:45.955145+01:00",
-      "next_run_at": "2026-07-11T11:54:03.531126+01:00",
-      "last_run_at": "2026-07-11T11:24:03.531126+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -1319,7 +1096,6 @@
         "kanban"
       ],
       "workdir": null,
-      "fire_claim": null,
       "pinned": true
     },
     {
@@ -1343,24 +1119,17 @@
       },
       "schedule_display": "every 1m",
       "repeat": {
-        "times": null,
-        "completed": 4185
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-03T21:41:21.816993+01:00",
       "paused_reason": null,
       "created_at": "2026-06-26T15:08:50.639859+01:00",
-      "next_run_at": "2026-07-03T21:41:42.389648+01:00",
-      "last_run_at": "2026-07-03T21:40:42.389648+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-trading",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-trading"
     },
     {
       "id": "01003843e967",
@@ -1383,24 +1152,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 70
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-26T15:49:09.625293+01:00",
-      "next_run_at": "2026-07-23T18:50:03.629386+01:00",
-      "last_run_at": "2026-07-23T06:32:08.173260+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0ddf67598a8c",
@@ -1423,24 +1185,17 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 53
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:13.202591+01:00",
       "paused_reason": null,
       "created_at": "2026-06-27T03:31:45.351029+01:00",
-      "next_run_at": "2026-07-11T12:00:00+01:00",
-      "last_run_at": "2026-07-11T06:00:22.925234+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:1521973783794155530",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "19f58cbf99fd",
@@ -1471,19 +1226,13 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 49
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:13.407681+01:00",
       "paused_reason": null,
       "created_at": "2026-06-27T07:24:25.905413+01:00",
-      "next_run_at": "2026-07-11T12:42:40.856923+01:00",
-      "last_run_at": "2026-07-11T06:42:40.856923+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -1491,8 +1240,7 @@
         "file",
         "terminal"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "cf77312cc3c7",
@@ -1515,24 +1263,17 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 1481
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T10:34:31.256482+00:00",
       "paused_reason": "Consolidated into dgx-unified-health-probe (t_39c29d42): single canonical probe + single escalation path.",
       "created_at": "2026-06-27T12:45:26.209174+01:00",
-      "next_run_at": "2026-07-11T11:42:29.294607+01:00",
-      "last_run_at": "2026-07-11T11:32:29.294607+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4e0a66b916ef",
@@ -1555,24 +1296,17 @@
       },
       "schedule_display": "0 8 * * *",
       "repeat": {
-        "times": null,
-        "completed": 50
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-28T15:26:09.766304+01:00",
-      "next_run_at": "2026-07-24T08:00:00+01:00",
-      "last_run_at": "2026-07-22T19:52:47.726968+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/strategy_promotion_funnel_report.sh",
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "645eac4c22b5",
@@ -1595,24 +1329,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 303
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-29T10:23:55.819422+01:00",
-      "next_run_at": "2026-07-23T13:51:26.509362+01:00",
-      "last_run_at": "2026-07-23T06:52:01.453407+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "082ceadcc6d6",
@@ -1635,24 +1362,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 572
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-29T12:22:29.468357+01:00",
-      "next_run_at": "2026-07-23T13:41:30.698695+01:00",
-      "last_run_at": "2026-07-23T13:11:30.698695+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b8d28c8e5f6e",
@@ -1675,24 +1395,17 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null,
-        "completed": 4647
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T08:05:40.604969+01:00",
-      "next_run_at": "2026-07-23T13:26:15.619235+01:00",
-      "last_run_at": "2026-07-23T13:24:15.619235+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c0a27b1a63c6",
@@ -1713,24 +1426,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 516
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T17:00:47+0100",
-      "next_run_at": "2026-07-23T13:41:30.432039+01:00",
-      "last_run_at": "2026-07-23T13:11:30.432039+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0335d3de142b",
@@ -1753,27 +1459,20 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 622
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-06T11:59:41.760746+01:00",
       "paused_reason": null,
       "created_at": "2026-06-30T20:37:31.952112+01:00",
-      "next_run_at": "2026-07-06T12:28:44.895857+01:00",
-      "last_run_at": "2026-07-06T12:23:44.895857+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e46687368088",
@@ -1796,27 +1495,20 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 929
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T20:37:43.494011+01:00",
-      "next_run_at": "2026-07-23T13:30:37.023801+01:00",
-      "last_run_at": "2026-07-23T13:15:37.023801+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "35fd9cd6d157",
@@ -1839,27 +1531,20 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 64
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T20:37:56.243337+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T12:55:28.821287+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "502ce12743c5",
@@ -1882,24 +1567,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 265
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T21:29:02.215693+01:00",
-      "next_run_at": "2026-07-23T13:56:01.398067+01:00",
-      "last_run_at": "2026-07-23T12:56:01.398067+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "96ae5ae57f3c",
@@ -1926,24 +1604,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 36
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:14.628453+01:00",
       "paused_reason": null,
       "created_at": "2026-06-30T21:29:36.360914+01:00",
-      "next_run_at": "2026-07-11T12:34:27.567298+01:00",
-      "last_run_at": "2026-07-11T06:34:27.567298+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b87081cd9d37",
@@ -1966,24 +1637,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 492
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T21:31:10.860017+01:00",
-      "next_run_at": "2026-07-23T13:42:08.971820+01:00",
-      "last_run_at": "2026-07-23T13:12:08.971820+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "565a6ee597b9",
@@ -2006,24 +1670,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 927
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T21:33:49.635057+01:00",
-      "next_run_at": "2026-07-23T13:28:31.702366+01:00",
-      "last_run_at": "2026-07-23T13:13:31.702366+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c79a0939cfe7",
@@ -2046,24 +1703,17 @@
       },
       "schedule_display": "every 240m",
       "repeat": {
-        "times": null,
-        "completed": 73
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T09:15:27.661091+01:00",
-      "next_run_at": "2026-07-23T16:55:28.901014+01:00",
-      "last_run_at": "2026-07-23T12:55:28.901014+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "7c783af2177f",
@@ -2086,24 +1736,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 2144
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T09:45:47.065613+01:00",
-      "next_run_at": "2026-07-23T13:30:50.915374+01:00",
-      "last_run_at": "2026-07-23T13:25:50.915374+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4aecc19efac8",
@@ -2129,24 +1772,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 31
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:13.805766+01:00",
       "paused_reason": null,
       "created_at": "2026-07-01T10:10:55.046603+01:00",
-      "next_run_at": "2026-07-11T12:47:49.595975+01:00",
-      "last_run_at": "2026-07-11T06:47:49.595975+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "495e3eb9252b",
@@ -2171,24 +1807,17 @@
       },
       "schedule_display": "0 12 * * *",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T10:13:23.362063+01:00",
-      "next_run_at": "2026-07-24T12:00:00+01:00",
-      "last_run_at": "2026-07-23T13:07:15.857064+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "7885ab69d7cb",
@@ -2211,24 +1840,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 2051
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T10:39:02.082410+01:00",
-      "next_run_at": "2026-07-23T13:30:43.166637+01:00",
-      "last_run_at": "2026-07-23T13:25:43.166637+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "67a0e9a36047",
@@ -2251,24 +1873,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 1755
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T11:41:09.728577+01:00",
-      "next_run_at": "2026-07-23T13:25:59.683168+01:00",
-      "last_run_at": "2026-07-23T13:20:59.683168+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "8c0e599c454a",
@@ -2291,24 +1906,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 2139
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T11:42:28.495169+01:00",
-      "next_run_at": "2026-07-23T13:29:31.487662+01:00",
-      "last_run_at": "2026-07-23T13:24:31.487662+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f2d0c8cfd508",
@@ -2331,24 +1939,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 792
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T11:42:44.247958+01:00",
-      "next_run_at": "2026-07-23T13:28:41.100938+01:00",
-      "last_run_at": "2026-07-23T13:13:41.100938+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "edb00251077b",
@@ -2371,24 +1972,17 @@
       },
       "schedule_display": "0 2 * * *",
       "repeat": {
-        "times": null,
-        "completed": 18
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T11:44:13.826772+01:00",
-      "next_run_at": "2026-07-24T02:00:00+01:00",
-      "last_run_at": "2026-07-22T03:49:01.549951+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/scripts/nightly_analysis.py\", line 28, in <module>\n    fg_rows = db_rows(\"\"\"\n              ^^^^^^^^^^^\n  File \"/home/frank/.hermes/scripts/nightly_analysis.py\", line 22, in db_rows\n    r = subprocess.run(DB + [\"-c\", sql], capture_output=True, text=True, timeout=10)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2116, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1253, in _check_timeout\n    raise TimeoutExpired(\nsubprocess.TimeoutExpired: Command '['docker', 'exec', '-i', 'sycodetrading-supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', \"\\n    SELECT payload->'data'->>'classification', payload->'data'->>'value', captured_at::date\\n    FROM n8n_market_data WHERE source='fear-greed'\\n    AND captured_at > NOW() - INTERVAL '7 days'\\n    ORDER BY captured_at;\\n\"]' timed out after 10 seconds",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4ea0cb3e41a8",
@@ -2409,24 +2003,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 474
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T12:05:36.758243+01:00",
-      "next_run_at": "2026-07-23T13:41:30.835674+01:00",
-      "last_run_at": "2026-07-23T13:11:30.835674+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0d8a9583dfb5",
@@ -2447,24 +2034,17 @@
       },
       "schedule_display": "30 15 3 7 5",
       "repeat": {
-        "times": null,
-        "completed": 2
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T12:05:36.758271+01:00",
-      "next_run_at": "2026-07-24T15:30:00+01:00",
-      "last_run_at": "2026-07-17T20:40:09.133834+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/nfp_safety_mode.sh",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "dd3863533d18",
@@ -2487,24 +2067,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 18
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T12:13:25.804944+01:00",
-      "next_run_at": "2026-07-24T06:00:00+01:00",
-      "last_run_at": "2026-07-22T16:16:17.197328+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "8d034f48dc1a",
@@ -2527,24 +2100,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 859
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T12:47:03.895321+01:00",
-      "next_run_at": "2026-07-23T13:29:55.296650+01:00",
-      "last_run_at": "2026-07-23T13:14:55.296650+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f7107612eb02",
@@ -2567,24 +2133,17 @@
       },
       "schedule_display": "0 3 * * *",
       "repeat": {
-        "times": null,
-        "completed": 20
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T14:04:44.371148+01:00",
-      "next_run_at": "2026-07-24T03:00:00+01:00",
-      "last_run_at": "2026-07-22T13:30:58.733410+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/scripts/signal_quality.py\", line 44, in <module>\n    r = subprocess.run([\"curl\", \"-s\", \"--connect-timeout\", \"5\", \"--max-time\", \"15\",\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2116, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1253, in _check_timeout\n    raise TimeoutExpired(\nsubprocess.TimeoutExpired: Command '['curl', '-s', '--connect-timeout', '5', '--max-time', '15', '-H', '[REDACTED_SECRET]', 'http://localhost:3001/api/openclaw/signals/journey/stats']' timed out after 20 seconds",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0e8097519c6b",
@@ -2607,24 +2166,17 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 1242
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T15:36:55.153859+01:00",
-      "next_run_at": "2026-07-23T13:27:30.890315+01:00",
-      "last_run_at": "2026-07-23T13:17:30.890315+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "6747b083dce8",
@@ -2650,19 +2202,13 @@
       },
       "schedule_display": "0 4,10,16,22 * * *",
       "repeat": {
-        "times": null,
-        "completed": 52
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T15:38:52.475470+01:00",
-      "next_run_at": "2026-07-23T16:00:00+01:00",
-      "last_run_at": "2026-07-23T04:46:36.909062+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -2670,8 +2216,7 @@
         "file",
         "kanban"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e44dcfaaed79",
@@ -2694,24 +2239,17 @@
       },
       "schedule_display": "0 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 17
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T15:39:14.528106+01:00",
-      "next_run_at": "2026-07-24T07:00:00+01:00",
-      "last_run_at": "2026-07-22T17:57:46.926206+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/scripts/performance_wiki_feed.py\", line 26, in <module>\n    today_data = db(\"\"\"\n                 ^^^^^^\n  File \"/home/frank/.hermes/scripts/performance_wiki_feed.py\", line 17, in db\n    r = subprocess.run(DB + [\"-c\", sql], capture_output=True, text=True, timeout=30)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2116, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1253, in _check_timeout\n    raise TimeoutExpired(\nsubprocess.TimeoutExpired: Command '['docker', 'exec', '-e', 'PGPASSWORD=*** 'sycodetrading-supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres', '-t', '-A', '-c', \"\\nSELECT json_build_object(\\n  'pnl', COALESCE(round(sum(realized_pnl)::numeric, 2), 0),\\n  'trades', count(*)::int,\\n  'wins', sum(case when realized_pnl > 0 then 1 else 0 end)::int,\\n  'losses', sum(case when realized_pnl < 0 then 1 else 0 end)::int\\n)::text FROM managed_positions\\nWHERE closed_at >= now() - interval '24 hours' AND realized_pnl IS NOT NULL;\\n\"]' timed out after 30 seconds",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "30d85640737e",
@@ -2734,24 +2272,17 @@
       },
       "schedule_display": "0 8 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T15:46:05.785905+01:00",
-      "next_run_at": "2026-07-27T08:00:00+01:00",
-      "last_run_at": "2026-07-21T15:05:02.508590+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/profiles/jarvis/scripts/strategy_kill_gate.py\", line 86, in <module>\n    flagged = os.environ.get(\"KILL_GATE_FIXTURE_LINES\") or db(\"\"\"\n                                                           ^^^^^^\n  File \"/home/frank/.hermes/profiles/jarvis/scripts/strategy_kill_gate.py\", line 27, in db\n    r = subprocess.run(DB + [\"-c\", sql], capture_output=True, text=True, timeout=30)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2116, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1253, in _check_timeout\n    raise TimeoutExpired(\nsubprocess.TimeoutExpired: Command '['docker', 'exec', '-e', 'PGPASSWORD=*** 'sycodetrading-supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres', '-t', '-A', '-c', \"\\nWITH weekly AS (\\n    SELECT strategy_name,\\n           date_trunc('week', closed_at) as week,\\n           sum(realized_pnl) as week_pnl,\\n           count(*) as week_trades\\n    FROM managed_positions\\n    WHERE realized_pnl IS NOT NULL AND closed_at >= now() - interval '4 weeks'\\n    GROUP BY strategy_name, date_trunc('week', closed_at)\\n),\\nranked AS (\\n    SELECT strategy_name, week, week_pnl, week_trades,\\n           row_number() OVER (PARTITION BY strategy_name ORDER BY week DESC) as rn\\n    FROM weekly\\n)\\nSELECT r1.strategy_name,\\n       r1.week_pnl as latest_week_pnl,\\n       COALESCE(r2.week_pnl, 0) as prev_week_pnl,\\n       (r1.week_pnl + COALESCE(r2.week_pnl, 0)) as combined_pnl,\\n       r1.week_trades as latest_trades\\nFROM ranked r1\\nLEFT JOIN ranked r2 ON r1.strategy_name = r2.strategy_name AND r1.rn = 1 AND r2.rn = 2\\nWHERE r1.rn = 1\\n  AND r1.week_pnl < 0\\n  AND (r2.week_pnl IS NOT NULL AND r2.week_pnl < 0)\\n  AND (r1.week_pnl + COALESCE(r2.week_pnl, 0)) < -5\\nORDER BY combined_pnl;\\n\"]' timed out after 30 seconds",
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "1487a685282e",
@@ -2774,24 +2305,17 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 465
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T14:24:43.763028+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:00:48.674352+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "a9def8c365df",
@@ -2814,24 +2338,17 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null,
-        "completed": 2276
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T15:46:40.204311+01:00",
-      "next_run_at": "2026-07-23T13:26:16.701604+01:00",
-      "last_run_at": "2026-07-23T13:24:16.701604+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c13949d88751",
@@ -2859,24 +2376,17 @@
       },
       "schedule_display": "0 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 2
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-10T19:54:05.463386+01:00",
       "paused_reason": null,
       "created_at": "2026-07-02T16:10:10.501067+01:00",
-      "next_run_at": "2026-07-13T09:00:00+01:00",
-      "last_run_at": "2026-07-08T04:09:36.075126+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "7ffdf1f12d4e",
@@ -2899,24 +2409,17 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 1143
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T16:22:01.418246+01:00",
-      "next_run_at": "2026-07-23T13:27:30.988739+01:00",
-      "last_run_at": "2026-07-23T13:17:30.988739+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "112dbf08692a",
@@ -2939,24 +2442,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 1921
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T19:12:49.526861+01:00",
-      "next_run_at": "2026-07-23T13:29:31.385955+01:00",
-      "last_run_at": "2026-07-23T13:24:31.385955+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ef64fb885946",
@@ -2979,24 +2475,17 @@
       },
       "schedule_display": "0 8 * * *",
       "repeat": {
-        "times": null,
-        "completed": 17
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T20:16:59.969490+01:00",
-      "next_run_at": "2026-07-24T08:00:00+01:00",
-      "last_run_at": "2026-07-22T19:51:04.236752+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "a1646f47cb29",
@@ -3019,24 +2508,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 202
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T21:44:51.884882+01:00",
-      "next_run_at": "2026-07-23T13:41:14.155876+01:00",
-      "last_run_at": "2026-07-23T05:48:28.332842+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/scripts/macro_regime_adaptor.py\", line 207, in <module>\n    main()\n  File \"/home/frank/.hermes/scripts/macro_regime_adaptor.py\", line 148, in main\n    macro = get_latest_macro()\n            ^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.hermes/scripts/macro_regime_adaptor.py\", line 67, in get_latest_macro\n    raw = run_psql(query)\n          ^^^^^^^^^^^^^^^\n  File \"/home/frank/.hermes/scripts/macro_regime_adaptor.py\", line 51, in run_psql\n    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=env)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2116, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1253, in _check_timeout\n    raise TimeoutExpired(\nsubprocess.TimeoutExpired: Command '['psql', '-h', '127.0.0.1', '-p', '5432', '-U', 'postgres', '-d', 'postgres', '-t', '-A', '-F', '|', '-c', '\\n    SELECT fear_greed, dollar_index, btc_dominance, vix,\\n           fear_greed_class, altcoin_cycle_phase, qt_status,\\n           as_of_ts\\n    FROM macro_context_daily\\n    ORDER BY as_of_ts DESC\\n    LIMIT 1;\\n    ']' timed out after 15 seconds\nstdout:\n=== Macro Regime Adaptor \u2014 2026-07-23T04:43:56.909618+00:00 ===",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "db9010b23a48",
@@ -3059,24 +2541,17 @@
       },
       "schedule_display": "0 8 * * *",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T11:52:00.424956+01:00",
-      "next_run_at": "2026-07-24T08:00:00+01:00",
-      "last_run_at": "2026-07-22T20:40:36.717623+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/llm_wiki_health_check.py",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "2a8bd26381d2",
@@ -3097,24 +2572,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 688
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T15:00:52.854207+01:00",
-      "next_run_at": "2026-07-23T13:29:56.689097+01:00",
-      "last_run_at": "2026-07-23T13:14:56.689097+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "2ef03c710168",
@@ -3137,24 +2605,17 @@
       },
       "schedule_display": "0 6 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:02:53.672602+01:00",
-      "next_run_at": "2026-07-27T06:00:00+01:00",
-      "last_run_at": "2026-07-21T09:36:26.415103+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "29675cd46541",
@@ -3177,24 +2638,17 @@
       },
       "schedule_display": "0 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:02:54.033481+01:00",
-      "next_run_at": "2026-07-24T07:00:00+01:00",
-      "last_run_at": "2026-07-22T18:08:18.798204+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "00d811ecb8f5",
@@ -3217,24 +2671,17 @@
       },
       "schedule_display": "0 9 * * *",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:02:54.416890+01:00",
-      "next_run_at": "2026-07-24T09:00:00+01:00",
-      "last_run_at": "2026-07-22T21:50:16.813379+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "474645983254",
@@ -3257,24 +2704,17 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 970
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:03:27.113292+01:00",
-      "next_run_at": "2026-07-23T13:27:31.086621+01:00",
-      "last_run_at": "2026-07-23T13:17:31.086621+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "bdad1a33cd6c",
@@ -3288,21 +2728,15 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null,
-        "completed": 14
+        "times": null
       },
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:04:24.198699+01:00",
-      "last_run_at": "2026-07-23T04:23:27.085337+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": "live adapter send to discord:1521973775761936646 timed out before the coroutine was dispatched; delivery error: Discord send failed: Server disconnected",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "script": "dgx_nous_proxy_watchdog.py",
       "no_agent": true,
       "context_from": null,
@@ -3313,8 +2747,7 @@
       },
       "schedule_display": "45 15 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports",
-      "next_run_at": "2026-07-23T15:45:00+01:00"
+      "deliver": "discord:#fleet-reports"
     },
     {
       "id": "938e55e7b15b",
@@ -3328,21 +2761,15 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null,
-        "completed": 199
+        "times": null
       },
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:04:24.198699+01:00",
-      "last_run_at": "2026-07-23T05:55:25.997324+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "script": "dgx_disk_space_watchdog.sh",
       "no_agent": true,
       "context_from": null,
@@ -3353,8 +2780,7 @@
       },
       "schedule_display": "every 60m",
       "enabled": true,
-      "deliver": "discord:#fleet-reports",
-      "next_run_at": "2026-07-23T13:41:14.155876+01:00"
+      "deliver": "discord:#fleet-reports"
     },
     {
       "id": "66bb00df0c5d",
@@ -3368,21 +2794,15 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null,
-        "completed": 15
+        "times": null
       },
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:04:24.198699+01:00",
-      "last_run_at": "2026-07-22T15:03:40.205705+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "script": "session_bus_reaper.py",
       "no_agent": true,
       "context_from": null,
@@ -3393,8 +2813,7 @@
       },
       "schedule_display": "17 4 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports",
-      "next_run_at": "2026-07-24T04:17:00+01:00"
+      "deliver": "discord:#fleet-reports"
     },
     {
       "id": "042823b6d8b7",
@@ -3408,21 +2827,15 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null,
-        "completed": 238
+        "times": null
       },
       "state": "paused",
       "paused_at": "2026-07-11T10:34:31.256482+00:00",
       "paused_reason": "Consolidated into dgx-unified-health-probe (t_39c29d42): single canonical probe + single escalation path.",
       "created_at": "2026-07-03T21:04:24.198699+01:00",
-      "last_run_at": "2026-07-11T11:29:28.759890+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "script": "sycode_minimal_host_health.sh",
       "no_agent": true,
       "context_from": null,
@@ -3433,8 +2846,7 @@
       },
       "schedule_display": "every 30m",
       "enabled": false,
-      "deliver": "discord:#fleet-reports",
-      "next_run_at": "2026-07-11T11:59:28.759890+01:00"
+      "deliver": "discord:#fleet-reports"
     },
     {
       "id": "6494f3b7d374",
@@ -3459,19 +2871,13 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 40
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:14.209373+01:00",
       "paused_reason": null,
       "created_at": "2026-06-27T03:33:06.205450+01:00",
-      "next_run_at": "2026-07-11T12:00:00+01:00",
-      "last_run_at": "2026-07-11T06:24:13.608518+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:1521973783794155530",
       "origin": null,
       "enabled_toolsets": [
@@ -3480,7 +2886,6 @@
         "kanban"
       ],
       "workdir": "/home/frank",
-      "fire_claim": null,
       "migrated_from_profile": "jarvis-os-pm",
       "migration_task": "t_86c82617"
     },
@@ -3505,24 +2910,17 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 56
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T21:36:10.497509+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T12:56:40.119009+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:1521973783794155530",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "migrated_from_profile": "jarvis-os-pm",
       "migration_task": "t_86c82617"
     },
@@ -3547,19 +2945,13 @@
       },
       "schedule_display": "0 8 * * *",
       "repeat": {
-        "times": null,
-        "completed": 17
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T22:33:24.738759+01:00",
-      "next_run_at": "2026-07-24T08:00:00+01:00",
-      "last_run_at": "2026-07-22T19:54:12.525467+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "discord:1521973783794155530",
       "origin": {
         "platform": "telegram",
@@ -3572,7 +2964,6 @@
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "migrated_from_profile": "jarvis-os-pm",
       "migration_task": "t_86c82617"
     },
@@ -3595,24 +2986,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 372
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:04:57.448945+01:00",
-      "next_run_at": "2026-07-23T13:41:32.875207+01:00",
-      "last_run_at": "2026-07-23T13:11:32.875207+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "migration_task": "t_86c82617",
       "updated_by_task": "t_86c82617"
     },
@@ -3637,26 +3021,19 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 214
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T16:13:28.556197+01:00",
-      "next_run_at": "2026-07-23T13:56:40.426262+01:00",
-      "last_run_at": "2026-07-23T12:56:40.426262+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nFile \"/home/frank/.hermes/profiles/jarvis/scripts/jarvis_os_kanban_integrity_backup.py\", line 5\n    created: 2026-07-14\n                  ^\nSyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "rehomed_from": "/home/frank/.hermes/profiles/devops/cron/jobs.json",
       "rehomed_by": "t_564bdeab"
     },
@@ -3679,24 +3056,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 369
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:07:31.145121+01:00",
-      "next_run_at": "2026-07-23T13:41:34.017584+01:00",
-      "last_run_at": "2026-07-23T13:11:34.017584+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -3719,24 +3089,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 362
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:07:31.145121+01:00",
-      "next_run_at": "2026-07-23T13:41:34.666560+01:00",
-      "last_run_at": "2026-07-23T13:11:34.666560+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstdout:\nerrors:\n- jarvis-os:t_975689fe event#72566: classify-failure rc=2: usage: hermes kanban [-h] [--board <slug>]\n                     {init,boards,create,swarm,list,ls,show,assign,reclaim,reassign,diagnostics,diag,link,unlink,claim,comment,attach,attachments,attach-rm,complete,edit,block,schedule,unblock,promote,archive,tail,dispatch,daemon,watch,stats,notify-subscrib",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -3761,24 +3124,17 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 965
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T20:36:04.830418+01:00",
-      "next_run_at": "2026-07-23T13:27:31.200422+01:00",
-      "last_run_at": "2026-07-23T13:17:31.200422+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0f39598f8210",
@@ -3801,24 +3157,17 @@
       },
       "schedule_display": "0 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 6
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:14:52.238482+01:00",
-      "next_run_at": "2026-07-27T09:00:00+01:00",
-      "last_run_at": "2026-07-23T13:24:14.953154+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e082a67768d6",
@@ -3841,24 +3190,17 @@
       },
       "schedule_display": "15 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 18
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:15:00.327606+01:00",
-      "next_run_at": "2026-07-24T07:15:00+01:00",
-      "last_run_at": "2026-07-23T13:22:22.522469+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b0e293bc701c",
@@ -3881,24 +3223,17 @@
       },
       "schedule_display": "*/5 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 1952
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:29:00.582297+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:25:31.728066+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c33973886990",
@@ -3921,24 +3256,17 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 1068
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:29:00.977341+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:20:33.341188+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "abc411626232",
@@ -3961,24 +3289,17 @@
       },
       "schedule_display": "*/1 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 7889
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:29:01.344837+01:00",
-      "next_run_at": "2026-07-23T13:26:00+01:00",
-      "last_run_at": "2026-07-23T13:25:31.773917+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "a547b49072e0",
@@ -4001,24 +3322,17 @@
       },
       "schedule_display": "0 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:38:32.202492+01:00",
-      "next_run_at": "2026-07-24T07:00:00+01:00",
-      "last_run_at": "2026-07-22T18:21:41.612735+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "063fe9fb6f87",
@@ -4041,19 +3355,13 @@
       },
       "schedule_display": "5 9 * * *",
       "repeat": {
-        "times": null,
-        "completed": 17
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:40:32.740686+01:00",
-      "next_run_at": "2026-07-24T09:05:00+01:00",
-      "last_run_at": "2026-07-23T11:15:33.677457+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts,whatsapp:Frank",
       "origin": null,
       "enabled_toolsets": [
@@ -4061,8 +3369,7 @@
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "55f23658ce51",
@@ -4085,24 +3392,17 @@
       },
       "schedule_display": "20 4 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:45:32.579430+01:00",
-      "next_run_at": "2026-07-26T04:20:00+01:00",
-      "last_run_at": "2026-07-20T01:09:47.886711+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": "live adapter send to discord:1521973775761936646 timed out before the coroutine was dispatched; delivery error: Discord send failed: ",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "edbfa1c95482",
@@ -4125,24 +3425,17 @@
       },
       "schedule_display": "0 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 2
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:55:10.630022+01:00",
-      "next_run_at": "2026-07-27T09:00:00+01:00",
-      "last_run_at": "2026-07-21T18:24:46.764699+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/no_black_holes_detector.py",
-      "last_delivery_error": "live adapter send to discord:1521973775761936646 timed out before the coroutine was dispatched; delivery error: Discord send failed: ",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "88c545dffd60",
@@ -4167,19 +3460,13 @@
       },
       "schedule_display": "15 8 * * *",
       "repeat": {
-        "times": null,
-        "completed": 14
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:55:37.605937+01:00",
-      "next_run_at": "2026-07-24T08:15:00+01:00",
-      "last_run_at": "2026-07-22T21:19:40.461422+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: No access token found for Nous Portal login. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -4187,8 +3474,7 @@
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "48d81cb5ba90",
@@ -4211,24 +3497,17 @@
       },
       "schedule_display": "0 7 1 * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:57:04.118683+01:00",
-      "next_run_at": "2026-08-01T07:00:00+01:00",
-      "last_run_at": "2026-07-03T21:57:26.591307+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ac8f83c93959",
@@ -4254,19 +3533,13 @@
       },
       "schedule_display": "15 7 1 * *",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:57:04.467764+01:00",
-      "next_run_at": "2026-08-01T07:15:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
@@ -4283,9 +3556,6 @@
       "no_agent": true,
       "script": "channel_liveness_oob_probe.py",
       "deliver": "local",
-      "last_run_at": "2026-07-22T18:43:53.463058+01:00",
-      "last_status": "error",
-      "last_delivery_error": null,
       "id": "e2425b67ccb3",
       "prompt": "",
       "skills": [],
@@ -4298,20 +3568,16 @@
       "context_from": null,
       "schedule_display": "0 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 15
+        "times": null
       },
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T01:25:14.678592+01:00",
       "updated_at": "2026-07-04T01:25:14.678592+01:00",
-      "next_run_at": "2026-07-24T07:00:00+01:00",
-      "last_error": "Script exited with code 1\nstdout:\n\ud83d\udea8 CHANNEL LIVENESS FAILURE [liveness-1784741815]\nTimestamp: 2026-07-22T17:36:55.019929+00:00\n\nFailed channels:\n  \u274c discord-critical-alerts (discord:#critical-alerts) \u2014 TimeoutExpired: Command '['/home/frank/.local/bin/hermes', 'send', '-q', '-t', 'discord:#critical-alerts', '-s', '\ud83d\udd0d Channel liveness probe [liveness-1784741815]', 'Channel liveness receipt liveness-1784741815\\nTimestamp: 2026-07-22T17:37:01.163810+00:00\\nProbe path: discord->wa-failover, daily briefing, oob liveness\\nIf you see this, the channel is alive and delivery works end-to-end.']' timed out after 60 seconds (consecutive=5, last_success=2026-07-17T02:13:07.228759+00:00)\n  \u274c telegram (telegram:506972405) \u2014 TimeoutExpired: Command '['/home/frank/.local/bin/hermes', 'send', '-q', '-t', 'telegram:506972405', '-s', '\ud83d\udd0d Channel liveness probe [liveness-1784741815]', 'Channel liveness receipt liveness-1784741815\\nTimestamp: 2026-07-22T17:38:19.629073+00:00\\nProbe path: discord->wa-failover, daily briefing, oob liveness\\nIf you see this, the channel is alive and delivery works end-to-end.']' timed out after 60 seconds (consecutive=5, last_success=2026-07-17T02:13:07.228759+00:00)\n  \u274c whatsapp-frank (whatsapp:Frank) \u2014 TimeoutExpired: Command '['/home/frank/.local/bin/hermes', 'send', '-q', '-t', 'whatsapp:Frank', '-s', '\ud83d\udd0d Channel liveness probe [liveness-1784741815]', 'Channel liveness receipt liveness-1784741815\\nTimestamp: 2026-07-22T17:39:29.927352+00:00\\nProbe path: discord->wa-failover, daily briefing, oob liveness\\nIf you see this, the channel is alive and delivery works end-to-end.']' timed out after 60 seconds (consecutive=5, last_success=2026-07-17T02:13:07.228759+00:00)\n\nWorking channels (cross-alert sent here):\n\nCross-alert delivered to: discord:#critical-alerts, whatsapp:Frank",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "1f6bac147b1b",
@@ -4334,19 +3600,13 @@
       },
       "schedule_display": "0 4 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-04T01:42:24.082268+01:00",
       "paused_reason": null,
       "created_at": "2026-07-03T22:50:02.887420+01:00",
-      "next_run_at": "2026-07-05T04:00:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -4373,19 +3633,13 @@
       },
       "schedule_display": "0 4 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-04T01:42:24.276261+01:00",
       "paused_reason": null,
       "created_at": "2026-07-03T22:52:51.988308+01:00",
-      "next_run_at": "2026-07-05T04:00:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -4412,24 +3666,17 @@
       },
       "schedule_display": "0 4 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T22:56:17.383200+01:00",
-      "next_run_at": "2026-07-26T04:00:00+01:00",
-      "last_run_at": "2026-07-20T00:45:51.342040+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/profiles/jarvis/scripts/kanban_gc_hygiene_bundle_apply.py\", line 16, in <module>\n    runpy.run_path(str(Path(__file__).with_name(\"kanban_gc_hygiene_bundle.py\")), run_name=\"__main__\")\n  File \"<frozen runpy>\", line 291, in run_path\n  File \"<frozen runpy>\", line 98, in _run_module_code\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/home/frank/.hermes/profiles/jarvis/scripts/kanban_gc_hygiene_bundle.py\", line 384, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/home/frank/.hermes/profiles/jarvis/scripts/kanban_gc_hygiene_bundle.py\", line 375, in main\n    reports = [collect_board(board, cutoff, apply, state) for board in boards]\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.hermes/profiles/jarvis/scripts/kanban_gc_hygiene_bundle.py\", line 375, in <listcomp>\n    reports = [collect_board(board, cutoff, apply, state) for board in boards]\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.hermes/profiles/jarvis/scripts/kanban_gc_hygiene_bundle.py\", line 170, in collect_board\n    proc = subprocess.run(\n           ^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 550, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1209, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 2116, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr)\n  File \"/home/frank/.local/share/uv/python/cpython-3.11.14-linux-aarch64-gnu/lib/python3.11/subprocess.py\", line 1253, in _check_timeout\n    raise TimeoutExpired(\nsubprocess.TimeoutExpired: Command '['/home/frank/.local/bin/hermes', 'kanban', '--board', 'jarvis-os', 'gc']' timed out after 300 seconds",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ab17df99a336",
@@ -4452,24 +3699,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 355
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T03:28:10.201255+01:00",
-      "next_run_at": "2026-07-23T13:26:41.503703+01:00",
-      "last_run_at": "2026-07-23T12:56:41.503703+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "9a755435138f",
@@ -4492,24 +3732,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 169
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T07:24:09.388425+01:00",
-      "next_run_at": "2026-07-23T13:41:14.155876+01:00",
-      "last_run_at": "2026-07-23T10:48:21.677378+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nBOARD_PM_TRIAGE_VISIBILITY_ERROR board=sycode-ai: Command '['hermes', 'kanban', '--board', 'sycode-ai', 'create', 'PM TRIAGE VISIBILITY: sycode-ai active queue review 2026-07-23', '--assignee', 'sycode-ai-pm', '--priority', '75', '--idempotency-key', 'pm-triage-visibility:sycode-ai:2026-07-23', '--created-by', 'board-pm-triage-visibility-cron', '--body', 'Automated PM triage visibility bridge for board `sycode-ai`.\\nSource: jarvis:board-pm-triage-sycode-ai (task t_93315858).\\nObserved queue counts: {\"archived\": 17, \"blocked\": 2, \"done\": 128, \"in_progress\": 1, \"todo\": 7}.\\n\\nAcceptance:\\n1. Inspect blocked/todo/scheduled/ready queues and recent PM/reviewer comments.\\n2. Take exactly one safe PM action: unblock with delegated evidence, create/route a narrow child, update a status/Obsidian pointer, or leave a reasoned no-op comment.\\n3. Preserve hard gates: no credentials/secrets, live trading, production deploys, irreversible data ops, new spend, or guardrail weakening.\\n4. Complete with metadata naming the evidence checked and action/no-op decision.\\n\\nConsumer rule: this task is the named consumer for the no-agent visibility cron output; if the queue is clean or recently covered, the cron stays silent.', '--json']' timed out after 60 seconds",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4c80202279d2",
@@ -4532,24 +3765,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 169
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T07:24:09.704684+01:00",
-      "next_run_at": "2026-07-23T14:10:30.233424+01:00",
-      "last_run_at": "2026-07-23T13:10:30.233424+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "cbc07fdf609f",
@@ -4572,24 +3798,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 15
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T10:53:32.291299+01:00",
-      "next_run_at": "2026-07-24T06:00:00+01:00",
-      "last_run_at": "2026-07-22T16:43:10.959158+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e909e7639aaf",
@@ -4612,24 +3831,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 1451
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T14:53:23.177600+01:00",
-      "next_run_at": "2026-07-23T13:25:33.484526+01:00",
-      "last_run_at": "2026-07-23T13:20:33.484526+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ef9126a21c6d",
@@ -4655,24 +3867,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 494
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T17:10:36.690517+01:00",
-      "next_run_at": "2026-07-23T13:33:15.913800+01:00",
-      "last_run_at": "2026-07-23T13:18:15.913800+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "79b3e3471877",
@@ -4695,24 +3900,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 601
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T17:11:26.614163+01:00",
-      "next_run_at": "2026-07-23T13:29:56.968058+01:00",
-      "last_run_at": "2026-07-23T13:14:56.968058+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "14a08855fb8f",
@@ -4735,24 +3933,17 @@
       },
       "schedule_display": "0 */8 * * *",
       "repeat": {
-        "times": null,
-        "completed": 32
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T18:36:10.520078+01:00",
-      "next_run_at": "2026-07-23T16:00:00+01:00",
-      "last_run_at": "2026-07-23T11:04:35.053241+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "78a8c2d6b4f9",
@@ -4775,24 +3966,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 237
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-10T19:54:04.912861+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T21:58:33.867302+01:00",
-      "next_run_at": "2026-07-10T19:47:02.502797+01:00",
-      "last_run_at": "2026-07-10T19:16:07.626641+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "34c74dfeb231",
@@ -4818,24 +4002,17 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 309
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-10T19:54:04.355322+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T22:49:23.638517+01:00",
-      "next_run_at": "2026-07-10T19:44:02.670304+01:00",
-      "last_run_at": "2026-07-10T19:13:59.895254+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0de04114c221",
@@ -4858,24 +4035,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 14
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T06:23:44.261290+01:00",
-      "next_run_at": "2026-07-24T06:00:00+01:00",
-      "last_run_at": "2026-07-22T17:24:57.900767+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstdout:\nFLEET FALLBACK-CHAIN VALIDATOR \u2014 per-rung liveness\ngenerated: 2026-07-22T16:24:18.145041+00:00\n\nPROFILE                RUNG      PROVIDER       MODEL                            STATE      ACTUAL_BP    EXP   MARKER                      \n-------------------------------------------------------------------------------------------------------------------------------------------\ntrading-ml-ensemble    PRIMARY   nous           tencent/hy3:free                 TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-ml-ensemble    FB#1      nous           tencent/hy3:free                 TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-ml-ensemble    FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-ml-ensemble    FB#3      nous           stepfun/step-3.7-flash:free      TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-risk-reviewer  PRIMARY   nous           tencent/hy3:free                 TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-risk-reviewer  FB#1      nous           tencent/hy3:free                 TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-risk-reviewer  FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-risk-reviewer  FB#3      nous           stepfun/step-3.7-flash:free      TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-strategy-dev   PRIMARY   nous           tencent/hy3:free                 TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-strategy-dev   FB#1      nous           tencent/hy3:free                 TIMEOUT    -            LIVE  timeout after 120s [persiste\ntrading-strategy-dev   FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b TIMEOUT    -            LIVE  timeout after 120s          \ntrading-strategy-dev   FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-trend-follower PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-trend-follower FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-trend-follower FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-trend-follower FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-volatility-arb PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-volatility-arb FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-volatility-arb FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-volatility-arb FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-design-reviewer  PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-design-reviewer  FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-design-reviewer  FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-design-reviewer  FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-integrator       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-integrator       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-integrator       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-integrator       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-marketplace-builder PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-marketplace-builder FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-marketplace-builder FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-marketplace-builder FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-payments-builder PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-payments-builder FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-payments-builder FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-payments-builder FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-builder PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-builder FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-builder FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-builder FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-flow-builder PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-flow-builder FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-flow-builder FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-flow-builder FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nupero-ui-builder       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-ui-builder       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nupero-ui-builder       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nupero-ui-builder       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nworkforce-scaler       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nworkforce-scaler       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nworkforce-scaler       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nworkforce-scaler       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-api-builder PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-api-builder FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-api-builder FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-api-builder FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-db-architect PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-db-architect FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-db-architect FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-db-architect FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-devops PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-devops FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-devops FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-devops FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-integrator PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-integrator FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-integrator FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-integrator FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-reviewer PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-reviewer FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-reviewer FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-reviewer FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-ui-builder PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-ui-builder FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-ui-builder FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-ui-builder FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nbuilder                PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nbuilder                FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nbuilder                FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nbuilder                FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ncapability-builder     PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ncapability-builder     FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ncapability-builder     FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ncapability-builder     FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ncomms-writer           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ncomms-writer           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ncomms-writer           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ncomms-writer           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ndb-architect           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ndb-architect           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ndb-architect           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ndb-architect           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ndevops                 PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ndevops                 FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ndevops                 FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ndevops                 FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nelon                   PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nelon                   FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nelon                   FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nelon                   FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \neval-runner            PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \neval-runner            FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \neval-runner            FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \neval-runner            FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nfinance-ops            PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nfinance-ops            FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nfinance-ops            FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nfinance-ops            FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nfleet-analyst          PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nfleet-analyst          FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nfleet-analyst          FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nfleet-analyst          FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nfrontend-builder       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nfrontend-builder       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nfrontend-builder       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nfrontend-builder       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nguardian               PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nguardian               FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nguardian               FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nguardian               FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nintegration-builder    PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nintegration-builder    FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nintegration-builder    FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nintegration-builder    FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \njarvis                 PRIMARY   openai-codex   gpt-5.6-sol                      SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nnervous-system-engineer PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnervous-system-engineer FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnervous-system-engineer FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nnervous-system-engineer FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nnim-deepseek           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-deepseek           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-deepseek           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nnim-deepseek           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nnim-gemini3            PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-gemini3            FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-gemini3            FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nnim-gemini3            FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nnim-glm52              PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-glm52              FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-glm52              FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nnim-glm52              FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nnim-qwen35             PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-qwen35             FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nnim-qwen35             FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nnim-qwen35             FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nos-architect           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nos-architect           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nos-architect           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nos-architect           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nos-reviewer            PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nos-reviewer            FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nos-reviewer            FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nos-reviewer            FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \npaper-analyst          PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \npaper-analyst          FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \npaper-analyst          FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \npaper-analyst          FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \npaper-risk             PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \npaper-risk             FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \npaper-risk             FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \npaper-risk             FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \npaper-trader           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \npaper-trader           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \npaper-trader           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \npaper-trader           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nplatform-builder       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nplatform-builder       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nplatform-builder       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nplatform-builder       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nplatform-db-migrator   PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nplatform-db-migrator   FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nplatform-db-migrator   FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nplatform-db-migrator   FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nplatform-reviewer      PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nplatform-reviewer      FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nplatform-reviewer      FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nplatform-reviewer      FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nprompt-optimizer       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nprompt-optimizer       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nprompt-optimizer       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nprompt-optimizer       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nresearch               PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch               FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch               FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nresearch               FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nresearch-ai            PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch-ai            FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch-ai            FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nresearch-ai            FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nresearch-trading       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch-trading       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch-trading       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nresearch-trading       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nresearch-upero         PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch-upero         FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nresearch-upero         FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nresearch-upero         FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nself-improve-engineer  PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nself-improve-engineer  FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nself-improve-engineer  FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nself-improve-engineer  FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading         PRIMARY   openai-codex   gpt-5.6-sol                      SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading         FB#1      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading         FB#2      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      PRIMARY   openai-codex   gpt-5.6-sol                      SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#1      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#2      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nsystem-optimizer       PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nsystem-optimizer       FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \nsystem-optimizer       FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \nsystem-optimizer       FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntest-engineer          PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntest-engineer          FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntest-engineer          FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntest-engineer          FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-backtest-runner PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-backtest-runner FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-backtest-runner FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-backtest-runner FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-breakout-trader PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-breakout-trader FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-breakout-trader FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-breakout-trader FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-data-oracle    PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-data-oracle    FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-data-oracle    FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-data-oracle    FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-devops         PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-devops         FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-devops         FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-devops         FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-market-analyst PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-market-analyst FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-market-analyst FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-market-analyst FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \ntrading-mean-reversion PRIMARY   nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-mean-reversion FB#1      nous           tencent/hy3:free                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-mean-reversion FB#2      nous           nvidia/nemotron-3-ultra-550b-a55b SKIPPED    -            LIVE  total budget exhausted      \ntrading-mean-reversion FB#3      nous           stepfun/step-3.7-flash:free      SKIPPED    -            LIVE  total budget exhausted      \n\n@here FLEET CRITICAL \u2014 fallback rung(s) expected live are DEAD:\n\n  \u2022 trading-ml-ensemble/PRIMARY nous/tencent/hy3:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-ml-ensemble/FB#1 nous/tencent/hy3:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-ml-ensemble/FB#2 nous/nvidia/nemotron-3-ultra-550b-a55b  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-ml-ensemble/FB#3 nous/stepfun/step-3.7-flash:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-risk-reviewer/PRIMARY nous/tencent/hy3:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-risk-reviewer/FB#1 nous/tencent/hy3:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-risk-reviewer/FB#2 nous/nvidia/nemotron-3-ultra-550b-a55b  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-risk-reviewer/FB#3 nous/stepfun/step-3.7-flash:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-strategy-dev/PRIMARY nous/tencent/hy3:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-strategy-dev/FB#1 nous/tencent/hy3:free  state=TIMEOUT  marker=timeout after 120s [persisted; first=TIMEOUT]\n  \u2022 trading-strategy-dev/FB#2 nous/nvidia/nemotron-3-ultra-550b-a55b  state=TIMEOUT  marker=timeout after 120s\n\nInvestigate keys / provider status; this is the class that previously caused silent fleet outages.",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c27622ade5fd",
@@ -4898,24 +4068,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 1293
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T06:23:47.545761+01:00",
-      "next_run_at": "2026-07-23T13:25:34.519298+01:00",
-      "last_run_at": "2026-07-23T13:20:34.519298+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e53763f47144",
@@ -4943,19 +4106,13 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 232
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-10T19:45:38.104723+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T09:11:09.142429+01:00",
-      "next_run_at": "2026-07-10T19:42:02.509966+01:00",
-      "last_run_at": "2026-07-10T19:01:27.422978+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "origin",
       "origin": {
         "platform": "discord",
@@ -4965,8 +4122,7 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "d02673f760aa",
@@ -4989,19 +4145,13 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 90
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-10T19:54:06.014714+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T09:38:48.145119+01:00",
-      "next_run_at": "2026-07-10T20:00:00+01:00",
-      "last_run_at": "2026-07-10T19:13:27.760299+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "origin",
       "origin": {
         "platform": "whatsapp",
@@ -5011,8 +4161,7 @@
         "user_id": "447846416003@s.whatsapp.net"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f8c5f45a9831",
@@ -5035,19 +4184,13 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 516
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T10:44:25.069809+01:00",
-      "next_run_at": "2026-07-23T13:30:55.515349+01:00",
-      "last_run_at": "2026-07-23T13:15:55.515349+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": {
         "platform": "discord",
@@ -5057,8 +4200,7 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f05227128ac2",
@@ -5081,19 +4223,13 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 40
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T12:59:58.350928+01:00",
-      "next_run_at": "2026-07-23T18:00:00+01:00",
-      "last_run_at": "2026-07-23T12:58:18.920167+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": {
         "platform": "discord",
@@ -5103,8 +4239,7 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f9aac66d5b49",
@@ -5127,19 +4262,13 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 25
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-06T05:14:46.358193+01:00",
       "paused_reason": "t_6bacc651: disabled P0 auto-deployer because 15m force-recreate can sweep paper positions, ignore deploy-deferred commits/migrations, and fight seat-owned deploys. Do not resume until single deploy authority + position-safe gate are implemented.",
       "created_at": "2026-07-05T15:10:30.138699+01:00",
-      "next_run_at": "2026-07-06T05:26:01.374203+01:00",
-      "last_run_at": "2026-07-06T05:11:01.374203+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "origin",
       "origin": {
         "platform": "discord",
@@ -5149,8 +4278,7 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b2536429e954",
@@ -5173,24 +4301,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 285
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T19:46:47.755512+01:00",
-      "next_run_at": "2026-07-23T13:41:34.784060+01:00",
-      "last_run_at": "2026-07-23T13:11:34.784060+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c916a7bc343f",
@@ -5213,24 +4334,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T20:17:11.664947+01:00",
-      "next_run_at": "2026-07-24T06:00:00+01:00",
-      "last_run_at": "2026-07-23T10:49:56.141352+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/obsidian_wiki_lint.py",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes",
-      "fire_claim": null
+      "workdir": "/home/frank/.hermes"
     },
     {
       "id": "7ad0e11f7790",
@@ -5253,24 +4367,17 @@
       },
       "schedule_display": "15 4 1 * *",
       "repeat": {
-        "times": null,
-        "completed": 2
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T20:53:02.277976+01:00",
-      "next_run_at": "2026-08-01T04:15:00+01:00",
-      "last_run_at": "2026-07-11T12:03:42.984626+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "1324383c1d61",
@@ -5293,19 +4400,13 @@
       },
       "schedule_display": "20 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-05T21:06:08.151315+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T21:05:51.947142+01:00",
-      "next_run_at": "2026-07-06T06:20:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
@@ -5332,24 +4433,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 283
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T21:19:19.266546+01:00",
-      "next_run_at": "2026-07-23T13:41:34.883307+01:00",
-      "last_run_at": "2026-07-23T13:11:34.883307+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f96bc59a9657",
@@ -5372,24 +4466,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 1207
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T21:25:47.393067+01:00",
-      "next_run_at": "2026-07-23T13:26:46.101580+01:00",
-      "last_run_at": "2026-07-23T13:21:46.101580+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "a70772892543",
@@ -5412,24 +4499,17 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 537
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T20:24:59.033736+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:16:32.731208+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "fac46dae8172",
@@ -5452,24 +4532,17 @@
       },
       "schedule_display": "0 10 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T00:36:13.693267+01:00",
-      "next_run_at": "2026-07-27T10:00:00+01:00",
-      "last_run_at": "2026-07-21T18:44:26.476780+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstdout:\nEDGE-SCAN ERROR: Command '['docker', 'exec', '-e', 'PGOPTIONS=-c default_transaction_read_only=on', 'sycodetrading-supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres', '-tAqc', \"SELECT count(*), avg(r_achieved), stddev(r_achieved)\\n                 FROM r_multiple_labels l JOIN signal_journeys sj ON sj.id=l.journey_id\\n                 WHERE l.bracket_config_id='s1_t1_v1' AND l.contaminated IS NOT TRUE\\n                   AND l.r_achieved IS NOT NULL AND sj.triggered_at>'2026-07-05'\"]' timed out after 180 seconds",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0ac3d8b6af91",
@@ -5492,24 +4565,17 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 119
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T08:08:57.593454+01:00",
-      "next_run_at": "2026-07-23T14:00:00+01:00",
-      "last_run_at": "2026-07-23T13:00:48.899120+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "64b9e461b28f",
@@ -5532,24 +4598,17 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 378
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T20:15:57.082699+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:16:14.342701+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "2e26eefaccf8",
@@ -5572,24 +4631,17 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 367
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T23:28:19.468950+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:16:33.231180+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "cef479ec2f88",
@@ -5612,24 +4664,17 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 101
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-09T03:23:20.263360+01:00",
-      "next_run_at": "2026-07-23T14:00:00+01:00",
-      "last_run_at": "2026-07-23T13:01:48.701006+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "62140b71270a",
@@ -5652,24 +4697,17 @@
       },
       "schedule_display": "45 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 11
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-09T03:25:48.837528+01:00",
-      "next_run_at": "2026-07-24T06:45:00+01:00",
-      "last_run_at": "2026-07-22T17:48:43.245019+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nERROR feature-density monitor: Command '['docker', 'exec', '-e', 'PGOPTIONS=-c default_transaction_read_only=on', 'sycodetrading-supabase-db', 'psql', '-U', 'postgres', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '--csv', '-c', \"SELECT (triggered_at AT TIME ZONE 'UTC')::date AS day,\\n       count(*) AS n_rows,\\n       round(100.0*count(funding_rate_trend)/count(*), 1) AS funding_rate_trend,\\n       round(100.0*count(market_oi_delta_percent)/count(*), 1) AS market_oi_delta_percent,\\n       round(100.0*count(pattern_strength)/count(*), 1) AS pattern_strength,\\n       round(100.0*count(directional_conviction)/count(*), 1) AS directional_conviction,\\n       round(100.0*count(market_funding_rate)/count(*), 1) AS market_funding_rate,\\n       round(100.0*count(market_funding_rate_annualized)/count(*), 1) AS market_funding_rate_annualized,\\n       round(100.0*count(market_open_interest)/count(*), 1) AS market_open_interest,\\n       round(100.0*count(regime_volatility)/count(*), 1) AS regime_volatility,\\n       round(100.0*count(regime_trend)/count(*), 1) AS regime_trend,\\n       round(100.0*count(regime_score)/count(*), 1) AS regime_score,\\n       round(100.0*count(regime_direction)/count(*), 1) AS regime_direction,\\n       round(100.0*count(regime_key)/count(*), 1) AS regime_key,\\n       round(100.0*count(regime_favorable)/count(*), 1) AS regime_favorable,\\n       round(100.0*count(structure_levels)/count(*), 1) AS structure_levels,\\n       round(100.0*count(liquidation_context)/count(*), 1) AS liquidation_context\\nFROM public.signal_journeys\\nWHERE triggered_at >= ((now() AT TIME ZONE 'UTC')::date - INTERVAL '6 days')\\nGROUP BY 1 ORDER BY 1;\"]' timed out after 120 seconds",
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "062d182994e0",
@@ -5692,24 +4730,17 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 83
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T02:53:19.893358+01:00",
-      "next_run_at": "2026-07-23T14:00:00+01:00",
-      "last_run_at": "2026-07-23T13:01:24.114750+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b89302ef4383",
@@ -5732,24 +4763,17 @@
       },
       "schedule_display": "*/75 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 83
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T02:53:27.255339+01:00",
-      "next_run_at": "2026-07-23T14:00:00+01:00",
-      "last_run_at": "2026-07-23T13:01:24.161289+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "unified-health-probe-39c29d42",
@@ -5772,26 +4796,19 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 332
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T10:34:31.256482+00:00",
-      "next_run_at": "2026-07-23T13:29:42.628087+01:00",
-      "last_run_at": "2026-07-23T13:19:42.628087+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
-      "fire_claim": null,
       "pinned": false
     },
     {
@@ -5815,24 +4832,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 41
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-13T09:01:35.875673+01:00",
-      "next_run_at": "2026-07-23T13:41:37.748819+01:00",
-      "last_run_at": "2026-07-23T13:11:37.748819+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "8b84c382cfa8",
@@ -5861,19 +4871,13 @@
       },
       "schedule_display": "every 720m",
       "repeat": {
-        "times": null,
-        "completed": 6
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-13T17:33:46.694174+01:00",
-      "next_run_at": "2026-07-23T17:00:54.573025+01:00",
-      "last_run_at": "2026-07-23T05:00:54.573025+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: xAI OAuth state is missing access_token. Re-authenticate with `hermes model`. Run `hermes model` to re-authenticate.",
-      "last_delivery_error": null,
       "deliver": "discord:#quant-reports",
       "origin": {
         "platform": "discord",
@@ -5888,8 +4892,7 @@
         "file",
         "delegation"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ed3aedb474d2",
@@ -5912,24 +4915,17 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 28
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-17T02:49:55.098495+01:00",
-      "next_run_at": "2026-07-23T13:30:00+01:00",
-      "last_run_at": "2026-07-23T13:01:24.219912+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "3ddf2469949e",
@@ -5952,24 +4948,17 @@
       },
       "schedule_display": "23 4 * * *",
       "repeat": {
-        "times": null,
-        "completed": 6
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-17T02:35:28.557587+01:00",
-      "next_run_at": "2026-07-24T04:23:00+01:00",
-      "last_run_at": "2026-07-22T15:47:35.596709+01:00",
-      "last_status": "error",
-      "last_error": "Script timed out after 3600s: /home/frank/.hermes/profiles/jarvis/scripts/fleet_knowledge_catalog_regen.py",
-      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "06311c0fa116",
@@ -5990,25 +4979,18 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null,
-        "completed": 43
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-17T10:46:59.366003+01:00",
-      "next_run_at": "2026-07-23T13:26:15.713206+01:00",
-      "last_run_at": "2026-07-23T13:24:15.713206+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     }
   ],
-  "updated_at": "2026-07-23T13:25:50.915712+01:00"
+  "updated_at": "2026-07-23T13:27:32.715314+01:00"
 }

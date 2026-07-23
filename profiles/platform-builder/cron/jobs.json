@@ -20,19 +20,13 @@
       },
       "schedule_display": "once in 15m",
       "repeat": {
-        "times": 1,
-        "completed": 0
+        "times": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T17:20:20.515384+01:00",
-      "next_run_at": "2026-07-04T17:35:27.344758+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,

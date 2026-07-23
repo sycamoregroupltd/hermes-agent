@@ -11,6 +11,7 @@ This keeper is intentionally conservative:
 from __future__ import annotations
 
 import argparse
+import json
 import fnmatch
 import os
 import re
@@ -120,7 +121,7 @@ def copy_into_worktree(paths: set[str], wt: Path) -> None:
                 pass
             if rel == "cron/jobs.json" or fnmatch.fnmatch(rel, "profiles/*/cron/jobs.json"):
                 text = src.read_text(errors="ignore")
-                redacted = SECRET_PATTERN.sub("[REDACTED_SECRET]", text)
+                redacted = SECRET_PATTERN.sub("[REDACTED_SECRET]", normalize_cron_json(text))
                 dst.write_text(redacted)
                 shutil.copystat(src, dst)
             else:
@@ -130,6 +131,38 @@ def copy_into_worktree(paths: set[str], wt: Path) -> None:
 def staged_files(wt: Path) -> list[str]:
     cp = run(["git", "diff", "--cached", "--name-only"], cwd=wt)
     return [line.strip() for line in cp.stdout.splitlines() if line.strip()]
+
+
+def normalize_cron_json(text: str) -> str:
+    """Strip scheduler runtime state from cron job stores before VCS sync.
+
+    The automation branch is recovery/source-of-truth, not a live scheduler state
+    database. Keeping last_run/next_run/error counters would create a new commit on
+    nearly every keeper tick and can preserve transient stderr containing secrets.
+    """
+    volatile = {
+        "next_run_at",
+        "last_run_at",
+        "last_status",
+        "last_error",
+        "last_delivery_error",
+        "fire_claim",
+    }
+    try:
+        data = json.loads(text)
+    except Exception:
+        return text
+    jobs = data.get("jobs")
+    if isinstance(jobs, list):
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            for key in volatile:
+                job.pop(key, None)
+            repeat = job.get("repeat")
+            if isinstance(repeat, dict):
+                repeat.pop("completed", None)
+    return json.dumps(data, indent=2, sort_keys=False) + "\n"
 
 
 def secret_scan(wt: Path, files: list[str]) -> list[str]:
