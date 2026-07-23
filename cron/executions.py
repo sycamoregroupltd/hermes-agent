@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from agent.redact import redact_sensitive_text
 from hermes_constants import get_hermes_home
 from hermes_time import now as _hermes_now
 
@@ -138,7 +139,11 @@ def finish_execution(
     """Write a terminal result once; terminal attempts cannot be rewritten."""
     now = _hermes_now().isoformat()
     status = "completed" if success else "failed"
-    detail = None if success else (str(error) if error else "unknown failure")
+    detail = None if success else redact_sensitive_text(
+        str(error) if error else "unknown failure",
+        force=True,
+        redact_url_credentials=True,
+    )
     with _lock, _connect() as conn:
         cur = conn.execute(
             """UPDATE executions SET status=?, finished_at=?, error=?

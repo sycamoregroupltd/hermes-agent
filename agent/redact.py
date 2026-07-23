@@ -200,14 +200,18 @@ _AUTH_HEADER_RE = re.compile(
 )
 
 # API-key style auth headers carrying a single opaque value (no scheme word).
-# Anthropic and many providers authenticate with ``x-api-key``; values without
-# a known vendor prefix (custom/local backends) would otherwise leak when a
-# request or curl command is logged or echoed into tool output / transcripts.
+# Anthropic and many providers authenticate with ``x-api-key``. Custom services
+# also commonly use names such as ``X-Example-Token``; values without a known
+# vendor prefix would otherwise leak when a request or curl argv is captured.
+# Match explicit common names plus custom hyphenated headers whose final segment
+# is credential-shaped. Requiring a hyphen before the generic suffix avoids
+# masking ordinary prose labels such as ``token: count``.
 _SECRET_HEADER_NAMES = (
-    r"(?:x-api-key|x-goog-api-key|api-key|apikey|x-api-token|x-auth-token|x-access-token)"
+    r"(?:x-api-key|x-goog-api-key|api-key|apikey|x-api-token|x-auth-token|x-access-token|"
+    r"(?:[a-z0-9]+-)+(?:api-key|api-token|auth-token|access-token|token|secret))"
 )
 _SECRET_HEADER_RE = re.compile(
-    rf"({_SECRET_HEADER_NAMES}\s*:\s*)(\S+)",
+    rf"({_SECRET_HEADER_NAMES}\s*:\s*)([^\s\"']+)",
     re.IGNORECASE,
 )
 

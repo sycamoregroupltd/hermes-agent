@@ -287,6 +287,15 @@ class TestAuthHeaders:
 
 
 class TestApiKeyHeaders:
+    def test_custom_token_header_in_argv_is_masked(self):
+        secret = "synthetic-auth-value-1234567890"
+        text = repr(["curl", "-H", f"X-Example-Token: {secret}", "https://example.invalid"])
+
+        result = redact_sensitive_text(text, force=True)
+
+        assert secret not in result
+        assert "X-Example-Token:" in result
+
     def test_x_api_key_header_masked(self):
         text = "x-api-key: opaque-provider-key-1234567890"
         result = redact_sensitive_text(text)

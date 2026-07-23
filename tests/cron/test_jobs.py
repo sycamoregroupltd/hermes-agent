@@ -251,6 +251,45 @@ class TestJobCRUD:
         assert fetched is not None
         assert fetched["prompt"] == "Check server status"
 
+    def test_failure_fields_are_redacted_before_jobs_json_persistence(self, tmp_cron_dir):
+        auth_value = "synthetic-auth-value-1234567890"
+        env_value = "synthetic-env-value-1234567890"
+        job = create_job(prompt="Check server status", schedule="every 1h")
+        error = (
+            "Command ['curl', '-H', "
+            f"'X-Example-Token: {auth_value}'] failed; SERVICE_TOKEN={env_value}"
+        )
+        delivery_error = f"Authorization: Bearer {auth_value}"
+
+        mark_job_run(
+            job["id"],
+            success=False,
+            error=error,
+            delivery_error=delivery_error,
+        )
+
+        persisted = get_job(job["id"])
+        assert persisted is not None
+        assert auth_value not in persisted["last_error"]
+        assert env_value not in persisted["last_error"]
+        assert auth_value not in persisted["last_delivery_error"]
+        assert "X-Example-Token:" in persisted["last_error"]
+
+    def test_output_is_redacted_before_file_persistence(self, tmp_cron_dir):
+        auth_value = "synthetic-auth-value-1234567890"
+        env_value = "synthetic-env-value-1234567890"
+        output = (
+            f"stderr: X-Example-Token: {auth_value}\n"
+            f"argv env: SERVICE_TOKEN={env_value}\n"
+        )
+
+        output_path = save_job_output("synthetic-job", output)
+        persisted = output_path.read_text(encoding="utf-8")
+
+        assert auth_value not in persisted
+        assert env_value not in persisted
+        assert "X-Example-Token:" in persisted
+
     def test_list_jobs(self, tmp_cron_dir):
         create_job(prompt="Job 1", schedule="every 1h")
         create_job(prompt="Job 2", schedule="every 2h")

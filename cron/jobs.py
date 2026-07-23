@@ -33,6 +33,7 @@ except ImportError:  # pragma: no cover - non-Windows
     msvcrt = None
 from datetime import datetime, timedelta
 from pathlib import Path
+from agent.redact import redact_sensitive_text
 from hermes_constants import get_hermes_home
 from typing import Optional, Dict, List, Any, Set, Tuple, Union
 
@@ -907,14 +908,42 @@ def load_jobs() -> List[Dict[str, Any]]:
     )
 
 
+def _redact_persisted_text(value: Optional[Any]) -> Optional[str]:
+    """Return text safe for durable cron state, regardless of user settings."""
+    if value is None:
+        return None
+    try:
+        return redact_sensitive_text(
+            str(value),
+            force=True,
+            redact_url_credentials=True,
+        )
+    except Exception:
+        logger.warning("Cron persistence redaction failed; storing sentinel", exc_info=True)
+        return "[REDACTED - redaction failed]"
+
+
+def _redact_job_state(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Copy jobs and scrub error fields before serializing jobs.json."""
+    safe_jobs = copy.deepcopy(jobs)
+    for job in safe_jobs:
+        if not isinstance(job, dict):
+            continue
+        for field in ("last_error", "last_delivery_error"):
+            if job.get(field) is not None:
+                job[field] = _redact_persisted_text(job[field])
+    return safe_jobs
+
+
 def _save_jobs_unlocked(jobs: List[Dict[str, Any]]):
     """Save all jobs to storage. Caller must hold _jobs_lock()."""
     jobs_file = _current_cron_store().jobs_file
+    safe_jobs = _redact_job_state(jobs)
     ensure_dirs()
     fd, tmp_path = tempfile.mkstemp(dir=str(jobs_file.parent), suffix='.tmp', prefix='.jobs_')
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump({"jobs": jobs, "updated_at": _hermes_now().isoformat()}, f, indent=2)
+            json.dump({"jobs": safe_jobs, "updated_at": _hermes_now().isoformat()}, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
         atomic_replace(tmp_path, jobs_file)
@@ -2207,6 +2236,7 @@ def _prune_job_output(job_output_dir: Path, keep: int) -> int:
 
 def save_job_output(job_id: str, output: str):
     """Save job output to file."""
+    safe_output = _redact_persisted_text(output) or ""
     ensure_dirs()
     job_output_dir = _job_output_dir(job_id)
     job_output_dir.mkdir(parents=True, exist_ok=True)
@@ -2218,7 +2248,7 @@ def save_job_output(job_id: str, output: str):
     fd, tmp_path = tempfile.mkstemp(dir=str(job_output_dir), suffix='.tmp', prefix='.output_')
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            f.write(output)
+            f.write(safe_output)
             f.flush()
             os.fsync(f.fileno())
         atomic_replace(tmp_path, output_file)

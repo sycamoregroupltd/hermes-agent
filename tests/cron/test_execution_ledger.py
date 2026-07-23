@@ -121,6 +121,24 @@ def test_failed_execution_keeps_error(monkeypatch, tmp_path):
     assert failed["error"] == "provider exploded"
 
 
+def test_failed_execution_redacts_error_before_sqlite_persistence(monkeypatch, tmp_path):
+    executions = _point_ledger(monkeypatch, tmp_path)
+    auth_value = "synthetic-auth-value-1234567890"
+    env_value = "synthetic-env-value-1234567890"
+    error = (
+        f"stderr: X-Example-Token: {auth_value}; "
+        f"argv env: SERVICE_TOKEN={env_value}"
+    )
+
+    record = executions.create_execution("redacted", source="external")
+    failed = executions.finish_execution(record["id"], success=False, error=error)
+
+    assert failed is not None
+    assert auth_value not in failed["error"]
+    assert env_value not in failed["error"]
+    assert "X-Example-Token:" in failed["error"]
+
+
 def test_recovery_does_not_mark_live_process_execution_unknown(monkeypatch, tmp_path):
     executions = _point_ledger(monkeypatch, tmp_path)
     record = executions.create_execution("still-live", source="builtin")
