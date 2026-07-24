@@ -510,6 +510,7 @@ class TestCronjobToolScript:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        (cron_env / "scripts" / "monitor.py").write_text('print("ok")\n')
         result = json.loads(cronjob(
             action="create",
             schedule="every 1h",
@@ -530,6 +531,7 @@ class TestCronjobToolScript:
         ))
         job_id = create_result["job_id"]
 
+        (cron_env / "scripts" / "new_script.py").write_text('print("ok")\n')
         update_result = json.loads(cronjob(
             action="update",
             job_id=job_id,
@@ -542,6 +544,7 @@ class TestCronjobToolScript:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        (cron_env / "scripts" / "some_script.py").write_text('print("ok")\n')
         create_result = json.loads(cronjob(
             action="create",
             schedule="every 1h",
@@ -562,6 +565,7 @@ class TestCronjobToolScript:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        (cron_env / "scripts" / "data_collector.py").write_text('print("ok")\n')
         cronjob(
             action="create",
             schedule="every 1h",
@@ -729,6 +733,7 @@ class TestCronjobToolScriptValidation:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        (cron_env / "scripts" / "monitor.py").write_text('print("ok")\n')
         result = json.loads(cronjob(
             action="create",
             schedule="every 1h",
@@ -762,6 +767,7 @@ class TestCronjobToolScriptValidation:
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         from tools.cronjob_tools import cronjob
 
+        (cron_env / "scripts" / "monitor.py").write_text('print("ok")\n')
         create_result = json.loads(cronjob(
             action="create",
             schedule="every 1h",
@@ -789,6 +795,261 @@ class TestCronjobToolScriptValidation:
             script="C:\\Users\\evil\\script.py",
         ))
         assert result["success"] is False
+
+
+class TestDeadPinGuardEnableTime:
+    """Dead-pin guard (enable-time): missing scripts are rejected at create/update."""
+
+    def test_create_rejects_nonexistent_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+            script="does_not_exist.py",
+        ))
+        assert result["success"] is False
+        err = result["error"].lower()
+        assert "not found" in err or "not exist" in err or "dead-pin" in err
+
+    def test_update_rejects_nonexistent_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        create_result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+        ))
+        job_id = create_result["job_id"]
+
+        update_result = json.loads(cronjob(
+            action="update",
+            job_id=job_id,
+            script="vanished.py",
+        ))
+        assert update_result["success"] is False
+        err = update_result["error"].lower()
+        assert "not found" in err or "not exist" in err or "dead-pin" in err
+
+    def test_update_rejects_nonexistent_subdir_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        create_result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+        ))
+        job_id = create_result["job_id"]
+
+        update_result = json.loads(cronjob(
+            action="update",
+            job_id=job_id,
+            script="monitors/vanished.py",
+        ))
+        assert update_result["success"] is False
+
+    def test_create_allows_existing_script(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        (cron_env / "scripts" / "exists.py").write_text('print("ok")\n')
+        result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="Monitor things",
+            script="exists.py",
+        ))
+        assert result["success"] is True
+        assert result["job"]["script"] == "exists.py"
+
+
+class TestValidateCronScriptPathDeadPin:
+    """Unit-level dead-pin guard for the API-boundary validator."""
+
+    def test_rejects_nonexistent_script(self, cron_env):
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        err = _validate_cron_script_path("does_not_exist.py")
+        assert err is not None
+        low = err.lower()
+        assert "not found" in low or "dead-pin" in low
+
+    def test_rejects_nonexistent_subdir_script(self, cron_env):
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        err = _validate_cron_script_path("monitors/vanished.py")
+        assert err is not None
+
+    def test_allows_existing_script(self, cron_env):
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        (cron_env / "scripts" / "exists.py").write_text('print("ok")\n')
+        assert _validate_cron_script_path("exists.py") is None
+
+    def test_empty_script_is_none(self, cron_env):
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        assert _validate_cron_script_path("") is None
+        assert _validate_cron_script_path(None) is None
+        assert _validate_cron_script_path("   ") is None
+
+
+class TestRunJobDeadPinFireTime:
+    """Fire-time missing script alerts #critical-alerts and auto-pauses only dead pins."""
+
+    def _make_job(self, cron_env, monkeypatch, script, no_agent=True):
+        import json as _json
+        from tools.cronjob_tools import cronjob
+
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        # Create time uses the enable-time guard, so seed an existing script.
+        (cron_env / "scripts" / "seed.py").write_text('print("ok")\n')
+        created = _json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            prompt="probe",
+            script="seed.py",
+            no_agent=no_agent,
+        ))
+        job_id = created["job_id"]
+        # Now point the job at the (possibly missing) script directly in the
+        # persisted store, bypassing the enable-time guard, and read it back.
+        from cron.jobs import get_job, update_job
+
+        update_job(job_id, {"script": script, "no_agent": no_agent})
+        job = get_job(job_id)
+        assert job is not None
+        return job
+
+    def test_missing_script_autopauses_no_agent(self, cron_env, monkeypatch):
+        from cron.jobs import get_job
+        from cron.scheduler import run_job
+
+        job = self._make_job(cron_env, monkeypatch, "vanished.py", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert err is not None
+        assert "Script not found" in err
+
+        paused = get_job(job_id)
+        assert paused is not None
+        assert paused["enabled"] is False
+        assert paused["state"] == "paused"
+        assert paused["paused_reason"].startswith("dead-pin: script not found:")
+        # Schedule is untouched — only the broken job is paused.
+        assert paused["schedule"] is not None
+
+    def test_missing_script_delivers_alert_no_agent(self, cron_env, monkeypatch):
+        import cron.scheduler as sched_mod
+        from cron.jobs import get_job
+        from cron.scheduler import run_job
+
+        alerts = []
+        monkeypatch.setattr(sched_mod, "_alert_critical_alerts", alerts.append)
+
+        job = self._make_job(cron_env, monkeypatch, "vanished.py", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert err is not None
+        assert "Script not found" in err
+
+        assert alerts, "expected a #critical-alerts ping for a missing script"
+        assert any("dead-pin" in a.lower() for a in alerts)
+        paused = get_job(job_id)
+        assert paused is not None
+        assert paused["enabled"] is False
+        assert paused["paused_reason"].startswith("dead-pin: script not found:")
+
+    def test_transient_failure_no_deadpin_alert(self, cron_env, monkeypatch):
+        import cron.scheduler as sched_mod
+        from cron.jobs import get_job
+        from cron.scheduler import run_job
+
+        alerts = []
+        monkeypatch.setattr(sched_mod, "_alert_critical_alerts", alerts.append)
+
+        script = cron_env / "scripts" / "boom.py"
+        script.write_text("import sys\nsys.exit(3)\n")
+        job = self._make_job(cron_env, monkeypatch, "boom.py", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert err is not None
+        assert "exited with code 3" in err
+
+        assert not any("dead-pin" in a.lower() for a in alerts), (
+            "transient failure must not trigger the dead-pin alert"
+        )
+        still_enabled = get_job(job_id)
+        assert still_enabled is not None
+        assert still_enabled["enabled"] is True
+        assert still_enabled["state"] != "paused"
+
+    def test_not_a_file_autopauses(self, cron_env, monkeypatch):
+        from cron.jobs import get_job
+        from cron.scheduler import run_job
+
+        (cron_env / "scripts" / "adir").mkdir()
+        job = self._make_job(cron_env, monkeypatch, "adir", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert err is not None
+        assert "not a file" in err
+
+        paused = get_job(job_id)
+        assert paused is not None
+        assert paused["enabled"] is False
+        assert paused["state"] == "paused"
+
+    def test_transient_failure_does_not_autopause(self, cron_env, monkeypatch):
+        from cron.jobs import get_job
+        from cron.scheduler import run_job
+
+        script = cron_env / "scripts" / "boom.py"
+        script.write_text("import sys\nsys.exit(3)\n")
+        job = self._make_job(cron_env, monkeypatch, "boom.py", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert err is not None
+        assert "exited with code 3" in err
+
+        still_enabled = get_job(job_id)
+        assert still_enabled is not None
+        assert still_enabled["state"] != "paused"
+        assert still_enabled["enabled"] is True
+
+    def test_missing_script_autopauses_llm_path(self, cron_env, monkeypatch):
+        from cron.jobs import get_job
+        from cron.scheduler import run_job
+
+        job = self._make_job(cron_env, monkeypatch, "gone.py", no_agent=False)
+        job_id = job["id"]
+
+        # LLM path may fail downstream (no model), but the dead-pin guard must
+        # have already fired during the pre-check script run.
+        try:
+            run_job(job)
+        except Exception:
+            pass
+
+        paused = get_job(job_id)
+        assert paused is not None
+        assert paused["enabled"] is False
+        assert paused["state"] == "paused"
+        assert paused["paused_reason"].startswith("dead-pin: script not found:")
 
 
 class TestRunJobEnvVarCleanup:

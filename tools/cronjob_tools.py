@@ -561,6 +561,23 @@ def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
             f"Script path escapes the scripts directory via traversal: {raw!r}"
         )
 
+    # Dead-pin guard: the resolved script file must actually exist on disk.
+    # A job pointing at a non-existent script silently fails to fire forever
+    # (the incident class this closes). Reject at enable/update time so the
+    # operator learns about the missing file immediately, not days later.
+    # NOTE: this deliberately checks only the job-time path; the scheduler
+    # *also* re-checks at fire time (files can be deleted after creation), so
+    # a missing script is caught whether it vanished before or after enable.
+    resolved = scripts_dir / raw
+    if not resolved.exists() or not resolved.is_file():
+        return (
+            f"Script file not found: {raw!r}. "
+            f"Place the script in ~/.hermes/scripts/ (resolved: {resolved}) "
+            f"before creating/updating the job. "
+            f"A dead-pin (missing script) is rejected so the job does not "
+            f"fail silently at fire time."
+        )
+
     return None
 
 
