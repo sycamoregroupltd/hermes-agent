@@ -59,12 +59,12 @@ VALID_VERDICTS = {"APPROVE", "APPROVED", "CHANGES_REQUESTED"}
 # gate detector above. Genuine affirmative verdicts ("REVIEW_VERDICT=APPROVED",
 # "Target: t_... REVIEW_VERDICT=APPROVED") keep their noun and still route.
 _VERDICT_NEGATION_CUES = (
-    r"no|not|without|do\s+not|don'?t|never|none|neither|absent|missing|"
-    r"unissued|did\s+not|didn'?t|wasn'?t|weren'?t|isn'?t|aren'?t|"
-    r"no[- ]?verdict|no[- ]?review[- ]?verdict|void|voided|lack\s+of|"
-    r"decline[ds]?|withdrawn|not\s+post|do\s+not\s+post|never\s+post"
+    r"\bno\b|\bnot\b|\bwithout\b|\bdo\s+not\b|\bdon'?t\b|\bnever\b|\bnone\b|\bneither\b|\babsent\b|\bmissing\b|"
+    r"\bunissued\b|\bdid\s+not\b|\bdidn'?t\b|\bwasn'?t\b|\bweren'?t\b|\bisn'?t\b|\baren'?t\b|"
+    r"\bno[- ]?verdict\b|\bno[- ]?review[- ]?verdict\b|\bvoid\b|\bvoided\b|\black\s+of\b|"
+    r"\bdecline[ds]?\b|\bwithdrawn\b|\bnot\s+post\b|\bdo\s+not\s+post\b|\bnever\s+post\b"
 )
-VERDICT_NEGATION_CUE_RE = re.compile(r"(?:\b" + _VERDICT_NEGATION_CUES + r"\b)", re.I)
+VERDICT_NEGATION_CUE_RE = re.compile(r"(?:" + _VERDICT_NEGATION_CUES + r")", re.I)
 _VERDICT_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?\n]")
 # Trailing "..." / "/" / "," are verdict-list continuations, not negation scope
 # ends, so the sentence boundary for a verdict is the next real sentence break.
@@ -251,10 +251,6 @@ def operator_gate_terms(
 
 SAFE_DELIVERABLE_RE = re.compile(
     r"\b(source|code|patch|diff|docs?|documentation|spec|test(?:s|ing)?|fixture|lint|typecheck|unit|build)\b",
-    re.I,
-)
-READ_ONLY_ASSERTION_RE = re.compile(
-    r"\b(read[-_ ]?(?:only|only)|paper[-_ ]?only|no[-_ ]?(?:db\s+write|engine\s+mutation|production\s+deploy|cron\s+change|credential\s+(?:rotat|change|creat)|insert|update|delete|alter|drop(?:\s+table)?))\b",
     re.I,
 )
 REVIEW_REQUIRED_RE = re.compile(r"\breview[-_ ]required\b", re.I)
@@ -633,13 +629,6 @@ def classify_scope(candidate: Candidate, verdict: str | None) -> tuple[str, str]
         candidate.title, candidate.body, block_reason=block_reason, block_kind=block_kind
     )
     if forbidden:
-        task_text = "\n".join([candidate.title or "", candidate.body or ""])
-        if READ_ONLY_ASSERTION_RE.search(task_text):
-            return (
-                "source_docs_spec_test_only",
-                f"read-only/paper-only/no-write assertion overrides bare lexical gate term "
-                f"{forbidden.group(0)!r} on title/body",
-            )
         return "operator_gated", f"operator-gated term: {forbidden.group(0)!r}"
     if verdict == "REJECT":
         return "standard", "standard scope (no operator-gated keywords)"
