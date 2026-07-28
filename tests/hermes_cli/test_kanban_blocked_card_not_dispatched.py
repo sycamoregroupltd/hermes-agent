@@ -15,6 +15,7 @@ Acceptance:
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -479,8 +480,429 @@ def test_dispatch_once_skips_blocked_card_at_spawn_time(
             "No block_gate_audit event was created"
         )
 
+        # Verify block_kind is included in the audit payload
+        payload = json.loads(audit_rows[0]["payload"])
+        assert "block_kind" in payload, (
+            f"block_gate_audit payload must include block_kind; "
+            f"got {audit_rows[0]['payload']!r}"
+        )
+
         # Card appears in skipped_block_gate as final evidence
         assert tid in result.skipped_block_gate, (
             f"Card must be in skipped_block_gate; "
             f"got {result.skipped_block_gate!r}"
+        )
+
+
+# ── gap coverage: explicit event emission ──────────────────────────────
+
+
+def test_create_task_blocked_emits_blocked_event(
+    kanban_home: Path,
+) -> None:
+    """``create_task`` with ``initial_status='blocked'`` must emit a
+    ``'blocked'`` event in ``task_events`` — tests the fix directly at the
+    source rather than through downstream effects.
+
+    Without this event, ``_has_sticky_block()`` returns ``False`` and the
+    dispatcher would promote the card to ``ready`` on the next tick. This is
+    the root-cause test for the P1 defect (t_fc1fdf31).
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="blocked-event-test",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        # Verify a 'blocked' event was written
+        rows = conn.execute(
+            "SELECT kind, payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'blocked'",
+            (tid,),
+        ).fetchall()
+        assert len(rows) >= 1, (
+            f"create_task with initial_status='blocked' must emit "
+            f"a 'blocked' event; got {len(rows)} rows"
+        )
+        # Verify the payload mentions "initial_status"
+        payload = rows[0]["payload"]
+        assert payload is not None and "initial_status" in payload, (
+            f"blocked event payload should indicate 'initial_status' as source; "
+            f"got {payload!r}"
+        )
+
+
+# ── gap coverage: mixed queue (blocked + ready) ────────────────────────
+
+
+def test_mixed_blocked_and_ready_cards_in_single_dispatch_tick(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """When both a blocked card and a ready card are in the dispatch queue,
+    only the ready card must be spawned — the blocked card must not prevent
+    the ready one from being dispatched, nor be claimed itself.
+    """
+    with kb.connect() as conn:
+        blocked_id = kb.create_task(
+            conn,
+            title="must-stay-blocked",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        ready_id = kb.create_task(
+            conn,
+            title="should-be-dispatched",
+            assignee="test-profile",
+        )
+        assert kb.get_task(conn, blocked_id).status == "blocked"
+        assert kb.get_task(conn, ready_id).status == "ready"
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+
+        # Blocked card must stay blocked and not be spawned
+        assert kb.get_task(conn, blocked_id).status == "blocked", (
+            "Blocked card must stay blocked in mixed queue"
+        )
+        spawned_ids = [s[0] for s in result.spawned]
+        assert blocked_id not in spawned_ids, (
+            f"Blocked card must not be spawned in mixed queue; "
+            f"got spawned={result.spawned!r}"
+        )
+        assert blocked_id not in spy.calls, (
+            "spawn_fn must not be called for blocked card in mixed queue"
+        )
+
+        # Ready card must be dispatched
+        assert ready_id in spawned_ids, (
+            f"Ready card must be spawned in mixed queue; "
+            f"got spawned={result.spawned!r}"
+        )
+        assert ready_id in spy.calls, (
+            "spawn_fn must be called for the ready card in mixed queue"
+        )
+        assert kb.get_task(conn, ready_id).status == "running", (
+            "Ready card must transition to 'running' after dispatch"
+        )
+
+
+# ── gap coverage: multiple dispatch ticks ──────────────────────────────
+
+
+def test_blocked_card_stays_blocked_across_multiple_ticks(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A blocked card must remain blocked after N consecutive
+    ``dispatch_once`` ticks — verifies no gradual state leakage or
+    tick-boundary edge case can eventually claim it.
+    """
+    N_TICKS = 5
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="multi-tick-blocked",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        assert kb.get_task(conn, tid).status == "blocked"
+
+        spy = _spy_spawn()
+        for tick in range(N_TICKS):
+            result = kb.dispatch_once(conn, spawn_fn=spy)
+            task = kb.get_task(conn, tid)
+            assert task.status == "blocked", (
+                f"Blocked card changed to {task.status!r} after "
+                f"tick {tick + 1}/{N_TICKS}"
+            )
+            assert len(result.spawned) == 0, (
+                f"dispatch_once spawned something on tick {tick + 1}: "
+                f"{result.spawned!r}"
+            )
+        assert len(spy.calls) == 0, (
+            f"spawn_fn was called {len(spy.calls)} times over "
+            f"{N_TICKS} ticks for a blocked card"
+        )
+
+
+# ── gap coverage: sticky block with done parent ───────────────────────
+
+
+def test_sticky_blocked_card_with_done_parent_stays_blocked(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A card that is sticky-blocked (via ``block_task`` with a non-dependency
+    kind) must stay blocked even when all its parents are done. Only the
+    ``dependency`` block kind should auto-recover via ``todo`` promotion.
+    """
+    with kb.connect() as conn:
+        parent_id = kb.create_task(
+            conn, title="parent", assignee="parent-profile",
+        )
+        kb.complete_task(conn, parent_id, result="done")
+        assert kb.get_task(conn, parent_id).status == "done"
+
+        child_id = kb.create_task(
+            conn,
+            title="child-needs_input",
+            assignee="test-profile",
+            parents=[parent_id],
+        )
+        # Child is ready (parent done).
+        assert kb.get_task(conn, child_id).status == "ready"
+
+        # Block with needs_input — must land in 'blocked', not 'todo'.
+        kb.block_task(
+            conn, child_id, reason="needs human review", kind="needs_input",
+        )
+        assert kb.get_task(conn, child_id).status == "blocked", (
+            "needs_input block must route to 'blocked', not 'todo'"
+        )
+
+        # recompute_ready should NOT promote it — sticky block overrides
+        # parent-done logic.
+        promoted = kb.recompute_ready(conn)
+        assert promoted == 0, (
+            "recompute_ready must not promote a needs_input-blocked card "
+            "even when parents are done"
+        )
+        assert kb.get_task(conn, child_id).status == "blocked"
+
+        # Full dispatch tick must also refuse.
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+        assert kb.get_task(conn, child_id).status == "blocked"
+        assert len(result.spawned) == 0
+        assert child_id not in spy.calls
+
+
+# ── blocked_dispatch_attempt audit event ───────────────────────────────
+
+
+def test_blocked_card_records_blocked_dispatch_attempt_event(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A card created with ``initial_status='blocked'`` must produce a
+    ``blocked_dispatch_attempt`` event after ``dispatch_once`` runs, proving
+    that the dispatcher audited the blocked card (even though the SQL filter
+    prevents it from ever reaching the spawn loop).
+
+    Acceptance:
+      - Card stays blocked and unclaimed after dispatch_once.
+      - A ``blocked_dispatch_attempt`` event exists in ``task_events``.
+      - The event payload includes origin, task_id, block_kind, and gate.
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="blocked-dispatch-attempt-audit-test",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        assert kb.get_task(conn, tid).status == "blocked"
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+
+        # (a) Card stays blocked — not claimed
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked", (
+            f"Blocked card must stay blocked; got {task.status!r}"
+        )
+        assert task.claim_lock is None, (
+            f"Blocked card must not have a claim lock; "
+            f"got {task.claim_lock!r}"
+        )
+        assert len(result.spawned) == 0
+
+        # (b) A blocked_dispatch_attempt event exists
+        rows = conn.execute(
+            "SELECT payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'blocked_dispatch_attempt'",
+            (tid,),
+        ).fetchall()
+        assert len(rows) >= 1, (
+            f"Expected at least 1 'blocked_dispatch_attempt' event; "
+            f"got {len(rows)}"
+        )
+
+        # (c) Payload includes origin, task_id, block_kind, and gate fields
+        payload = rows[0]["payload"]
+        assert payload is not None, "blocked_dispatch_attempt payload must not be None"
+        pl = json.loads(payload)
+        assert "task_id" in pl, f"payload missing task_id: {pl}"
+        assert pl["task_id"] == tid, f"payload task_id mismatch: {pl['task_id']} != {tid}"
+        assert "block_kind" in pl, f"payload missing block_kind: {pl}"
+        assert "gate" in pl, f"payload missing gate field: {pl}"
+
+
+def test_ready_card_with_sticky_block_records_blocked_dispatch_attempt(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A ``ready``-status card with a sticky block (a ``blocked`` event but
+    status still ``ready``) must produce a ``blocked_dispatch_attempt`` event
+    from the block-gate audit in ``_dispatch_once_locked``.
+
+    Tests the second code path: when a card passes the SQL filter (status='ready')
+    but has a sticky block, the dispatcher must emit ``blocked_dispatch_attempt``
+    alongside ``block_gate_audit``.
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="ready-with-sticky-block-audit-test",
+            assignee="test-profile",
+        )
+        # Card starts as 'ready' (no parents, valid assignee).
+        assert kb.get_task(conn, tid).status == "ready"
+
+        # Inject a 'blocked' event to create a sticky block.
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) "
+            "VALUES (?, 'blocked', ?, ?)",
+            (tid, '{"origin":"test-injection","reason":"blocked"}', now),
+        )
+        conn.commit()
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+
+        # (a) Card was NOT claimed/spawned
+        post_task = kb.get_task(conn, tid)
+        assert post_task.claim_lock is None, (
+            f"Sticky-blocked card was claimed despite block; "
+            f"claim_lock={post_task.claim_lock!r}"
+        )
+        assert tid not in result.spawned, (
+            f"Sticky-blocked card was spawned despite block"
+        )
+
+        # (b) Both block_gate_audit AND blocked_dispatch_attempt events exist
+        audit_rows = conn.execute(
+            "SELECT kind, payload FROM task_events "
+            "WHERE task_id = ? AND kind IN ('block_gate_audit', 'blocked_dispatch_attempt') "
+            "ORDER BY id",
+            (tid,),
+        ).fetchall()
+        audit_kinds = [r["kind"] for r in audit_rows]
+
+        assert "block_gate_audit" in audit_kinds, (
+            f"Missing block_gate_audit event; got kinds={audit_kinds}"
+        )
+        assert "blocked_dispatch_attempt" in audit_kinds, (
+            f"Missing blocked_dispatch_attempt event; got kinds={audit_kinds}"
+        )
+
+        # (c) Verify the blocked_dispatch_attempt payload includes gate field
+        bda_rows = [r for r in audit_rows if r["kind"] == "blocked_dispatch_attempt"]
+        assert len(bda_rows) >= 1
+        payload = bda_rows[0]["payload"]
+        assert payload is not None
+        pl = json.loads(payload)
+        assert "gate" in pl, f"blocked_dispatch_attempt payload missing gate: {pl}"
+        assert "block_kind" in pl, f"blocked_dispatch_attempt payload missing block_kind: {pl}"
+        assert "task_id" in pl
+
+
+# ── stress test: high-frequency dispatch loop ─────────────────────────
+
+
+def test_stress_loop_100_ticks_blocked_card_never_claimed(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """High-frequency stress test: run 100 dispatch ticks with ready cards
+    interleaved.  The blocked card must NEVER be claimed across any tick.
+
+    This is a stronger version of the 5-tick test (above).  It stresses the
+    dispatcher loop with real spawn work on interleaved ready cards to
+    exercise the SQL-filter path, the block-gate audit, and the
+    sticky-block guard over many iterations.
+    """
+    N_TICKS = 100
+    READY_COUNT = 5
+    with kb.connect() as conn:
+        # Create one blocked card — the invariant under test.
+        blocked_id = kb.create_task(
+            conn,
+            title="stress-blocked-must-never-dispatch",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        assert kb.get_task(conn, blocked_id).status == "blocked"
+
+        # Create a pool of ready cards that the dispatcher will pick up,
+        # exercising the full dispatch pipeline on each tick.
+        ready_ids: list[str] = []
+        for i in range(READY_COUNT):
+            tid = kb.create_task(
+                conn,
+                title=f"stress-ready-card-{i}",
+                assignee="test-profile",
+            )
+            ready_ids.append(tid)
+            assert kb.get_task(conn, tid).status == "ready"
+
+        # Track which ready cards have been dispatched (they get consumed
+        # on first spawn, then emit no more).
+        dispatched_ready: set[str] = set()
+
+        spy = _spy_spawn()
+        for tick in range(N_TICKS):
+            result = kb.dispatch_once(conn, spawn_fn=spy)
+
+            # (a) Blocked card must NEVER be claimed
+            blocked_task = kb.get_task(conn, blocked_id)
+            assert blocked_task.status == "blocked", (
+                f"Stress test: blocked card changed to "
+                f"{blocked_task.status!r} on tick {tick}/{N_TICKS}"
+            )
+            assert blocked_task.claim_lock is None, (
+                f"Stress test: blocked card acquired claim_lock on "
+                f"tick {tick}/{N_TICKS}: {blocked_task.claim_lock!r}"
+            )
+            assert blocked_id not in spy.calls, (
+                f"spawn_fn called for blocked card on tick {tick}/{N_TICKS}"
+            )
+
+            # (b) Every spawned task must be a ready card, not the blocked one
+            spawned_ids = [s[0] for s in result.spawned]
+            for sid in spawned_ids:
+                assert sid in ready_ids, (
+                    f"Tick {tick}: spawned unexpected id {sid!r} "
+                    f"(expect ready cards only)"
+                )
+                dispatched_ready.add(sid)
+
+            # (c) The blocked_dispatch_attempt event must be emitted each tick
+            # for the blocked card.
+            bda_rows = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM task_events "
+                "WHERE task_id = ? AND kind = 'blocked_dispatch_attempt'",
+                (blocked_id,),
+            ).fetchone()
+            assert bda_rows and bda_rows["cnt"] > tick, (
+                f"Expected at least {tick + 1} blocked_dispatch_attempt "
+                f"events after tick {tick}, got {bda_rows['cnt']}"
+            )
+
+        # After all ticks, blocked card must still be pristine
+        final_task = kb.get_task(conn, blocked_id)
+        assert final_task.status == "blocked"
+        assert final_task.claim_lock is None
+        assert blocked_id not in spy.calls
+
+        # At least 1 ready card should have been dispatched (the quick ones
+        # that go ready->running immediately).  If none were dispatched the
+        # test didn't exercise the dispatcher properly.
+        assert len(dispatched_ready) >= 1, (
+            "Stress test did not exercise any ready-card dispatch — "
+            "the dispatcher may not have found the ready cards. "
+            f"spy.calls={spy.calls!r}"
         )
