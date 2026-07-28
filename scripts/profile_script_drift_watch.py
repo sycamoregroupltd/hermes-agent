@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # CANONICAL SOURCE — do not edit profile-local copies. See the goal-orchestrator-operating-runbook for the canonical-copy rule.
-"""Alert when enabled profile-local cron scripts drift from canonical central scripts.
+"""Alert when enabled profile-local cron scripts drift from canonical central scripts,
+and detect duplicate mutation scripts across profiles.
 
 Canonical-copy rule: scheduler.py resolves cron --script paths under the running
 profile's $HERMES_HOME/scripts directory. Enabled profile-local jobs that are
@@ -46,6 +47,30 @@ DRIFT_EXCLUSIONS: set[tuple[str, str]] = {
     # — this is a correct fork, not a drift failure.
     ("jarvis", "pit-monitor.sh"),
 }
+
+# Set of script names known to mutate state (writes to kanban, database,
+# trading positions, service restarts, file mutations). When two enabled cron
+# jobs with distinct job_ids reference the same mutation script, it risks
+# duplicate writes, race conditions, or double-execution. Read-only scripts
+# (monitors, probes, validators) are excluded — duplicates of those are
+# wasteful but not dangerous. Add scripts here only when confirmed to write
+# state that a duplicate would corrupt.
+MUTATION_SCRIPTS: set[str] = {
+    "verdict_router.py",                 # kanban task create/complete/block
+    "nfp_safety_mode.sh",                # enables/disables trading strategies
+    "msb-weekly-rebalance.sh",           # executes portfolio rebalance
+    "macro-regime-change-monitor.py",    # creates kanban alert tasks
+    "sycode_clean_epoch_ledger.py",      # deletes/archives DB records
+    "arena-insert-liveness-cron-runner.sh",  # inserts liveness probe data to DB
+    "sync-pattern-win-rate-registry.sh", # writes to win-rate registry
+    "calibration_cron.sh",               # runs calibration that writes state
+    "sycode_edge_emergence_scan.py",     # may create kanban investigation tasks
+}
+
+# DORMANT_SHADOW_RISK_DELIVER — delivery target for the dormant-shadow-risk
+# report (paused jobs that reference mutation scripts). Distinct from the
+# alert-format deliver so an operator can route it to a quieter channel.
+DORMANT_SHADOW_RISK_DELIVER = "discord:#fleet-reports"
 
 
 def sha256(path: Path) -> str:
@@ -195,8 +220,94 @@ def inspect_kanban_dupe_hook_coverage(root: Path) -> list[dict]:
     return alerts
 
 
-def inspect(root: Path) -> list[dict]:
-    """Return alert rows for enabled jobs whose profile scripts are unsafe forks.
+def inspect_duplicate_mutation_scripts(root: Path) -> tuple[list[dict], list[dict]]:
+    """Return (duplicate_alerts, dormant_shadow_risk_alerts).
+
+    duplicate_alerts: enabled jobs referencing a MUTATION_SCRIPTS entry with
+    2+ distinct job_ids (cross-profile mirrors with the same job_id are
+    intentional and not flagged as duplicates).
+
+    dormant_shadow_risk_alerts: paused jobs that reference a mutation script.
+    These represent dormant state-mutation capacity that could be accidentally
+    resumed and cause double-execution with the already-active job.
+    """
+    duplicate_alerts: list[dict] = []
+    dormant_alerts: list[dict] = []
+    profiles = root / "profiles"
+    if not profiles.exists():
+        return duplicate_alerts, dormant_alerts
+
+    # Collect all (script_name, job_id, profile, job_name, enabled, paused)
+    script_entries: dict[str, list[dict]] = {}
+    for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+        profile = jobs_path.parents[1].name
+        for job in load_jobs(jobs_path):
+            if "_load_error" in job:
+                continue
+            script = job.get("script")
+            if not script or script not in MUTATION_SCRIPTS:
+                continue
+            entry = {
+                "profile": profile,
+                "job_id": job.get("id", "?"),
+                "job_name": job.get("name", "?"),
+                "enabled": bool(job.get("enabled", True)),
+                "paused": job.get("state") == "paused" or bool(job.get("paused_at")),
+            }
+            script_entries.setdefault(script, []).append(entry)
+
+    # Active duplicate check: mutation scripts with 2+ enabled jobs
+    # that have distinct job_ids (same job_id = cross-profile mirror, safe).
+    for script, entries in sorted(script_entries.items()):
+        active = [e for e in entries if e["enabled"] and not e["paused"]]
+        distinct_ids = set(e["job_id"] for e in active)
+        if len(distinct_ids) >= 2:
+            duplicate_alerts.append({
+                "type": "DUPLICATE_MUTATION_SCRIPT",
+                "script": script,
+                "count": len(active),
+                "distinct_job_ids": len(distinct_ids),
+                "jobs": [
+                    {"profile": e["profile"], "job_id": e["job_id"], "job_name": e["job_name"]}
+                    for e in sorted(active, key=lambda x: (x["profile"], x["job_name"]))
+                ],
+                "task": TASK_ID,
+            })
+
+    # Dormant shadow risk: paused jobs pointing to any mutation script
+    for script, entries in sorted(script_entries.items()):
+        paused = [e for e in entries if e["paused"]]
+        if not paused:
+            continue
+        active = [e for e in entries if e["enabled"] and not e["paused"]]
+        dormant_alerts.append({
+            "type": "DORMANT_SHADOW_RISK",
+            "script": script,
+            "paused_count": len(paused),
+            "active_count": len(active),
+            "paused_jobs": [
+                {"profile": e["profile"], "job_id": e["job_id"], "job_name": e["job_name"]}
+                for e in sorted(paused, key=lambda x: (x["profile"], x["job_name"]))
+            ],
+            "active_jobs": [
+                {"profile": e["profile"], "job_id": e["job_id"], "job_name": e["job_name"]}
+                for e in sorted(active, key=lambda x: (x["profile"], x["job_name"]))
+            ],
+            "task": TASK_ID,
+        })
+
+    return duplicate_alerts, dormant_alerts
+
+
+def inspect(root: Path) -> tuple[list[dict], list[dict]]:
+    """Return (drift_and_dupe_alerts, dormant_shadow_risk_alerts).
+
+    drift_and_dupe_alerts: script-fork-drift, kanban-dupe-hook-coverage, and
+    duplicate-mutation-script alerts — actionable items needing operator attention.
+
+    dormant_shadow_risk_alerts: paused jobs referencing mutation scripts that
+    represent dormant capacity which would cause double-execution if resumed
+    alongside an already-active instance of the same script.
 
     Intentional profile-local scripts are skipped when no central counterpart
     exists; the reconciliation map only covers rows where a central counterpart
@@ -208,7 +319,7 @@ def inspect(root: Path) -> list[dict]:
     profiles = root / "profiles"
     central_scripts = root / "scripts"
     if not profiles.exists() or not central_scripts.exists():
-        return [{"type": "ROOT_MISSING", "root": str(root)}]
+        return [{"type": "ROOT_MISSING", "root": str(root)}], []
     alerts.extend(inspect_kanban_dupe_hook_coverage(root))
     for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
         profile_home = jobs_path.parents[1]
@@ -271,7 +382,10 @@ def inspect(root: Path) -> list[dict]:
                 "task": TASK_ID,
                 "source_map_task": SOURCE_MAP_TASK_ID,
             })
-    return alerts
+    # Add duplicate-mutation-script checks
+    dupe_alerts, dormant_alerts = inspect_duplicate_mutation_scripts(root)
+    alerts.extend(dupe_alerts)
+    return alerts, dormant_alerts
 
 
 def format_alerts(alerts: list[dict], deliver: str = DEFAULT_DELIVER) -> str:
@@ -288,6 +402,29 @@ def format_alerts(alerts: list[dict], deliver: str = DEFAULT_DELIVER) -> str:
         lines.append(json.dumps(item, sort_keys=True))
     if len(alerts) > MAX_ALERT_ROWS:
         lines.append(f"... truncated {len(alerts) - MAX_ALERT_ROWS} additional alerts")
+    return "\n".join(lines) + "\n"
+
+
+def format_dormant_shadow_risk(alerts: list[dict]) -> str:
+    """Format the dormant shadow risk report as a separate output section.
+
+    Returns empty string if no dormant risks to report.
+    """
+    if not alerts:
+        return ""
+    lines = [
+        "===== DORMANT SHADOW RISK REPORT =====",
+        f"task={TASK_ID}",
+        f"deliver={DORMANT_SHADOW_RISK_DELIVER}",
+        "Paused jobs referencing mutation scripts — resuming would risk",
+        "double-execution alongside the active instance(s) below.",
+        f"count={len(alerts)}",
+    ]
+    for item in alerts[:MAX_ALERT_ROWS]:
+        lines.append(json.dumps(item, sort_keys=True))
+    if len(alerts) > MAX_ALERT_ROWS:
+        lines.append(f"... truncated {len(alerts) - MAX_ALERT_ROWS} additional alerts")
+    lines.append("===== END DORMANT SHADOW RISK REPORT =====")
     return "\n".join(lines) + "\n"
 
 
@@ -340,12 +477,22 @@ def make_fixture_root() -> Path:
 
     write(profile / "local_only.py", "print('intentional profile-local')\n")
 
+    # Mutation script — placed in both central and profile so it doesn't
+    # trigger PROFILE_SCRIPT_MISSING path in the drift watch
+    write(central / "macro-regime-change-monitor.py", "print('mutation script fixture')\n")
+    write(profile / "macro-regime-change-monitor.py", "print('mutation script fixture')\n")
+
     jobs = {
         "jobs": [
             {"id": "fixture-exact", "name": "fixture-exact", "enabled": True, "script": "ok_exact.py"},
             {"id": "fixture-shim", "name": "fixture-shim", "enabled": True, "script": "ok_shim.py"},
             {"id": "fixture-drift", "name": "fixture-drift", "enabled": True, "script": "drift.py"},
             {"id": "fixture-local", "name": "fixture-local", "enabled": True, "script": "local_only.py"},
+            # Same mutation script, different job_id → should trigger DUPLICATE_MUTATION_SCRIPT
+            {"id": "fixture-mutation-a", "name": "fixture-mutation-a", "enabled": True, "script": "macro-regime-change-monitor.py"},
+            {"id": "fixture-mutation-b", "name": "fixture-mutation-b", "enabled": True, "script": "macro-regime-change-monitor.py"},
+            # Paused mutation script → should trigger DORMANT_SHADOW_RISK
+            {"id": "fixture-mutation-paused", "name": "fixture-mutation-paused", "enabled": False, "script": "macro-regime-change-monitor.py", "state": "paused", "paused_at": "2026-07-28T10:00:00Z"},
         ]
     }
     write(cron / "jobs.json", json.dumps(jobs, indent=2) + "\n")
@@ -355,15 +502,42 @@ def make_fixture_root() -> Path:
 def run_fixture() -> int:
     root = make_fixture_root()
     try:
-        alerts = inspect(root)
+        alerts, dormant = inspect(root)
         output = format_alerts(alerts)
-        sys.stdout.write(output)
-        if len(alerts) != 1:
-            sys.stderr.write(f"fixture expected 1 alert, got {len(alerts)} in {root}\n")
+        if output:
+            sys.stdout.write(output)
+        dormant_output = format_dormant_shadow_risk(dormant)
+        if dormant_output:
+            sys.stdout.write(dormant_output)
+
+        # Expect: 1 SCRIPT_FORK_DRIFT (fixture-drift) +
+        #         1 DUPLICATE_MUTATION_SCRIPT (macro-regime-change-monitor.py 2x)
+        #         1 DORMANT_SHADOW_RISK (fixture-mutation-paused)
+        if len(alerts) != 2:
+            sys.stderr.write(f"fixture expected 2 drift+dupe alerts, got {len(alerts)} in {root}\n")
             return 1
-        alert = alerts[0]
-        if alert.get("job_id") != "fixture-drift" or "local_only" in output:
-            sys.stderr.write(f"fixture alert mismatch in {root}: {json.dumps(alert, sort_keys=True)}\n")
+        if len(dormant) != 1:
+            sys.stderr.write(f"fixture expected 1 dormant shadow risk, got {len(dormant)} in {root}\n")
+            return 1
+
+        drift = [a for a in alerts if a.get("type") == "SCRIPT_FORK_DRIFT"]
+        dupe = [a for a in alerts if a.get("type") == "DUPLICATE_MUTATION_SCRIPT"]
+        if len(drift) != 1 or len(dupe) != 1:
+            sys.stderr.write(
+                f"fixture type mismatch: drift={len(drift)} dupe={len(dupe)} in {root}\n"
+            )
+            return 1
+        drift_alert = drift[0]
+        dupe_alert = dupe[0]
+        if drift_alert.get("job_id") != "fixture-drift" or "local_only" in (output or ""):
+            sys.stderr.write(f"fixture drift mismatch in {root}: {json.dumps(drift_alert, sort_keys=True)}\n")
+            return 1
+        if dupe_alert.get("script") != "macro-regime-change-monitor.py":
+            sys.stderr.write(f"fixture dupe script mismatch: {json.dumps(dupe_alert, sort_keys=True)}\n")
+            return 1
+        dormant_alert = dormant[0]
+        if dormant_alert.get("type") != "DORMANT_SHADOW_RISK":
+            sys.stderr.write(f"fixture dormant type mismatch: {json.dumps(dormant_alert, sort_keys=True)}\n")
             return 1
         return 0
     finally:
@@ -384,13 +558,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.fixture:
         return run_fixture()
     root = Path(args.root).expanduser()
-    alerts = inspect(root)
+    alerts, dormant = inspect(root)
     if args.json:
-        sys.stdout.write(json.dumps(alerts, indent=2, sort_keys=True) + "\n")
+        # JSON mode: emit both in one payload with sections
+        import json as jmod
+        payload = {"drift_and_dupe_alerts": alerts, "dormant_shadow_risk": dormant}
+        sys.stdout.write(jmod.dumps(payload, indent=2, sort_keys=True) + "\n")
     else:
         output = format_alerts(alerts, args.deliver)
         if output:
             sys.stdout.write(output)
+        dormant_output = format_dormant_shadow_risk(dormant)
+        if dormant_output:
+            sys.stdout.write(dormant_output)
     return 0
 
 
