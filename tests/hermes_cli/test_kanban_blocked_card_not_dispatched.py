@@ -809,3 +809,101 @@ def test_ready_card_with_sticky_block_records_blocked_dispatch_attempt(
         assert "gate" in pl, f"blocked_dispatch_attempt payload missing gate: {pl}"
         assert "block_kind" in pl, f"blocked_dispatch_attempt payload missing block_kind: {pl}"
         assert "task_id" in pl
+
+
+# ── stress test: high-frequency dispatch loop ─────────────────────────
+
+
+def test_stress_loop_100_ticks_blocked_card_never_claimed(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """High-frequency stress test: run 100 dispatch ticks with ready cards
+    interleaved.  The blocked card must NEVER be claimed across any tick.
+
+    This is a stronger version of the 5-tick test (above).  It stresses the
+    dispatcher loop with real spawn work on interleaved ready cards to
+    exercise the SQL-filter path, the block-gate audit, and the
+    sticky-block guard over many iterations.
+    """
+    N_TICKS = 100
+    READY_COUNT = 5
+    with kb.connect() as conn:
+        # Create one blocked card — the invariant under test.
+        blocked_id = kb.create_task(
+            conn,
+            title="stress-blocked-must-never-dispatch",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        assert kb.get_task(conn, blocked_id).status == "blocked"
+
+        # Create a pool of ready cards that the dispatcher will pick up,
+        # exercising the full dispatch pipeline on each tick.
+        ready_ids: list[str] = []
+        for i in range(READY_COUNT):
+            tid = kb.create_task(
+                conn,
+                title=f"stress-ready-card-{i}",
+                assignee="test-profile",
+            )
+            ready_ids.append(tid)
+            assert kb.get_task(conn, tid).status == "ready"
+
+        # Track which ready cards have been dispatched (they get consumed
+        # on first spawn, then emit no more).
+        dispatched_ready: set[str] = set()
+
+        spy = _spy_spawn()
+        for tick in range(N_TICKS):
+            result = kb.dispatch_once(conn, spawn_fn=spy)
+
+            # (a) Blocked card must NEVER be claimed
+            blocked_task = kb.get_task(conn, blocked_id)
+            assert blocked_task.status == "blocked", (
+                f"Stress test: blocked card changed to "
+                f"{blocked_task.status!r} on tick {tick}/{N_TICKS}"
+            )
+            assert blocked_task.claim_lock is None, (
+                f"Stress test: blocked card acquired claim_lock on "
+                f"tick {tick}/{N_TICKS}: {blocked_task.claim_lock!r}"
+            )
+            assert blocked_id not in spy.calls, (
+                f"spawn_fn called for blocked card on tick {tick}/{N_TICKS}"
+            )
+
+            # (b) Every spawned task must be a ready card, not the blocked one
+            spawned_ids = [s[0] for s in result.spawned]
+            for sid in spawned_ids:
+                assert sid in ready_ids, (
+                    f"Tick {tick}: spawned unexpected id {sid!r} "
+                    f"(expect ready cards only)"
+                )
+                dispatched_ready.add(sid)
+
+            # (c) The blocked_dispatch_attempt event must be emitted each tick
+            # for the blocked card.
+            bda_rows = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM task_events "
+                "WHERE task_id = ? AND kind = 'blocked_dispatch_attempt'",
+                (blocked_id,),
+            ).fetchone()
+            assert bda_rows and bda_rows["cnt"] > tick, (
+                f"Expected at least {tick + 1} blocked_dispatch_attempt "
+                f"events after tick {tick}, got {bda_rows['cnt']}"
+            )
+
+        # After all ticks, blocked card must still be pristine
+        final_task = kb.get_task(conn, blocked_id)
+        assert final_task.status == "blocked"
+        assert final_task.claim_lock is None
+        assert blocked_id not in spy.calls
+
+        # At least 1 ready card should have been dispatched (the quick ones
+        # that go ready->running immediately).  If none were dispatched the
+        # test didn't exercise the dispatcher properly.
+        assert len(dispatched_ready) >= 1, (
+            "Stress test did not exercise any ready-card dispatch — "
+            "the dispatcher may not have found the ready cards. "
+            f"spy.calls={spy.calls!r}"
+        )
