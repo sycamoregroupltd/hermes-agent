@@ -8705,7 +8705,7 @@ def _dispatch_once_locked(
         )
 
     ready_rows = conn.execute(
-        "SELECT id, assignee FROM tasks "
+        "SELECT id, assignee, block_kind FROM tasks "
         "WHERE status = 'ready' AND claim_lock IS NULL "
         "ORDER BY priority DESC, created_at ASC"
     ).fetchall()
@@ -8771,13 +8771,19 @@ def _dispatch_once_locked(
         # skip the spawn so no claim is sent for a blocked card.
         if _has_sticky_block(conn, row["id"]):
             result.skipped_block_gate.append(row["id"])
+            _bk = row["block_kind"] if "block_kind" in row.keys() and row["block_kind"] else "unknown"
             if not dry_run:
                 at = _claimer_id()
                 with write_txn(conn):
                     _append_event(
                         conn, row["id"], "block_gate_audit",
-                        {"origin": at, "task_id": row["id"]},
+                        {"origin": at, "task_id": row["id"], "block_kind": _bk},
                     )
+            _log.warning(
+                "kanban dispatch: skipped %s (block_gate_audit): task has "
+                "a sticky block, block_kind=%s",
+                row["id"], _bk,
+            )
             continue
 
         row_assignee = row["assignee"]
