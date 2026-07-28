@@ -315,6 +315,22 @@ def classify_kanban_failure(
             "No active failure classification; inspect history only if an operator asks.",
         )
 
+    # PRECEDENCE — PID/process-death error strings checked first, before any
+    # other heuristic. A dead or exited worker is an unambiguous crash signal.
+    if _matches_any(combined, (
+        r"pid\s+\d+\s+not alive", r"exited with code\s+\d+", r"nonzero_exit",
+        r"killed by signal\s+\d+", r"signaled", r"outcome['\"]?\s*[:=]\s*['\"]?crashed",
+    )):
+        for pattern in (r"pid\s+\d+\s+not alive", r"exited with code\s+\d+", r"killed by signal\s+\d+", r"nonzero_exit", r"signaled"):
+            hit = _matches_any(combined, (pattern,))
+            if hit:
+                _add_marker(markers, hit)
+        return FailureClassification(
+            "pid_not_alive_or_nonzero_crash", "medium",
+            markers or ["latest failed run outcome=crashed"],
+            "Worker process crash evidence found; count toward breaker, inspect logs, and route replacement/review evidence if the original lane is superseded.",
+        )
+
     status = str(_task_field(task, "status", "") or "")
     block_kind = str(_task_field(task, "block_kind", "") or "")
     current_run_id = _task_field(task, "current_run_id", None)
@@ -437,20 +453,6 @@ def classify_kanban_failure(
         return FailureClassification(
             "protocol_violation", "high", markers,
             "True lifecycle exit suspected; keep the completion/block gate and require log inspection or explicit retry instructions before unblocking.",
-        )
-
-    if _matches_any(combined, (
-        r"pid\s+\d+\s+not alive", r"exited with code\s+\d+", r"nonzero_exit",
-        r"killed by signal\s+\d+", r"signaled", r"outcome['\"]?\s*[:=]\s*['\"]?crashed",
-    )):
-        for pattern in (r"pid\s+\d+\s+not alive", r"exited with code\s+\d+", r"killed by signal\s+\d+", r"nonzero_exit", r"signaled"):
-            hit = _matches_any(combined, (pattern,))
-            if hit:
-                _add_marker(markers, hit)
-        return FailureClassification(
-            "pid_not_alive_or_nonzero_crash", "medium",
-            markers or ["latest failed run outcome=crashed"],
-            "Worker process crash evidence found; count toward breaker, inspect logs, and route replacement/review evidence if the original lane is superseded.",
         )
 
     failed = _recent_failed_runs(runs)
