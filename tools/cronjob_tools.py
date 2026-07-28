@@ -561,6 +561,23 @@ def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
             f"Script path escapes the scripts directory via traversal: {raw!r}"
         )
 
+    # Dead-pin guard: the resolved script file must actually exist on disk.
+    # A job pointing at a non-existent script silently fails to fire forever
+    # (the incident class this closes). Reject at enable/update time so the
+    # operator learns about the missing file immediately, not days later.
+    # NOTE: this deliberately checks only the job-time path; the scheduler
+    # *also* re-checks at fire time (files can be deleted after creation), so
+    # a missing script is caught whether it vanished before or after enable.
+    resolved = scripts_dir / raw
+    if not resolved.exists() or not resolved.is_file():
+        return (
+            f"Script file not found: {raw!r}. "
+            f"Place the script in ~/.hermes/scripts/ (resolved: {resolved}) "
+            f"before creating/updating the job. "
+            f"A dead-pin (missing script) is rejected so the job does not "
+            f"fail silently at fire time."
+        )
+
     return None
 
 
@@ -623,8 +640,18 @@ def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
 
         # At-most-once claim: bail without running if a tick/other fire owns it.
         if not claim_job_for_fire(job_id):
-            return {"claimed": False, "success": False,
-                    "error": "Job is already being fired by the scheduler; not run again."}
+            # claim_job_for_fire returns False for paused/disabled/missing
+            # jobs too — don't mislabel those as "already being fired"
+            # (#60703): that message sends the user chasing a phantom
+            # in-flight run when the job simply isn't runnable.
+            refreshed = get_job(job_id)
+            if refreshed is None:
+                reason = "Job no longer exists; nothing to run."
+            elif not refreshed.get("enabled", True) or refreshed.get("state") == "paused":
+                reason = "Job is paused/disabled; resume it before running."
+            else:
+                reason = "Job is already being fired by the scheduler; not run again."
+            return {"claimed": False, "success": False, "error": reason}
 
         # run_one_job records last_run_at/last_status via mark_job_run (which
         # also clears the fire claim) and returns True iff it processed the job.
@@ -837,7 +864,7 @@ def cronjob(
             result["executed"] = exec_result.get("claimed", False)
             result["execution_success"] = exec_result.get("success", False)
             if not exec_result.get("claimed", False):
-                result["execution_skipped"] = (
+                result["execution_skipped"] = exec_result.get("error") or (
                     "Already being fired by the scheduler; not run again."
                 )
             elif exec_result.get("error"):

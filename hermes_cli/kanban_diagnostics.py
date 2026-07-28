@@ -39,6 +39,7 @@ import time
 # amber (warning), orange (error), red (critical). Sorted outputs put
 # critical first so operators see the worst fires at the top.
 SEVERITY_ORDER = ("warning", "error", "critical")
+BUDGET_EXHAUSTED_ERROR_PREFIX = "Iteration budget exhausted"
 
 
 def severity_at_or_above(severity: Optional[str], threshold: Optional[str]) -> bool:
@@ -355,11 +356,11 @@ def _rule_hallucinated_cards(task, events, runs, now, cfg) -> list[Diagnostic]:
         severity="error",
         title="Worker claimed cards that don't exist",
         detail=(
-            f"The completing worker declared created_cards that either didn't "
-            f"exist or weren't created by its profile. The completion was "
-            f"blocked and the task stayed in its prior state. "
-            f"Usually means the worker hallucinated ids instead of capturing "
-            f"return values from kanban_create."
+            "The completing worker declared created_cards that either didn't "
+            "exist or weren't created by its profile. The completion was "
+            "blocked and the task stayed in its prior state. "
+            "Usually means the worker hallucinated ids instead of capturing "
+            "return values from kanban_create."
         ),
         actions=actions,
         first_seen_at=first,
@@ -530,7 +531,20 @@ def _rule_repeated_failures(task, events, runs, now, cfg) -> list[Diagnostic]:
 
     Accepts the legacy ``spawn_failure_threshold`` config key for
     back-compat.
+
+    Terminal statuses are exempt: a done/archived card has nothing left
+    to retry, so a lingering failure streak is history, not a signal.
+    (``complete_task`` resets the counter, but a manual done — e.g. a
+    dashboard drag — ends no run and used to leave the flag stuck.)
+
+    A fresh attempt in flight (``running``) is also exempt: retrying a
+    task should clear the stale failure banner until this attempt also
+    resolves. Otherwise a card that's actively trying again still shows
+    "failed Nx", which reads as a current failure. It re-fires if the new
+    run fails too (status leaves ``running`` with a recorded outcome).
     """
+    if _task_field(task, "status") in ("done", "archived", "running"):
+        return []
     threshold = _positive_int(cfg.get(
         "failure_threshold",
         cfg.get("spawn_failure_threshold", 3),
@@ -637,6 +651,65 @@ def _rule_repeated_failures(task, events, runs, now, cfg) -> list[Diagnostic]:
     )]
 
 
+def _rule_budget_exhausted(task, events, runs, now, cfg) -> list[Diagnostic]:
+    """Goal-mode iteration-budget kill is actionable, not a generic timeout.
+
+    The recovery actuator owns mutation; this rule only makes blocked/ready
+    cards carrying the dispatcher budget-kill marker visible to operators and
+    cron classifiers. It intentionally classifies from the task row itself so
+    it cannot depend on a separate recovery API.
+    """
+    status = _task_field(task, "status")
+    if status not in {"blocked", "ready"}:
+        return []
+    last_err = _task_field(task, "last_failure_error", "") or ""
+    if not str(last_err).startswith(BUDGET_EXHAUSTED_ERROR_PREFIX):
+        return []
+
+    failures = _positive_int(_task_field(task, "consecutive_failures", 0), 0)
+    task_id = _task_field(task, "id")
+    actions: list[DiagnosticAction] = []
+    if task_id:
+        actions.append(DiagnosticAction(
+            kind="cli_hint",
+            label=(
+                "Run gated recovery: "
+                f"/home/frank/.hermes/scripts/kanban_budget_exhausted_recovery.py --board <board>"
+            ),
+            payload={
+                "command": (
+                    "/home/frank/.hermes/scripts/kanban_budget_exhausted_recovery.py "
+                    "--board <board>"
+                ),
+                "task_id": task_id,
+            },
+            suggested=True,
+        ))
+    actions.extend(_generic_recovery_actions(task, running=False))
+
+    severity = "error" if status == "blocked" else "warning"
+    return [Diagnostic(
+        kind="budget_exhausted",
+        severity=severity,
+        title="Goal-mode iteration budget exhausted",
+        detail=(
+            "This card carries the dispatcher goal-mode iteration-cap kill "
+            "marker. The periodic recovery actuator should either bounded-"
+            "recover a clean first failure or leave repeat/embedded-error "
+            "cases escalated for a named reviewer."
+        ),
+        actions=actions,
+        first_seen_at=now,
+        last_seen_at=now,
+        count=max(failures, 1),
+        data={
+            "consecutive_failures": failures,
+            "last_error": last_err,
+            "recovery_script": "/home/frank/.hermes/scripts/kanban_budget_exhausted_recovery.py",
+        },
+    )]
+
+
 def _rule_repeated_crashes(task, events, runs, now, cfg) -> list[Diagnostic]:
     """The worker spawns fine but keeps crashing mid-run. Check the last
     N runs' outcomes; N consecutive ``crashed`` without a successful
@@ -649,7 +722,20 @@ def _rule_repeated_crashes(task, events, runs, now, cfg) -> list[Diagnostic]:
     total failures) so the operator gets a crash-specific heads-up
     before the unified rule kicks in. Suppresses itself when the
     unified rule is also about to fire, to avoid double-flagging.
+
+    Terminal statuses are exempt for the same reason as
+    ``repeated_failures`` — with one extra wrinkle: this rule reads run
+    history, and a manual done (dashboard drag) appends no ``completed``
+    run to break the crash streak, so the flag was permanent (#kanban
+    desktop dogfood). Done means done.
+
+    ``running`` is exempt too: a fresh attempt is in flight, and its
+    in-flight run (no outcome yet) doesn't break the trailing crash scan,
+    so a retried card kept showing "crashed Nx" over an active run. The
+    banner re-fires if the new attempt also crashes.
     """
+    if _task_field(task, "status") in ("done", "archived", "running"):
+        return []
     failure_threshold = int(cfg.get(
         "failure_threshold",
         cfg.get("spawn_failure_threshold", 3),
@@ -1023,6 +1109,7 @@ _RULES: list[RuleFn] = [
     _rule_hallucinated_cards,
     _rule_triage_aux_unavailable,
     _rule_prose_phantom_refs,
+    _rule_budget_exhausted,
     _rule_repeated_failures,
     _rule_repeated_crashes,
     _rule_stuck_in_blocked,
@@ -1038,6 +1125,7 @@ DIAGNOSTIC_KINDS = (
     "hallucinated_cards",
     "triage_aux_unavailable",
     "prose_phantom_refs",
+    "budget_exhausted",
     "repeated_failures",
     "repeated_crashes",
     "stuck_in_blocked",

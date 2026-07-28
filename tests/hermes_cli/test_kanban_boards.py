@@ -126,17 +126,22 @@ class TestPathResolution:
             fresh_home / "kanban" / "boards" / "other" / "logs"
         )
 
-    def test_env_var_db_override_still_wins(self, fresh_home, tmp_path, monkeypatch):
-        """``HERMES_KANBAN_DB`` pins the file regardless of board= arg."""
+    def test_env_var_db_override_wins_only_without_explicit_board(self, fresh_home, tmp_path, monkeypatch):
+        """``HERMES_KANBAN_DB`` pins implicit calls, but board= is stronger."""
         forced = tmp_path / "custom.db"
         monkeypatch.setenv("HERMES_KANBAN_DB", str(forced))
         assert kb.kanban_db_path() == forced
-        assert kb.kanban_db_path(board="ignored") == forced
+        assert kb.kanban_db_path(board="selected") == (
+            fresh_home / "kanban" / "boards" / "selected" / "kanban.db"
+        )
 
-    def test_env_var_workspaces_override(self, fresh_home, tmp_path, monkeypatch):
+    def test_env_var_workspaces_override_wins_only_without_explicit_board(self, fresh_home, tmp_path, monkeypatch):
         forced = tmp_path / "ws"
         monkeypatch.setenv("HERMES_KANBAN_WORKSPACES_ROOT", str(forced))
-        assert kb.workspaces_root(board="any") == forced
+        assert kb.workspaces_root() == forced
+        assert kb.workspaces_root(board="any") == (
+            fresh_home / "kanban" / "boards" / "any" / "workspaces"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +362,25 @@ class TestConnectionIsolation:
             assert [t.title for t in kb.list_tasks(conn)] == ["via-env"]
         with kb.connect(board="persist") as conn:
             assert kb.list_tasks(conn) == []
+
+    def test_connect_explicit_board_ignores_worker_db_pin(self, fresh_home, monkeypatch):
+        """Regression: worker-pinned HERMES_KANBAN_DB must not defeat board=."""
+        kb.create_board("origin")
+        kb.create_board("target")
+        origin_db = kb.kanban_db_path(board="origin")
+
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(origin_db))
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "origin")
+
+        with kb.connect(board="target") as conn:
+            tid = kb.create_task(conn, title="target-only", assignee="x")
+
+        with kb.connect(board="target") as conn:
+            task = kb.get_task(conn, tid)
+            assert task is not None
+            assert task.title == "target-only"
+        with kb.connect(db_path=origin_db) as conn:
+            assert kb.get_task(conn, tid) is None
 
     def test_connect_stale_env_uses_fallback_board_without_recreating_it(
         self, fresh_home, monkeypatch,

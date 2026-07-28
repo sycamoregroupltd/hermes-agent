@@ -244,6 +244,14 @@ class TestSupportsVisionOverride:
         }
         assert _supports_vision_override(cfg, "custom", "gpt-5.5") is True
 
+    def test_custom_colon_runtime_name_stripped_suffix_lookup(self):
+        cfg = {
+            "providers": {
+                "my-proxy": {"models": {"gpt-5.5": {"supports_vision": True}}},
+            },
+        }
+        assert _supports_vision_override(cfg, "custom:my-proxy", "gpt-5.5") is True
+
     def test_custom_colon_name_stripped_suffix_false(self):
         # Explicitly disabled vision on the stripped key.
         cfg = {
@@ -324,6 +332,26 @@ class TestAutoModeRespectsOverride:
         cfg = {"model": {"supports_vision": True}}
         with patch("agent.models_dev.get_model_capabilities", return_value=None):
             assert decide_image_input_mode("custom", "qwen3.6-35b", cfg) == "native"
+
+    def test_auto_native_for_namespaced_runtime_custom_provider(self):
+        cfg = {
+            "providers": {
+                "my-proxy": {
+                    "models": {
+                        "qwen3.8-max-preview": {"supports_vision": True},
+                    },
+                },
+            },
+        }
+        with patch("agent.models_dev.get_model_capabilities", return_value=None):
+            assert (
+                decide_image_input_mode(
+                    "custom:my-proxy",
+                    "qwen3.8-max-preview",
+                    cfg,
+                )
+                == "native"
+            )
 
     def test_auto_text_for_custom_with_supports_vision_false(self):
         cfg = {"model": {"supports_vision": False}}
@@ -779,6 +807,44 @@ class TestFormatCompatibility:
         assert url.startswith("data:image/png;base64,")
         b64 = url.split(",", 1)[1]
         assert base64.b64decode(b64) == _png_bytes()
+
+    def test_file_to_data_url_blocks_read_denied_image_path(self, tmp_path: Path):
+        """Native image routing must honor the shared credential read guard."""
+        from agent.image_routing import _file_to_data_url
+
+        img_path = tmp_path / ".env"
+        img_path.write_bytes(_png_bytes())
+
+        assert _file_to_data_url(img_path) is None
+
+    def test_native_content_parts_skip_read_denied_local_image(self, tmp_path: Path):
+        from agent.image_routing import build_native_content_parts
+
+        img_path = tmp_path / ".env.local"
+        img_path.write_bytes(_png_bytes())
+
+        parts, skipped = build_native_content_parts("inspect this", [str(img_path)])
+
+        assert skipped == [str(img_path)]
+        assert all(part.get("type") != "image_url" for part in parts)
+
+    def test_native_content_parts_blocks_image_symlink_to_read_denied_file(self, tmp_path: Path):
+        from agent.image_routing import build_native_content_parts
+        import os
+        import pytest
+
+        secret = tmp_path / ".env"
+        secret.write_bytes(_png_bytes())
+        img_link = tmp_path / "secret.png"
+        try:
+            os.symlink(secret, img_link)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        parts, skipped = build_native_content_parts("inspect this", [str(img_link)])
+
+        assert skipped == [str(img_link)]
+        assert all(part.get("type") != "image_url" for part in parts)
 
     def test_jpeg_passes_through_no_transcode(self, tmp_path: Path):
         from agent.image_routing import _file_to_data_url
