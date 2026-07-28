@@ -148,7 +148,7 @@ fi
 TRIAGE_SCRIPT="/home/frank/.hermes/scripts/pending-frank-triage.py"
 TRIAGE_OUT="${FLEET_STATUS_TRIAGE_OUT:-/home/frank/uaa-rules/PENDING-FRANK-TRIAGE.md}"
 if [ "${FLEET_STATUS_TRIAGE:-1}" != "0" ] && [ -x "$TRIAGE_SCRIPT" ]; then
-  if "$TRIAGE_SCRIPT" --status-file "$OUT" > "$TRIAGE_OUT.tmp" 2>/dev/null; then
+  if "$TRIAGE_SCRIPT" --status-file "$OUT" --a3-queue-from-scan > "$TRIAGE_OUT.tmp" 2>/dev/null; then
     mv "$TRIAGE_OUT.tmp" "$TRIAGE_OUT"
     {
       echo

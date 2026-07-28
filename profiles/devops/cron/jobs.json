@@ -21,19 +21,26 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-03T21:05:01.258850+01:00",
       "paused_reason": "t_564bdeab: rehomed to live jarvis cron store with same id/script and semantic kanban checks",
       "created_at": "2026-07-02T16:13:28.556197+01:00",
+      "next_run_at": "2026-07-02T20:35:30.642109+01:00",
+      "last_run_at": "2026-07-02T16:13:40.555001+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": null,
+      "fire_claim": null,
       "disabled_by": "t_564bdeab",
       "disabled_reason": "t_564bdeab: rehomed to live jarvis cron store with same id/script and semantic kanban checks"
     },
@@ -58,19 +65,26 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 3
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T11:17:15.709079+00:00",
+      "paused_reason": "t_8b946730 no-black-holes shard remediation: stale/expired local cron row disabled 2026-07-28T11:17:15.709079+00:00; reversible pause only; prior: t_564bdeab: devops profile cron store has no gateway/ticker; keep disabled until rehomed to a live profile (see verdict-router repair t_2afc2c67 where applicable)",
       "created_at": "2026-07-03T20:36:04.830418+01:00",
+      "next_run_at": "2026-07-04T17:57:01.571985+01:00",
+      "last_run_at": "2026-07-04T17:35:34.414761+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "disabled_by": "t_564bdeab",
-      "disabled_reason": "t_564bdeab: devops profile cron store has no gateway/ticker; keep disabled until rehomed to a live profile (see verdict-router repair t_2afc2c67 where applicable)"
+      "disabled_by": "t_8b946730",
+      "disabled_reason": "t_8b946730 no-black-holes shard remediation: stale/expired local cron row disabled 2026-07-28T11:17:15.709079+00:00; reversible pause only; prior: t_564bdeab: devops profile cron store has no gateway/ticker; keep disabled until rehomed to a live profile (see verdict-router repair t_2afc2c67 where applicable)",
+      "fire_claim": null
     },
     {
       "id": "69056380960a",
@@ -93,13 +107,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-04T10:57:05.996774+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T10:52:52.066911+01:00",
+      "next_run_at": "2026-07-04T10:57:52.083211+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -126,13 +146,19 @@
       },
       "schedule_display": "once at 2026-07-04 11:24",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-04T12:57:00+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T12:24:41.267571+01:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -163,13 +189,19 @@
       },
       "schedule_display": "once at 2026-07-04 11:25",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-04T12:57:00+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T12:25:33.870796+01:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -199,17 +231,25 @@
       },
       "schedule_display": "once at 2026-07-04 12:44",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T11:17:15.709079+00:00",
+      "paused_reason": "t_8b946730 no-black-holes shard remediation: stale/expired local cron row disabled 2026-07-28T11:17:15.709079+00:00; reversible pause only",
       "created_at": "2026-07-04T12:44:30.127923+01:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "disabled_by": "t_8b946730",
+      "disabled_reason": "t_8b946730 no-black-holes shard remediation: stale/expired local cron row disabled 2026-07-28T11:17:15.709079+00:00; reversible pause only"
     },
     {
       "id": "76af2166a9e5",
@@ -231,20 +271,30 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T17:04:53.304143+01:00",
+      "next_run_at": "2026-07-11T12:23:42.775508+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "fire_claim": {
+        "at": "2026-07-11T12:08:42.775508+01:00",
+        "by": "spark-4be3:3208464"
+      }
     },
     {
       "id": "983edee6c3b9",
@@ -267,13 +317,19 @@
       },
       "schedule_display": "0 0 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T19:37:27.950464+01:00",
+      "next_run_at": "2026-07-05T00:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
@@ -300,17 +356,24 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T23:42:40.335786+01:00",
+      "next_run_at": "2026-07-07T06:00:00+01:00",
+      "last_run_at": "2026-07-06T10:19:16.424854+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 1\nstdout:\nFLEET FALLBACK-CHAIN VALIDATOR \u2014 per-rung liveness\ngenerated: 2026-07-06T09:19:10.753854+00:00\n\nPROFILE                RUNG      PROVIDER       MODEL                            STATE      ACTUAL_BP    EXP   MARKER                      \n-------------------------------------------------------------------------------------------------------------------------------------------\nbuilder                PRIMARY   gemini         gemini-3.5-flash                 LIVE       gemini       LIVE                              \nbuilder                FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\nbuilder                FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\ncapability-builder     PRIMARY   openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\ncapability-builder     FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\ncapability-builder     FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\ncomms-writer           PRIMARY   openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\ncomms-writer           FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\ncomms-writer           FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\ndb-architect           PRIMARY   gemini         gemini-3.5-flash                 LIVE       gemini       LIVE                              \ndb-architect           FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\ndb-architect           FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\ndevops                 PRIMARY   gemini         gemini-3.5-flash                 LIVE       gemini       LIVE                              \ndevops                 FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\ndevops                 FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nelon                   PRIMARY   gemini         gemini-3.5-flash                 TIMEOUT    -            LIVE  timeout after 120s          \nelon                   FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\nelon                   FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\neval-runner            PRIMARY   openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\neval-runner            FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\neval-runner            FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nfinance-ops            PRIMARY   openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nfinance-ops            FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\nfinance-ops            FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nfleet-analyst          PRIMARY   openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nfleet-analyst          FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\nfleet-analyst          FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nfrontend-builder       PRIMARY   openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nfrontend-builder       FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=75 no live marker in stdo\nfrontend-builder       FB#2      openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=75 no live marker in stdo\nguardian               PRIMARY   gemini         gemini-3.5-flash                 TIMEOUT    -            LIVE  timeout after 120s          \nguardian               FB#1      gemini         gemini-3.5-flash                 LIVE       gemini       LIVE                              \nguardian               FB#2      nous           deepseek/deepseek-v4-flash       FALLBACK   gemini       LIVE  pinned_provider=nous but bil\nguardian               FB#3      nvidia         z-ai/glm-5.2                     GARBAGE    gemini       LIVE  no recognizable OK reply in \nguardian               FB#4      nvidia         deepseek-ai/deepseek-v4-pro      FALLBACK   gemini       LIVE  pinned_provider=nvidia but b\nguardian               FB#5      custom         openai/gpt-oss-120b              FALLBACK   gemini       LIVE  pinned_provider=custom but b\nguardian               FB#6      nous           google/gemini-3-pro-preview      FALLBACK   gemini       LIVE  pinned_provider=nous but bil\nguardian               FB#7      ollama-local   qwen3:8b-fp16                    DEAD_KEY   -            LIVE  Goodbye!                    \nguardian               FB#8      nous           deepseek/deepseek-v4-flash       FALLBACK   gemini       LIVE  pinned_provider=nous but bil\nguardian               FB#9      openai-codex   gpt-5.5                          TIMEOUT    -            LIVE  timeout after 120s          \nintegration-builder    PRIMARY   openai-codex   gpt-5.5                          ERROR      -            LIVE  rc=1 no live marker in stdou\nintegration-builder    FB#1      nous           deepseek/deepseek-v4-flash       ERROR      -            LIVE  rc=1 no live marker in stdou\njarvis                 PRIMARY   gemini         gemini-3.5-flash                 LIVE       gemini       LIVE                              \njarvis                 FB#1      gemini         gemini-3.5-flash                 LIVE       gemini       LIVE                              \njarvis                 FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#9      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#10     nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#11     custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#12     nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#13     gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \njarvis                 FB#14     ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis-coordinator     FB#9      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \njarvis-os-pm           FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \njarvis-voice           FB#9      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nnervous-system-engineer PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nnervous-system-engineer FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nnervous-system-engineer FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nnim-deepseek           PRIMARY   nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \nnim-deepseek           FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nnim-gemini3            PRIMARY   gemini         gemini-3-pro-preview             SKIPPED    -            LIVE  total budget exhausted      \nnim-gemini3            FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nnim-glm52              PRIMARY   nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \nnim-glm52              FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nnim-qwen35             PRIMARY   nvidia         qwen/qwen3.5-122b-a10b           SKIPPED    -            LIVE  total budget exhausted      \nnim-qwen35             FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nos-architect           PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nos-architect           FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nos-architect           FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nos-reviewer            PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nos-reviewer            FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nos-reviewer            FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \npaper-analyst          PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \npaper-analyst          FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \npaper-analyst          FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \npaper-risk             PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \npaper-risk             FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \npaper-risk             FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \npaper-trader           PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \npaper-trader           FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \npaper-trader           FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nplatform-builder       PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nplatform-builder       FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nplatform-builder       FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nplatform-db-migrator   PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nplatform-db-migrator   FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nplatform-db-migrator   FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nplatform-reviewer      PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nplatform-reviewer      FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nprompt-optimizer       PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nprompt-optimizer       FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nprompt-optimizer       FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nresearch               PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nresearch               FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nresearch-ai            PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nresearch-ai            FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nresearch-ai            FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nresearch-trading       PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nresearch-trading       FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nresearch-trading       FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nresearch-upero         PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nresearch-upero         FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nresearch-upero         FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nself-improve-engineer  PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nself-improve-engineer  FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nsycode-ai-pm           FB#9      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nsycode-trading-pm      FB#9      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nsystem-optimizer       PRIMARY   xai-oauth      grok-4.3                         SKIPPED    -            LIVE  total budget exhausted      \nsystem-optimizer       FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nsystem-optimizer       FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntenant-guardian        FB#9      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntest-engineer          PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntest-engineer          FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntest-engineer          FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-backtest-runner PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-backtest-runner FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-backtest-runner FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-breakout-trader PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-breakout-trader FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-breakout-trader FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-data-oracle    PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-data-oracle    FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-data-oracle    FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-devops         PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-devops         FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-devops         FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-market-analyst PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-market-analyst FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-market-analyst FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-mean-reversion PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-mean-reversion FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-mean-reversion FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-ml-ensemble    PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-ml-ensemble    FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-risk-reviewer  PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-risk-reviewer  FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-risk-reviewer  FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-strategy-dev   PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \ntrading-strategy-dev   FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-strategy-dev   FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-trend-follower PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-trend-follower FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-trend-follower FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-volatility-arb PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \ntrading-volatility-arb FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \ntrading-volatility-arb FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-design-reviewer  PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-design-reviewer  FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-design-reviewer  FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-integrator       PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-integrator       FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-integrator       FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-marketplace-builder PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-marketplace-builder FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-marketplace-builder FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-payments-builder PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-payments-builder FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-payments-builder FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-pm               FB#9      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-builder PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-builder FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-builder FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-flow-builder PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-flow-builder FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-supplier-flow-builder FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-ui-builder       PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nupero-ui-builder       FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nupero-ui-builder       FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nworkforce-scaler       PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nworkforce-scaler       FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-api-builder PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-api-builder FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-api-builder FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-db-architect PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-db-architect FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-db-architect FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-devops PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-devops FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-devops FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-integrator PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-integrator FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-integrator FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  PRIMARY   gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#1      gemini         gemini-3.5-flash                 SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#2      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#3      nvidia         z-ai/glm-5.2                     SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#4      nvidia         deepseek-ai/deepseek-v4-pro      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#5      custom         openai/gpt-oss-120b              SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#6      nous           google/gemini-3-pro-preview      SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#7      ollama-local   qwen3:8b-fp16                    SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#8      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-pm  FB#9      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-reviewer PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-reviewer FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-reviewer FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-ui-builder PRIMARY   openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-ui-builder FB#1      nous           deepseek/deepseek-v4-flash       SKIPPED    -            LIVE  total budget exhausted      \nyorkstone-supplies-ui-builder FB#2      openai-codex   gpt-5.5                          SKIPPED    -            LIVE  total budget exhausted      \n\n@here FLEET CRITICAL \u2014 fallback rung(s) expected live are DEAD:\n\n  \u2022 builder/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 builder/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 capability-builder/PRIMARY openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 capability-builder/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 capability-builder/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 comms-writer/PRIMARY openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 comms-writer/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 comms-writer/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 db-architect/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 db-architect/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 devops/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 devops/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 elon/PRIMARY gemini/gemini-3.5-flash  state=TIMEOUT  marker=timeout after 120s\n  \u2022 elon/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 elon/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 eval-runner/PRIMARY openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 eval-runner/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 eval-runner/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 finance-ops/PRIMARY openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 finance-ops/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 finance-ops/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 fleet-analyst/PRIMARY openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 fleet-analyst/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 fleet-analyst/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 frontend-builder/PRIMARY openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 frontend-builder/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 frontend-builder/FB#2 openai-codex/gpt-5.5  state=ERROR  marker=rc=75 no live marker in stdout nor stderr\n  \u2022 guardian/PRIMARY gemini/gemini-3.5-flash  state=TIMEOUT  marker=timeout after 120s\n  \u2022 guardian/FB#3 nvidia/z-ai/glm-5.2  state=GARBAGE  marker=no recognizable OK reply in answer box\n    actual_billing_provider=gemini actual_model=z-ai/glm-5.2\n  \u2022 guardian/FB#7 ollama-local/qwen3:8b-fp16  state=DEAD_KEY  marker=Goodbye!\n  \u2022 guardian/FB#9 openai-codex/gpt-5.5  state=TIMEOUT  marker=timeout after 120s\n  \u2022 integration-builder/PRIMARY openai-codex/gpt-5.5  state=ERROR  marker=rc=1 no live marker in stdout nor stderr\n  \u2022 integration-builder/FB#1 nous/deepseek/deepseek-v4-flash  state=ERROR  marker=rc=1 no live marker in stdout nor stderr\n\nInvestigate keys / provider status; this is the class that previously caused silent fleet outages.",
+      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "0bcf76a41f05",
@@ -333,17 +396,24 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T23:42:41.356968+01:00",
+      "next_run_at": "2026-07-06T10:24:23.507066+01:00",
+      "last_run_at": "2026-07-06T10:19:23.507066+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "40807df04827",
@@ -366,13 +436,19 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T14:20:21.780270+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T02:14:41.709112+01:00",
+      "next_run_at": "2026-07-05T02:29:41.709258+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
@@ -398,13 +474,19 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T15:04:32.227270+01:00",
+      "next_run_at": "2026-07-05T15:30:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
@@ -413,7 +495,7 @@
     {
       "id": "7e7133e84d75",
       "name": "Qwen3-Coder GGUF download task completer",
-      "prompt": "You are the devops agent monitoring task t_d1d3c0e5.\nYour goal is to check if the GGUF download at /home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf has finished downloading completely.\n\nInstructions:\n1. Run a terminal command to check the size of `/home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf`.\n   The expected size is 17665334432 bytes.\n2. Check if a curl process is still running with `pgrep -f \"curl.*Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL\"`.\n3. If the download is NOT complete:\n   - If the curl process is not running, restart it by executing the python watchdog script: `python3 /home/frank/.hermes/profiles/devops/scripts/download-watchdog-qwen3-coder.py`\n   - Log the current progress (percentage, remaining download size) as a kanban comment to task t_d1d3c0e5, then stop.\n4. If the download IS complete (the file size matches 17665334432 bytes):\n   - Verify the final file size.\n   - Run a SHA256 checksum on `/home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf` to verify it matches `199c115af690bce1d3a771918053dc84fd41587e5fa6c51f59318febdd51638f`.\n   - Double-check that the file is not wired into any services or provider chain (Guardrail d). Check /home/frank/.hermes/config.yaml or ollama list to confirm it is not wired in.\n   - Complete the task t_d1d3c0e5 with kanban_complete, specifying:\n     - summary: \"Successfully verified Qwen3-Coder-30B-A3B GGUF download completion, file size (17665334432 bytes), and SHA256 checksum (199c115af690bce1d3a771918053dc84fd41587e5fa6c51f59318febdd51638f).\"\n     - metadata: {\"file_path\": \"/home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf\", \"size_bytes\": 17665334432, \"sha256\": \"199c115af690bce1d3a771918053dc84fd41587e5fa6c51f59318febdd51638f\"}\n   - Remove this cron job. Find its job_id from cronjob(action=\"list\") matching name \"Qwen3-Coder GGUF download task completer\" and call cronjob(action=\"remove\", job_id=...).",
+      "prompt": "You are the devops agent monitoring jarvis-os kanban task t_d1d3c0e5.\n\nGoal: check whether the GGUF download at /home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf has finished, verify it, preserve Guardrail d, and complete or comment/block the task honestly.\n\nCanonical expected artifact:\n- Path: /home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf\n- Size: 17665334432 bytes (from HF HEAD content-length)\n- Expected SHA256: 2841aa314d916434860cfb8990347528dcdfe5c350dbcb9d1461dbee88ff2533 (HF x-linked-etag / LFS object hash). Do NOT use the redirected Xet CDN etag 199c115af690bce1d3a771918053dc84fd41587e5fa6c51f59318febdd51638f as the file SHA256.\n\nSteps:\n1. Check current file size with stat and check for a running curl process matching `curl.*Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL`.\n2. If the file is missing or smaller than 17665334432 bytes:\n   - If no matching curl process is running, safely resume via `python3 /home/frank/.hermes/profiles/devops/scripts/download-watchdog-qwen3-coder.py`.\n   - Add a kanban_comment to t_d1d3c0e5 with current size, percent, curl-running state, and any resume action taken.\n   - Then call kanban_block(task_id='t_d1d3c0e5', kind='dependency', reason='Download still in progress: <percent>% (<bytes>/17665334432), curl_running=<true/false>, safe-resume=<run/skipped>.')\n3. If the file size is exactly 17665334432 bytes:\n   - Run `sha256sum /home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf` and require it to match 2841aa314d916434860cfb8990347528dcdfe5c350dbcb9d1461dbee88ff2533.\n   - Verify Guardrail d: search active Hermes configs for this exact GGUF path / qwen3-coder:30b wiring and check `ollama list`; do not create, run, serve, or wire the model.\n   - If checksum and guardrail verification pass, call kanban_complete(task_id='t_d1d3c0e5', summary='Verified Qwen3-Coder-30B-A3B GGUF download completion, exact size 17665334432 bytes, SHA256 2841aa314d916434860cfb8990347528dcdfe5c350dbcb9d1461dbee88ff2533, and no provider/Ollama/service wiring by this task.', metadata={'file_path':'/home/frank/models/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf','size_bytes':17665334432,'sha256':'2841aa314d916434860cfb8990347528dcdfe5c350dbcb9d1461dbee88ff2533','guardrail_d':'no provider/Ollama/service wiring performed or found for qwen3-coder:30b GGUF by this task'}).\n   - Then remove this cron job by listing cron jobs, finding name 'Qwen3-Coder GGUF download task completer', and removing its job_id.\n4. If checksum fails or the file is larger than expected, do NOT complete; comment exact evidence and kanban_block(kind='transient' or 'needs_input' as appropriate).\n\nNever edit provider routing, fallback chains, credentials, services, Ollama Modelfiles, or start an Ollama/llama-server/vLLM load for this model.",
       "skills": [],
       "skill": null,
       "model": "gpt-5.5",
@@ -430,16 +512,25 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T14:19:55.833281+01:00",
       "paused_reason": null,
       "created_at": "2026-07-06T09:44:17.239369+01:00",
+      "next_run_at": "2026-07-28T12:49:31.057439+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
       "workdir": null
     },
     {
@@ -464,17 +555,25 @@
       },
       "schedule_display": "once at 2026-07-13 10:55",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T11:17:15.709079+00:00",
+      "paused_reason": "t_8b946730 no-black-holes shard remediation: stale/expired local cron row disabled 2026-07-28T11:17:15.709079+00:00; reversible pause only",
       "created_at": "2026-07-06T10:53:20.632742+01:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "disabled_by": "t_8b946730",
+      "disabled_reason": "t_8b946730 no-black-holes shard remediation: stale/expired local cron row disabled 2026-07-28T11:17:15.709079+00:00; reversible pause only"
     },
     {
       "id": "6da5d90fffa4",
@@ -497,17 +596,24 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T01:56:35.052294+01:00",
+      "next_run_at": "2026-07-08T02:12:06.845743+01:00",
+      "last_run_at": "2026-07-08T01:56:43.284388+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "10b9f4196572",
@@ -530,13 +636,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T00:08:04.090010+01:00",
+      "next_run_at": "2026-07-11T00:13:04.107245+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -563,13 +675,19 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T09:35:43.554094+01:00",
+      "next_run_at": "2026-07-11T10:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
@@ -596,13 +714,19 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T11:52:25.458274+01:00",
+      "next_run_at": "2026-07-11T12:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
@@ -629,17 +753,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:30:59.077058+01:00",
+      "next_run_at": "2026-07-11T12:35:59.130211+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:30:59.130211+01:00",
+        "by": "spark-4be3:3347269"
+      }
     },
     {
       "id": "39483a1784e2",
@@ -662,17 +796,27 @@
       },
       "schedule_display": "once in 30m",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:30:59.148648+01:00",
+      "next_run_at": "2026-07-11T13:00:59.148610+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:30:59.170890+01:00",
+        "by": "spark-4be3:3347269"
+      }
     },
     {
       "id": "b0d17eb5d674",
@@ -695,13 +839,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T12:30:59.226163+01:00",
       "paused_reason": null,
       "created_at": "2026-07-11T12:30:59.203776+01:00",
+      "next_run_at": "2026-07-11T12:35:59.221256+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -728,17 +878,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:30:59.244838+01:00",
+      "next_run_at": "2026-07-11T12:35:59.298140+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:30:59.298140+01:00",
+        "by": "spark-4be3:3347269"
+      }
     },
     {
       "id": "02740b299b0e",
@@ -761,17 +921,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:30:59.315777+01:00",
+      "next_run_at": "2026-07-11T12:35:59.346025+01:00",
+      "last_run_at": "2026-07-11T12:30:59.342070+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:30:59.346025+01:00",
+        "by": "spark-4be3:3347269"
+      }
     },
     {
       "id": "51b335c3ca51",
@@ -794,17 +964,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:34:56.068757+01:00",
+      "next_run_at": "2026-07-11T12:39:56.139352+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:34:56.139352+01:00",
+        "by": "spark-4be3:3367114"
+      }
     },
     {
       "id": "a547cef8c9f0",
@@ -827,17 +1007,27 @@
       },
       "schedule_display": "once in 30m",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:34:56.156143+01:00",
+      "next_run_at": "2026-07-11T13:04:56.156119+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:34:56.176166+01:00",
+        "by": "spark-4be3:3367114"
+      }
     },
     {
       "id": "5ed638db7078",
@@ -860,13 +1050,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T12:34:56.221248+01:00",
       "paused_reason": null,
       "created_at": "2026-07-11T12:34:56.200474+01:00",
+      "next_run_at": "2026-07-11T12:39:56.216311+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -893,17 +1089,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:34:56.238610+01:00",
+      "next_run_at": "2026-07-11T12:39:56.264333+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:34:56.264333+01:00",
+        "by": "spark-4be3:3367114"
+      }
     },
     {
       "id": "0ff8d84d25f5",
@@ -926,17 +1132,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:34:56.280952+01:00",
+      "next_run_at": "2026-07-11T12:39:56.310870+01:00",
+      "last_run_at": "2026-07-11T12:34:56.306698+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:34:56.310870+01:00",
+        "by": "spark-4be3:3367114"
+      }
     },
     {
       "id": "3ad937c976cf",
@@ -959,17 +1175,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:16.866103+01:00",
+      "next_run_at": "2026-07-11T12:43:16.937720+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:16.937720+01:00",
+        "by": "spark-4be3:3382967"
+      }
     },
     {
       "id": "0fd07d41c457",
@@ -992,17 +1218,27 @@
       },
       "schedule_display": "once in 30m",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:16.954656+01:00",
+      "next_run_at": "2026-07-11T13:08:16.954628+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:16.975363+01:00",
+        "by": "spark-4be3:3382967"
+      }
     },
     {
       "id": "9d7a2b9b65a8",
@@ -1025,13 +1261,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T12:38:17.020897+01:00",
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:17.000277+01:00",
+      "next_run_at": "2026-07-11T12:43:17.016123+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -1058,17 +1300,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:17.035927+01:00",
+      "next_run_at": "2026-07-11T12:43:17.060709+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:17.060709+01:00",
+        "by": "spark-4be3:3382967"
+      }
     },
     {
       "id": "64daaf96a6ed",
@@ -1091,17 +1343,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:17.077242+01:00",
+      "next_run_at": "2026-07-11T12:43:17.106151+01:00",
+      "last_run_at": "2026-07-11T12:38:17.102382+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:17.106151+01:00",
+        "by": "spark-4be3:3382967"
+      }
     },
     {
       "id": "13a954a8be74",
@@ -1124,17 +1386,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:40.560646+01:00",
+      "next_run_at": "2026-07-11T12:43:40.607212+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:40.607212+01:00",
+        "by": "spark-4be3:3384693"
+      }
     },
     {
       "id": "1252ab8c00ca",
@@ -1157,17 +1429,27 @@
       },
       "schedule_display": "once in 30m",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:40.624235+01:00",
+      "next_run_at": "2026-07-11T13:08:40.624211+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:40.644826+01:00",
+        "by": "spark-4be3:3384693"
+      }
     },
     {
       "id": "43c30ee003e0",
@@ -1190,13 +1472,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T12:38:40.689583+01:00",
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:40.668724+01:00",
+      "next_run_at": "2026-07-11T12:43:40.683703+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -1223,17 +1511,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:40.705987+01:00",
+      "next_run_at": "2026-07-11T12:43:40.748215+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:40.748215+01:00",
+        "by": "spark-4be3:3384693"
+      }
     },
     {
       "id": "67b33a704ca6",
@@ -1256,17 +1554,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:38:40.764143+01:00",
+      "next_run_at": "2026-07-11T12:43:40.794819+01:00",
+      "last_run_at": "2026-07-11T12:38:40.789925+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T12:38:40.794819+01:00",
+        "by": "spark-4be3:3384693"
+      }
     },
     {
       "id": "f335a9e2ae89",
@@ -1289,13 +1597,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T12:39:43.388157+01:00",
+      "next_run_at": "2026-07-11T12:44:43.404932+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -1322,13 +1636,19 @@
       },
       "schedule_display": "0 4 * * 1",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T13:56:07.137996+01:00",
+      "next_run_at": "2026-07-13T04:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -1355,17 +1675,25 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:25:47.853881+01:00",
+      "next_run_at": "2026-07-28T17:45:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "disabled_by": "t_8b946730",
+      "disabled_reason": "t_8b946730 no-black-holes shard remediation: stale/expired local cron row disabled 2026-07-28T11:17:15.709079+00:00; reversible pause only"
     },
     {
       "id": "7d1105125690",
@@ -1388,13 +1716,19 @@
       },
       "schedule_display": "once at 2026-07-18 11:00",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:26:17.950390+01:00",
+      "next_run_at": "2026-07-18T11:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
@@ -1421,17 +1755,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:46:10.560917+01:00",
+      "next_run_at": "2026-07-11T14:51:10.607097+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T14:46:10.607097+01:00",
+        "by": "spark-4be3:4121171"
+      }
     },
     {
       "id": "55b284ad1b3a",
@@ -1454,17 +1798,27 @@
       },
       "schedule_display": "once in 30m",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:46:10.626712+01:00",
+      "next_run_at": "2026-07-11T15:16:10.626674+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T14:46:10.649464+01:00",
+        "by": "spark-4be3:4121171"
+      }
     },
     {
       "id": "0947e0b32498",
@@ -1487,13 +1841,19 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T14:46:10.703534+01:00",
       "paused_reason": null,
       "created_at": "2026-07-11T14:46:10.682859+01:00",
+      "next_run_at": "2026-07-11T14:51:10.699426+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -1520,17 +1880,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:46:10.723249+01:00",
+      "next_run_at": "2026-07-11T14:51:10.750515+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T14:46:10.750515+01:00",
+        "by": "spark-4be3:4121171"
+      }
     },
     {
       "id": "cd14e79a8bcf",
@@ -1553,17 +1923,27 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:46:10.770715+01:00",
+      "next_run_at": "2026-07-11T14:51:10.803047+01:00",
+      "last_run_at": "2026-07-11T14:46:10.798459+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": {
+        "at": "2026-07-11T14:46:10.803047+01:00",
+        "by": "spark-4be3:4121171"
+      }
     },
     {
       "id": "9f23fd93cfcd",
@@ -1586,13 +1966,19 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-12T03:07:41.409956+01:00",
+      "next_run_at": "2026-07-12T09:07:41.410213+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
@@ -1621,17 +2007,24 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-12T05:50:17.880844+01:00",
+      "next_run_at": "2026-07-12T06:22:23.271892+01:00",
+      "last_run_at": "2026-07-12T05:50:27.793256+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/devops/scripts/deadpid-fleet-alert-guard.py",
+      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "666a78c65d3e",
@@ -1654,19 +2047,26 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-24T13:04:00.319433+01:00",
       "paused_reason": null,
       "created_at": "2026-07-12T09:52:15.847758+01:00",
+      "next_run_at": "2026-07-12T10:02:27.407374+01:00",
+      "last_run_at": "2026-07-12T09:52:27.407374+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": "/home/frank/.hermes/profiles/devops/scripts"
+      "workdir": "/home/frank/.hermes/profiles/devops/scripts",
+      "fire_claim": null
     },
     {
       "id": "2d7658d233ba",
@@ -1689,13 +2089,19 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-23T15:29:51.597308+01:00",
+      "paused_reason": "retired by t_f5fa7f80: devops profile cron ticker is stale/no gateway-owned scheduler; direct SQL/manual probe evidence supersedes this legacy 24h clean watch, whose open_eagain count includes known pre-fix legacy blocks",
       "created_at": "2026-07-19T22:30:04.178146+01:00",
+      "next_run_at": "2026-07-19T23:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
@@ -1722,24 +2128,31 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-23T13:19:50.420979+01:00",
+      "next_run_at": "2026-07-23T13:30:00+01:00",
+      "last_run_at": "2026-07-23T13:20:16.823037+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": "/home/frank/.hermes/profiles/devops/scripts"
+      "workdir": "/home/frank/.hermes/profiles/devops/scripts",
+      "fire_claim": null
     },
     {
       "id": "fbdcfa8e6ab8",
       "name": "automation-vc-keeper",
-      "prompt": "Script-only keeper for ~/.hermes automation VCS branch fleet/automation-vc. Runs /home/frank/.hermes/scripts/automation_vc_keeper.py, which copies allowlisted automation source into an isolated worktree, redacts/normalizes cron runtime state, scans for secret patterns, commits, and pushes to origin/fleet/automation-vc. Silent on no-op.",
+      "prompt": "Script-only keeper for ~/.hermes automation VCS branch fleet/automation-vc. Runs the devops-profile dispatch wrapper automation-vc-keeper.sh (~/.hermes/profiles/devops/scripts/), which delegates to the TRACKED root script automation_vc_keeper.py (~/.hermes/scripts/ \u2014 durable, restored by `rsync scripts/` AND `rsync profiles/devops/scripts/` on DGX rebuild). The root script copies allowlisted automation source into an isolated worktree, redacts/normalizes cron runtime state, scans for secret patterns, commits, and pushes to origin/fleet/automation-vc. Silent on no-op; on any failure (secret hit, push error, exception) it exits non-zero so this job delivers the error to discord:#fleet-reports instead of failing silently.",
       "skills": [],
       "skill": null,
       "model": null,
@@ -1757,17 +2170,187 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-23T13:30:00.800483+01:00",
+      "next_run_at": "2026-07-23T19:34:28.339853+01:00",
+      "last_run_at": "2026-07-23T13:34:28.339853+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "f5f3b2371484",
+      "name": "nonspawnable-fleet-alert-guard",
+      "prompt": "Read-only fleet watchdog (t_2b273303): scan all kanban boards for tasks parked on non-existent (non-spawnable) profiles in status='ready' / claim_lock IS NULL / assignee NOT a real profile dir, excluding recognized terminal lanes (fable/codex/grok/orion-*), and emit ONE deduped fleet alert to discord:#fleet-reports via `hermes send` when the parked set grows. Do NOT change dispatch behaviour.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "nonspawnable-fleet-alert-guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null,
+        "completed": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-24T20:44:27.586072+01:00",
+      "next_run_at": "2026-07-24T21:14:33.767449+01:00",
+      "last_run_at": "2026-07-24T20:44:33.767449+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "5f0d3047f68a",
+      "name": "DQSH alert-reduction 2-week measurement (t_9cb96d37 window close)",
+      "prompt": "You are the scheduled gate-resolver + measurement runner for the time-gated DQSH alert-reduction follow-up. Today (the earliest fire date) is on/after 2026-08-12, so the 14-day post-fix window (2026-07-28 \u2192 2026-08-11) has elapsed and the real measurement is due.\n\nCONTEXT (read first):\n- Measurement task: kanban t_9cb96d37 (devops). Parent: sycode-trading/t_f020e1a4 (DQSH bounded-status hardening). Gate task: t_e33da949 (dependency parent of t_9cb96d37).\n- Fix-date baseline captured 2026-07-28T14:21Z: attached to t_9cb96d37 AND at /home/frank/.hermes/scripts/dqsh_alert_reduction_baseline_2026-07-28.json. A method note lives in the fleet vault at /home/frank/obsidian-fleet-vault/Operations/DQSH-Alert-Reduction-Measurement-Baseline-t_9cb96d37.md.\n- Method script: /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py\n- Board DB: /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db\n- Registry: project control-plane, tracker jarvis-os, vault fleet. The obsidian-knowledge-management skill is MANDATORY before any durable vault write.\n\nWINDOW TIMESTAMPS (epoch s):\n- start = 1785196800 (2026-07-28T00:00:00Z)\n- end   = 1786492799 (2026-08-11T23:59:59Z)\n\nSTEPS:\n1. Run `date -u` and confirm current UTC date >= 2026-08-12. If NOT, do NOT mutate anything \u2014 kanban_comment t_9cb96d37 \"cron fired early; window not elapsed\" and STOP (should not happen given schedule).\n2. kanban_show t_9cb96d37 and t_e33da949 to re-read baseline context and attached baseline JSON.\n3. Run the measurement over the window AND the full current board:\n   python3 /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py --db /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db --json --window-start 1785196800 --window-end 1786492799\n   python3 /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py --db /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db --json\n   Capture both outputs. The first gives new_in_window per term (cards created in the 14-day window); the second gives current by_status for comparison vs the fix-date baseline.\n4. Compare new_in_window counts against baseline expectations:\n   - Baseline new_in_window@t0: dlq 0, backlog 7, starvation 0, pipeline_sta 0, queue_backlog 0.\n   - GENUINE recurrence cluster = material new set of dlq / starvation / pipeline_sta cards NOT explainable as normal board churn: e.g. new_in_window for dlq OR starvation OR pipeline_sta >= 3, OR a tight temporal cluster of same-term cards, OR open/blocked same-term cards indicating an unresolved incident. backlog/queue_backlog at low counts are likely noise \u2014 judge by inspecting titles + created_at.\n5. CLASSIFY and ACT:\n   a) NO genuine recurrence cluster \u2192 reduction MET. kanban_comment t_9cb96d37 with the full report (new_in_window per term, open-vs-resolved at window close, baseline comparison, recurrence-vs-noise verdict). The spawned devops worker (auto-promoted after gate completion) will finalize kanban_complete. (Optionally, you may also write the durable fleet task-evidence note now per step 6.)\n   b) GENUINE recurrence cluster \u2192 DO NOT auto-mutate. kanban_create a remediation task (assignee devops, parent t_9cb96d37) titled \"Remediate <term> recurrence cluster post DQSH fix (window 2026-07-28..08-11)\" with the evidence (counts, sample card ids/titles, created_at cluster). kanban_comment t_9cb96d37 summarizing the cluster. Then block t_9cb96d37 with kind='needs_input' reason summarizing the cluster (so a human reviews before declaring success). After blocking, proceed to step 7 (complete the gate).\n6. (On no-recurrence path) Persist a durable task-evidence note to the FLEET vault at /home/frank/obsidian-fleet-vault/Operations/ following the obsidian-knowledge-management skill (load it first): type: task-evidence, status: active, created/updated YYYY-MM-DD, confidence: high, tags, sources=[sycode-trading/t_f020e1a4, jarvis-os board, this task], body with measured new_in_window counts, open-vs-resolved, baseline comparison, and recurrence-vs-noise verdict. Link [[Projects/Control-Plane]] and [[Operations/DQSH-Bounded-Status-Hardening-t_f020e1a4]] and the baseline note.\n7. COMPLETE THE GATE: kanban_complete t_e33da949 with summary \"2-week window elapsed 2026-08-11; measurement triggered for t_9cb96d37.\" This auto-promotes t_9cb96d37 to ready so the dispatcher spawns a devops worker to finalize. (Do NOT call kanban_complete on t_9cb96d37 here \u2014 leave the official completion to the spawned worker, except in the recurrence case where you have already blocked it.)\n\nNO live trading, credentials, destructive DB/schema, prod deploy, or spend. Read-only board observation + report only.\n\nHonesty rule: never fabricate a board state. The board is live; measure it now. If the board DB is missing/corrupt, kanban_block t_9cb96d37 with kind='capability' and kanban_complete t_e33da949, then STOP.",
+      "skills": [
+        "obsidian-knowledge-management",
+        "devops"
+      ],
+      "skill": "obsidian-knowledge-management",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "openai-codex",
+      "model_snapshot": "gpt-5.5",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-08-12T00:05:00+01:00",
+        "display": "once at 2026-08-12 00:05"
+      },
+      "schedule_display": "once at 2026-08-12 00:05",
+      "repeat": {
+        "times": 1,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-28T15:29:53.454984+01:00",
+      "next_run_at": "2026-08-12T00:05:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "all",
+      "origin": null,
+      "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "146d152d459f",
+      "name": "PR505-560 no-hot-patch docs merger",
+      "prompt": "run the merger script pr505-560-no-hot-patch-merger.sh",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "pr505-560-no-hot-patch-merger.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/10 * * * *",
+        "display": "*/10 * * * *"
+      },
+      "schedule_display": "*/10 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-28T16:13:54.250988+01:00",
+      "next_run_at": "2026-07-28T16:20:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "319421d9afc4",
+      "name": "budget-exhausted-actuator-staged",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "budget-exhausted-actuator.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T17:40:33.234634+00:00",
+      "paused_reason": "t_5b07664c: STAGED companion cron for review - disabled and paused. Default run is DRY-RUN (classifies + logs, mutates nothing). Arming requires a separate operator/Frank approval to set LIVE=true.",
+      "created_at": "2026-07-28T17:40:33.234634+00:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/.hermes/profiles/devops/scripts",
+      "disabled_by": "t_5b07664c",
+      "disabled_reason": "t_5b07664c: staged for review in disabled/paused state. To activate: review, then set enabled=true AND (separately) arm LIVE=true per the staging runbook. Note: devops profile cron store has no live gateway/ticker, so this entry cannot fire until rehomed to a live profile."
     }
-  ]
+  ],
+  "updated_at": "2026-07-28T17:34:38.845888+01:00"
 }

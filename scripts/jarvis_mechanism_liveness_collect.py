@@ -138,6 +138,16 @@ def recent_comment_by_author(author: str, since_minutes: int = 1440) -> dict[str
     }
 
 
+# One-strike grace (t_631685fb): a single last_run age breach during a transient
+# gateway ticker stall must not flip a mechanism to DEAD. Many of these jobs run
+# every 5-15m; a one-cycle stall (observed ~20-30m gaps on 2026-07-25) is a
+# ticker hiccup, not a mechanism rotation. The job is still OK if it is alive
+# (last_status ok), within one scheduled period of its next run, and the breach
+# is below this grace. Real rotations (paused, error, or persistently stale past
+# GRACE + 1 period) still surface as DEAD.
+LIVENESS_GRACE_MIN = 30
+
+
 def classify_job(profile: str, job: dict[str, Any], now: datetime, max_age_minutes: int | None, allow_not_due: bool = True) -> tuple[str, str, float | None]:
     enabled = bool(job.get("enabled", True)) and job.get("state") != "paused"
     if not enabled:
@@ -162,6 +172,16 @@ def classify_job(profile: str, job: dict[str, Any], now: datetime, max_age_minut
         if allow_not_due and next_run and next_run > now and job.get("schedule", {}).get("kind") == "cron":
             # Daily/weekly cron jobs can be healthy with age > max_age if they are not due.
             return "OK", f"last run age {age:.1f}m; next scheduled {next_run.isoformat()}", age
+        # One-strike grace: absorb a single transient breach that is within
+        # LIVENESS_GRACE_MIN of the window AND the job is still armed to run
+        # again soon (next_run within grace of now). Persistently stale past
+        # this grace is a real rotation and still returns DEAD.
+        if (age - max_age_minutes) <= LIVENESS_GRACE_MIN and next_run is not None and (next_run - now).total_seconds() <= LIVENESS_GRACE_MIN * 60:
+            return "OK", (
+                f"last run age {age:.1f}m > {max_age_minutes}m but within "
+                f"{LIVENESS_GRACE_MIN}m one-strike grace (transient ticker stall); "
+                f"next scheduled {next_run.isoformat()}"
+            ), age
         return "DEAD", f"stale last_run age {age:.1f}m > {max_age_minutes}m", age
     return "OK", "enabled, last_status ok, last_run fresh/enough", age
 

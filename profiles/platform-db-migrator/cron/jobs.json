@@ -6,10 +6,11 @@
       "prompt": "Run the orphan monitoring script to check if the signal_pnl_points orphan count is stable after FK application. Report whether orphan count is stable (no new orphans) or still growing.",
       "skills": [],
       "skill": null,
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
+      "model": "tencent/hy3:free",
+      "provider": "nous",
       "provider_snapshot": "openai-codex",
       "model_snapshot": "gpt-5.5",
+      "base_url": null,
       "script": "monitor-signal-pnl-orphans.sh",
       "no_agent": false,
       "context_from": null,
@@ -20,13 +21,19 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": 4
+        "times": 4,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T12:10:11.467226+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T18:48:10.055429+01:00",
+      "next_run_at": "2026-07-05T00:48:10.087112+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -53,17 +60,24 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T12:10:12.176744+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T17:11:04.318453+01:00",
+      "next_run_at": "2026-07-05T17:41:04.318548+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
     }
-  ]
+  ],
+  "updated_at": "2026-07-28T12:10:12.177385+01:00"
 }

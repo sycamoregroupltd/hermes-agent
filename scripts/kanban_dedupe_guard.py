@@ -6,7 +6,7 @@ Born from the 2026-07-05 out-of-band production DDL incident
 sycode-trading-pm cloned gate-blocked t_5c25f222 into t_d0fcaddb on a profile
 without the gate, and that profile applied production DDL out-of-band.
 
-Three deterministic rules (no LLM):
+Five deterministic rules (no LLM):
 
   RULE 1 (dupe-of-gate-blocked): an active task (todo/ready/running) whose
   failure signature (referenced t_xxxxxxxx ids, file names, quoted error
@@ -23,6 +23,16 @@ Three deterministic rules (no LLM):
   token set is identical to, or Jaccard >= 0.85 with, another non-archived task
   created on the same board in the last 14 days is a HIGH duplicate. Jaccard
   0.50-0.85 is MEDIUM and comment-only. Parent/child links are exempt.
+
+  RULE 4 (stale-reference lane): a blocked RESEARCH-ACTIONABLE / REVIEW lane
+  whose referenced source task is already done is a phantom blocker; report it,
+  and optionally close it when --resolve-stale-refs is explicitly passed.
+
+  RULE 5 (research-actionable bullet-only card): a newly-created
+  RESEARCH-ACTIONABLE card must be a grouped, independent workstream with an
+  owner/assignee, acceptance/verification criteria, and a gate/safety marker.
+  Single bullet/specification/heading/table/code fragments are blocked at
+  kanban_create time; the source task should receive one digest child instead.
 
 Enforcement honesty: Hermes has no pre-create/pre-dispatch veto hook
 (kanban_task_* hooks are observer-only, fired after commit — verified in
@@ -118,53 +128,22 @@ TITLE_TOKEN_RE = re.compile(r"[a-z0-9]+")
 NON_ARCHIVED_STATUSES = {"todo", "ready", "running", "blocked", "scheduled", "done"}
 REVIEW_TITLE_RE = re.compile(r"(?i)\b(pre[- ]review|review|verify|verification|guardian|risk-review)\b")
 
-# --- RULE 6: review/verification cards must only go to terminal-capable
-# reviewer profiles (sycode-trading/t_jarvis_revrouter_20260728).
-#
-# Root-level fix for the 2026-07-28 dispatch cycle: 30/254 released cards
-# re-blocked because review cards (REVIEW / REWORK / VERDICT / "Post-state
-# review" / "terminal review") were dispatched to profiles with no
-# terminal/psql/gh tool surface, so the worker capability-failed and
-# re-blocked. We block the *creation* of such a card unless its assignee is
-# an on-disk terminal-capable reviewer profile.
-#
-# The terminal-capable reviewer set is the explicit 2026-07-28 contract
-# (os-reviewer, guardian, platform-reviewer, devops) extended with
-# trading-risk-reviewer (demonstrably terminal-capable; dominant review
-# assignee) and trading-devops (the sycode-trading devops-class profile, also
-# terminal-capable: psql/gh/terminal). Excluding trading-devops would
-# mis-flag ~10 legitimate review cards already on it and re-introduce the
-# exact re-block churn this fix targets, so it is included. Keep this set in
-# sync with real terminal-capable reviewer profiles; it is intentionally
-# narrow (not every on-disk profile). Reviewer: confirm the membership
-# against the current fleet before promoting.
-TERMINAL_CAPABLE_REVIEWER_PROFILES = frozenset({
-    "os-reviewer",
-    "guardian",
-    "platform-reviewer",
-    "devops",
-    "trading-devops",
-    "trading-risk-reviewer",
-})
-# Profiles that are recognizably reviewers, so the scan-path report-only
-# signal stays quiet on legitimate reviewer assignments even when one is not
-# in the strict terminal-capable set above.
-KNOWN_REVIEWER_PROFILES = frozenset({
-    "os-reviewer", "guardian", "platform-reviewer", "devops",
-    "trading-risk-reviewer", "research-trading", "test-engineer",
-    "upero-design-reviewer", "yorkstone-supplies-reviewer",
-    "tenant-guardian",
-})
-# Title must LEAD with a review term (avoids false positives on
-# "IMPLEMENT AFTER REVIEW" implementation cards, which legitimately go to
-# implementer profiles).
-REVIEW_CARD_TITLE_RE = re.compile(
-    r"(?i)^(re[- ]?review|review|rework|verdict|post[- ]state review|terminal review)\b"
+# --- RULE 5: research-actionable bullet-only card suppression --------------
+RESEARCH_ACTIONABLE_TITLE_RE = re.compile(r"(?i)^RESEARCH-ACTIONABLE\b")
+RA_SOURCE_RE = re.compile(r"(?i)\b(?:[a-z0-9_-]+/)?t_[0-9a-f]{8}\b")
+OWNER_MARKER_RE = re.compile(r"(?i)\b(owner|assignee|assigned to|profile)\b")
+ACCEPTANCE_MARKER_RE = re.compile(
+    r"(?i)\b(acceptance\s+(?:test|criteria)|verification\s+criteria|"
+    r"required\s+checks?|done\s+when|tests?\s+run|review-required)\b"
 )
-# Body is stricter: only the explicit verdict/rework/post-state/terminal
-# terms (the generic word "review" is far too noisy inside card bodies).
-REVIEW_CARD_BODY_RE = re.compile(
-    r"(?i)\b(REVIEW_VERDICT|REWORK_REQUIRED|post[- ]state review|terminal review)\b"
+GATE_MARKER_RE = re.compile(
+    r"(?i)\b(gate\s*(?:class)?|A[0-3]\b|safety|review\s+gate|"
+    r"Frank\s+gate|no\s+live\s+trading|no\s+credentials?)\b"
+)
+BULLET_FRAGMENT_RE = re.compile(
+    r"(?ix)^(?:\s*(?:[-*+]\s*)?)"
+    r"(?:\|.*\||`{1,3}.*|\#{1,6}\s+.*|(?:and|or|but|then|also|vs\.?|where)\b.*|"
+    r"\d+[.)]\s*(?:JWT\s+token\s+requirement|Are\s+leak-free|[A-Z][^:]{0,40}$))"
 )
 
 # --- RULE 4: stale-reference blocked lanes ---------------------------------
@@ -212,55 +191,53 @@ def title_tokens(title: str) -> set[str]:
     return tokens
 
 
+def research_actionable_block_reason(title: str, body: str, assignee: str) -> str | None:
+    """RULE 5: block RESEARCH-ACTIONABLE bullet/spec-line task spam at create time.
+
+    A legitimate research-actionable child is not just a copied bullet. It must
+    be an independently runnable digest/workstream with a named owner, an
+    acceptance or verification criterion, and a gate/safety boundary. This keeps
+    automated decomposers from turning every markdown bullet into a separate
+    blocked child card while preserving a path for one grouped implementation
+    card per source.
+    """
+    if not RESEARCH_ACTIONABLE_TITLE_RE.search(title or ""):
+        return None
+
+    hay = f"{title}\n{body or ''}"
+    has_owner = bool((assignee or "").strip() or OWNER_MARKER_RE.search(hay))
+    has_acceptance = bool(ACCEPTANCE_MARKER_RE.search(hay))
+    has_gate = bool(GATE_MARKER_RE.search(hay))
+
+    suffix = title.split("—", 1)[-1].split("-", 1)[-1].strip() if title else ""
+    looks_fragment = bool(BULLET_FRAGMENT_RE.search(suffix))
+    looks_single_source_bullet = bool(RA_SOURCE_RE.search(title or "")) and len((body or "").strip()) < 220
+
+    if has_owner and has_acceptance and has_gate and not looks_fragment:
+        return None
+
+    missing = []
+    if not has_owner:
+        missing.append("owner/assignee")
+    if not has_acceptance:
+        missing.append("acceptance/verification criteria")
+    if not has_gate:
+        missing.append("gate/safety marker")
+    if looks_fragment or looks_single_source_bullet:
+        missing.append("grouped independent-workstream digest")
+    return (
+        f"BLOCKED by {GUARD_AUTHOR}: RESEARCH-ACTIONABLE child cards must be "
+        f"grouped independent workstreams, not one card per bullet/spec line. "
+        f"Missing/weak contract: {', '.join(missing)}. Create/comment one digest "
+        f"child for the source task with distinct owner, acceptance test, and gate. "
+        f"Ref: sycode-trading/t_1243d100"
+    )
+
+
 def jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
-
-
-def is_terminal_capable_reviewer(assignee: str) -> bool:
-    """A review card is only safe on a profile with a terminal/psql/gh surface.
-
-    Recognized on-disk terminal-capable reviewer profiles (see
-    TERMINAL_CAPABLE_REVIEWER_PROFILES). An empty/unset assignee is NOT
-    capable — an unassigned review card would fall to default_assignee
-    (which may be a non-terminal profile), so treat it as needing an
-    explicit terminal-capable assignee.
-    """
-    a = (assignee or "").strip().lower()
-    if not a:
-        return False
-    return a in TERMINAL_CAPABLE_REVIEWER_PROFILES
-
-
-def review_assignee_block_reason(title: str, body: str, assignee: str) -> str | None:
-    """RULE 6: review/verification cards must go to a terminal-capable reviewer.
-
-    A card is a "review card" if its TITLE LEADS with a review term
-    (REVIEW/REWORK/VERDICT/etc.) OR its body carries an explicit review
-    verdict / rework / post-state / terminal-review marker. Implementation
-    cards that merely *mention* review after the leading verb (e.g.
-    "IMPLEMENT AFTER REVIEW …") are intentionally excluded.
-
-    If the card is a review card and its assignee is not a recognized
-    terminal-capable reviewer profile, return a block reason naming the
-    allowed set. Otherwise None (allowed).
-    """
-    if not (REVIEW_CARD_TITLE_RE.search(title or "")
-            or REVIEW_CARD_BODY_RE.search(body or "")):
-        return None
-    if is_terminal_capable_reviewer(assignee):
-        return None
-    a = (assignee or "").strip() or "(unassigned)"
-    allowed = ", ".join(sorted(TERMINAL_CAPABLE_REVIEWER_PROFILES))
-    return (
-        f"BLOCKED by {GUARD_AUTHOR}: review/verification card assigned to "
-        f"'{a}', which is not a terminal-capable reviewer profile "
-        f"(no terminal/psql/gh tool surface). Review cards must be assigned "
-        f"to one of: {allowed}. Reassign before creating, or have a "
-        f"terminal-capable reviewer create the card. Ref: "
-        f"sycode-trading/t_jarvis_revrouter_20260728"
-    )
 
 
 def recent_non_archived(task: dict, now: int | None = None) -> bool:
@@ -474,43 +451,6 @@ def resolve_stale_ref_lane(board: str, task: dict, ref_id: str,
         report.append(f"ERROR: resolve failed for {key}")
 
 
-def report_review_misroute(board: str, task: dict, reason: str,
-                            state: dict, dry_run: bool, report: list[str]) -> None:
-    """RULE 6 report-only path for the existing review-card pile.
-
-    Leaves a single durable comment pointing at the correct terminal-capable
-    reviewer profiles. Deliberately does NOT block — the 2026-07-28 incident
-    was a re-block cycle, so we must not re-park these cards. Idempotent via
-    shared state (one comment per card per lifetime).
-    """
-    key = f"{board}:{task['id']}:RULE6-review-misroute"
-    if key in state["actions"]:
-        return
-    verb = "WOULD-REPORT(dry-run)" if dry_run else "REPORT"
-    report.append(
-        f"{verb} [RULE6-review-misroute] {board}/{task['id']} "
-        f"(status={task['status']}, assignee={task['assignee'] or '-'}) -> "
-        f"comment: {reason}"
-    )
-    if dry_run:
-        return
-    comment = (
-        f"[{GUARD_AUTHOR}] RULE6-review-misroute: {reason} | Reassign to a "
-        f"terminal-capable reviewer (or have one create the card). Report-only: "
-        f"this guard will not re-block the card. Ref: "
-        f"sycode-trading/t_jarvis_revrouter_20260728"
-    )
-    ok = run_hermes(
-        ["kanban", "--board", board, "comment", task["id"],
-         "--author", GUARD_AUTHOR, comment]
-    )
-    if ok:
-        state["actions"][key] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        save_state(state)
-    else:
-        report.append(f"ERROR: hermes CLI comment failed for {key}")
-
-
 def scan_board_stale_refs(board: str, *, state: dict, dry_run: bool,
                           resolve: bool, report: list[str],
                           tasks: dict, comments: dict) -> None:
@@ -648,20 +588,6 @@ def scan_board(board: str, *, include_archived: bool, assume_blocked: set[str],
                 act(board, t, "RULE2-gated-to-gateless-profile", reason,
                     state, dry_run, report)
 
-        # RULE 6 (report-only, no re-block): an existing review/verification
-        # card parked on a non-terminal-capable assignee that is NOT itself a
-        # recognized reviewer profile. This surfaces the 2026-07-28 pile
-        # without re-triggering the re-block cycle. Active cards only.
-        rr = review_assignee_block_reason(
-            t["title"], t["body"], t["assignee"])
-        if rr:
-            a = (t["assignee"] or "").strip().lower()
-            # Silence when the assignee is already a recognized reviewer
-            # profile (legitimate route, even if outside the strict
-            # terminal-capable set) — avoids noise on valid assignments.
-            if a not in KNOWN_REVIEWER_PROFILES:
-                report_review_misroute(board, t, rr, state, dry_run, report)
-
         # RULE 3: title-token duplicate window (same board, recent, non-archived).
         # Active candidates only. Linked parent/child pairs are legitimate
         # decomposition and are exempt. MEDIUM is comment-only; HIGH blocks
@@ -724,12 +650,9 @@ def hook_check() -> None:
     if not (title or body):
         return
 
-    # RULE 6 at create time: review/verification card -> terminal-capable
-    # reviewer profile only. Hard-block; fail-open otherwise (the function
-    # returns None for non-review cards or valid reviewer assignees).
-    review_reason = review_assignee_block_reason(title, body, assignee)
-    if review_reason:
-        print(review_reason)
+    ra_reason = research_actionable_block_reason(title, body, assignee)
+    if ra_reason:
+        print(ra_reason)
         return
 
     new_sig = extract_signature(title + "\n" + body)

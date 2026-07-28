@@ -32,7 +32,7 @@ Contamination-epoch cross-check (governor task t_47fd45ce, 2026-07-09):
     fails closed to EVIDENCE STALE. (Legitimate prior-year academic citations
     in prose are allowed — only path-citations are gated.)
 """
-import sys, json, os, re, datetime as dt
+import sys, json, os, re, datetime as dt, time
 import duckdb
 import polars as pl
 
@@ -59,6 +59,10 @@ N_THRESH = 300
 STALE_THRESH = 5.0
 RET_CLIP = 10.0
 WIN_TH = 0.2
+MAX_RUNTIME_SECONDS = int(os.environ.get("QR_MAX_RUNTIME_SECONDS", "900"))
+CANONICAL_FAIL_CLOSED_EARLY_EXIT = os.environ.get(
+    "QR_CANONICAL_FAIL_CLOSED_EARLY_EXIT", "1"
+) not in ("0", "false", "False", "no")
 
 # ---- Data-epoch contamination cross-check (governor task t_47fd45ce) ----
 CLEAN_LABEL_REBUILD = dt.datetime(2026, 7, 3, 0, 0, tzinfo=dt.timezone.utc)
@@ -73,6 +77,29 @@ N_THRESH_EARLY = 50
 KILL_LIST_DOC = os.path.expanduser(
     "~/obsidian/quant-team/2026-06-29-WORLDCLASS-ASSESSMENT-edges-refuted-claude.md"
 )
+
+
+def _stage_start(name: str) -> float:
+    ts = time.monotonic()
+    sys.stderr.write(f"[quant-researcher-stage] START {name}\n")
+    sys.stderr.flush()
+    return ts
+
+
+def _stage_done(name: str, started: float) -> None:
+    sys.stderr.write(
+        f"[quant-researcher-stage] DONE {name} elapsed_s={time.monotonic() - started:.2f}\n"
+    )
+    sys.stderr.flush()
+
+
+def _check_runtime_budget(run_started: float, stage: str) -> None:
+    elapsed = time.monotonic() - run_started
+    if elapsed > MAX_RUNTIME_SECONDS:
+        raise TimeoutError(
+            f"bounded abort at stage={stage}: elapsed_s={elapsed:.1f} > "
+            f"QR_MAX_RUNTIME_SECONDS={MAX_RUNTIME_SECONDS}"
+        )
 
 
 def write_research_note(body, run_date, operational_status):
@@ -314,6 +341,59 @@ def render_preclean_appendix(n_preclean, n_preclean_contam_90d):
     return lines
 
 
+def canonical_fail_closed_early_exit(run_label, run_date, clean_epoch_start,
+                                     kill_list, kill_doc_exists, epoch_rows,
+                                     n_preclean, n_preclean_contam_90d,
+                                     canonical_status, canonical_reason):
+    """Emit a bounded fail-closed report before the heavy synthetic sweep.
+
+    The fleet currently consumes the canonical Tier-1 realized-exit verdict as
+    the promotion/edge safety latch shared with fusion-calibration. When that
+    verdict is INSUFFICIENT_SAMPLE/FAIL_CLOSED there is no safe implementation
+    action to discover in the expensive candle join, so exit cleanly with the
+    fail-closed provenance instead of burning the scheduler's 3600s cap.
+    """
+    clean_epoch_floor_iso = clean_epoch_start.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    epoch_open = clean_epoch_start.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    body = []
+    body.append("# Quantitative Research: 6-Hour Systematic Edge & Carry Sweep (FAIL-CLOSED)")
+    body.append("**Cadence:** every 6 hours (cron `15 */6 * * *`, 4 runs/day) — matches the '6h' contract.")
+    body.append(f"**Date:** {run_label}")
+    body.append("**Job ID:** 13c1f9279025 (deterministic no_agent script)")
+    body.append(f"**Data window:** clean epoch [{clean_epoch_floor_iso}Z, now] (canonical Tier-1 realized-exit check; synthetic candle sweep skipped by bounded fail-closed early exit)")
+    body.append("")
+    body.append("## Result: FAIL-CLOSED — canonical Tier-1 sample below validation floor")
+    body.append("")
+    body.append(f"- **VALIDATED_EDGE_STATUS: `{canonical_status}`** — {canonical_reason}")
+    body.append("- **Bounded-exit policy:** because the shared fusion-calibration/quant-researcher verdict is not `VALIDATED`, this run exits before the heavy synthetic forward-label candle join. No cohort is cleared for implementation or paper-sleeve routing.")
+    body.append("- **Runtime guard:** `QR_MAX_RUNTIME_SECONDS` bounds this script before the scheduler hard cap; stage timings are emitted to stderr as `[quant-researcher-stage]` lines.")
+    body.append("")
+    body.append("## Methodology & Freshness-Gate Invariant")
+    body.append("- A cohort would **FAIL CLOSED** unless ALL hold: stale_share <= 5.0%, fresh N >= 300, fresh WR >= 53%.")
+    body.append("- `fresh_window_min`: 15m=15, 1h=60, 4h=240, 1d=1440. `fresh_lag` = median lag_min of the fresh subset.")
+    body.append("- `stale_share` = stale / (fresh+stale); clean-epoch eligibility requires `n_clean_fresh` >= 300.")
+    body.append("- Synthetic forward-label computation remains available for diagnostics with `QR_CANONICAL_FAIL_CLOSED_EARLY_EXIT=0`, but the default cron path is fail-closed and bounded when Tier-1 evidence is insufficient.")
+    body.append("")
+    body.append("## Data-Epoch Contamination Cross-Check (vs fusion calibration kill-list)")
+    body.append("")
+    body.append(f"- **Clean-candidate epoch:** `{CLEAN_EPOCH_NAME}` opens **{epoch_open}** (UTC). Per t_47fd45ce acceptance #2, a `WR>53%, n>=300 validated` claim is permitted ONLY for cohorts computed strictly within this open epoch. All signals before it overlap a known-defect epoch and are tagged CONTAMINATED/UNVALIDATED.")
+    body.append(f"- **Kill-list cross-reference (K1-K7):** live `strategy_lineage_kills` table returned {len(kill_list)} kill(s); obsidian assessment doc present: {kill_doc_exists}.")
+    body.append("- **Consulted `data_epoch_registry` (system of record):**")
+    for name, starts, ends, defects, is_clean in epoch_rows:
+        s = str(starts) if starts is not None else "-infinity"
+        e = str(ends) if ends is not None else "open"
+        tag = "CLEAN" if is_clean else "DEFECT"
+        body.append(f"  - `{name}` [{tag}] {s} -> {e}: {defects[:120]}")
+    body.append("")
+    body.extend(render_preclean_appendix(n_preclean, n_preclean_contam_90d))
+    report = "\n".join(body)
+    print(report)
+    try:
+        write_research_note(report, run_date, "fail-closed")
+    except Exception as e:
+        sys.stderr.write(f"note-write-warning: {e}\n")
+    run_self_validator(report)
+
 
 def check_citations(body):
     """Acceptance #3 (governor task t_47fd45ce): citation-staleness gate.
@@ -385,25 +465,35 @@ def gate_cohort(n_clean_fresh, wr_clean_fresh_v, clean_stale_share,
 
 
 def main():
+    run_started = time.monotonic()
     run_ts = dt.datetime.now(dt.timezone.utc)
     run_date = run_ts.strftime("%Y-%m-%d")
     run_label = run_ts.strftime("%Y-%m-%d %H:%M UTC")
 
+    st = _stage_start("connect_duckdb_postgres")
     con = duckdb.connect()
     con.execute("INSTALL postgres; LOAD postgres;")
     con.execute(f"ATTACH '{DB_URL}' AS pg (TYPE POSTGRES);")
+    _stage_done("connect_duckdb_postgres", st)
+    _check_runtime_budget(run_started, "connect_duckdb_postgres")
 
     # ---- Contamination cross-check sources (t_47fd45ce ACC #1/#2) ----
+    st = _stage_start("load_epoch_and_kill_list")
     clean_epoch_start, epoch_rows = load_epoch_registry(con)
     kill_list, kill_doc_exists = load_kill_list(con)
     clean_epoch_start_ts = clean_epoch_start.timestamp()
+    _stage_done("load_epoch_and_kill_list", st)
+    _check_runtime_budget(run_started, "load_epoch_and_kill_list")
 
     # ---- CANONICAL VALIDATED-EDGE VERDICT (t_4df5351d / t_460bb546) ----
     # Compute the SAME validated_edge_status the fusion-calibration report
     # prints, fed by the SAME authoritative Tier-1 realized-exit sample, so the
     # two reports cannot disagree. Computed while the DB connection is open.
+    st = _stage_start("canonical_tier1_edge")
     canonical_status, canonical_reason = compute_canonical_tier1_edge(
         con, clean_epoch_start)
+    _stage_done("canonical_tier1_edge", st)
+    _check_runtime_budget(run_started, "canonical_tier1_edge")
 
     # ---- Clean-epoch age + early-epoch ramp window (t_4cc128ea) ----
     # Age is measured from the open-epoch constant (CLEAN_EPOCH_FALLBACK), not
@@ -412,6 +502,21 @@ def main():
     # the full N_THRESH gate applies automatically (no manual switch).
     clean_epoch_age_days = (run_ts - CLEAN_EPOCH_FALLBACK).total_seconds() / 86400.0
     in_early_epoch = clean_epoch_age_days < EARLY_EPOCH_DAYS
+
+    if CANONICAL_FAIL_CLOSED_EARLY_EXIT and canonical_status != VALIDATED:
+        st = _stage_start("preclean_audit_for_fail_closed")
+        n_preclean, n_preclean_contam_90d = build_preclean_audit(con, clean_epoch_start)
+        _stage_done("preclean_audit_for_fail_closed", st)
+        con.close()
+        canonical_fail_closed_early_exit(
+            run_label, run_date, clean_epoch_start, kill_list, kill_doc_exists,
+            epoch_rows, n_preclean, n_preclean_contam_90d,
+            canonical_status, canonical_reason,
+        )
+        sys.stderr.write(
+            f"[quant-researcher-stage] EXIT fail_closed_early elapsed_s={time.monotonic() - run_started:.2f}\n"
+        )
+        return
 
     # ---- Pull signals: BOUND to the certified clean epoch (t_572a791e) ----
     # The EFFECTIVE evaluation window is [clean_epoch_start, now]. The old
@@ -625,6 +730,7 @@ def main():
 
     any_validated = validated.height > 0
     any_early = early_cohorts.height > 0
+    canonical_allows_validated_output = canonical_status == VALIDATED
 
     # ---- Quiet-mode early-return (proposal t_ca461999) ----
     # The full 250-line cohort dump carries near-zero validated information
@@ -657,12 +763,12 @@ def main():
         # proposal's goal). So we ALWAYS write the dated note (overwrite), which
         # keeps the validator's mtime check satisfied and produces no more than
         # one dated artifact per day anyway.
-        quiet_starving(run_label, run_date, n_sig, win_label, clean_epoch_start,
-                       contaminated_share, df.height, kill_list, kill_doc_exists,
-                       epoch_rows, total_clean=total_clean,
-                       n_preclean=n_preclean, n_preclean_contam_90d=n_preclean_contam_90d,
-                       canonical_status=canonical_status, canonical_reason=canonical_reason)
-        run_self_validator()
+        quiet_body = quiet_starving(run_label, run_date, n_sig, win_label, clean_epoch_start,
+                                    contaminated_share, df.height, kill_list, kill_doc_exists,
+                                    epoch_rows, total_clean=total_clean,
+                                    n_preclean=n_preclean, n_preclean_contam_90d=n_preclean_contam_90d,
+                                    canonical_status=canonical_status, canonical_reason=canonical_reason)
+        run_self_validator(quiet_body)
         return
     # ---- Build report ----
     out = []
@@ -690,12 +796,12 @@ def main():
         out.append("")
         out.append("No edge cohort independently cleared the triple gate on STRICTLY clean-epoch data. "
                    "Per t_47fd45ce acceptance #2 and the t_ec3d651c LOW-CONFIDENCE instruction (clean unique-journey n<100), "
-                   "nothing is validated, confirmed, or routed for implementation/paper sleeve. ")
+                   "nothing is cleared for implementation or paper-sleeve routing. ")
         out.append("Any cohort whose sample overlaps a pre-clean-candidate defect epoch is tagged CONTAMINATED/UNVALIDATED "
-                   "below and excluded from validated claims. Do not recalibrate the engine or fire MCE/edge alerts from this report.")
+                   "below and excluded from edge claims. Do not change engine settings or fire MCE/edge alerts from this report.")
         out.append("")
     else:
-        if any_validated and not in_early_epoch:
+        if any_validated and not in_early_epoch and canonical_allows_validated_output:
             # DEFENSE-IN-DEPTH (t_26cdaf62): the blind-period contract forbids
             # ANY validated cohort before the clean epoch reaches EARLY_EPOCH_DAYS.
             # gate_cohort() already routes every blind-period passing cohort to
@@ -721,6 +827,28 @@ def main():
                            f"{'YES' if r['contaminated'] else 'NO'} | {'YES' if r['kill_listed'] else 'NO'} | "
                            f"{r['lag_min_med']} | {r['fresh_window_min']} | {r['fresh_lag_med']} | {r['stale_share']}% | forward-synthetic |")
             out.append("")
+        elif any_validated and not in_early_epoch:
+            # DEFENSE-IN-DEPTH (t_fbaaea94): QR_CANONICAL_FAIL_CLOSED_EARLY_EXIT=0
+            # is a diagnostic override, not an alternate promotion path. When
+            # the authoritative realized-exit Tier-1 verdict is not VALIDATED,
+            # full synthetic-forward rows may be shown for investigation but
+            # must never be headed or stamped as validated cohorts.
+            out.append(f"## Diagnostic Synthetic-Forward Candidates (canonical Tier-1 status: {canonical_status})")
+            out.append("")
+            out.append("> Diagnostic override `QR_CANONICAL_FAIL_CLOSED_EARLY_EXIT=0` is active. "
+                       "The rows below passed the synthetic-forward cohort gate only. "
+                       "The authoritative realized-exit Tier-1 verdict is not `VALIDATED`, so these rows are candidates for investigation only; "
+                       "they are not cleared for implementation, paper-sleeve routing, engine setting changes, or MCE/edge alerts.")
+            out.append("")
+            out.append("| TF | Dir | Vol | Macro | Fav | AllN | AllWR | FreshN | FreshWR | CleanN | CleanWR | Clean_stale | Contam? | Kill? | lag_min | fresh_window_min | fresh_lag | stale_share | label_basis |")
+            out.append("|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|")
+            for r in validated.sort("wr_clean_fresh", descending=True).to_dicts():
+                out.append(f"| {r['timeframe']} | {r['direction']} | {r['volatility']} | {r['macro_regime']} | {str(r['fav'])} | "
+                           f"{r['n_all']:,} | {r['wr_all']}% | {r['n_fresh']:,} | {r['wr_fresh']}% | "
+                           f"{r['n_clean_fresh']:,} | {r['wr_clean_fresh']}% | {r['clean_stale_share']}% | "
+                           f"{'YES' if r['contaminated'] else 'NO'} | {'YES' if r['kill_listed'] else 'NO'} | "
+                           f"{r['lag_min_med']} | {r['fresh_window_min']} | {r['fresh_lag_med']} | {r['stale_share']}% | forward-synthetic-diagnostic |")
+            out.append("")
         if any_early:
             # Segregated lower-confidence section (t_4cc128ea AC #3) -- NEVER a
             # validated/confirmed edge; never fires MCE/edge alerts.
@@ -729,7 +857,7 @@ def main():
             out.append(f"> These cohorts passed the **softened early-epoch fresh-N ramp** (N >= {N_THRESH_EARLY}, "
                        f"WR >= {WR_THRESH}%, stale_share <= {STALE_THRESH}%) but would NOT clear the full N >= {N_THRESH} "
                        f"gate. They are reported ONLY here, strictly segregated from VALIDATED. Per t_4cc128ea they are "
-                       f"**not** confirmed edges and MUST NOT trigger MCE/edge alerts or engine recalibration. They are "
+                       f"**not** confirmed edges and MUST NOT trigger MCE/edge alerts or engine setting changes. They are "
                        f"re-evaluated under the full gate once the clean epoch passes {EARLY_EPOCH_DAYS}d.")
             out.append("")
             out.append("| TF | Dir | Vol | Macro | Fav | AllN | AllWR | FreshN | FreshWR | CleanN | CleanWR | Clean_stale | Contam? | Kill? | lag_min | fresh_window_min | fresh_lag | stale_share |")
@@ -846,7 +974,7 @@ def main():
         write_research_note(
             body,
             run_date,
-            "validated" if any_validated else "early-epoch" if any_early else "fail-closed",
+            "validated" if (any_validated and canonical_allows_validated_output) else "early-epoch" if any_early else "fail-closed",
         )
     except Exception as e:
         sys.stderr.write(f"note-write-warning: {e}\n")
@@ -858,13 +986,18 @@ def main():
     # (not echoed) to keep the delivered report clean; only a real
     # validation failure is surfaced to stderr. Import is guarded so a
     # missing/partial validator module can never break report delivery.
-    run_self_validator()
+    run_self_validator(body)
 
 
-def run_self_validator():
+def run_self_validator(body=None):
     """In-process fail-closed self-validation backstop (shared by main paths).
 
-    Runs the companion quant_researcher_6h_validator in-process. On a
+    Runs the companion quant_researcher_6h_validator in-process. When the
+    current rendered report body is available, validate that in-memory body
+    instead of the newest scheduler output file; the scheduler writes the output
+    file only after this script exits, so validating the output directory here
+    races against the previous run and can falsely demote a healthy report.
+    On a
     STALE/forbidden/metric-missing output it demotes this job's last_status in
     jobs.json so the fleet dashboard stops showing a green lie. Its stdout is
     captured (not echoed) to keep the delivered report clean; only a real
@@ -872,13 +1005,16 @@ def run_self_validator():
     missing/partial validator module can never break report delivery.
     """
     try:
-        import io as _io
-        import contextlib as _cl
         import quant_researcher_6h_validator as _val
-        _buf = _io.StringIO()
-        with _cl.redirect_stdout(_buf), _cl.redirect_stderr(_buf):
-            _val.main()
-        _verdict = _buf.getvalue()
+        if body is not None:
+            _verdict = _val.selfcheck_from_body(body)
+        else:
+            import io as _io
+            import contextlib as _cl
+            _buf = _io.StringIO()
+            with _cl.redirect_stdout(_buf), _cl.redirect_stderr(_buf):
+                _val.main()
+            _verdict = _buf.getvalue()
         if "FAIL-CLOSED validator" in _verdict:
             sys.stderr.write("[self-validator] " + _verdict)
     except Exception as _ve:
@@ -996,6 +1132,7 @@ def quiet_starving(run_label, run_date, n_sig, win_label, clean_epoch_start,
         write_research_note(body, run_date, "starving")
     except Exception as e:
         sys.stderr.write(f"note-write-warning: {e}\n")
+    return body
 
 
 def fail_closed(run_label, run_date, n_sig, reason):

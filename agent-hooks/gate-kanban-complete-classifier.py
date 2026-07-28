@@ -287,6 +287,11 @@ NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
     r"\bpaired [^\n.]{0,80}negative\b[^\n.]{0,200}\bconcrete apps/web\b[^\n.]{0,120}\bwithout verify_pass\b",
 ]
 
+SOURCE_REVIEW_PATTERNS: PatternList = [
+    r"\breview_verdict\b",
+    r"\b(?:source task|source review|review source task)\b",
+]
+
 
 FRONTEND_WEB_TASK_CATEGORY = TaskTypeCategory(
     name="frontend_web_app_surface",
@@ -502,6 +507,25 @@ def _app_impl_needs_verify_pass(task_part: str, raw: str) -> bool:
     return _has_app_impl(task_part)
 
 
+def _source_review_without_web(task_part: str, raw: str) -> bool:
+    """A source PR review verdict card is explicitly a review of another task.
+    It does not implement or change frontend/app surfaces itself.
+    Guard: the review verdict + source task reference signals this is a
+    source-PR-review verdict card, not an implementation card.
+    NOTE: this override fires AFTER changed_files (step 1) and app_impl
+    (step 2) checks. Those higher-priority guards already filtered out
+    concrete app surface work and implementation-verb cards.
+    """
+    if not _any(SOURCE_REVIEW_PATTERNS, task_part):
+        return False
+    # Belt-and-suspenders: no concrete web impl should have snuck through
+    if _any(CONCRETE_WEB_IMPL_PATTERNS, task_part):
+        return False
+    if _has_app_impl(task_part):
+        return False
+    return True
+
+
 def _web_surface(task_part: str, raw: str) -> bool:
     return _matches_category(FRONTEND_WEB_TASK_CATEGORY, task_part)
 
@@ -536,6 +560,12 @@ CONTRACT_TABLE: Sequence[ContractRule] = [
         decision=READONLY_EVIDENCE_TASK_CATEGORY.decision,
         predicate=_readonly_without_web,
         rationale=READONLY_EVIDENCE_TASK_CATEGORY.rationale,
+    ),
+    ContractRule(
+        name="ALLOW_SOURCE_PR_REVIEW_WITHOUT_WEB_SURFACE",
+        decision=OPERATIONAL_NONCODE_TASK_CATEGORY.decision,
+        predicate=_source_review_without_web,
+        rationale="source PR review verdict card with REVIEW_VERDICT and source task reference; no app/impl/web surface touched by this review card",
     ),
     ContractRule(
         name="BLOCK_WEB_SURFACE_NEEDS_VERIFY_PASS",

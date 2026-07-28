@@ -116,6 +116,7 @@ def append_markdown_event(
     event: str,
     *,
     initial_body: str,
+    idempotency_key: str | None = None,
     **properties: Any,
 ) -> Path:
     """Serialize an append stream and replace the complete note atomically."""
@@ -131,6 +132,8 @@ def append_markdown_event(
                     raise ValueError(f"refusing to append to noncanonical note: {destination}")
             else:
                 current = render_markdown(initial_body, properties)
+            if idempotency_key and idempotency_key in current:
+                return destination
             combined = current.rstrip() + "\n\n" + event.strip() + "\n"
             return write_text_atomic(destination, combined)
         finally:
@@ -167,9 +170,24 @@ def self_test() -> None:
         stream = root / "stream.md"
         append_markdown_event(stream, "## Event one", initial_body="# Stream", **properties)
         append_markdown_event(stream, "## Event two", initial_body="# Stream", **properties)
+        append_markdown_event(
+            stream,
+            "## Event two duplicate <!-- idempotency-key:self-test-event-two -->",
+            initial_body="# Stream",
+            idempotency_key="idempotency-key:self-test-event-two",
+            **properties,
+        )
+        append_markdown_event(
+            stream,
+            "## Event two duplicate <!-- idempotency-key:self-test-event-two -->",
+            initial_body="# Stream",
+            idempotency_key="idempotency-key:self-test-event-two",
+            **properties,
+        )
         stream_text = stream.read_text(encoding="utf-8")
         assert stream_text.count("---") == 2
-        assert stream_text.count("## Event") == 2
+        assert stream_text.count("## Event") == 3
+        assert stream_text.count("idempotency-key:self-test-event-two") == 1
         assert not list(root.glob(".*.incoming-*"))
         try:
             render_markdown("---\ninvalid\n---", properties)

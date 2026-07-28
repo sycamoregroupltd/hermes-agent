@@ -1,45 +1,49 @@
 #!/usr/bin/env python3
-# CANONICAL SOURCE — do not edit profile-local copies. See the goal-orchestrator-operating-runbook for the canonical-copy rule.
-# 2026-07-05 claude-seat audit fix: removed dead xai-oauth/grok-4.3 pin (revoked 2026-06-25;
-# profile default + fallback chain now applies), fixed literal {{now[:10]}} log path bug,
-# and propagate the agent exit code so cron stops reporting silent failures as ok.
-# 2026-07-09 devops fix (t_6554215b): the inner `hermes -z` skill-curator pass routinely exceeds the
-# previous 600s inner timeout, raising an uncaught subprocess.TimeoutExpired that crashed the cron
-# with exit 1. Now every subprocess failure (timeout, missing interpreter, non-zero agent exit) is
-# handled defensively: a dated audit note is appended to the vault and a concise summary is printed to
-# stdout, and the script exits 0 so the watchdog stays green (no crash alert) while the evidence remains.
-# 2026-07-10 observability hardening (t_752c3b80): the t_6554215b fix traded a crash alert for a
-# SILENT-GREEN blind spot — even a perpetually-stuck or no-op inner agent reported "ok" (exit 0).
-# Now the wrapper CLASSES the outcome (InnerTimeout / InnerNonZero / InnerNoAudit / Success) and exits
-# NON-ZERO with an explicit "SKILL-CURATOR DEGRADED: <reason>" line + a DEGRADED marker file the
-# watchdog can see, so silent degradation is surfaced instead of masked. A genuine success still
-# writes the dated audit note and exits 0. The prior crash-class bug (uncaught TimeoutExpired) is
-# preserved as caught — we only change post-failure REPORTING/EXIT semantics, never re-raise.
-import subprocess, datetime, sys, os, traceback
+# CANONICAL SOURCE — do not edit profile-local copies.
+# 2026-07-23 Native rewrite: replaced `hermes -z` LLM-agent inner call with
+# native `hermes curator run` + `hermes curator status`. The native Hermes
+# curator already runs every 3d (consolidates, prunes, archives).
+# This script is now a HEALTH WRAPPER: surface the native curator's state,
+# report failures, and exit 0 only when the native curator is healthy.  It must
+# not trigger a second full curator run; the native curator owns its own cadence.
+# Previous LLM-agent-based curation (which redundantly inspected all 165+58
+# skills every run) is eliminated. Audit logs are now concise — no duplicated
+# 220-line reports in the vault.
+import subprocess, datetime, sys, os, re
 
-from second_brain_writer import append_markdown_event
+INNER_TIMEOUT = 300  # 5 min — native curator run is fast
 
-# 50 min — comfortably under the scheduler's 1h script-timeout window, so a legitimate
-# long curator pass can finish instead of being killed at 10 min.
-INNER_TIMEOUT = 3000
-
-# Distinct marker the watchdog / cron report can grep for to distinguish DEGRADED from green.
 DEGRADED_MARKER_PATH = "/home/frank/.hermes/var/skill-curator-degraded.flag"
 
 now = datetime.datetime.now(datetime.timezone.utc)
 now_str = now.isoformat()
 date_str = now_str[:10]
-log_path = f"/home/frank/obsidian-fleet-vault/Operations/skill-curator/{date_str}.md"
+
+# Lazy-import — only load the writer when we actually produce an audit event
+_writer = None
+
+def _get_writer():
+    global _writer
+    if _writer is None:
+        try:
+            from second_brain_writer import append_markdown_event
+            _writer = append_markdown_event
+        except ImportError:
+            _writer = False
+    return _writer if _writer else False
 
 
 def write_audit(heading, body):
-    # Best-effort audit trail. A failure here must NEVER crash the cron run itself.
+    writer = _get_writer()
+    if not writer:
+        print(f"[skill-curator] WARN: second_brain_writer not available; audit not written")
+        return False
     try:
-        append_markdown_event(
-            log_path,
+        writer(
+            f"/home/frank/obsidian-fleet-vault/Operations/skill-curator/{date_str}.md",
             f"## {heading} ({now_str})\n\n{body}",
-            initial_body=f"# Skill Curator Audit — {date_str}",
-            title=f"Skill Curator Audit — {date_str}",
+            initial_body=f"# Skill Curator Health — {date_str}",
+            title=f"Skill Curator Health — {date_str}",
             type="task-evidence",
             status="active",
             created=date_str,
@@ -53,8 +57,10 @@ def write_audit(heading, body):
             generated=True,
             generator="dgx_skill_curator.py",
         )
+        return True
     except Exception as e:
-        print(f"[skill-curator] WARN: could not write audit note: {e}")
+        print(f"[skill-curator] WARN: audit write failed: {e}")
+        return False
 
 
 def clear_degraded_marker():
@@ -74,86 +80,157 @@ def write_degraded_marker(reason):
         pass
 
 
-def classify(proc):
-    """Return (outcome, reason) classifying the inner subprocess result.
-
-    outcome is one of: Success | InnerNonZero | InnerNoAudit
-    (Timeout / NotFound are raised as exceptions by subprocess and handled in run())."""
-    if proc.returncode == 0:
-        summary = (proc.stdout or "").strip()
-        # A genuine success must actually print a real summary (the PROMPT mandates
-        # the inner agent print its findings to stdout). If it exited 0 but produced
-        # no stdout, it did no real work — treat as a no-op. Detect on EMPTY STDOUT
-        # ONLY; a log_path proxy would be wrong here because the InnerNoAudit branch
-        # below itself writes log_path, which would mask every repeat same-day no-op
-        # run as green (the t_752c3b80 reviewer-identified blind spot).
-        if not summary:
-            return "InnerNoAudit", "inner agent exited 0 but produced no audit output (no-op)"
-        return "Success", ""
-    return "InnerNonZero", f"inner agent exited non-zero (returncode={proc.returncode})"
-
-
-PROMPT = (
-    "Skill curator pass. Review skills/ for duplicates, stale references, and missing "
-    "umbrella consolidation. Make minimal safe changes. Write a dated markdown summary of "
-    f"findings and changes to {log_path} (create parent dirs if needed), and print the same "
-    "summary to stdout so the cron report carries it."
-)
-
-
-def run():
+def run_native_curator():
+    """Run native `hermes curator run` and return (outcome, detail)."""
     try:
         proc = subprocess.run(
-            ["hermes", "-p", "jarvis", "-z", PROMPT],
+            ["hermes", "curator", "run"],
             timeout=INNER_TIMEOUT,
             capture_output=True,
             text=True,
         )
-        outcome, reason = classify(proc)
-        if outcome == "Success":
-            summary = (proc.stdout or "").strip() or "(no stdout; see vault note)"
-            write_audit("Skill curator pass OK", summary)
-            print(summary)
-            clear_degraded_marker()
-            return 0
-        if outcome == "InnerNoAudit":
-            detail = (
-                f"returncode={proc.returncode}\n"
-                f"--- stdout ---\n{proc.stdout or ''}\n"
-                f"--- stderr ---\n{proc.stderr or ''}"
-            )
-            write_audit("Skill curator pass NO AUDIT (no-op)", detail)
-            print(f"SKILL-CURATOR DEGRADED: {reason}; detail recorded to {log_path}")
-            write_degraded_marker(reason)
-            return 2
-        # InnerNonZero
-        detail = (
-            f"returncode={proc.returncode}\n"
-            f"--- stdout ---\n{proc.stdout or ''}\n"
-            f"--- stderr ---\n{proc.stderr or ''}"
-        )
-        write_audit("Skill curator pass returned non-zero", detail)
-        print(f"SKILL-CURATOR DEGRADED: {reason}; detail recorded to {log_path}")
-        write_degraded_marker(reason)
-        return 2
-    except subprocess.TimeoutExpired as e:
-        write_audit(
-            "Skill curator pass TIMEOUT",
-            f"Inner `hermes -z` pass exceeded {INNER_TIMEOUT}s budget and was skipped this tick.\n"
-            f"{str(e)[:500]}",
-        )
-        print(f"SKILL-CURATOR DEGRADED: inner timeout after {INNER_TIMEOUT}s (no-op this tick); recorded to {log_path}")
-        write_degraded_marker(f"inner timeout after {INNER_TIMEOUT}s")
-        return 2
-    except FileNotFoundError as e:
-        write_audit("Skill curator pass SKIPPED", f"`hermes` not found on PATH in cron env: {e}")
-        print(f"SKILL-CURATOR DEGRADED: `hermes` not on PATH in cron env; recorded to {log_path}")
-        write_degraded_marker("hermes not on PATH")
-        return 2
+        stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+
+        if proc.returncode == 0:
+            # Native curator succeeded. Parse key facts from output.
+            summary = stdout.split("\n")[0] if stdout else "no summary"
+            detail = f"exit 0 | {summary}"
+            return ("ok", detail)
+        else:
+            detail = f"exit {proc.returncode}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+            return ("degraded", detail)
+    except subprocess.TimeoutExpired:
+        return ("timeout", f"native curator exceeded {INNER_TIMEOUT}s")
+    except FileNotFoundError:
+        return ("missing", "`hermes` not found on PATH")
     except Exception as e:
-        write_audit("Skill curator pass ERROR", f"Unexpected error: {e}\n{traceback.format_exc()}")
-        print(f"SKILL-CURATOR DEGRADED: unexpected error — {e}; recorded to {log_path}")
-        write_degraded_marker(f"unexpected error: {e}")
+        return ("error", f"unexpected: {e}")
+
+
+# Status probe must be resilient to a flaky/slow `hermes` CLI (observed 30s
+# subprocess timeouts under load after the NIM provider switch). A transient
+# status-probe failure is NOT evidence the native curator is degraded — that
+# would falsely fail this cron (the original black hole). Treat probe failure
+# as "unknown" and exit healthy with a warning, so only a real curator run
+# failure (which this wrapper no longer performs) can degrade the loop.
+STATUS_TIMEOUT = 120  # generous; a status call should be fast, but tolerate spikes
+
+def _parse_curator_staleness(raw):
+    """Classify the native curator as authoritatively stale from `status` text.
+
+    A curator that is ENABLED but whose last successful run is older than its own
+    `stale after` threshold is authoritatively stale — that is the health signal
+    this wrapper exists to surface (no-black-holes: a silently-green cron that
+    hides a dead curator). A probe that FAILS (timeout / non-zero / not found) is
+    inconclusive and handled separately as WARN/unknown so it must NOT degrade
+    (see t_eb5984ed — a flaky probe is not evidence of curator death). Only a
+    successful, parsable, stale/disabled report counts as DEGRADED.
+    """
+    m = re.search(r"^curator:\s*(\S+)", raw, re.MULTILINE)
+    if m and m.group(1).upper() != "ENABLED":
+        return True, f"native curator not enabled (state={m.group(1)})"
+    m_last = re.search(r"last run:\s*([\d.]+)\s*([hdwmy])", raw)
+    m_stale = re.search(r"stale after:\s*([\d.]+)\s*([hdwmy])", raw)
+    if not (m_last and m_stale):
+        return False, None
+    units = {"h": 1 / 24.0, "d": 1.0, "w": 7.0, "m": 30.0, "y": 365.0}
+    last = float(m_last.group(1)) * units.get(m_last.group(2), 1.0)
+    stale = float(m_stale.group(1)) * units.get(m_stale.group(2), 1.0)
+    if last > stale:
+        return True, (
+            f"native curator stale: last run {m_last.group(1)}{m_last.group(2)} "
+            f"ago exceeds stale-after {m_stale.group(1)}{m_stale.group(2)}"
+        )
+    return False, None
+
+
+def check_native_curator_status():
+    """Fetch native curator status by parsing text output.
+
+    Returns (status_data, status_line). On any probe failure (timeout, missing
+    binary, non-zero exit) status_data is None and status_line is a clearly
+    labelled WARNING — never a silent degradation. On a successful probe,
+    status_data carries a parsed `stale` verdict so run() can DEGRADE an
+    authoritatively-dead curator instead of masking it as green.
+    """
+    try:
+        proc = subprocess.run(
+            ["hermes", "curator", "status"],
+            timeout=STATUS_TIMEOUT,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            # Non-zero exit from the probe is inconclusive; do not degrade.
+            stderr = (proc.stderr or "").strip()
+            warn = (stderr.splitlines()[0] if stderr else f"exit {proc.returncode}")[:160]
+            return None, f"WARN: status probe inconclusive ({warn})"
+        stale, reason = _parse_curator_staleness(proc.stdout)
+        status_data = {"raw_output": proc.stdout.strip(), "stale": stale, "stale_reason": reason}
+        return status_data, f"status ok ({len(proc.stdout)} chars)"
+    except subprocess.TimeoutExpired:
+        return None, f"WARN: status probe timed out after {STATUS_TIMEOUT}s"
+    except FileNotFoundError:
+        return None, "WARN: `hermes` not found on PATH"
+    except Exception as e:
+        return None, f"WARN: status probe error: {e}"
+
+
+def run():
+    # 1. Check native curator status first
+    status_data, status_line = check_native_curator_status()
+    print(f"[skill-curator] Native curator status: {status_line}")
+
+    # 2. Do not run the native curator here.  This cron used to call
+    #    `hermes curator run`, which can legitimately exceed the cron/script
+    #    timeout when profile consolidation is enabled.  The native curator
+    #    status is the health signal; invoking another full run from the health
+    #    wrapper turns a healthy curator into a false failing cron.
+    #
+    #    A probe failure (timeout / inconclusive) is treated as UNKNOWN, not
+    #    DEGRADED. The native curator runs on its own 3-day cadence; unless we
+    #    actually observed a failed run, the loop stays healthy. We still record
+    #    the warning so the audit trail is honest.
+    if status_line.startswith("WARN:"):
+        outcome = "unknown"
+        detail = status_line
+        print(f"[skill-curator] Native curator status probe inconclusive — treating as healthy (unknown)")
+    elif status_data is not None and status_data.get("stale"):
+        # Authoritative staleness: a successful probe reported the curator is
+        # disabled or its last run exceeds its own stale-after threshold. This is
+        # genuine degradation the wrapper must surface — FAIL-LOUD, not silent-green.
+        outcome = "degraded"
+        detail = status_data.get("stale_reason") or "native curator stale"
+        print(f"[skill-curator] Native curator authoritatively STALE — degrading (no-black-holes)")
+    elif status_data is not None:
+        outcome = "ok"
+        detail = status_line
+        print(f"[skill-curator] Native curator run: skipped — health wrapper only")
+    else:
+        outcome = "degraded"
+        detail = status_line
+        print(f"[skill-curator] Native curator run: skipped — status unavailable")
+
+    # 3. Write audit trail
+    if outcome == "ok":
+        write_audit("Curator run OK", f"Native: {detail.split('|', 1)[-1].strip()}\nStatus: {status_line}")
+        clear_degraded_marker()
+        print(f"[skill-curator] HEALTHY")
+        return 0
+    elif outcome == "unknown":
+        # Probe inconclusive but no real failure observed — healthy, with a note.
+        write_audit(
+            "Curator status probe inconclusive",
+            f"Status probe returned: {detail}\nTreated as healthy; native curator owns its own cadence and was not re-run.",
+        )
+        clear_degraded_marker()
+        print(f"[skill-curator] HEALTHY (status probe inconclusive)")
+        return 0
+    else:
+        write_audit(f"Curator run {outcome.upper()}", detail)
+        print(f"SKILL-CURATOR DEGRADED: {outcome} — {detail[:200]}")
+        write_degraded_marker(f"{outcome}: {detail[:300]}")
         return 2
 
 

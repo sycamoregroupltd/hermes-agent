@@ -21,17 +21,24 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1815
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-29T21:59:04.279377+01:00",
+      "next_run_at": "2026-07-28T22:10:00+01:00",
+      "last_run_at": "2026-07-28T22:01:02.440998+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "discord:1521973775761936646",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "f1956871c01a",
@@ -54,17 +61,24 @@
       },
       "schedule_display": "17 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 51
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T15:55:00+01:00",
+      "next_run_at": "2026-07-28T22:17:00+01:00",
+      "last_run_at": "2026-07-28T21:35:59.408358+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "35ea8eccdfb1",
@@ -87,17 +101,24 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 12
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-03T21:04:57.448945+01:00",
       "paused_reason": "migrated-to-jarvis-cron-store-by-t_86c82617-live-discord-delivery",
       "created_at": "2026-06-30T21:36:10.497509+01:00",
+      "next_run_at": "2026-07-04T00:00:00+01:00",
+      "last_run_at": "2026-07-03T18:00:17.818639+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:1521973783794155530",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "2d13d1ebe4fd",
@@ -120,19 +141,26 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 883
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T17:02:13.703781+01:00",
+      "next_run_at": "2026-07-28T22:22:57.690548+01:00",
+      "last_run_at": "2026-07-28T22:07:57.690548+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading"
+      "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading",
+      "fire_claim": null
     },
     {
       "id": "ac9fd7e91dac",
@@ -155,17 +183,24 @@
       },
       "schedule_display": "0 10 * * 0",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T17:54:11.112250+01:00",
+      "next_run_at": "2026-08-02T10:00:00+01:00",
+      "last_run_at": "2026-07-28T21:35:59.882163+01:00",
+      "last_status": "ok",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "bd9848a88dd3",
@@ -188,17 +223,24 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 34
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T17:54:12.129596+01:00",
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T21:35:59.963485+01:00",
+      "last_status": "ok",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null,
+      "last_error": null,
+      "last_delivery_error": null
     },
     {
       "id": "5c14c760b7df",
@@ -221,17 +263,24 @@
       },
       "schedule_display": "0 8 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T21:28:34.235601+01:00",
+      "next_run_at": "2026-07-29T08:00:00+01:00",
+      "last_run_at": "2026-07-28T21:36:00.146611+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "986e25e53c03",
@@ -254,17 +303,24 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 704
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T02:56:04.991112+01:00",
+      "next_run_at": "2026-07-28T22:21:40.523870+01:00",
+      "last_run_at": "2026-07-28T22:06:40.523870+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "e2a237c4e703",
@@ -287,17 +343,24 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 352
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T05:15:45.837289+01:00",
+      "next_run_at": "2026-07-28T22:36:40.656537+01:00",
+      "last_run_at": "2026-07-28T22:06:40.656537+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "604a198683fc",
@@ -320,17 +383,24 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 302
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T13:52:26.644935+01:00",
       "paused_reason": null,
       "created_at": "2026-07-06T22:18:53.350930+01:00",
+      "next_run_at": "2026-07-11T13:52:34.001552+01:00",
+      "last_run_at": "2026-07-11T13:37:34.001552+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "c7226b0fbbe5",
@@ -353,17 +423,24 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 396
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T01:53:05.694139+01:00",
+      "next_run_at": "2026-07-28T22:23:14.687376+01:00",
+      "last_run_at": "2026-07-28T22:08:14.687376+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "0ead099b5eac",
@@ -386,52 +463,25 @@
       },
       "schedule_display": "*/20 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 49
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T11:09:23.407379+01:00",
       "paused_reason": null,
       "created_at": "2026-07-10T19:21:58.802997+01:00",
+      "next_run_at": "2026-07-11T11:20:00+01:00",
+      "last_run_at": "2026-07-11T11:13:46.691171+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "6649ec49a4b5",
-      "name": "Fusion HOLD monitor \u2014 Tier-1 n>=300 recalibration re-evaluation (t_b4c824c7)",
-      "prompt": "Paper-only recalibration-hold watchdog for the Sycode Fusion Engine Calibration.",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "fusion_recalibration_hold_monitor.py",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "cron",
-        "expr": "17 6 * * *",
-        "display": "17 6 * * *"
-      },
-      "schedule_display": "17 6 * * *",
-      "repeat": {
-        "times": null
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-17T13:27:48.090269+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "workdir": "/home/frank"
+      "workdir": null,
+      "fire_claim": null
     }
-  ]
+  ],
+  "updated_at": "2026-07-28T22:08:14.687830+01:00"
 }

@@ -8,10 +8,11 @@
         "obsidian-knowledge-management"
       ],
       "skill": "obsidian-knowledge-management",
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
+      "model": "tencent/hy3:free",
+      "provider": "nous",
       "provider_snapshot": "openai-codex",
       "model_snapshot": "gpt-5.5",
+      "base_url": null,
       "script": "sidecar-freshness-check.py",
       "no_agent": false,
       "context_from": null,
@@ -22,13 +23,19 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T12:10:28.858734+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T22:04:17.320389+01:00",
+      "next_run_at": "2026-07-04T22:34:17.358923+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -40,10 +47,11 @@
       "prompt": "Run the catalyst-feed production gate monitor. Executes export_market_news.py to refresh staging files, checks if 1000+ rows are ready, and if so creates a kanban card for trading-risk-reviewer to approve the production write.",
       "skills": [],
       "skill": null,
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
+      "model": "tencent/hy3:free",
+      "provider": "nous",
       "provider_snapshot": "openai-codex",
       "model_snapshot": "gpt-5.5",
+      "base_url": null,
       "script": "catalyst-feed-gate-monitor.py",
       "no_agent": false,
       "context_from": null,
@@ -54,20 +62,27 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T22:56:02.352763+01:00",
+      "next_run_at": "2026-07-04T23:57:03.678871+01:00",
+      "last_run_at": "2026-07-04T22:57:03.678871+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank/sycode-trading/reports/catalyst-feed"
+      "workdir": "/home/frank/sycode-trading/reports/catalyst-feed",
+      "fire_claim": null
     },
     {
       "id": "8db4d896efe1",
@@ -75,10 +90,11 @@
       "prompt": "Run the weekend Short 1m (strategy 29) post-weekend verification script and report results. This is a follow-up from the 1m signal pipeline fix (t_701c8072, t_9814dde1). The weekend period (Sat 00:00 UTC Jul 4 \u2192 Mon 00:00 UTC Jul 6) has just concluded. The script checks if strategy 29 produced any SHORT 1m signals with trigger_score >= 95 on its 7 target symbols. Run the script and deliver its full output. If the result is zero signals, add analysis about whether this is likely natural market conditions (altcoins in bullish phase) or indicates a remaining pipeline issue.",
       "skills": [],
       "skill": null,
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
+      "model": "tencent/hy3:free",
+      "provider": "nous",
       "provider_snapshot": "openai-codex",
       "model_snapshot": "gpt-5.5",
+      "base_url": null,
       "script": "weekend-short-29-verify.sh",
       "no_agent": false,
       "context_from": null,
@@ -89,13 +105,19 @@
       },
       "schedule_display": "once at 2026-07-06 00:15",
       "repeat": {
-        "times": 1
+        "times": 1,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T12:10:10.697308+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T16:31:06.683684+01:00",
+      "next_run_at": "2026-07-06T00:15:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "origin",
       "origin": null,
       "enabled_toolsets": null,
@@ -122,17 +144,24 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T12:10:29.237284+01:00",
       "paused_reason": null,
       "created_at": "2026-07-06T17:51:23.050613+01:00",
+      "next_run_at": "2026-07-06T18:52:05.441001+01:00",
+      "last_run_at": "2026-07-06T17:52:05.441001+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "748de258cba0",
@@ -155,13 +184,19 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T03:58:19.250715+01:00",
+      "next_run_at": "2026-07-08T04:58:19.250797+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -188,19 +223,66 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 0
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T12:10:10.977772+01:00",
       "paused_reason": null,
       "created_at": "2026-07-09T10:22:00.281109+01:00",
+      "next_run_at": "2026-07-09T11:22:00.311526+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
       "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor"
+    },
+    {
+      "id": "8033879cd039",
+      "name": "BLUR funding-rate monitor (hourly) re-registered t_6b1b1589",
+      "prompt": "Read-only BLUR funding-rate persistence monitor. Execute collect_blur.py to append a row to data/blur_funding_timeseries.csv and emit the built-in persistent-extreme alert if Hyperliquid annualized BLUR funding is below -200% for >=6 consecutive samples. Public endpoints only; never place orders, never insert trade_intents, never change credentials, never allocate capital.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "blur_funding_monitor_collect.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "repeat": {
+        "times": null,
+        "completed": 1
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T12:23:42.837551+01:00",
+      "paused_reason": null,
+      "created_at": "2026-07-28T10:12:14.288075+01:00",
+      "next_run_at": "2026-07-28T11:12:41.517108+01:00",
+      "last_run_at": "2026-07-28T10:12:41.517108+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor",
+      "fire_claim": null
     }
-  ]
+  ],
+  "updated_at": "2026-07-28T12:23:42.838007+01:00"
 }

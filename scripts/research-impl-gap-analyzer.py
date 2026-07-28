@@ -62,6 +62,15 @@ FALSE_POSITIVE_PATTERNS = [
     re.compile(r"^5\.\s*Are leak-free entry/exit semantics", re.IGNORECASE),
 ]
 
+ACTIONABLE_VERBS = {
+    "add", "adjust", "audit", "backfill", "build", "create", "dedupe",
+    "document", "enforce", "fix", "group", "harden", "implement", "inspect",
+    "land", "migrate", "patch", "persist", "reconcile", "refactor", "repair",
+    "route", "run", "ship", "test", "update", "validate", "verify", "wire",
+}
+LOW_SIGNAL_PREFIX_RE = re.compile(r"(?i)^(and|or|but|then|also|where|vs\.?)\b")
+MARKDOWN_FRAGMENT_RE = re.compile(r"^\s*(?:\|.*\||#{1,6}\s+.*|`{1,3}.*)$")
+
 
 # ── Parsing ────────────────────────────────────────────────────────────
 
@@ -175,12 +184,35 @@ def normalize_action_text(text: str) -> str:
     text = text.strip()
     # Remove leading numbering like "3. **Implement pipeline:**"
     text = re.sub(r'^\d+\.\s*\*{0,2}', '', text).strip()
+    text = re.sub(r'^[-*+]\s+', '', text).strip()
+    text = text.strip("`*_ ")
     return text
+
+
+def is_low_signal_bullet_action(action_text: str) -> bool:
+    """True for markdown/table/code/fragments that should not become cards.
+
+    Automated decomposers must not turn each copied bullet or specification line
+    into its own RESEARCH-ACTIONABLE child. A standalone child requires an
+    imperative verb plus a real object; otherwise the item should be suppressed
+    or grouped into one digest for the source task.
+    """
+    normalized = normalize_action_text(action_text)
+    if not normalized:
+        return True
+    if MARKDOWN_FRAGMENT_RE.match(normalized) or LOW_SIGNAL_PREFIX_RE.match(normalized):
+        return True
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_-]*", normalized.lower())
+    if len(words) < 3:
+        return True
+    return words[0] not in ACTIONABLE_VERBS
 
 
 def is_false_positive_action(action_text: str) -> bool:
     """Check if an extracted action matches known false-positive patterns."""
     normalized = normalize_action_text(action_text)
+    if is_low_signal_bullet_action(normalized):
+        return True
     for pattern in FALSE_POSITIVE_PATTERNS:
         if pattern.search(normalized):
             return True
@@ -433,7 +465,10 @@ def classify_item(item: dict, cb_state: dict) -> dict:
     # 7. If we have real actions after filtering template text
     if real_actions:
         result["classification"] = "real_gap"
-        result["reason"] = f"{len(real_actions)} non-template action(s) found"
+        result["reason"] = (
+            f"{len(real_actions)} independently actionable item(s) found; "
+            "group into one digest child for the source task"
+        )
         result["confidence"] = min(0.95, 0.6 + 0.1 * len(real_actions))
         result["real_actions"] = real_actions
         return result

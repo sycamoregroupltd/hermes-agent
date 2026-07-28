@@ -889,5 +889,38 @@
     "title": "REVIEW: completion-gate repair for frontend route fix + implement marketplace route component and page layout",
     "body": "This is actual frontend route/page/component work; no VERIFY_PASS supplied.",
     "summary": "AD_HOC_VERIFY_PASS only; no running app VERIFY_PASS supplied"
+  },
+  {
+    "name": "t_3c05a0d7-source-pr-review-ui-spacing-no-web-allows",
+    "task_id": "t_3c05a0d7_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "REVIEW: sycode-trading Fix UI spacing on order-book widget from sycode-trading/t_5c33e334",
+    "body": "Review source task sycode-trading/t_5c33e334: UI spacing fixes for the order-book widget display. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 spacing needs width breakpoint adjustments.",
+    "summary": "REVIEW_VERDICT=CHANGES_REQUESTED posted for sycode-trading/t_5c33e334; verdict consumed by verdict-router.",
+    "metadata": {"changed_files": ["/home/frank/obsidian-fleet-vault/Governance/2026-07-23-source-pr-review-t_3c05a0d7.md"]},
+    "description": "REQUIRED: source PR review of UI spacing PR. Card quotes PR frontend/UI surface but changes only docs. FALSE POSITIVE at HEAD: WEB_PATTERNS matches 'ui'."
+  },
+  {
+    "name": "source-pr-review-frontend-changed-files-negative-blocks",
+    "task_id": "t_3c05a0d7_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "REVIEW: sycode-trading marketplace order-book from sycode-trading/t_patch01",
+    "body": "Review source task sycode-trading/t_patch01: implement marketplace order-book React route component\u2014this card applies the reviewed spacing fixes. REVIEW_VERDICT=CHANGES_REQUESTED.",
+    "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; apps/web files modified.",
+    "metadata": {"changed_files": ["apps/web/src/app/marketplace/page.tsx"]},
+    "description": "BLOCK: paired negative. REVIEW_VERDICT card that modifies apps/web changed_files must still require running-app VERIFY_PASS."
+  },
+  {
+    "name": "source-pr-review-impl-verbs-negative-blocks",
+    "task_id": "t_3c05a0d7_impl_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "REVIEW: sycode-trading marketplace dashboard from sycode-trading/t_patch02",
+    "body": "Review source task sycode-trading/t_patch02: fix marketplace dashboard page component layout. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 this card applies the reviewed changes. No running app VERIFY_PASS supplied.",
+    "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; fix marketplace dashboard page component.",
+    "metadata": {"changed_files": ["/home/frank/obsidian-fleet-vault/Governance/2026-07-23-review-marketplace.md"]},
+    "description": "BLOCK: paired negative. Body uses APP_IMPL_PATTERNS verb+surface, step 2 fires before source-review override."
   }
 ]

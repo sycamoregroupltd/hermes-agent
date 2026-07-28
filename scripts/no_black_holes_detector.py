@@ -4,8 +4,10 @@
 
 Weekly no-agent cron audit for report-like producers that write to local/origin
 or file sinks without a documented consumer. Empty stdout means clean/silent.
-When findings exist, emits a Discord-ready report and creates one idempotency-keyed
-triage card on the jarvis-os board.
+When findings exist, emits a capped Discord-ready report by default and creates
+one idempotency-keyed triage card on the jarvis-os board. Reviewers can request
+full evidence explicitly via --json or --max-findings without changing default
+Discord noise.
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ ALLOWLIST_PATH = STATE_DIR / "no_black_holes_allowlist.json"
 STATE_PATH = STATE_DIR / "no_black_holes_state.json"
 BOARD = os.environ.get("NO_BLACK_HOLES_BOARD", "jarvis-os")
 IDEMPOTENCY_KEY = "no-black-holes-weekly-findings"
-MAX_FINDINGS_PER_SECTION = int(os.environ.get("NO_BLACK_HOLES_MAX_FINDINGS", "30"))
+DEFAULT_MAX_FINDINGS_PER_SECTION = int(os.environ.get("NO_BLACK_HOLES_MAX_FINDINGS", "30"))
 REPORT_RE = re.compile(r"report|summary|findings|alert", re.I)
 
 KNOWN_OUTPUT_DIRS = [
@@ -104,8 +106,8 @@ def atomic_write_json(path: Path, data: Any) -> None:
     os.replace(tmp_name, path)
 
 
-def ensure_allowlist() -> dict[str, Any]:
-    if not ALLOWLIST_PATH.exists():
+def ensure_allowlist(*, create: bool = True) -> dict[str, Any]:
+    if create and not ALLOWLIST_PATH.exists():
         atomic_write_json(ALLOWLIST_PATH, DEFAULT_ALLOWLIST)
     allow = read_json(ALLOWLIST_PATH, DEFAULT_ALLOWLIST)
     for k, v in DEFAULT_ALLOWLIST.items():
@@ -425,12 +427,17 @@ def create_triage_card(findings: list[Finding], dry_run: bool) -> str | None:
         return f"ERROR creating triage card: {exc}"
 
 
-def format_report(findings: list[Finding], triage: str | None, mode: str) -> str:
-    if not findings:
-        return ""
+def findings_by_section(findings: list[Finding]) -> dict[str, list[Finding]]:
     by_section: dict[str, list[Finding]] = {}
     for f in findings:
         by_section.setdefault(f.section, []).append(f)
+    return by_section
+
+
+def format_report(findings: list[Finding], triage: str | None, mode: str, *, max_findings: int | None) -> str:
+    if not findings:
+        return ""
+    by_section = findings_by_section(findings)
     lines = [
         f"🔴 NO-BLACK-HOLES DETECTOR: {len(findings)} finding(s) ({mode})",
         f"allowlist={ALLOWLIST_PATH}",
@@ -440,16 +447,38 @@ def format_report(findings: list[Finding], triage: str | None, mode: str) -> str
         lines.append(f"triage_card={triage}")
     for section, items in sorted(by_section.items()):
         lines.append(f"\n## {section} ({len(items)})")
-        for f in items[:MAX_FINDINGS_PER_SECTION]:
+        visible_items = items if max_findings is None else items[:max_findings]
+        for f in visible_items:
             lines.append(f"- {f.severity.upper()} {f.key}: {f.summary}; {f.detail}")
-        if len(items) > MAX_FINDINGS_PER_SECTION:
-            lines.append(f"- … {len(items) - MAX_FINDINGS_PER_SECTION} more")
+        if max_findings is not None and len(items) > max_findings:
+            lines.append(f"- … {len(items) - max_findings} more")
     return "\n".join(lines)
+
+
+def format_json(findings: list[Finding], triage: str | None, mode: str, *, dry_run: bool, state_written: bool) -> str:
+    by_section = findings_by_section(findings)
+    payload = {
+        "mode": mode,
+        "dry_run": dry_run,
+        "state_written": state_written,
+        "triage_card": triage,
+        "allowlist": str(ALLOWLIST_PATH),
+        "state": str(STATE_PATH),
+        "counts": {
+            "total": len(findings),
+            "by_section": {section: len(items) for section, items in sorted(by_section.items())},
+        },
+        "findings": [asdict(f) for f in findings],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True)
 
 
 def fixture_run() -> tuple[list[Finding], dict[str, Any]]:
     findings = [
-        Finding("cron-output", "fixture:local-weekly-summary", "high", "report-like enabled cron job uses deliver=local", "pre-fix fixture reproduces local summary black hole"),
+        *[
+            Finding("cron-output", f"fixture:local-weekly-summary-{i:02d}", "high", "report-like enabled cron job uses deliver=local", "pre-fix fixture reproduces local summary black hole")
+            for i in range(35)
+        ],
         Finding("file-sink", "/fixture/reports/unlinked-review.md", "medium", "recent output file has zero inbound references", "pre-fix fixture reproduces orphan report file"),
         Finding("vault-orphan", "/fixture/vault/Agent Finding.md", "low", "agent-authored vault note older than 48h has zero inbound wikilinks", "pre-fix fixture reproduces orphan agent note"),
         Finding("new-producer", "fixture:new-producer", "medium", "new producer appeared since prior scan and needs consumer check", "pre-fix fixture reproduces new producer guard"),
@@ -458,12 +487,16 @@ def fixture_run() -> tuple[list[Finding], dict[str, Any]]:
 
 
 def run(args: argparse.Namespace) -> int:
-    allow = ensure_allowlist()
+    max_findings = None if args.max_findings < 0 else args.max_findings
+    allow = ensure_allowlist(create=not args.dry_run and not args.fixture)
     old_state = read_json(STATE_PATH, {})
     if args.fixture:
         findings, new_state = fixture_run()
         triage = create_triage_card(findings, dry_run=True)
-        print(format_report(findings, triage, "fixture-dry-run"))
+        if args.json:
+            print(format_json(findings, triage, "fixture-dry-run", dry_run=True, state_written=False))
+        else:
+            print(format_report(findings, triage, "fixture-dry-run", max_findings=max_findings))
         return 0 if len(findings) >= 3 else 2
 
     reference_blob = build_reference_blob()
@@ -488,7 +521,8 @@ def run(args: argparse.Namespace) -> int:
     if not args.dry_run:
         atomic_write_json(STATE_PATH, new_state)
     triage = create_triage_card(findings, dry_run=args.dry_run)
-    report = format_report(findings, triage, "dry-run" if args.dry_run else "live")
+    mode = "dry-run" if args.dry_run else "live"
+    report = format_json(findings, triage, mode, dry_run=args.dry_run, state_written=not args.dry_run) if args.json else format_report(findings, triage, mode, max_findings=max_findings)
     if report:
         print(report)
     return 0
@@ -498,6 +532,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="scan and report without writing state or creating kanban card")
     ap.add_argument("--fixture", action="store_true", help="run built-in pre-fix fixture; must produce >=3 findings")
+    ap.add_argument("--json", action="store_true", help="emit machine-readable full findings; never truncates findings")
+    ap.add_argument("--max-findings", type=int, default=DEFAULT_MAX_FINDINGS_PER_SECTION, metavar="N", help="max findings per human report section; use -1 for all (default: env NO_BLACK_HOLES_MAX_FINDINGS or 30)")
     args = ap.parse_args(argv)
     try:
         return run(args)

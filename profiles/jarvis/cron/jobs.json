@@ -62,7 +62,8 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T03:00:00+01:00"
     },
     {
       "id": "cc38d71cb6ca",
@@ -83,7 +84,8 @@
       },
       "schedule_display": "0 */4 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
@@ -93,7 +95,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T20:00:36.521061+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "96b2923d206a",
@@ -114,7 +122,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -124,7 +133,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:00:21.723514+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "3eddc6709f44",
@@ -189,7 +204,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -204,7 +220,13 @@
         "thread_id": null
       },
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:00:39.771331+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "bf4fd963c988",
@@ -225,7 +247,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -235,7 +258,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:00:23.423556+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ae049639f334",
@@ -266,7 +295,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T05:00:00+01:00"
     },
     {
       "id": "46b4535eb511",
@@ -286,7 +316,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 28
       },
       "enabled": true,
       "state": "scheduled",
@@ -302,7 +333,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-28T22:09:48.589706+01:00",
+      "last_run_at": "2026-07-28T21:59:03.194909+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e97a2e581fa8",
@@ -323,7 +360,8 @@
       },
       "schedule_display": "every 1m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 177
       },
       "enabled": true,
       "state": "scheduled",
@@ -333,7 +371,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:50.145189+01:00",
+      "last_run_at": "2026-07-28T22:07:50.145189+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e51c9e2fa5df",
@@ -359,7 +403,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 26
       },
       "enabled": true,
       "state": "scheduled",
@@ -377,7 +422,13 @@
       ],
       "workdir": "/home/frank/.hermes/profiles/elon",
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-28T22:08:48.404779+01:00",
+      "last_run_at": "2026-07-28T21:58:06.989349+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e435af190e9e",
@@ -398,7 +449,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 37
       },
       "enabled": true,
       "state": "scheduled",
@@ -414,7 +466,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-28T22:16:49.412417+01:00",
+      "last_run_at": "2026-07-28T22:06:49.412417+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b91117332832",
@@ -449,7 +507,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "5e7d12d0a6ec",
@@ -470,7 +529,8 @@
       },
       "schedule_display": "0 4 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -484,7 +544,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T04:00:00+01:00",
+      "fire_claim": null,
+      "last_run_at": "2026-07-28T19:49:50.209763+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null
     },
     {
       "id": "3ac9196fe0f0",
@@ -519,7 +585,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "11295230d374",
@@ -540,7 +607,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -555,7 +623,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:08:57.051967+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ea7e8125bfa0",
@@ -590,7 +664,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00"
     },
     {
       "id": "f85a3de37919",
@@ -625,7 +700,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-08-03T08:00:00+01:00"
     },
     {
       "id": "43d386fc9339",
@@ -657,7 +733,8 @@
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-02T05:00:00+01:00"
     },
     {
       "id": "96a24b35be15",
@@ -717,7 +794,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-24T19:15:20.738515+01:00",
-      "deliver": "local",
+      "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
@@ -725,7 +802,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "a5900fd72486",
@@ -796,7 +874,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "7c802db3ba38",
@@ -817,7 +896,8 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 8
       },
       "enabled": true,
       "state": "scheduled",
@@ -827,7 +907,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T23:00:00+01:00",
+      "last_run_at": "2026-07-28T22:00:47.574902+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "13c1f9279025",
@@ -840,17 +926,18 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "quant_researcher_6h.py",
+      "script": "/home/frank/.hermes/profiles/jarvis/scripts/quant_researcher_6h.py",
       "no_agent": true,
       "context_from": null,
       "schedule": {
         "kind": "cron",
-        "expr": "15 */6 * * *",
-        "display": "15 */6 * * *"
+        "expr": "37 */6 * * *",
+        "display": "37 */6 * * *"
       },
-      "schedule_display": "15 */6 * * *",
+      "schedule_display": "37 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -860,7 +947,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/scripts"
+      "workdir": "/home/frank/.hermes/scripts",
+      "next_run_at": "2026-07-29T00:37:00+01:00",
+      "last_run_at": "2026-07-28T18:38:13.867482+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "dac3c580e9bb",
@@ -883,7 +976,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -893,7 +987,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/scripts"
+      "workdir": "/home/frank/.hermes/scripts",
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:02:33.777533+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "d52dfcc7cbf5",
@@ -926,7 +1026,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-31T14:59:48.657510+01:00"
     },
     {
       "id": "b701186fa79f",
@@ -949,7 +1050,8 @@
       },
       "schedule_display": "every 120m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
@@ -959,7 +1061,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T23:36:08.151929+01:00",
+      "last_run_at": "2026-07-28T21:36:08.151929+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstderr:\n/home/frank/.hermes/hermes-agent/venv/bin/python: can't open file '/home/frank/.hermes/scripts/dgx_nous_proxy_watchdog.py': [Errno 2] No such file or directory",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ee57faa4538f",
@@ -982,7 +1090,8 @@
       },
       "schedule_display": "every 7m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 45
       },
       "enabled": true,
       "state": "scheduled",
@@ -992,7 +1101,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:23.242663+01:00",
+      "last_run_at": "2026-07-28T22:01:23.242663+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b563577e2300",
@@ -1015,7 +1130,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 23
       },
       "enabled": true,
       "state": "scheduled",
@@ -1025,7 +1141,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:21:54.373348+01:00",
+      "last_run_at": "2026-07-28T22:06:54.373348+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "d224c5b386b0",
@@ -1048,7 +1170,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 24
       },
       "enabled": true,
       "state": "scheduled",
@@ -1058,7 +1181,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:21:52.446116+01:00",
+      "last_run_at": "2026-07-28T22:06:52.446116+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "5f71a9e0462f",
@@ -1152,7 +1281,8 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -1162,7 +1292,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T03:36:27.231574+01:00",
+      "last_run_at": "2026-07-28T21:36:27.231574+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0ddf67598a8c",
@@ -1306,7 +1442,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "645eac4c22b5",
@@ -1329,7 +1466,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 6
       },
       "enabled": true,
       "state": "scheduled",
@@ -1339,7 +1477,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:36:27.356368+01:00",
+      "last_run_at": "2026-07-28T21:36:27.356368+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "082ceadcc6d6",
@@ -1362,7 +1506,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 13
       },
       "enabled": true,
       "state": "scheduled",
@@ -1372,7 +1517,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:36:53.408842+01:00",
+      "last_run_at": "2026-07-28T22:06:53.408842+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b8d28c8e5f6e",
@@ -1395,7 +1546,8 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 121
       },
       "enabled": true,
       "state": "scheduled",
@@ -1405,7 +1557,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:54.199930+01:00",
+      "last_run_at": "2026-07-28T22:06:54.199930+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c0a27b1a63c6",
@@ -1426,7 +1584,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 13
       },
       "enabled": true,
       "state": "scheduled",
@@ -1436,7 +1595,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:36:54.323079+01:00",
+      "last_run_at": "2026-07-28T22:06:54.323079+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0335d3de142b",
@@ -1495,7 +1660,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 23
       },
       "enabled": true,
       "state": "scheduled",
@@ -1508,7 +1674,13 @@
         "terminal",
         "file"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:14:47.267511+01:00",
+      "last_run_at": "2026-07-28T21:59:47.267511+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "35fd9cd6d157",
@@ -1531,7 +1703,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -1544,7 +1717,13 @@
         "terminal",
         "file"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:00:42.919365+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstderr:\n{\"status\": \"failed\", \"error\": \"read-only endpoint failed (7): http://localhost:3001/api/openclaw/ml/predictions/recent?limit=50: curl: (7) Failed to connect to localhost port 3001 after 0 ms: Couldn't connect to server\"}",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "502ce12743c5",
@@ -1567,7 +1746,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 6
       },
       "enabled": true,
       "state": "scheduled",
@@ -1577,18 +1757,23 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:36:57.408037+01:00",
+      "last_run_at": "2026-07-28T21:36:57.408037+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "96ae5ae57f3c",
       "name": "external-edge-discovery",
-      "prompt": "You are a crypto trading edge researcher. In this run:\n\n1. Search X/Twitter for the latest crypto trading strategies, edge ideas, and pro trader insights. Use web_search with queries like:\n   - \"site:x.com crypto trading strategy funding rate arbitrage\"\n   - \"site:x.com Hyperliquid strategy backtest\"\n   - \"site:x.com delta neutral crypto perps\"\n   - \"site:x.com market neutral funding carry\"\n   - \"site:x.com crypto momentum strategy alts\"\n\n2. Search GitHub for new strategy repos:\n   - \"site:github.com crypto funding rate arbitrage strategy\"\n   - \"site:github.com Hyperliquid trading bot paper\"\n   - \"site:github.com market neutral crypto perps\"\n\n3. Search TradingView for promising Pine Script strategies via web_search:\n   - \"TradingView Pine Script funding rate strategy crypto\"\n   - \"TradingView Pine Script Hyperliquid backtest\"\n\n4. Extract the full content of the 2-3 most promising finds using web_extract.\n\n5. Score each candidate on:\n   - Methodology quality (entry/exit rules clear? 1-10)\n   - Cost modeling (funding, slippage, fees included? 1-10)\n   - Sycode-feasibility (can we build this? 1-10)\n   - Edge uniqueness (different from what we already do? 1-10)\n\n6. Output a concise report with:\n   - Top 3 external edge findings\n   - Actionable recommendations\n   - URLs to source material\n\n7. Save output to /home/frank/obsidian/quant-team/research/external-edge-discovery-$(date +%Y-%m-%d).md\n\nImportant: Persist any useful findings to the Obsidian vault at ~/obsidian/quant-team/research/. Link to original sources.",
+      "prompt": "You are a crypto trading edge researcher. In this run:\n\nIMPORTANT: Use ONLY Hermes native free web tools \u2014 web_search(query) for web searches, web_extract(urls) for page/PDF content, and the arxiv skill/tool for academic papers. NEVER invoke the external paid crawler CLI or any paid crawler NPM package (its credits are exhausted and calls error).\n\n1. Search X/Twitter for the latest crypto trading strategies, edge ideas, and pro trader insights. Use web_search with queries like:\n   - \"site:x.com crypto trading strategy funding rate arbitrage\"\n   - \"site:x.com Hyperliquid strategy backtest\"\n   - \"site:x.com delta neutral crypto perps\"\n   - \"site:x.com market neutral funding carry\"\n   - \"site:x.com crypto momentum strategy alts\"\n\n2. Search GitHub for new strategy repos:\n   - \"site:github.com crypto funding rate arbitrage strategy\"\n   - \"site:github.com Hyperliquid trading bot paper\"\n   - \"site:github.com market neutral crypto perps\"\n\n3. Search TradingView for promising Pine Script strategies via web_search:\n   - \"TradingView Pine Script funding rate strategy crypto\"\n   - \"TradingView Pine Script Hyperliquid backtest\"\n\n4. Extract the full content of the 2-3 most promising finds using web_extract.\n\n5. Score each candidate on:\n   - Methodology quality (entry/exit rules clear? 1-10)\n   - Cost modeling (funding, slippage, fees included? 1-10)\n   - Sycode-feasibility (can we build this? 1-10)\n   - Edge uniqueness (different from what we already do? 1-10)\n\n6. Output a concise report with:\n   - Top 3 external edge findings\n   - Actionable recommendations\n   - URLs to source material\n\n7. Save output to /home/frank/obsidian/quant-team/research/external-edge-discovery-$(date +%Y-%m-%d).md\n\nImportant: Persist any useful findings to the Obsidian vault at ~/obsidian/quant-team/research/. Link to original sources.",
       "skills": [
-        "firecrawl",
         "find-docs",
         "obsidian-knowledge-management"
       ],
-      "skill": "firecrawl",
+      "skill": null,
       "model": "tencent/hy3:free",
       "provider": "nous",
       "provider_snapshot": null,
@@ -1637,7 +1822,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 12
       },
       "enabled": true,
       "state": "scheduled",
@@ -1647,7 +1833,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:38:04.106783+01:00",
+      "last_run_at": "2026-07-28T22:08:04.106783+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "565a6ee597b9",
@@ -1670,7 +1862,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 23
       },
       "enabled": true,
       "state": "scheduled",
@@ -1680,7 +1873,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:21.257094+01:00",
+      "last_run_at": "2026-07-28T21:53:21.257094+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c79a0939cfe7",
@@ -1703,7 +1902,8 @@
       },
       "schedule_display": "every 240m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -1713,7 +1913,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T23:00:27.095643+01:00",
+      "last_run_at": "2026-07-28T19:00:27.095643+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "7c783af2177f",
@@ -1736,7 +1942,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 59
       },
       "enabled": true,
       "state": "scheduled",
@@ -1746,7 +1953,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:10:53.835796+01:00",
+      "last_run_at": "2026-07-28T22:05:53.835796+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "4aecc19efac8",
@@ -1817,7 +2030,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00"
     },
     {
       "id": "7885ab69d7cb",
@@ -1840,7 +2054,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 59
       },
       "enabled": true,
       "state": "scheduled",
@@ -1850,7 +2065,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:10:59.027753+01:00",
+      "last_run_at": "2026-07-28T22:05:59.027753+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "67a0e9a36047",
@@ -1873,7 +2094,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 58
       },
       "enabled": true,
       "state": "scheduled",
@@ -1883,7 +2105,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:02.668873+01:00",
+      "last_run_at": "2026-07-28T22:03:02.668873+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "8c0e599c454a",
@@ -1906,7 +2134,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 58
       },
       "enabled": true,
       "state": "scheduled",
@@ -1916,7 +2145,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:17.650650+01:00",
+      "last_run_at": "2026-07-28T22:03:17.650650+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f2d0c8cfd508",
@@ -1939,7 +2174,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 23
       },
       "enabled": true,
       "state": "scheduled",
@@ -1949,7 +2185,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:07:49.791552+01:00",
+      "last_run_at": "2026-07-28T21:52:49.791552+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstderr:\n/home/frank/.hermes/hermes-agent/venv/bin/python: can't open file '/home/frank/.hermes/scripts/pnl_tracker.py': [Errno 2] No such file or directory",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "edb00251077b",
@@ -1982,7 +2224,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T02:00:00+01:00"
     },
     {
       "id": "4ea0cb3e41a8",
@@ -2003,7 +2246,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 13
       },
       "enabled": true,
       "state": "scheduled",
@@ -2013,7 +2257,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:38:04.292216+01:00",
+      "last_run_at": "2026-07-28T22:08:04.292216+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0d8a9583dfb5",
@@ -2044,7 +2294,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-31T15:30:00+01:00"
     },
     {
       "id": "dd3863533d18",
@@ -2077,7 +2328,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:00:00+01:00"
     },
     {
       "id": "8d034f48dc1a",
@@ -2100,7 +2352,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 22
       },
       "enabled": true,
       "state": "scheduled",
@@ -2110,7 +2363,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:09:11.918045+01:00",
+      "last_run_at": "2026-07-28T21:54:11.918045+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f7107612eb02",
@@ -2143,7 +2402,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T03:00:00+01:00"
     },
     {
       "id": "0e8097519c6b",
@@ -2166,7 +2426,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 34
       },
       "enabled": true,
       "state": "scheduled",
@@ -2176,7 +2437,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:46.935330+01:00",
+      "last_run_at": "2026-07-28T21:58:46.935330+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "6747b083dce8",
@@ -2202,7 +2469,8 @@
       },
       "schedule_display": "0 4,10,16,22 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
@@ -2216,7 +2484,13 @@
         "file",
         "kanban"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T04:00:00+01:00",
+      "last_run_at": "2026-07-28T22:04:34.808946+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e44dcfaaed79",
@@ -2249,7 +2523,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "30d85640737e",
@@ -2282,7 +2557,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T08:00:00+01:00"
     },
     {
       "id": "1487a685282e",
@@ -2305,7 +2581,8 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 14
       },
       "enabled": true,
       "state": "scheduled",
@@ -2315,7 +2592,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:30:00+01:00",
+      "last_run_at": "2026-07-28T22:01:55.846795+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "a9def8c365df",
@@ -2338,7 +2621,8 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 116
       },
       "enabled": true,
       "state": "scheduled",
@@ -2348,7 +2632,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:07:55.661084+01:00",
+      "last_run_at": "2026-07-28T22:05:55.661084+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c13949d88751",
@@ -2409,7 +2699,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 34
       },
       "enabled": true,
       "state": "scheduled",
@@ -2419,7 +2710,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:46.820958+01:00",
+      "last_run_at": "2026-07-28T21:58:46.820958+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "112dbf08692a",
@@ -2442,7 +2739,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 59
       },
       "enabled": true,
       "state": "scheduled",
@@ -2452,7 +2750,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:13:04.430920+01:00",
+      "last_run_at": "2026-07-28T22:08:04.430920+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ef64fb885946",
@@ -2485,7 +2789,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "a1646f47cb29",
@@ -2508,7 +2813,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 6
       },
       "enabled": true,
       "state": "scheduled",
@@ -2518,7 +2824,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:37:49.930484+01:00",
+      "last_run_at": "2026-07-28T21:37:49.930484+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstderr:\n/home/frank/.hermes/hermes-agent/venv/bin/python: can't open file '/home/frank/.hermes/scripts/macro_regime_adaptor.py': [Errno 2] No such file or directory",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "db9010b23a48",
@@ -2551,7 +2863,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "2a8bd26381d2",
@@ -2572,7 +2885,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 22
       },
       "enabled": true,
       "state": "scheduled",
@@ -2582,7 +2896,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:09:44.775240+01:00",
+      "last_run_at": "2026-07-28T21:54:44.775240+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2ef03c710168",
@@ -2615,7 +2935,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T06:00:00+01:00"
     },
     {
       "id": "29675cd46541",
@@ -2648,7 +2969,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "00d811ecb8f5",
@@ -2681,7 +3003,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T09:00:00+01:00"
     },
     {
       "id": "474645983254",
@@ -2704,7 +3027,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 34
       },
       "enabled": true,
       "state": "scheduled",
@@ -2714,7 +3038,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:46.953158+01:00",
+      "last_run_at": "2026-07-28T21:58:46.953158+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "bdad1a33cd6c",
@@ -2728,7 +3058,8 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "state": "scheduled",
       "paused_at": null,
@@ -2747,7 +3078,13 @@
       },
       "schedule_display": "45 15 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports"
+      "deliver": "discord:#fleet-reports",
+      "next_run_at": "2026-07-29T15:45:00+01:00",
+      "last_run_at": "2026-07-28T15:46:14.166530+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "938e55e7b15b",
@@ -2761,7 +3098,8 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 6
       },
       "state": "scheduled",
       "paused_at": null,
@@ -2780,7 +3118,13 @@
       },
       "schedule_display": "every 60m",
       "enabled": true,
-      "deliver": "discord:#fleet-reports"
+      "deliver": "discord:#fleet-reports",
+      "next_run_at": "2026-07-28T22:37:57.453997+01:00",
+      "last_run_at": "2026-07-28T21:37:57.453997+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "66bb00df0c5d",
@@ -2813,7 +3157,8 @@
       },
       "schedule_display": "17 4 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports"
+      "deliver": "discord:#fleet-reports",
+      "next_run_at": "2026-07-29T04:17:00+01:00"
     },
     {
       "id": "042823b6d8b7",
@@ -2910,7 +3255,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -2922,7 +3268,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617"
+      "migration_task": "t_86c82617",
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:01:32.079540+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e2bcff2ad299",
@@ -2965,7 +3317,8 @@
       ],
       "workdir": null,
       "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617"
+      "migration_task": "t_86c82617",
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "86c82617fd01",
@@ -2986,7 +3339,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 12
       },
       "enabled": true,
       "state": "scheduled",
@@ -2998,7 +3352,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "migration_task": "t_86c82617",
-      "updated_by_task": "t_86c82617"
+      "updated_by_task": "t_86c82617",
+      "next_run_at": "2026-07-28T22:07:58.970852+01:00",
+      "last_run_at": "2026-07-28T21:37:58.970852+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "93ced04b18bf",
@@ -3021,7 +3381,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 6
       },
       "enabled": true,
       "state": "scheduled",
@@ -3035,7 +3396,13 @@
       ],
       "workdir": null,
       "rehomed_from": "/home/frank/.hermes/profiles/devops/cron/jobs.json",
-      "rehomed_by": "t_564bdeab"
+      "rehomed_by": "t_564bdeab",
+      "next_run_at": "2026-07-28T22:37:59.926503+01:00",
+      "last_run_at": "2026-07-28T21:37:59.926503+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2d696b360c2b",
@@ -3056,7 +3423,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 12
       },
       "enabled": true,
       "state": "scheduled",
@@ -3068,7 +3436,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-28T22:08:00.546277+01:00",
+      "last_run_at": "2026-07-28T21:38:00.546277+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "fe49f09f4e53",
@@ -3089,7 +3463,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
@@ -3101,7 +3476,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-28T22:08:03.952528+01:00",
+      "last_run_at": "2026-07-28T21:38:03.952528+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "d042c6feafa6",
@@ -3124,7 +3505,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 34
       },
       "enabled": true,
       "state": "scheduled",
@@ -3134,7 +3516,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:47.412038+01:00",
+      "last_run_at": "2026-07-28T21:58:47.412038+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0f39598f8210",
@@ -3167,7 +3555,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "e082a67768d6",
@@ -3200,7 +3589,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:15:00+01:00"
     },
     {
       "id": "b0e293bc701c",
@@ -3223,7 +3613,8 @@
       },
       "schedule_display": "*/5 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 74
       },
       "enabled": true,
       "state": "scheduled",
@@ -3233,7 +3624,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:10:00+01:00",
+      "last_run_at": "2026-07-28T22:05:55.778734+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c33973886990",
@@ -3256,7 +3653,8 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 37
       },
       "enabled": true,
       "state": "scheduled",
@@ -3266,7 +3664,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:10:00+01:00",
+      "last_run_at": "2026-07-28T22:01:56.801251+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "abc411626232",
@@ -3289,7 +3693,8 @@
       },
       "schedule_display": "*/1 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 305
       },
       "enabled": true,
       "state": "scheduled",
@@ -3299,7 +3704,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:00+01:00",
+      "last_run_at": "2026-07-28T22:07:00.894914+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "a547b49072e0",
@@ -3332,7 +3743,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "063fe9fb6f87",
@@ -3369,7 +3781,8 @@
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "next_run_at": "2026-07-29T09:05:00+01:00"
     },
     {
       "id": "55f23658ce51",
@@ -3402,7 +3815,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-02T04:20:00+01:00"
     },
     {
       "id": "edbfa1c95482",
@@ -3435,7 +3849,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "88c545dffd60",
@@ -3474,7 +3889,8 @@
         "terminal",
         "file"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:15:00+01:00"
     },
     {
       "id": "48d81cb5ba90",
@@ -3507,7 +3923,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-01T07:00:00+01:00"
     },
     {
       "id": "ac8f83c93959",
@@ -3543,7 +3960,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/profiles/elon"
+      "workdir": "/home/frank/.hermes/profiles/elon",
+      "next_run_at": "2026-08-01T07:15:00+01:00"
     },
     {
       "name": "channel-liveness-oob",
@@ -3577,7 +3995,8 @@
       "updated_at": "2026-07-04T01:25:14.678592+01:00",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "1f6bac147b1b",
@@ -3676,7 +4095,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-02T04:00:00+01:00"
     },
     {
       "id": "ab17df99a336",
@@ -3699,7 +4119,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
@@ -3709,7 +4130,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:12.544080+01:00",
+      "last_run_at": "2026-07-28T21:38:12.544080+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "9a755435138f",
@@ -3732,7 +4159,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 6
       },
       "enabled": true,
       "state": "scheduled",
@@ -3742,7 +4170,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:38:12.624191+01:00",
+      "last_run_at": "2026-07-28T21:38:12.624191+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "4c80202279d2",
@@ -3765,7 +4199,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 6
       },
       "enabled": true,
       "state": "scheduled",
@@ -3775,7 +4210,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:38:12.961429+01:00",
+      "last_run_at": "2026-07-28T21:38:12.961429+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "cbc07fdf609f",
@@ -3808,7 +4249,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:00:00+01:00"
     },
     {
       "id": "e909e7639aaf",
@@ -3831,7 +4273,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 58
       },
       "enabled": true,
       "state": "scheduled",
@@ -3841,7 +4284,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:07:52.587272+01:00",
+      "last_run_at": "2026-07-28T22:02:52.587272+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ef9126a21c6d",
@@ -3867,7 +4316,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 18
       },
       "enabled": true,
       "state": "scheduled",
@@ -3877,7 +4327,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:17:52.467700+01:00",
+      "last_run_at": "2026-07-28T22:02:52.467700+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "79b3e3471877",
@@ -3900,7 +4356,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 22
       },
       "enabled": true,
       "state": "scheduled",
@@ -3910,7 +4367,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:09:31.569416+01:00",
+      "last_run_at": "2026-07-28T21:54:31.569416+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "14a08855fb8f",
@@ -3933,7 +4396,8 @@
       },
       "schedule_display": "0 */8 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -3943,7 +4407,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T16:01:50.935600+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "78a8c2d6b4f9",
@@ -4045,7 +4515,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:00:00+01:00"
     },
     {
       "id": "c27622ade5fd",
@@ -4068,7 +4539,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 58
       },
       "enabled": true,
       "state": "scheduled",
@@ -4078,7 +4550,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:07:53.223610+01:00",
+      "last_run_at": "2026-07-28T22:02:53.223610+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e53763f47144",
@@ -4184,7 +4662,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 20
       },
       "enabled": true,
       "state": "scheduled",
@@ -4200,7 +4679,13 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:21:49.286820+01:00",
+      "last_run_at": "2026-07-28T21:51:44.344695+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f05227128ac2",
@@ -4223,7 +4708,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -4239,7 +4725,13 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T00:00:00+01:00",
+      "last_run_at": "2026-07-28T18:01:42.551753+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f9aac66d5b49",
@@ -4301,7 +4793,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
@@ -4311,7 +4804,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:14.794657+01:00",
+      "last_run_at": "2026-07-28T21:38:14.794657+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c916a7bc343f",
@@ -4344,7 +4843,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes"
+      "workdir": "/home/frank/.hermes",
+      "next_run_at": "2026-07-29T06:00:00+01:00"
     },
     {
       "id": "7ad0e11f7790",
@@ -4377,7 +4877,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-01T04:15:00+01:00"
     },
     {
       "id": "1324383c1d61",
@@ -4433,7 +4934,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
@@ -4443,7 +4945,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:14.915487+01:00",
+      "last_run_at": "2026-07-28T21:38:14.915487+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f96bc59a9657",
@@ -4466,7 +4974,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 58
       },
       "enabled": true,
       "state": "scheduled",
@@ -4476,7 +4985,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:08:34.765742+01:00",
+      "last_run_at": "2026-07-28T22:03:34.765742+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "a70772892543",
@@ -4489,17 +5004,18 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "clean_outcome_labeler_24h_v2.sh",
+      "script": "sycode_clean_labeler_mutex.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {
         "kind": "cron",
-        "expr": "*/15 * * * *",
-        "display": "*/15 * * * *"
+        "expr": "2,17,32,47 * * * *",
+        "display": "2,17,32,47 * * * *"
       },
-      "schedule_display": "*/15 * * * *",
+      "schedule_display": "2,17,32,47 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 25
       },
       "enabled": true,
       "state": "scheduled",
@@ -4509,7 +5025,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:17:00+01:00",
+      "last_run_at": "2026-07-28T22:03:55.391760+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "fac46dae8172",
@@ -4542,7 +5064,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T10:00:00+01:00"
     },
     {
       "id": "0ac3d8b6af91",
@@ -4565,7 +5088,8 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 8
       },
       "enabled": true,
       "state": "scheduled",
@@ -4575,7 +5099,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T23:00:00+01:00",
+      "last_run_at": "2026-07-28T22:02:11.760430+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "64b9e461b28f",
@@ -4588,17 +5118,18 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "r_multiple_labeler.sh",
+      "script": "sycode_rmultiple_labeler_mutex.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {
         "kind": "cron",
-        "expr": "*/15 * * * *",
-        "display": "*/15 * * * *"
+        "expr": "9,24,39,54 * * * *",
+        "display": "9,24,39,54 * * * *"
       },
-      "schedule_display": "*/15 * * * *",
+      "schedule_display": "9,24,39,54 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 27
       },
       "enabled": true,
       "state": "scheduled",
@@ -4608,7 +5139,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:09:00+01:00",
+      "last_run_at": "2026-07-28T21:54:46.011593+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 1\nstderr:\nALERT r-multiple-labeler: host-reachable DATABASE_URL unavailable (need server/.env.prod with @localhost/@127.0.0.1). Refusing to run.",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2e26eefaccf8",
@@ -4626,12 +5163,13 @@
       "context_from": null,
       "schedule": {
         "kind": "cron",
-        "expr": "*/15 * * * *",
-        "display": "*/15 * * * *"
+        "expr": "11,26,41,56 * * * *",
+        "display": "11,26,41,56 * * * *"
       },
-      "schedule_display": "*/15 * * * *",
+      "schedule_display": "11,26,41,56 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 26
       },
       "enabled": true,
       "state": "scheduled",
@@ -4641,40 +5179,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "cef479ec2f88",
-      "name": "sycode-surface-freshness",
-      "prompt": "",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "sycode_surface_freshness_monitor.py",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "cron",
-        "expr": "0 * * * *",
-        "display": "0 * * * *"
-      },
-      "schedule_display": "0 * * * *",
-      "repeat": {
-        "times": null
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-09T03:23:20.263360+01:00",
-      "deliver": "discord:#critical-alerts",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:11:00+01:00",
+      "last_run_at": "2026-07-28T21:57:53.437496+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "62140b71270a",
@@ -4697,7 +5208,8 @@
       },
       "schedule_display": "45 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -4707,7 +5219,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:45:00+01:00",
+      "fire_claim": null,
+      "last_run_at": "2026-07-28T15:24:38.285209+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null
     },
     {
       "id": "062d182994e0",
@@ -4730,7 +5248,8 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 8
       },
       "enabled": true,
       "state": "scheduled",
@@ -4740,7 +5259,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T23:00:00+01:00",
+      "last_run_at": "2026-07-28T22:02:18.710257+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b89302ef4383",
@@ -4763,7 +5288,8 @@
       },
       "schedule_display": "*/75 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 8
       },
       "enabled": true,
       "state": "scheduled",
@@ -4773,7 +5299,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T23:00:00+01:00",
+      "last_run_at": "2026-07-28T22:02:18.804074+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "unified-health-probe-39c29d42",
@@ -4796,7 +5328,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 33
       },
       "enabled": true,
       "state": "scheduled",
@@ -4809,7 +5342,13 @@
         "terminal"
       ],
       "workdir": null,
-      "pinned": false
+      "pinned": false,
+      "next_run_at": "2026-07-28T22:18:15.392393+01:00",
+      "last_run_at": "2026-07-28T22:08:15.392393+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2f4dd10c9e23",
@@ -4832,7 +5371,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 12
       },
       "enabled": true,
       "state": "scheduled",
@@ -4842,7 +5382,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:36:06.552444+01:00",
+      "last_run_at": "2026-07-28T22:06:06.552444+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "8b84c382cfa8",
@@ -4892,7 +5438,8 @@
         "file",
         "delegation"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T02:59:48.657510+01:00"
     },
     {
       "id": "ed3aedb474d2",
@@ -4915,7 +5462,8 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 14
       },
       "enabled": true,
       "state": "scheduled",
@@ -4925,7 +5473,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:30:00+01:00",
+      "last_run_at": "2026-07-28T22:02:19.456457+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 1\nstderr:\nTraceback (most recent call last):\n  File \"/home/frank/.hermes/scripts/fleet_knowledge_catalog_regen_watchdog.py\", line 35, in <module>\n    from cron.jobs import _jobs_lock, _save_jobs_unlocked, load_jobs, use_cron_store  # noqa: E402\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/frank/.hermes/hermes-agent/cron/__init__.py\", line 29, in <module>\n    from cron.scheduler import tick\n  File \"/home/frank/.hermes/hermes-agent/cron/scheduler.py\", line 2203\n    <<<<<<< HEAD\n    ^^\nSyntaxError: invalid syntax",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "3ddf2469949e",
@@ -4958,7 +5512,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T04:23:00+01:00"
     },
     {
       "id": "06311c0fa116",
@@ -4979,7 +5534,8 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 117
       },
       "enabled": true,
       "state": "scheduled",
@@ -4989,7 +5545,219 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
+      "workdir": null,
+      "next_run_at": "2026-07-28T22:10:15.543455+01:00",
+      "last_run_at": "2026-07-28T22:08:15.543455+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
+    },
+    {
+      "id": "eff5a150e679",
+      "name": "sycode-worktree-reaper",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_worktree_reaper.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 5 * * 0",
+        "display": "0 5 * * 0"
+      },
+      "schedule_display": "0 5 * * 0",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-23T21:23:06.445051+01:00",
+      "next_run_at": "2026-08-02T05:00:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "c1c29c17b312",
+      "name": "autopromote-soak-gate-t_jarvis_autopromote_20260728",
+      "prompt": "One-shot soak gate for kanban card t_jarvis_autopromote_20260728 (board: sycode-trading). The P1 blocked-card auto-dispatch fix (commit 5ea77f871 at /home/frank/.hermes/hermes-agent) has been soaking for 24h.\n\nDo this:\n1. Run the soak watchdog manually: /home/frank/.hermes/hermes-agent/venv/bin/python /home/frank/.hermes/profiles/devops/scripts/blocked_to_running_soak_watchdog.py and check exit code (0=clean). Also do a full 24h retro sweep of task_events on /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db: any 'promoted' events in the last 24h whose task's last control event was 'blocked' (kind not in dependency/transient) without an intervening 'unblocked' (allow same-timestamp), 'specified', or 'decomposed' event.\n2. If CLEAN: unblock and complete card t_jarvis_autopromote_20260728 via the kanban tools (kanban_comment with the soak evidence, then the card is currently blocked needs_input \u2014 comment evidence and complete it with summary citing acceptance test #4 passed). Note: use env -u HERMES_DELEGATED_CHILD_CONTEXT if shelling to hermes kanban CLI. Update the incident note /home/frank/obsidian-fleet-vault/Incidents/2026-07-28-t_jarvis_autopromote-dispatch-claims-blocked-cards.md marking acceptance #4 PASSED with the sweep numbers.\n3. If ANY violation: comment the full evidence on the card, keep it blocked, and escalate \u2014 the fix is not holding.\n4. Also delete this one-shot cron job after running (it has repeat=1 so it should not refire, but confirm).",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "moonshotai/kimi-k3",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-07-29T21:45:00+01:00",
+        "display": "once at 2026-07-29 21:45"
+      },
+      "schedule_display": "once at 2026-07-29 21:45",
+      "repeat": {
+        "times": 1,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-28T21:50:16.098406+01:00",
+      "next_run_at": "2026-07-29T21:45:00+01:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "cc05e9815067",
+      "name": "blocked-to-running-soak-watchdog",
+      "prompt": "watchdog (no_agent)",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "blocked_to_running_soak_watchdog.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/5 * * * *",
+        "display": "*/5 * * * *"
+      },
+      "schedule_display": "*/5 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 3
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-28T21:52:22.419374+01:00",
+      "next_run_at": "2026-07-28T22:10:00+01:00",
+      "last_run_at": "2026-07-28T22:06:00.647020+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 1\nstdout:\n========================================================================\n===== ALERT: blocked\u2192running transition without unblock =====\n===== Detected at 2026-07-28T21:05:59Z =====\n===== 1 violation(s) | 1 post-fix | 0 pre-fix =====\n========================================================================\n\n>> POST-FIX violations (regression \u2014 fix is NOT holding) <<\n\n  [POST-FIX-REGRESSION] Task:        t_9a74cab6\n           Status:      ready  block_kind=needs_input\n           Event kind:  needs_input\n           Promoted at: 2026-07-28T21:01:57Z\n           Blocked at:  2026-07-28T06:39:28Z  (862.5 min before promotion)\n           Block msg:   {\"reason\": \"review-required: PR #663 (branch fix/t_9a74cab6-calibration-sql-regression, commit 62c00d970238db72a8cb254b652b3cdc845f5ec6) adds the calibration Section 5 SQL regression test + CI gate, with local compileall/pytest 9 passed/git diff --check green and evidence persisted. Independent revi\n           No unblocked event found (within 1h before promotion)\n           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500           \u2500\n\n24h soak monitoring for t_ee867753.\nPost-fix violations = fix regression (needs investigation).\nPre-fix violations = known historical state (no unblock needed before fix).\n========================================================================",
+      "last_delivery_error": "delivery error: WhatsApp send failed: Cannot connect to host localhost:3901 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 3901, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 3901)]",
+      "deliver": "all",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "70a1c0a8504d",
+      "name": "kanban-cap-invariant",
+      "prompt": "Run the kanban cap invariant check. If any board has running tasks exceeding max_in_progress for over 1 hour, output the alert message. Otherwise stay silent.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "kanban-cap-invariant.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *",
+        "display": "*/15 * * * *"
+      },
+      "schedule_display": "*/15 * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-28T21:56:24.395394+01:00",
+      "next_run_at": "2026-07-28T22:15:00+01:00",
+      "last_run_at": "2026-07-28T22:02:25.653625+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/kanban-cap-invariant.py",
+      "last_delivery_error": null,
+      "deliver": "origin",
+      "origin": {
+        "platform": "discord",
+        "chat_id": "1521955147411095716",
+        "chat_name": "Hermes-jarvis / #general",
+        "thread_id": null,
+        "user_id": "566415197649240064"
+      },
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "319421d9afc4",
+      "name": "budget-exhausted-actuator-staged",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "budget-exhausted-actuator.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-28T17:40:33.234634+00:00",
+      "paused_reason": "t_5b07664c: STAGED companion cron for review - disabled and paused. Default run is DRY-RUN (classifies + logs, mutates nothing). Arming requires a separate operator/Frank approval to set LIVE=true. Rehomed from devops store (t_c8241b86 GATE B) to jarvis live store.",
+      "created_at": "2026-07-28T17:40:33.234634+00:00",
+      "next_run_at": null,
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts",
+      "disabled_by": "t_5b07664c",
+      "disabled_reason": "t_5b07664c: staged for review in disabled/paused state. To activate: review, then set enabled=true AND (separately) arm LIVE=true per the staging runbook. Rehomed from devops store (t_c8241b86 GATE B) to jarvis live store."
     }
-  ]
+  ],
+  "updated_at": "2026-07-28T22:08:15.543839+01:00"
 }

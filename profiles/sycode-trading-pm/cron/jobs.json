@@ -22,17 +22,24 @@
       },
       "schedule_display": "0 9 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 22
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T14:08:40.869002+01:00",
+      "next_run_at": "2026-07-29T09:00:00+01:00",
+      "last_run_at": "2026-07-28T21:35:20.974702+01:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: HTTP 404: Model 'tencent/hy3:free' not found. The requested model does not exist in our configuration or OpenRouter catalog.",
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-wt/candle-full-universe"
+      "workdir": "/home/frank/sycode-wt/candle-full-universe",
+      "fire_claim": null
     },
     {
       "id": "493f2d7f179b",
@@ -55,22 +62,29 @@
       },
       "schedule_display": "30 7 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 9
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:15.626536+01:00",
       "paused_reason": null,
       "created_at": "2026-07-03T12:21:56.657458+01:00",
+      "next_run_at": "2026-07-12T07:30:00+01:00",
+      "last_run_at": "2026-07-11T07:39:58.290371+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "fire_claim": null
     },
     {
       "id": "5eea5079ff74",
       "name": "sycode-trading-board-triage",
-      "prompt": "Hourly Sycode-Trading board triage cron session. You are running as the sycode-trading-pm profile from cron, not as a kanban worker; do not call kanban_complete or kanban_block unless HERMES_KANBAN_TASK is explicitly set for this run.\n\nPurpose: prevent board-local freezes between daily north-star sweeps by making PM-judgment triage decisions on the live Sycode-Trading kanban board. This job was installed by jarvis-os kanban task t_369f9abe after sycode-trading-pm's gateway went live in t_77bb4837.\n\nSafety boundary: PAPER-ONLY governance. Do not perform live trading, create/modify trade_intents, deploy or restart production services, edit/copy/rotate credentials or provider auth, alter billing/spend, or run irreversible DB/data operations. Escalate those critical-list/A3-shaped items instead of acting. Before treating something as needing Frank, check /home/frank/uaa-rules/delegated-authority.md and /home/frank/uaa-rules/approvals-registry.md.\n\nRequired scope each run:\n1. Read the live Sycode-Trading board at /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db plus relevant task comments/events/runs before acting; do not rely on stale summaries.\n2. Scan blocked and review-required cards for unactioned REVIEW_VERDICT / guardian / risk-review handoffs. When the evidence is approval and the action is within PM delegated paper-only authority, record a `delegated:` comment with exact verdict task/comment evidence and unblock/promote the work. When verdict evidence says CHANGES_REQUESTED or gates failed, leave blocked and route a concrete rework card/comment rather than approving.\n3. Interplay with deterministic verdict-router companion card t_2afc2c67: if that router has landed and is active, do not duplicate deterministic verdict acting here; drop routine verdict-unblock duty and keep only judgment triage, deadlock diagnosis, dependency hygiene, and A3 escalation. Until it lands, this hourly job may act on clearly evidenced verdicts as a PM backstop.\n4. Verify there are no dependency cycles in the board graph. If a cycle is found, document the exact edge set and route/resolve only if the safe correction is obvious and reversible; otherwise escalate with a blocked/card comment.\n5. Promote dependency-released todo work when all parents are done and the task is otherwise ready; prefer the Hermes kanban CLI/tooling over direct SQLite writes for mutations.\n6. Escalate anything A3-shaped / Frank-critical (money, live trading, credentials/secrets, production deploys, irreversible data ops, new spend) to the NEEDS-FRANK surface (STATUS.md and/or Sycode-Trading-Home.md) and leave the card blocked; do not act on it.\n7. Persist significant governance/triage decisions to /home/frank/obsidian/quant-team/ with task IDs and evidence links. Keep noise low: if no action is needed, output exactly [SILENT].\n\nOutput contract: one line per action taken and one line per item intentionally left blocked/escalated. If no blocked/review/dependency work needed action and no cycle was found, output exactly [SILENT].",
+      "prompt": "Hourly Sycode-Trading board triage cron session. You are running as the sycode-trading-pm profile from cron, not as a kanban worker; do not call kanban_complete or kanban_block unless HERMES_KANBAN_TASK is explicitly set for this run.\n\nCONTEXT-BUDGET CONTRACT (t_afdeceb5 repair): do not dump/read the full blocked board, full comments for many cards, or full skill/reference files unless a durable write is actually needed. First get compact board counts and candidate IDs with read-only SQLite or concise kanban CLI. Inspect at most 8 candidate cards per run and only enough fields/comments/runs to decide. Prefer compact terminal/SQLite summaries over large kanban_show payloads. If more work remains, stop with a partial ACTION/LEFT report rather than growing context.\n\nPurpose: prevent board-local freezes between daily north-star sweeps by making PM-judgment triage decisions on the live Sycode-Trading kanban board. This job was installed by jarvis-os kanban task t_369f9abe after sycode-trading-pm's gateway went live in t_77bb4837.\n\nSafety boundary: PAPER-ONLY governance. Do not perform live trading, create/modify trade_intents, deploy or restart production services, edit/copy/rotate credentials or provider auth, alter billing/spend, or run irreversible DB/data operations. Escalate those critical-list/A3-shaped items instead of acting. Before treating something as needing Frank, check /home/frank/uaa-rules/delegated-authority.md and /home/frank/uaa-rules/approvals-registry.md.\n\nRequired scope each run:\n1. Read the live Sycode-Trading board at /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db plus relevant task comments/events/runs before acting; do not rely on stale summaries.\n2. Scan blocked and review-required cards for unactioned REVIEW_VERDICT / guardian / risk-review handoffs. When the evidence is approval and the action is within PM delegated paper-only authority, record a `delegated:` comment with exact verdict task/comment evidence and unblock/promote the work. When verdict evidence says CHANGES_REQUESTED or gates failed, leave blocked and route a concrete rework card/comment rather than approving.\n3. Interplay with deterministic verdict-router companion card t_2afc2c67: if that router has landed and is active, do not duplicate deterministic verdict acting here; drop routine verdict-unblock duty and keep only judgment triage, deadlock diagnosis, dependency hygiene, and A3 escalation. Until it lands, this hourly job may act on clearly evidenced verdicts as a PM backstop.\n4. Verify there are no dependency cycles in the board graph. If a cycle is found, document the exact edge set and route/resolve only if the safe correction is obvious and reversible; otherwise escalate with a blocked/card comment.\n5. Promote dependency-released todo work when all parents are done and the task is otherwise ready; prefer the Hermes kanban CLI/tooling over direct SQLite writes for mutations.\n6. Escalate anything A3-shaped / Frank-critical (money, live trading, credentials/secrets, production deploys, irreversible data ops, new spend) to the NEEDS-FRANK surface (STATUS.md and/or Sycode-Trading-Home.md) and leave the card blocked; do not act on it.\n7. Persist significant governance/triage decisions to /home/frank/obsidian/quant-team/ with task IDs and evidence links. Keep noise low: if no action is needed, output exactly [SILENT].\n\nOutput contract: one line per action taken and one line per item intentionally left blocked/escalated. If no blocked/review/dependency work needed action and no cycle was found, output exactly [SILENT].",
       "skills": [
         "obsidian-knowledge-management"
       ],
@@ -89,23 +103,28 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 438
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T20:31:51.805288+01:00",
+      "next_run_at": "2026-07-28T23:00:00+01:00",
+      "last_run_at": "2026-07-28T22:01:35.950058+01:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: HTTP 404: Model 'tencent/hy3:free' not found. The requested model does not exist in our configuration or OpenRouter catalog.",
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file",
-        "kanban",
-        "skills",
-        "memory"
+        "skills"
       ],
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "fire_claim": null
     },
     {
       "id": "327083e3a0b0",
@@ -128,17 +147,24 @@
       },
       "schedule_display": "0 8 * * 1",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:23:21.654671+01:00",
+      "next_run_at": "2026-08-03T08:00:00+01:00",
+      "last_run_at": "2026-07-28T21:37:20.366971+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "350b9809913b",
@@ -161,17 +187,24 @@
       },
       "schedule_display": "30 9 * * 1",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 4
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T09:48:32.278962+01:00",
+      "next_run_at": "2026-08-03T09:30:00+01:00",
+      "last_run_at": "2026-07-28T21:37:20.522839+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstdout:\n/home/frank/.hermes/venvs/trading-ml/bin/python: can't open file '/home/frank/sycode-trading/execution/multi_sleeve_book.py': [Errno 2] No such file or directory",
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "4c8faff831c9",
@@ -194,17 +227,24 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 70
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T17:42:44.805827+01:00",
+      "next_run_at": "2026-07-29T03:37:44.712500+01:00",
+      "last_run_at": "2026-07-28T21:37:44.712500+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "6db455df07e6",
@@ -227,17 +267,24 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 19
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:17:01.403083+01:00",
+      "next_run_at": "2026-07-29T06:00:00+01:00",
+      "last_run_at": "2026-07-28T21:37:44.964075+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "66b39b558eb3",
@@ -260,17 +307,24 @@
       },
       "schedule_display": "0 9 * * 0",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 4
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:20:27.072617+01:00",
+      "next_run_at": "2026-08-02T09:00:00+01:00",
+      "last_run_at": "2026-07-28T21:38:41.047515+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "84e3333b249e",
@@ -293,17 +347,24 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 65
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T10:38:31.731457+01:00",
+      "next_run_at": "2026-07-29T03:38:41.317583+01:00",
+      "last_run_at": "2026-07-28T21:38:41.317583+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "171790695c94",
@@ -326,17 +387,24 @@
       },
       "schedule_display": "0 10 * * 0",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 4
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T22:45:34.230778+01:00",
+      "next_run_at": "2026-08-02T10:00:00+01:00",
+      "last_run_at": "2026-07-28T21:39:54.250622+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "d543688456a3",
@@ -359,20 +427,27 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 963
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T13:40:47.293690+01:00",
+      "next_run_at": "2026-07-28T22:20:58.288344+01:00",
+      "last_run_at": "2026-07-28T22:05:58.288344+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank/sycode-trading"
+      "workdir": "/home/frank/sycode-trading",
+      "fire_claim": null
     },
     {
       "id": "3228011cb8a3",
@@ -395,17 +470,24 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 14
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:19:58.389214+01:00",
+      "next_run_at": "2026-07-29T06:00:00+01:00",
+      "last_run_at": "2026-07-28T21:35:47.783447+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "fire_claim": null
     },
     {
       "id": "45e0b154b41c",
@@ -428,17 +510,24 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 418
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-14T10:26:05.602781+01:00",
+      "next_run_at": "2026-07-28T22:30:00+01:00",
+      "last_run_at": "2026-07-28T22:03:37.190035+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstdout:\nCANDLE PER-SYMBOL FRESHNESS @ 2026-07-28T21:03:37.166486+00:00\n  [OK] 1m: fresh=10 floor=10 baseline=10\n  [OK] 5m: fresh=10 floor=10 baseline=10\n  [OK] 15m: fresh=264 floor=250 baseline=280\n  [OK] 1h: fresh=10 floor=10 baseline=10\n  [XX] 4h: fresh=415 floor=416 baseline=n/a tradeable_universe=416\n  [OK] 1D: fresh=10 floor=10 baseline=10\nVERDICT: DEGRADED \u2014 1 timeframe(s) below coverage SLO\nRED-ALERT: candle coverage dropped (silent-writer-death check):\n  \ud83d\udd34 candles[4h]: only 415/416 tradeable symbols fresh (floor=416, budget=8h) \u2014 writer dead/eroded\nCheck the owning ingestion producer/subscription (CandleIngestionService + KlineFeed subscription set).",
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "361710e3dc14",
@@ -463,20 +552,27 @@
       },
       "schedule_display": "0 6 * * 1",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-17T02:59:15.241306+01:00",
+      "next_run_at": "2026-08-03T06:00:00+01:00",
+      "last_run_at": "2026-07-28T21:37:18.253970+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "file",
         "kanban"
       ],
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "acf44ef06042",
@@ -499,17 +595,25 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 19
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-23T13:25:25.381080+01:00",
-      "deliver": "discord:#critical-alerts",
+      "next_run_at": "2026-07-28T22:10:00+01:00",
+      "last_run_at": "2026-07-28T22:03:37.291082+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     }
-  ]
+  ],
+  "updated_at": "2026-07-28T22:05:58.288605+01:00"
 }

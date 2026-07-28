@@ -67,40 +67,40 @@
       "script_mtime_at_approval": "2026-06-15T18:02:15.550392Z"
     },
     {
-      "approved_at": "2026-07-17T07:33:57.447474Z",
+      "approved_at": "2026-07-28T20:35:44.576633Z",
       "command": "/home/frank/.hermes/agent-hooks/gate-provider-governance.sh",
       "event": "on_session_start",
-      "script_mtime_at_approval": "2026-07-11T09:08:49.058729Z"
+      "script_mtime_at_approval": "2026-07-28T20:12:08.914084Z"
     },
     {
-      "approved_at": "2026-07-17T07:33:57.448548Z",
+      "approved_at": "2026-07-28T20:35:44.577315Z",
       "command": "/home/frank/.hermes/agent-hooks/inject-second-brain-contract.sh",
       "event": "pre_llm_call",
-      "script_mtime_at_approval": "2026-07-13T06:02:26.129684Z"
+      "script_mtime_at_approval": "2026-07-28T20:12:08.915084Z"
     },
     {
-      "approved_at": "2026-07-17T07:33:57.449703Z",
+      "approved_at": "2026-07-28T20:35:44.577559Z",
       "command": "/home/frank/.hermes/agent-hooks/gate-provider-governance.sh",
       "event": "pre_llm_call",
-      "script_mtime_at_approval": "2026-07-11T09:08:49.058729Z"
+      "script_mtime_at_approval": "2026-07-28T20:12:08.914084Z"
     },
     {
-      "approved_at": "2026-07-17T07:33:57.451013Z",
+      "approved_at": "2026-07-28T20:35:44.578768Z",
       "command": "/home/frank/.hermes/agent-hooks/gate-second-brain-writes.sh",
       "event": "pre_tool_call",
-      "script_mtime_at_approval": "2026-07-13T06:02:26.125535Z"
+      "script_mtime_at_approval": "2026-07-28T20:12:08.914084Z"
     },
     {
-      "approved_at": "2026-07-17T07:33:57.452647Z",
+      "approved_at": "2026-07-28T20:35:44.579101Z",
       "command": "/home/frank/.hermes/agent-hooks/gate-config-writes.sh",
       "event": "pre_tool_call",
-      "script_mtime_at_approval": "2026-06-26T18:45:21.815068Z"
+      "script_mtime_at_approval": "2026-07-28T20:12:08.909084Z"
     },
     {
-      "approved_at": "2026-07-17T07:33:57.454096Z",
+      "approved_at": "2026-07-28T20:35:44.579357Z",
       "command": "/home/frank/.hermes/agent-hooks/gate-kanban-dupe-create.sh",
       "event": "pre_tool_call",
-      "script_mtime_at_approval": "2026-07-05T20:19:14.488875Z"
+      "script_mtime_at_approval": "2026-07-28T20:12:08.913084Z"
     }
   ]
 }

@@ -27,6 +27,13 @@ DEFAULT_STATUS = Path(
 )
 AUTHOR = os.environ.get("PENDING_FRANK_TRIAGE_AUTHOR", "pending-frank-triage")
 
+APPROVAL_SCAN_SCRIPT = Path(
+    os.environ.get(
+        "APPROVAL_BLOCKER_SCAN",
+        "/home/frank/obsidian-fleet-vault/Orchestration/sessions/bin/approval-blocker-scan.py",
+    )
+)
+
 CRITICAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "explicit-frank-gate",
@@ -254,6 +261,54 @@ def fleet_status_ids(path: Path) -> dict[str, set[str]]:
     return ids
 
 
+def a3_queue_ids_from_scan() -> dict[str, set[str]]:
+    """Union the approval-blocker-scan candidate set (complete, no per-board
+    LIMIT) into the digest so A3/A2 gated cards that FLEET-STATUS.md's top-N
+    'Pending Frank' section truncates are not dropped.
+
+    We feed the FULL scan queue (minus NON_APPROVAL_BLOCKER / SUPERSEDED_BLOCKED)
+    and let the existing CRITICAL_PATTERNS re-classify, because the scan itself
+    splits some genuinely-Frank-gated cards into A2_DELEGATED_CANDIDATE.
+    """
+    import json as _json
+    import subprocess as _subprocess
+
+    if not APPROVAL_SCAN_SCRIPT.is_file():
+        print(
+            f"WARN: approval-blocker-scan not found at {APPROVAL_SCAN_SCRIPT}; skipping scan feed",
+            file=sys.stderr,
+        )
+        return {}
+    try:
+        out = _subprocess.run(
+            [sys.executable, str(APPROVAL_SCAN_SCRIPT), "--json"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as exc:
+        print(f"WARN: approval-blocker-scan failed: {exc}", file=sys.stderr)
+        return {}
+    if out.returncode != 0:
+        print(
+            f"WARN: approval-blocker-scan rc={out.returncode}: {out.stderr[:200]}",
+            file=sys.stderr,
+        )
+        return {}
+    try:
+        payload = _json.loads(out.stdout)
+    except Exception as exc:
+        print(f"WARN: approval-blocker-scan json parse failed: {exc}", file=sys.stderr)
+        return {}
+    skip = {"NON_APPROVAL_BLOCKER", "SUPERSEDED_BLOCKED"}
+    ids: dict[str, set[str]] = {}
+    for item in payload.get("items", []):
+        if item.get("classification") in skip:
+            continue
+        ids.setdefault(item.get("board", ""), set()).add(item.get("task_id", ""))
+    return ids
+
+
 def first_matches(
     patterns: list[tuple[str, re.Pattern[str]]], text: str, *, skip_boundary_context: bool = False
 ) -> list[tuple[str, str]]:
@@ -387,9 +442,18 @@ def main() -> int:
         action="store_true",
         help="Suppress assignee=null ready/todo report lane",
     )
+    ap.add_argument(
+        "--a3-queue-from-scan",
+        action="store_true",
+        help="Union the approval-blocker-scan candidate set (complete, no per-board LIMIT) into the digest so A3/A2 gated cards truncated by FLEET-STATUS.md's Pending Frank section are captured.",
+    )
     args = ap.parse_args()
 
     ids_by_board = {} if args.all_blocked else fleet_status_ids(args.status_file)
+    if args.a3_queue_from_scan and not args.all_blocked:
+        scan_ids = a3_queue_ids_from_scan()
+        for board, s in scan_ids.items():
+            ids_by_board.setdefault(board, set()).update(s)
     if not args.all_blocked and not ids_by_board:
         print("# Pending Frank delegated triage")
         print("Pending Frank before: 0")

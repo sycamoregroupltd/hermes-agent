@@ -747,6 +747,14 @@ def run_dqsh_cycle(live_mode=False):
     # 4. Process DLQ Poison replay
     execute_dlq_replay(live_mode=live_mode)
 
+    log_audit_action(
+        "DAEMON_HEARTBEAT",
+        "cycle complete",
+        int((time.time() - t_start) * 1000),
+        "OK",
+        f"mode={'LIVE' if live_mode else 'PAPER'}",
+    )
+
     return True
 
 
@@ -886,6 +894,24 @@ class TestDQSHDaemon(unittest.TestCase):
         self.assertEqual(len(suppression_logs), 1)
         self.assertEqual(suppression_logs[0]["status"], "SUCCESS")
         self.assertIn("Calibration alert & drift update suppressed", suppression_logs[0]["details"])
+
+    @patch("__main__.check_calibration_sample_size", return_value=227188)
+    @patch("__main__.check_consumer_liveness", return_value=True)
+    @patch("__main__.get_pipeline_lag_and_backlog", return_value={"finalizer_backlog": 0, "binary_backlog": 0, "finalizer_lag_hours": 0.0, "closer_lag_hours": 0.0, "binary_lag_hours": 0.0, "error": None})
+    @patch("__main__.process_active_candle_interpolation", return_value=(True, "mocked"))
+    @patch("__main__.execute_dlq_replay", return_value=(True, "mocked"))
+    def test_daemon_heartbeat_logged_on_quiet_cycle(self, mock_dlq, mock_candle, mock_lag, mock_live, mock_sample_size):
+        """Proves a healthy, no-action cycle still leaves liveness evidence in the audit log."""
+        run_dqsh_cycle(live_mode=False)
+
+        with open(AUDIT_LOG_PATH, "r") as f:
+            logs = [json.loads(line) for line in f if line.strip()]
+
+        heartbeat_logs = [l for l in logs if l["action"] == "DAEMON_HEARTBEAT"]
+        self.assertEqual(len(heartbeat_logs), 1)
+        self.assertEqual(heartbeat_logs[0]["trigger_condition"], "cycle complete")
+        self.assertEqual(heartbeat_logs[0]["status"], "OK")
+        self.assertEqual(heartbeat_logs[0]["details"], "mode=PAPER")
 
 
 # ----------------------------------------------------------------------------

@@ -25,12 +25,14 @@ import sys
 import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parent
 MODULE_PATH = REPO / "dgx_unified_health_probe.py"
 
 spec = importlib.util.spec_from_file_location("uhealth", MODULE_PATH)
-uhealth = importlib.util.module_from_spec(spec)
+assert spec is not None and spec.loader is not None
+uhealth: Any = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(uhealth)
 
 
@@ -90,18 +92,48 @@ def test_record_block_event_append_only_and_count():
 
 
 def _make_board(board_dir: Path, task_id: str, task_status: str,
-                outcome: str, ended_offset_min: float) -> None:
+                outcome: str, ended_offset_min: float,
+                parent_status: str | None = None) -> None:
     board_dir.mkdir(parents=True, exist_ok=True)
     db = board_dir / "kanban.db"
     con = sqlite3.connect(str(db))
     con.execute("CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, status TEXT)")
+    con.execute("CREATE TABLE IF NOT EXISTS task_links (parent_id TEXT, child_id TEXT)")
     con.execute("CREATE TABLE IF NOT EXISTS task_runs "
                 "(id INTEGER PRIMARY KEY, task_id TEXT, outcome TEXT, ended_at INTEGER)")
     con.execute("INSERT OR REPLACE INTO tasks (id, status) VALUES (?, ?)",
                 (task_id, task_status))
+    if parent_status is not None:
+        parent_id = f"{task_id}_parent"
+        con.execute("INSERT OR REPLACE INTO tasks (id, status) VALUES (?, ?)",
+                    (parent_id, parent_status))
+        con.execute("INSERT INTO task_links (parent_id, child_id) VALUES (?, ?)",
+                    (parent_id, task_id))
     ended = int(_now_iso(ended_offset_min).timestamp())
     con.execute("INSERT INTO task_runs (task_id, outcome, ended_at) VALUES (?, ?, ?)",
                 (task_id, outcome, ended))
+    con.commit()
+    con.close()
+
+
+def _make_ready_backlog_db(db: Path, now: datetime) -> None:
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "CREATE TABLE tasks ("
+        "id TEXT PRIMARY KEY, title TEXT, assignee TEXT, status TEXT, created_at INTEGER)"
+    )
+    rows = [
+        ("t_old_devops", "old devops", "devops", "ready", int((now - timedelta(days=10)).timestamp())),
+        ("t_mid_builder", "builder", "builder", "ready", int((now - timedelta(days=6)).timestamp())),
+        ("t_new_devops", "new devops", "devops", "ready", int((now - timedelta(days=2)).timestamp())),
+        ("t_running_devops", "running", "devops", "running", int((now - timedelta(days=20)).timestamp())),
+        ("t_blocked_old", "blocked", "devops", "blocked", int((now - timedelta(days=30)).timestamp())),
+    ]
+    con.executemany(
+        "INSERT INTO tasks (id, title, assignee, status, created_at) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
     con.commit()
     con.close()
 
@@ -121,6 +153,77 @@ def test_check_kanban_crashes_active_vs_stale():
     assert not any("t_done" in h for h in hits), f"stale leaked into active: {hits}"
 
 
+def test_jarvis_ready_backlog_counts_and_ages():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    db = tmp / "jarvis-os" / "kanban.db"
+    _make_ready_backlog_db(db, now)
+    uhealth.JARVIS_OS_KANBAN_DB = db
+
+    rep = uhealth.check_jarvis_ready_backlog(now)
+    assert rep["available"] is True
+    assert rep["ready_total"] == 3
+    assert rep["oldest_ready_age_days"] == 10.0
+    assert rep["devops_ready_count"] == 2
+    assert rep["oldest_devops_ready_age_days"] == 10.0
+    assert rep["top_ready_ids"] == ["t_old_devops", "t_mid_builder", "t_new_devops"]
+    assert rep["top_devops_ready_ids"] == ["t_old_devops", "t_new_devops"]
+
+
+def test_jarvis_ready_backlog_observability_does_not_block_main():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    db = tmp / "jarvis-os" / "kanban.db"
+    _make_ready_backlog_db(db, now)
+
+    uhealth.JARVIS_OS_KANBAN_DB = db
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.check_hermes_cli = lambda: (True, "ok", False)
+    uhealth.check_gateway_unit = lambda: (True, "ok", False)
+    uhealth.check_gateway_runtime = lambda: (True, True, "ok")
+    uhealth.check_cron_ticker = lambda: (True, "ok", False)
+    uhealth.check_canary_freshness = lambda: (True, "ok")
+    uhealth.check_docker = lambda: (True, "ok", False)
+    uhealth.check_disk = lambda: (True, "ok", False)
+    uhealth.check_mechanism_matrix = lambda: {
+        "available": True,
+        "overall": "GREEN",
+        "dead": 0,
+        "detail": "ok",
+        "fork_resource_pressure": False,
+    }
+    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] == "PASS"
+    assert record["jarvis_ready_backlog"]["oldest_ready_age_days"] == 10.0
+
+
+def test_check_kanban_crashes_treats_done_parent_active_child_as_stale():
+    tmp = Path(tempfile.mkdtemp())
+    boards = tmp / "boards"
+    _make_board(
+        boards / "jarvis-os",
+        "t_done_parent_child",
+        "running",
+        "gave_up",
+        -5,
+        parent_status="done",
+    )
+    _make_board(boards / "sycode-trading", "t_unparented", "running", "crashed", -5)
+    uhealth.BOARDS_DIR = boards
+    count, hits, stale = uhealth.check_kanban_crashes()
+    assert count == 1, f"expected only unparented active crash, got {count}: {hits}"
+    assert any("t_unparented" in h for h in hits), f"active hit missing: {hits}"
+    assert not any("t_done_parent_child" in h for h in hits), \
+        f"done-parent child leaked into active hits: {hits}"
+    assert stale == 1, f"expected done-parent child stale count, got {stale}"
+
+
 def test_check_kanban_crashes_dedupes_same_task():
     tmp = Path(tempfile.mkdtemp())
     boards = tmp / "boards"
@@ -129,6 +232,7 @@ def test_check_kanban_crashes_dedupes_same_task():
     db = bd / "kanban.db"
     con = sqlite3.connect(str(db))
     con.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT)")
+    con.execute("CREATE TABLE task_links (parent_id TEXT, child_id TEXT)")
     con.execute("CREATE TABLE task_runs "
                 "(id INTEGER PRIMARY KEY, task_id TEXT, outcome TEXT, ended_at INTEGER)")
     con.execute("INSERT INTO tasks VALUES ('t_x', 'ready')")

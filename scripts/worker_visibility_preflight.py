@@ -53,6 +53,8 @@ CRASH_RE = re.compile(r"\b(spawn_failed|pid[^\n]{0,40}not alive|failure[- ]limit
 REVIEW_RE = re.compile(r"\b(review[- ]required|needs[- ]approval|critical[- ]list|human approval|human gate|guardian review|REVIEW_VERDICT|approved by reviewer)\b", re.I)
 HEARTBEAT_RE = re.compile(r"heartbeat", re.I)
 ZERO_KEYS = ("reclaimed", "crashed", "timed_out", "stale", "auto_blocked", "promoted", "spawned")
+LIVE_TRANSCRIPT_PATH_RE = re.compile(r"/[^\s'\"`]*cache/delegation/live/deleg_[A-Za-z0-9_-]+/task-\d+\.log")
+DELEGATION_ID_RE = re.compile(r"\bdeleg_[A-Za-z0-9_-]+\b")
 
 
 @dataclass
@@ -93,6 +95,8 @@ class BoardEvidence:
     dashboard_run_errors: list[str] = field(default_factory=list)
     sampled_task_ids: list[str] = field(default_factory=list)
     sampled_run_ids: list[int] = field(default_factory=list)
+    delegation_live_transcripts: list[str] = field(default_factory=list)
+    delegation_ids: list[str] = field(default_factory=list)
     classifier: str = "DASHBOARD_UNAVAILABLE_DEGRADED"
     dedupe_lane_id: str | None = None
     existing_lane_id: str | None = None
@@ -365,12 +369,57 @@ def collect_dashboard_run_inspections(base: str, board: str, run_ids: list[int])
     return ok_ids, errors
 
 
+def _ordered_regex_hits(pattern: re.Pattern[str], text: str, *, limit: int = 8) -> list[str]:
+    """Return stable unique regex matches in first-seen order."""
+    out: list[str] = []
+    for match in pattern.findall(text or ""):
+        if match not in out:
+            out.append(match)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def record_delegation_transcript_evidence(ev: BoardEvidence, samples: list[TaskSample]) -> None:
+    """Attach v0.19 delegation side-channel evidence to abnormal boards.
+
+    ``delegate_task`` now returns live transcript paths under
+    ``cache/delegation/live/<delegation_id>/task-<n>.log`` at dispatch time and
+    emits durable async completion records when the whole background batch
+    finishes. Stall diagnostics must surface those paths as investigation
+    pointers when they are present, but the paths are not a recovery guarantee:
+    a running child may still be legitimately in flight, and a crashed parent
+    does not imply child crash recovery.
+    """
+    for sample in samples:
+        for path in _ordered_regex_hits(LIVE_TRANSCRIPT_PATH_RE, sample.latest_text):
+            if path not in ev.delegation_live_transcripts:
+                ev.delegation_live_transcripts.append(path)
+        for deleg_id in _ordered_regex_hits(DELEGATION_ID_RE, sample.latest_text):
+            if deleg_id not in ev.delegation_ids:
+                ev.delegation_ids.append(deleg_id)
+
+
+def add_delegation_diagnostic_reason(ev: BoardEvidence) -> None:
+    """Add a concise abnormal-path hint without adding clean-path noise."""
+    if ev.delegation_live_transcripts:
+        ev.reasons.append(
+            "delegation live transcript path(s) present; inspect cache/delegation/live logs before declaring a no-black-hole/stall"
+        )
+    elif ev.delegation_ids:
+        ev.reasons.append(
+            "delegation id present; check async completion queue and cache/delegation/live/<delegation_id>/manifest.json before declaring a no-black-hole/stall"
+        )
+
+
 def classify_board(ev: BoardEvidence, samples: list[TaskSample], now: int, stale_seconds: int) -> None:
     for sample in samples:
         if sample.id not in ev.sampled_task_ids:
             ev.sampled_task_ids.append(sample.id)
         if sample.latest_run_id is not None and sample.latest_run_id not in ev.sampled_run_ids:
             ev.sampled_run_ids.append(sample.latest_run_id)
+
+    record_delegation_transcript_evidence(ev, samples)
 
     review_samples = [s for s in samples if s.status == "blocked" and REVIEW_RE.search(s.latest_text)]
     if review_samples:
@@ -394,6 +443,7 @@ def classify_board(ev: BoardEvidence, samples: list[TaskSample], now: int, stale
     if crash_samples:
         ev.classifier = "RESPAWN_GUARD_OR_CRASHLOOP"
         ev.reasons.append("consecutive failure, spawn_failed, pid-not-alive, or failure-limit evidence")
+        add_delegation_diagnostic_reason(ev)
         return
 
     stalled = []
@@ -407,6 +457,7 @@ def classify_board(ev: BoardEvidence, samples: list[TaskSample], now: int, stale
     if stalled:
         ev.classifier = "STALLED_RUN"
         ev.reasons.append(f"running task older than stale policy ({stale_seconds}s) with no recent heartbeat")
+        add_delegation_diagnostic_reason(ev)
         return
 
     dry = ev.dispatch_dry_run or {}
@@ -518,6 +569,13 @@ def phone_lines(payload: dict[str, Any]) -> list[str]:
             bits.append(f"dedupe={board['dedupe_lane_id']}")
         if board.get("fallback_reason") and classifier == "DASHBOARD_UNAVAILABLE_DEGRADED":
             bits.append("fallback=dashboard-unavailable")
+        if classifier in {"RESPAWN_GUARD_OR_CRASHLOOP", "STALLED_RUN"}:
+            live_paths = board.get("delegation_live_transcripts") or []
+            delegation_ids = board.get("delegation_ids") or []
+            if live_paths:
+                bits.append("delegation_transcripts=" + ",".join(live_paths[:2]))
+            elif delegation_ids:
+                bits.append("delegations=" + ",".join(delegation_ids[:3]))
         sample_ids = board.get("sampled_task_ids") or []
         if sample_ids:
             bits.append("samples=" + ",".join(sample_ids[:5]))

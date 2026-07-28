@@ -45,9 +45,17 @@ UNIFIED_LOG = CRON_OUTPUT / "unified_health_canary.jsonl"
 DISK_WATCHDOG = HOME / ".hermes" / "scripts" / "dgx_disk_space_watchdog.sh"
 MECH_COLLECT = HOME / ".hermes" / "scripts" / "jarvis_mechanism_liveness_collect.py"
 BOARDS_DIR = HOME / ".hermes" / "kanban" / "boards"
+JARVIS_OS_KANBAN_DB = BOARDS_DIR / "jarvis-os" / "kanban.db"
+DEVOPS_READY_ASSIGNEES = ("devops",)
+READY_BACKLOG_TOP_LIMIT = 5
 ALERT_TARGET = "discord:#fleet-reports"
 CRON_STALE_MIN = 35          # cron ticker considered stale past this
 CANARY_STALE_MIN = 40        # last health_canary.jsonl write considered stale past this
+# The legacy dgx-jarvis-health-canary job was CONSOLIDATED into this unified
+# probe (t_39c29d42) and is paused, so its health_canary.jsonl is stale by
+# design. Beyond this grace window a stale legacy canary is treated as
+# "consolidated/skipped" rather than an active infra failure (avoids flapping).
+CANARY_CONSOLIDATED_GRACE_MIN = 1440  # 24h
 CRASH_LOOKBACK_MIN = 60      # kanban crash/gave_up window
 
 # Repeat-BLOCK hard-alert escalation (t_7a97ba51 proposal #3 / t_cafc1119 C3).
@@ -183,15 +191,29 @@ def check_gateway_runtime() -> tuple[bool, bool, str]:
 
 
 def check_cron_ticker() -> tuple[bool, str, bool]:
-    r = run([HERMES, "-p", PROFILE, "cron", "status"], timeout=25)
-    if r["timeout"] or r["rc"] != 0:
-        return False, f"cron status rc={r['rc']} timeout={r['timeout']}", bool(r.get("fork_resource_pressure"))
-    text = r["out"] + "\n" + r["err"]
-    if "Gateway is running" not in text:
-        return False, "cron status did not report 'Gateway is running'", bool(r.get("fork_resource_pressure"))
-    if not re.search(r"\b\d+ active job\(?s\)?", text):
-        return False, "cron active job count line not found", bool(r.get("fork_resource_pressure"))
-    return True, "cron ticker reports running with active jobs", bool(r.get("fork_resource_pressure"))
+    """Probe the gateway cron ticker. A single transient stall (the gateway
+    ticker momentarily stops firing jobs, then self-heals) must not flip the
+    whole fleet to BLOCK — retry once with a longer timeout so a brief stall is
+    absorbed. A genuine outage fails both attempts and is still reported.
+    See kanban t_631685fb (periodic ~20-30m ticker stalls observed 2026-07-25)."""
+    last_detail = "cron status never returned"
+    last_fork = False
+    for attempt in (1, 2):
+        r = run([HERMES, "-p", PROFILE, "cron", "status"], timeout=40)
+        last_fork = bool(r.get("fork_resource_pressure"))
+        if r["timeout"] or r["rc"] != 0:
+            last_detail = f"cron status rc={r['rc']} timeout={r['timeout']}"
+            if attempt == 1:
+                time.sleep(2)  # absorb a transient stall before concluding
+                continue
+            return False, last_detail, last_fork
+        text = r["out"] + "\n" + r["err"]
+        if "Gateway is running" not in text:
+            return False, "cron status did not report 'Gateway is running'", last_fork
+        if not re.search(r"\b\d+ active job\(?s\)?", text):
+            return False, "cron active job count line not found", last_fork
+        return True, "cron ticker reports running with active jobs", last_fork
+    return False, last_detail, last_fork
 
 
 def check_canary_freshness() -> tuple[bool, str]:
@@ -205,6 +227,14 @@ def check_canary_freshness() -> tuple[bool, str]:
         return False, f"cannot stat legacy canary: {exc}"
     age_min = (utc_now() - mtime).total_seconds() / 60.0
     if age_min > CANARY_STALE_MIN:
+        if age_min > CANARY_CONSOLIDATED_GRACE_MIN:
+            # The writer job (dgx-jarvis-health-canary) is paused/consolidated
+            # into this unified probe, so its canary is stale by design — not
+            # an active signal. (t_631685fb: removes chronic false-positive BLOCK.)
+            return True, (
+                f"legacy health_canary writer job paused/consolidated; "
+                f"{age_min:.0f}m stale is expected, not an active signal"
+            )
         return False, f"last health_canary write {age_min:.1f}m ago (> {CANARY_STALE_MIN}m)"
     return True, f"last health_canary write {age_min:.1f}m ago"
 
@@ -347,7 +377,12 @@ def check_kanban_crashes() -> tuple[int, list[str], int]:
             try:
                 rows = cur.execute(
                     "SELECT tr.task_id, tr.outcome, tr.ended_at, "
-                    "COALESCE(t.status, 'unknown') "
+                    "COALESCE(t.status, 'unknown') AS task_status, "
+                    "EXISTS ("
+                    "  SELECT 1 FROM task_links l "
+                    "  JOIN tasks p ON p.id = l.parent_id "
+                    "  WHERE l.child_id = tr.task_id AND p.status = 'done'"
+                    ") AS has_done_parent "
                     "FROM task_runs tr "
                     "LEFT JOIN tasks t ON tr.task_id = t.id "
                     "WHERE tr.outcome IN ('crashed','gave_up') "
@@ -358,8 +393,8 @@ def check_kanban_crashes() -> tuple[int, list[str], int]:
             except sqlite3.OperationalError:
                 rows = []
             con.close()
-            for task_id, outcome, ended, status in rows:
-                if status in ACTIVE_TASK_STATES:
+            for task_id, outcome, ended, status, has_done_parent in rows:
+                if status in ACTIVE_TASK_STATES and not has_done_parent:
                     # de-dupe by task_id so one task with several crashed/gave_up
                     # runs in the window is not double-counted.
                     if task_id not in seen_task_ids and len(active_hits) < 8:
@@ -372,6 +407,69 @@ def check_kanban_crashes() -> tuple[int, list[str], int]:
         except Exception:
             continue
     return len(active_hits), active_hits, stale_count
+
+
+def _age_days(now: dt.datetime, created_at: int | None) -> float | None:
+    if created_at is None:
+        return None
+    return round(max(0.0, now.timestamp() - int(created_at)) / 86400.0, 3)
+
+
+def check_jarvis_ready_backlog(now: dt.datetime | None = None) -> dict[str, Any]:
+    """Read-only observability for the jarvis-os ready backlog.
+
+    This is intentionally NON-BLOCKING telemetry: old ready rows are useful for
+    PM/devops routing, but backlog age alone must never drive the health probe
+    to BLOCK. Missing/unreadable DBs are reported as unavailable telemetry, not
+    infrastructure failures.
+    """
+    now = now or utc_now()
+    result: dict[str, Any] = {
+        "available": False,
+        "db": str(JARVIS_OS_KANBAN_DB),
+        "ready_total": 0,
+        "oldest_ready_age_days": None,
+        "devops_ready_count": 0,
+        "oldest_devops_ready_age_days": None,
+        "top_ready_ids": [],
+        "top_devops_ready_ids": [],
+        "detail": "jarvis-os kanban DB absent",
+    }
+    if not JARVIS_OS_KANBAN_DB.exists():
+        return result
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{JARVIS_OS_KANBAN_DB}?mode=ro", uri=True, timeout=3)
+        cur = con.cursor()
+        ready_rows = cur.execute(
+            "SELECT id, assignee, created_at FROM tasks "
+            "WHERE status = 'ready' "
+            "ORDER BY created_at ASC, id ASC"
+        ).fetchall()
+        con.close()
+    except Exception as exc:
+        result["detail"] = f"jarvis-os ready backlog scan failed: {type(exc).__name__}: {exc}"
+        return result
+
+    devops_rows = [r for r in ready_rows if r[1] in DEVOPS_READY_ASSIGNEES]
+    oldest_ready_age = _age_days(now, ready_rows[0][2]) if ready_rows else None
+    oldest_devops_age = _age_days(now, devops_rows[0][2]) if devops_rows else None
+    result.update({
+        "available": True,
+        "ready_total": len(ready_rows),
+        "oldest_ready_age_days": oldest_ready_age,
+        "devops_ready_count": len(devops_rows),
+        "oldest_devops_ready_age_days": oldest_devops_age,
+        "top_ready_ids": [r[0] for r in ready_rows[:READY_BACKLOG_TOP_LIMIT]],
+        "top_devops_ready_ids": [r[0] for r in devops_rows[:READY_BACKLOG_TOP_LIMIT]],
+        "detail": (
+            f"ready={len(ready_rows)} oldest_ready_days="
+            f"{oldest_ready_age if oldest_ready_age is not None else 'n/a'}; "
+            f"devops_ready={len(devops_rows)} oldest_devops_ready_days="
+            f"{oldest_devops_age if oldest_devops_age is not None else 'n/a'}"
+        ),
+    })
+    return result
 
 
 # ----------------------------------------------------------------------------
@@ -420,6 +518,12 @@ def main() -> int:
                              f"tasks: {stale_count})",
                    "fork_resource_pressure": False})
 
+    ready_backlog = check_jarvis_ready_backlog(now)
+    checks.append({"name": "jarvis_ready_backlog", "ok": True,
+                   "detail": ready_backlog.get("detail", ""),
+                   "fork_resource_pressure": False,
+                   "observability_only": True})
+
     # Fork resource pressure: a transient fork()/EAGAIN stall anywhere. This is
     # NOT a real infra failure and must NOT crash the probe or mask a genuine
     # infra verdict — it produces a DEGRADED verdict (rc=0) so liveness stays
@@ -445,6 +549,7 @@ def main() -> int:
         "mechanism_dead": mech.get("dead"),
         "kanban_crash_count": crash_count,
         "kanban_crash_stale": stale_count,
+        "jarvis_ready_backlog": ready_backlog,
         "fork_resource_pressure": fork_pressure,
         "fork_failed": fork_failed,
         "checks": checks,
@@ -479,7 +584,9 @@ def main() -> int:
             f"## Infra checks ({sum(1 for c in checks if c['ok'])}/{len(checks)} ok)\n"
             + "\n".join(f"  - {c['name']}: {c['detail']}" for c in checks)
             + f"\n\nmechanism={mech.get('overall','n/a')} "
-              f"active_crashes={crash_count} stale_crashes={stale_count}"
+              f"active_crashes={crash_count} stale_crashes={stale_count} "
+              f"ready_backlog={ready_backlog.get('ready_total')} "
+              f"devops_ready={ready_backlog.get('devops_ready_count')}"
         )
         alert_file = CRON_OUTPUT / "unified_health_alert.last"
         try:
@@ -500,7 +607,9 @@ def main() -> int:
             f"## Infra checks ({sum(1 for c in checks if c['ok'])}/{len(checks)} ok)\n"
             + "\n".join(f"  - {c['name']}: {c['detail']}" for c in checks)
             + f"\n\nmechanism={mech.get('overall','n/a')} "
-              f"active_crashes={crash_count} stale_crashes={stale_count}"
+              f"active_crashes={crash_count} stale_crashes={stale_count} "
+              f"ready_backlog={ready_backlog.get('ready_total')} "
+              f"devops_ready={ready_backlog.get('devops_ready_count')}"
         )
         # GUARANTEED LOCAL ARTIFACT — stamp PASS every run so a prior BLOCK
         # can never be replayed after recovery (stale-replay fix).
@@ -541,6 +650,11 @@ def main() -> int:
         lines.append("## fork_resource_pressure (also present, non-fatal): "
                      f"{', '.join(fork_failed)}")
     lines.append("")
+    lines.append("## Jarvis ready backlog telemetry (observability-only, NOT a BLOCK cause)")
+    lines.append(f"  - {ready_backlog.get('detail')}")
+    lines.append(f"  - top_ready_ids={ready_backlog.get('top_ready_ids')} "
+                 f"top_devops_ready_ids={ready_backlog.get('top_devops_ready_ids')}")
+    lines.append("")
     lines.append("Single escalation path. Classify + route via devops/os-reviewer. "
                  "Do NOT self-heal from this alert.")
     alert = "\n".join(lines)
@@ -568,6 +682,7 @@ def main() -> int:
                 "mechanism_dead_keys": mech.get("dead_keys"),
                 "kanban_crash_count": crash_count,
                 "kanban_crash_stale": stale_count,
+                "jarvis_ready_backlog": ready_backlog,
                 "fork_resource_pressure": fork_pressure,
                 "fork_failed": fork_failed,
             }, sort_keys=True) + "\n")
@@ -586,13 +701,23 @@ def main() -> int:
     # evidence, and we still exit non-zero so the scheduler flags it.
     send = run([HERMES, "send", "-t", ALERT_TARGET, alert], timeout=30)
     if send["rc"] != 0 or send["timeout"]:
-        # escalation-failed: the BLOCK is real BUT we could not deliver it.
-        # This IS a probe-side failure worth flagging (exit 1 = script failed
-        # is correct here). Local artifact already holds the evidence.
-        print("BLOCK (local artifact written; discord send FAILED rc=%s "
-              "timeout=%s — platform likely unconfigured). Alert at %s"
-              % (send["rc"], send["timeout"], alert_file), file=sys.stderr)
-        return 1
+        # Primary platform (discord) failed. Try a best-effort fallback to a
+        # second configured platform (telegram) so a single unconfigured
+        # platform does not drop the alert. This does NOT change credentials or
+        # provider routing — it only adds a redundant delivery attempt. If both
+        # fail, the local artifact already holds the evidence and we exit 1.
+        # NOTE: in this environment `hermes send` reports no configured platform
+        # (rc=1, "platform likely unconfigured") — see t_631685fb NEEDS-FRANK.
+        fb = run([HERMES, "send", "-t", "telegram", alert], timeout=30)
+        if fb["rc"] == 0 and not fb["timeout"]:
+            print(f"BLOCK escalated OK to telegram (discord failed rc={send['rc']} "
+                  f"timeout={send['timeout']}).", file=sys.stderr)
+        else:
+            print("BLOCK (local artifact written; discord send FAILED rc=%s "
+                  "timeout=%s — platform likely unconfigured; telegram fallback "
+                  "also failed rc=%s). Alert at %s"
+                  % (send["rc"], send["timeout"], fb["rc"], alert_file), file=sys.stderr)
+            return 1
 
     # REPEAT-BLOCK HARD-ALERT ESCALATION (t_7a97ba51 #3 / t_cafc1119 C3).
     # If the same crash class has re-BLOCKed the canary >= CRITICAL_ALERT_MIN_COUNT
