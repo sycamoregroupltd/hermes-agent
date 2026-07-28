@@ -15,6 +15,7 @@ Acceptance:
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -479,8 +480,200 @@ def test_dispatch_once_skips_blocked_card_at_spawn_time(
             "No block_gate_audit event was created"
         )
 
+        # Verify block_kind is included in the audit payload
+        payload = json.loads(audit_rows[0]["payload"])
+        assert "block_kind" in payload, (
+            f"block_gate_audit payload must include block_kind; "
+            f"got {audit_rows[0]['payload']!r}"
+        )
+
         # Card appears in skipped_block_gate as final evidence
         assert tid in result.skipped_block_gate, (
             f"Card must be in skipped_block_gate; "
             f"got {result.skipped_block_gate!r}"
         )
+
+
+# ── gap coverage: explicit event emission ──────────────────────────────
+
+
+def test_create_task_blocked_emits_blocked_event(
+    kanban_home: Path,
+) -> None:
+    """``create_task`` with ``initial_status='blocked'`` must emit a
+    ``'blocked'`` event in ``task_events`` — tests the fix directly at the
+    source rather than through downstream effects.
+
+    Without this event, ``_has_sticky_block()`` returns ``False`` and the
+    dispatcher would promote the card to ``ready`` on the next tick. This is
+    the root-cause test for the P1 defect (t_fc1fdf31).
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="blocked-event-test",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        # Verify a 'blocked' event was written
+        rows = conn.execute(
+            "SELECT kind, payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'blocked'",
+            (tid,),
+        ).fetchall()
+        assert len(rows) >= 1, (
+            f"create_task with initial_status='blocked' must emit "
+            f"a 'blocked' event; got {len(rows)} rows"
+        )
+        # Verify the payload mentions "initial_status"
+        payload = rows[0]["payload"]
+        assert payload is not None and "initial_status" in payload, (
+            f"blocked event payload should indicate 'initial_status' as source; "
+            f"got {payload!r}"
+        )
+
+
+# ── gap coverage: mixed queue (blocked + ready) ────────────────────────
+
+
+def test_mixed_blocked_and_ready_cards_in_single_dispatch_tick(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """When both a blocked card and a ready card are in the dispatch queue,
+    only the ready card must be spawned — the blocked card must not prevent
+    the ready one from being dispatched, nor be claimed itself.
+    """
+    with kb.connect() as conn:
+        blocked_id = kb.create_task(
+            conn,
+            title="must-stay-blocked",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        ready_id = kb.create_task(
+            conn,
+            title="should-be-dispatched",
+            assignee="test-profile",
+        )
+        assert kb.get_task(conn, blocked_id).status == "blocked"
+        assert kb.get_task(conn, ready_id).status == "ready"
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+
+        # Blocked card must stay blocked and not be spawned
+        assert kb.get_task(conn, blocked_id).status == "blocked", (
+            "Blocked card must stay blocked in mixed queue"
+        )
+        spawned_ids = [s[0] for s in result.spawned]
+        assert blocked_id not in spawned_ids, (
+            f"Blocked card must not be spawned in mixed queue; "
+            f"got spawned={result.spawned!r}"
+        )
+        assert blocked_id not in spy.calls, (
+            "spawn_fn must not be called for blocked card in mixed queue"
+        )
+
+        # Ready card must be dispatched
+        assert ready_id in spawned_ids, (
+            f"Ready card must be spawned in mixed queue; "
+            f"got spawned={result.spawned!r}"
+        )
+        assert ready_id in spy.calls, (
+            "spawn_fn must be called for the ready card in mixed queue"
+        )
+        assert kb.get_task(conn, ready_id).status == "running", (
+            "Ready card must transition to 'running' after dispatch"
+        )
+
+
+# ── gap coverage: multiple dispatch ticks ──────────────────────────────
+
+
+def test_blocked_card_stays_blocked_across_multiple_ticks(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A blocked card must remain blocked after N consecutive
+    ``dispatch_once`` ticks — verifies no gradual state leakage or
+    tick-boundary edge case can eventually claim it.
+    """
+    N_TICKS = 5
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="multi-tick-blocked",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        assert kb.get_task(conn, tid).status == "blocked"
+
+        spy = _spy_spawn()
+        for tick in range(N_TICKS):
+            result = kb.dispatch_once(conn, spawn_fn=spy)
+            task = kb.get_task(conn, tid)
+            assert task.status == "blocked", (
+                f"Blocked card changed to {task.status!r} after "
+                f"tick {tick + 1}/{N_TICKS}"
+            )
+            assert len(result.spawned) == 0, (
+                f"dispatch_once spawned something on tick {tick + 1}: "
+                f"{result.spawned!r}"
+            )
+        assert len(spy.calls) == 0, (
+            f"spawn_fn was called {len(spy.calls)} times over "
+            f"{N_TICKS} ticks for a blocked card"
+        )
+
+
+# ── gap coverage: sticky block with done parent ───────────────────────
+
+
+def test_sticky_blocked_card_with_done_parent_stays_blocked(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A card that is sticky-blocked (via ``block_task`` with a non-dependency
+    kind) must stay blocked even when all its parents are done. Only the
+    ``dependency`` block kind should auto-recover via ``todo`` promotion.
+    """
+    with kb.connect() as conn:
+        parent_id = kb.create_task(
+            conn, title="parent", assignee="parent-profile",
+        )
+        kb.complete_task(conn, parent_id, result="done")
+        assert kb.get_task(conn, parent_id).status == "done"
+
+        child_id = kb.create_task(
+            conn,
+            title="child-needs_input",
+            assignee="test-profile",
+            parents=[parent_id],
+        )
+        # Child is ready (parent done).
+        assert kb.get_task(conn, child_id).status == "ready"
+
+        # Block with needs_input — must land in 'blocked', not 'todo'.
+        kb.block_task(
+            conn, child_id, reason="needs human review", kind="needs_input",
+        )
+        assert kb.get_task(conn, child_id).status == "blocked", (
+            "needs_input block must route to 'blocked', not 'todo'"
+        )
+
+        # recompute_ready should NOT promote it — sticky block overrides
+        # parent-done logic.
+        promoted = kb.recompute_ready(conn)
+        assert promoted == 0, (
+            "recompute_ready must not promote a needs_input-blocked card "
+            "even when parents are done"
+        )
+        assert kb.get_task(conn, child_id).status == "blocked"
+
+        # Full dispatch tick must also refuse.
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+        assert kb.get_task(conn, child_id).status == "blocked"
+        assert len(result.spawned) == 0
+        assert child_id not in spy.calls
