@@ -1326,8 +1326,15 @@ def _is_missing_script_error(script_output: str) -> bool:
     """
     if not script_output:
         return False
-    lowered = script_output.lower()
-    return "script not found" in lowered or "not a file" in lowered
+    # Exact-prefix match against the literals emitted by _run_job_script
+    # (``Script not found:`` / ``Script path is not a file:``). Substring
+    # matching over the whole output is unsafe: run_job feeds the script's
+    # own stderr/stdout into this classifier, so an existing script that
+    # exits non-zero while printing e.g. "not a file" would be misclassified
+    # as a dead-pin and auto-paused.
+    return script_output.startswith("Script not found:") or script_output.startswith(
+        "Script path is not a file:"
+    )
 
 
 def _alert_critical_alerts(message: str) -> None:

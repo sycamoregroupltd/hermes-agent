@@ -822,6 +822,46 @@ class TestRunJobDeadPinFireTime:
         assert still_enabled["state"] != "paused"
         assert still_enabled["enabled"] is True
 
+    def test_existing_script_printing_dangerous_substrings_no_autopause(
+        self, cron_env, monkeypatch
+    ):
+        """Regression: an existing script that exits non-zero while printing
+        'not a file' or 'script not found' in its output must NOT be
+        misclassified as a dead-pin and auto-paused.
+
+        Before the exact-prefix fix, ``_is_missing_script_error`` used broad
+        substring matching over the entire script output (stderr+stdout),
+        so a non-missing script that happened to print those words would be
+        silently auto-paused — masking a real error.
+        """
+        import cron.scheduler as sched_mod
+        from cron.scheduler import run_job
+        from cron.jobs import get_job
+
+        alerts = []
+        monkeypatch.setattr(sched_mod, "_alert_critical_alerts", alerts.append)
+
+        script = cron_env / "scripts" / "dangerous.py"
+        script.write_text(
+            'import sys\nprint("Error: not a file")\nprint("Hint: script not found in path")\nsys.exit(2)\n'
+        )
+        job = self._make_job(cron_env, monkeypatch, "dangerous.py", no_agent=True)
+        job_id = job["id"]
+
+        success, doc, response, err = run_job(job)
+        assert success is False
+        assert "exited with code 2" in err
+        assert "not a file" in err
+        assert "script not found" in err
+
+        # No dead-pin alert, and the job must stay enabled.
+        assert not any("dead-pin" in a.lower() for a in alerts), (
+            "script emitting dangerous substrings must not trigger the dead-pin alert"
+        )
+        still_enabled = get_job(job_id)
+        assert still_enabled["enabled"] is True
+        assert still_enabled["state"] != "paused"
+
     def test_missing_script_autopauses_llm_path(self, cron_env, monkeypatch):
         """LLM path (no_agent=False) also auto-pauses on a missing script."""
         from cron.scheduler import run_job
