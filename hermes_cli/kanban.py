@@ -99,6 +99,12 @@ def _parse_workspace_flag(value: str) -> tuple[str, Optional[str]]:
     """Parse ``--workspace`` into ``(kind, path|None)``.
 
     Accepts: ``scratch``, ``worktree``, ``worktree:<path>``, ``dir:<path>``.
+
+    For ``worktree:<path>`` the path is the explicit, absolute worktree
+    target. When it lives OUTSIDE the production git checkout (e.g.
+    ``worktree:/home/frank/sycode-trading-worktrees/<id>``), Hermes materializes
+    a linked git worktree there branched from the nearest enclosing repo, so the
+    shared checkout is never modified. An absolute path is required.
     """
     if not value:
         return ("scratch", None)
@@ -113,7 +119,12 @@ def _parse_workspace_flag(value: str) -> tuple[str, Optional[str]]:
             raise argparse.ArgumentTypeError(
                 f"--workspace {prefix} requires a path after the colon"
             )
-        return (kind, os.path.expanduser(path))
+        expanded = os.path.expanduser(path)
+        if not os.path.isabs(expanded):
+            raise argparse.ArgumentTypeError(
+                f"--workspace {prefix} path {path!r} must be absolute"
+            )
+        return (kind, expanded)
     raise argparse.ArgumentTypeError(
         f"unknown --workspace value {value!r}: use scratch, worktree, "
         "worktree:<path>, or dir:<path>"
