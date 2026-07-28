@@ -1797,7 +1797,13 @@ KANBAN_CREATE_SCHEMA = {
                 "type": "string",
                 "description": (
                     "Absolute path for 'dir' or 'worktree' workspace. "
-                    "Relative paths are rejected at dispatch."
+                    "Relative paths are rejected at dispatch. For 'worktree', "
+                    "an explicit path may live OUTSIDE the production checkout "
+                    "(e.g. /home/frank/sycode-trading-worktrees/<id>); Hermes "
+                    "materializes a linked git worktree there branched from the "
+                    "nearest enclosing repo, so the shared checkout is never "
+                    "modified. When omitted, the board's configured "
+                    "worktree_root (if any) or default_workdir anchors it."
                 ),
             },
             "project": {

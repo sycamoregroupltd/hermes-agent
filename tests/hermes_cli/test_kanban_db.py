@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import sqlite3
 import subprocess
@@ -786,6 +787,67 @@ def test_detect_crashed_workers_isolated_failure_normal_retry(
             assert task.status == "ready", (
                 f"task {tid} should stay ready (isolated), got {task.status}"
             )
+
+
+def test_detect_crashed_workers_reclaims_done_parent_orphan_without_failure_count(
+    kanban_home,
+):
+    """A running child whose current run already crashed after its parent is
+    done is stale bookkeeping, so reclaim it without burning retry budget."""
+    with kb.connect() as conn:
+        parent = kb.create_task(conn, title="parent", assignee="a")
+        kb.complete_task(conn, parent, result="ok")
+        child = kb.create_task(conn, title="child", assignee="a", parents=[parent])
+        claimed = kb.claim_task(conn, child, claimer="host:orphan")
+        assert claimed is not None
+        run_id = conn.execute(
+            "SELECT current_run_id FROM tasks WHERE id = ?", (child,),
+        ).fetchone()["current_run_id"]
+        ended = int(time.time())
+        conn.execute(
+            "UPDATE task_runs SET status='crashed', outcome='crashed', "
+            "ended_at=?, error='synthetic crash', claim_lock='host:orphan', "
+            "claim_expires=?, worker_pid=123456 WHERE id=?",
+            (ended, ended + 60, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET worker_pid=123456, consecutive_failures=1, "
+            "last_failure_error='prior failure' WHERE id=?",
+            (child,),
+        )
+        conn.commit()
+
+        assert kb.detect_crashed_workers(conn) == []
+
+        row = conn.execute(
+            "SELECT status, current_run_id, claim_lock, claim_expires, "
+            "worker_pid, consecutive_failures, last_failure_error "
+            "FROM tasks WHERE id = ?",
+            (child,),
+        ).fetchone()
+        assert row["status"] == "ready"
+        assert row["current_run_id"] is None
+        assert row["claim_lock"] is None
+        assert row["claim_expires"] is None
+        assert row["worker_pid"] is None
+        assert row["consecutive_failures"] == 1
+        assert row["last_failure_error"] == "prior failure"
+        run_row = conn.execute(
+            "SELECT claim_lock, claim_expires, worker_pid FROM task_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        assert run_row["claim_lock"] is None
+        assert run_row["claim_expires"] is None
+        assert run_row["worker_pid"] is None
+        event = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? "
+            "AND kind = 'resolved_parent_orphan_reclaimed'",
+            (child,),
+        ).fetchone()
+        assert event is not None
+        payload = json.loads(event["payload"])
+        assert payload["failure_budget_counted"] is False
+        assert payload["next_status"] == "ready"
 
 
 def test_detect_crashed_workers_skips_freshly_claimed_tasks(
@@ -2203,6 +2265,69 @@ def test_worktree_no_path_no_board_default_raises(kanban_home, tmp_path, monkeyp
         assert task is not None
         with pytest.raises(ValueError, match="default_workdir"):
             kb.resolve_workspace(task)
+
+
+def test_worktree_no_path_honors_board_worktree_root_outside_checkout(kanban_home, tmp_path):
+    """A board that declares ``worktree_root`` materializes an isolated linked
+    worktree OUTSIDE the production checkout (so the checkout's HEAD, branches,
+    and untracked files are never touched). E.g. sycode-trading's
+    ``/home/frank/sycode-trading-worktrees/<id>`` instead of the in-repo
+    ``<checkout>/.worktrees/<id>``."""
+    repo = tmp_path / "sycode-trading"          # the production checkout
+    _init_git_repo(repo)
+    external_root = tmp_path / "sycode-trading-worktrees"  # OUTSIDE the repo
+    kb.create_board(
+        "wt-external-board",
+        default_workdir=str(repo),
+        worktree_root=str(external_root),
+    )
+    with kb.connect(board="wt-external-board") as conn:
+        t = kb.create_task(
+            conn, title="ship", workspace_kind="worktree", board="wt-external-board"
+        )
+        task = kb.get_task(conn, t)
+        ws = kb.resolve_workspace(task, board="wt-external-board")
+
+    expected = external_root / t
+    assert ws == expected
+    assert ws.exists()
+    # Critically: the production checkout's own tree is NOT modified — the
+    # linked worktree lives outside it.
+    assert ws.parent == external_root
+    assert external_root not in repo.parents and external_root != repo
+    # And the linked worktree is actually a git worktree of the repo.
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    assert str(ws) in listed
+    # The checkout itself still has no stray .worktrees dir created.
+    assert not (repo / ".worktrees").exists()
+
+
+def test_create_task_without_workspace_honors_board_default_workspace_kind(kanban_home, tmp_path):
+    """A board with ``default_workspace_kind: worktree`` upgrades a workspace-less
+    create (which defaults to scratch) into a worktree task, so trading cards
+    auto-dispatch with an isolated worktree rather than a throwaway scratch dir."""
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    external_root = tmp_path / "worktrees"
+    kb.create_board(
+        "wt-kind-board",
+        default_workdir=str(repo),
+        worktree_root=str(external_root),
+        default_workspace_kind="worktree",
+    )
+    with kb.connect(board="wt-kind-board") as conn:
+        # No workspace_kind / workspace_path supplied — defaults to scratch,
+        # but the board opts every task into worktree.
+        t = kb.create_task(conn, title="auto-trading", board="wt-kind-board")
+        task = kb.get_task(conn, t)
+
+    assert task.workspace_kind == "worktree"
+    ws = kb.resolve_workspace(task, board="wt-kind-board")
+    assert ws == external_root / t
+    assert ws.exists()
 
 
 def test_worktree_workspace_explicit_target_materializes_linked_worktree(kanban_home, tmp_path):

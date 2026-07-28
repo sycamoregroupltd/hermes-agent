@@ -685,6 +685,8 @@ def write_board_metadata(
     color: Optional[str] = None,
     archived: Optional[bool] = None,
     default_workdir: Optional[str] = None,
+    worktree_root: Optional[str] = None,
+    default_workspace_kind: Optional[str] = None,
 ) -> dict:
     """Create / update ``board.json`` for ``board``.
 
@@ -708,6 +710,12 @@ def write_board_metadata(
         meta["archived"] = bool(archived)
     if default_workdir is not None:
         meta["default_workdir"] = str(default_workdir) if default_workdir else None
+    if worktree_root is not None:
+        meta["worktree_root"] = str(worktree_root) if worktree_root else None
+    if default_workspace_kind is not None:
+        meta["default_workspace_kind"] = (
+            str(default_workspace_kind) if default_workspace_kind else None
+        )
     if not meta.get("created_at"):
         meta["created_at"] = int(time.time())
     path = board_metadata_path(slug)
@@ -728,6 +736,8 @@ def create_board(
     icon: Optional[str] = None,
     color: Optional[str] = None,
     default_workdir: Optional[str] = None,
+    worktree_root: Optional[str] = None,
+    default_workspace_kind: Optional[str] = None,
 ) -> dict:
     """Create a new board directory + DB + metadata. Idempotent.
 
@@ -745,6 +755,8 @@ def create_board(
         icon=icon,
         color=color,
         default_workdir=default_workdir,
+        worktree_root=worktree_root,
+        default_workspace_kind=default_workspace_kind,
     )
     # Touch the DB so list_boards() sees it immediately.
     init_db(board=normed)
@@ -2869,6 +2881,24 @@ def create_task(
                 # ``<repo>/.worktrees/<task-id>`` dir keyed on the new task id.
                 project_repo = str(project_obj.primary_path)
 
+    # Board-level default workspace kind. A board can opt every
+    # workspace-less task into a non-scratch workspace (e.g. the
+    # ``sycode-trading`` board sets ``default_workspace_kind: worktree`` so
+    # trading cards never dispatch with a throwaway scratch dir, and instead
+    # get an isolated git worktree — historical default for that board before
+    # this field existed). Only upgrade a caller that didn't express a kind
+    # (``workspace_kind`` defaults to ``"scratch"``); an explicit ``dir`` /
+    # ``worktree`` / explicit ``scratch`` is always honored.
+    if (
+        workspace_kind == "scratch"
+        and workspace_path is None
+        and project_repo is None
+    ):
+        board_slug = board if board else get_current_board()
+        board_kind = (read_board_metadata(board_slug).get("default_workspace_kind") or "").strip()
+        if board_kind in VALID_WORKSPACE_KINDS:
+            workspace_kind = board_kind
+
     parents = tuple(p for p in parents if p)
 
     # Normalise + validate skills: strip whitespace, drop empties, dedupe
@@ -2951,7 +2981,22 @@ def create_task(
         board_meta = read_board_metadata(board_slug)
         board_default = board_meta.get("default_workdir")
         if board_default:
-            workspace_path = str(board_default)
+            if workspace_kind == "worktree":
+                # A board that opts worktree tasks into an isolated external
+                # ``worktree_root`` (e.g. ``sycode-trading`` →
+                # ``/home/frank/sycode-trading-worktrees``) must NOT inherit the
+                # production checkout as the workspace path — that would land
+                # the linked worktree inside the shared checkout
+                # (``<checkout>/.worktrees/<id>``) and risk touching its HEAD /
+                # branches / untracked WIP. Leave ``workspace_path`` unset so
+                # ``_resolve_worktree_workspace`` consults ``worktree_root`` and
+                # materializes an isolated ``<worktree_root>/<task-id>`` instead.
+                if (board_meta.get("worktree_root") or "").strip():
+                    pass  # keep workspace_path None → resolved via worktree_root
+                else:
+                    workspace_path = str(board_default)
+            else:
+                workspace_path = str(board_default)
 
     # Retry once on the extremely unlikely id collision.
     for attempt in range(2):
@@ -3890,6 +3935,12 @@ def recompute_ready(
                         else int(failure_limit)
                     )
                     if failures >= effective_limit:
+                        continue
+                    # Absolute catch-all: prevent auto-recovery of tasks
+                    # that have hit the dispatcher-wide max-consecutive-
+                    # failure kill-switch, even when per-task max_retries
+                    # or config failure_limit is set higher.
+                    if failures >= DISPATCHER_MAX_CONSECUTIVE_FAILURES:
                         continue
                     conn.execute(
                         "UPDATE tasks SET status = 'ready' "
@@ -6215,6 +6266,17 @@ def _resolve_worktree_workspace(
         # scatters worktrees under whatever repo the gateway started in.
         board_slug = board if board else get_current_board()
         board_default = (read_board_metadata(board_slug).get("default_workdir") or "").strip()
+        # A board may also declare an explicit ``worktree_root`` — an isolated
+        # directory OUTSIDE the production checkout where every trading/work
+        # card's worktree is materialized (e.g. ``sycode-trading`` uses
+        # ``/home/frank/sycode-trading-worktrees`` so the production checkout
+        # at ``/home/frank/sycode-trading`` is never touched — its HEAD,
+        # branches, and untracked WIP stay intact). When set, it takes
+        # precedence over the in-repo ``.worktrees/<id>`` fallback so the
+        # linked worktree is genuinely isolated from the shared checkout.
+        board_worktree_root = (
+            read_board_metadata(board_slug).get("worktree_root") or ""
+        ).strip()
         if not board_default:
             raise ValueError(
                 f"task {task.id} has workspace_kind=worktree but no workspace_path, "
@@ -6234,6 +6296,19 @@ def _resolve_worktree_workspace(
                 f"task {task.id} has workspace_kind=worktree but board "
                 f"{board_slug!r} default_workdir {board_default!r} is not inside a git repo"
             )
+        if board_worktree_root:
+            # Isolated external root: materialize ``<worktree_root>/<task-id>``
+            # as a linked worktree branched from ``repo_root``. The target
+            # lives outside the production checkout by design.
+            wt_root = Path(board_worktree_root).expanduser()
+            if not wt_root.is_absolute():
+                raise ValueError(
+                    f"board {board_slug!r} worktree_root {board_worktree_root!r} "
+                    "is not absolute; use an absolute path"
+                )
+            target = wt_root / task.id
+            _ensure_git_worktree(repo_root, target, branch_name)
+            return target, branch_name
         target = repo_root / ".worktrees" / task.id
         _ensure_git_worktree(repo_root, target, branch_name)
         return target, branch_name
@@ -6404,6 +6479,18 @@ def schedule_task(
 DEFAULT_FAILURE_LIMIT = 2
 # Legacy alias — callers / tests still reference the old name.
 DEFAULT_SPAWN_FAILURE_LIMIT = DEFAULT_FAILURE_LIMIT
+
+# Absolute catch-all max-consecutive-failure kill-switch.  No override —
+# per-task ``max_retries``, ``kanban.failure_limit`` config, or caller-
+# supplied ``failure_limit`` — can bypass this hard limit.  When a task's
+# ``consecutive_failures`` reaches this value the dispatcher ALWAYS blocks
+# the task and stops retrying, even in paths that normally skip the unified
+# failure counter (e.g. below-budget protocol violations).  A high default
+# gives the normal circuit breaker (``DEFAULT_FAILURE_LIMIT = 2``) priority
+# for routine failures while catching edge cases where the counter grows
+# unbounded via schema migration, manual edits, or interleaved failure types
+# that reset per-type streaks without resetting the unified counter.
+DISPATCHER_MAX_CONSECUTIVE_FAILURES = 10
 
 # Max bytes to keep in a single worker log file. The dispatcher truncates
 # and rotates on spawn if the file is larger than this at spawn time.
@@ -7208,6 +7295,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     """
     crashed: list[str] = []
     rate_limited: list[str] = []
+    resolved_parent_orphans: list[str] = []
     # Per-crash details collected inside the main txn, used after it
     # closes to run ``_record_task_failure`` (which needs its own
     # write_txn so can't nest). ``protocol_violation`` flags the
@@ -7217,6 +7305,73 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     crash_details: list[tuple[str, int, str, bool, str]] = []
     # (task_id, pid, claimer, protocol_violation, error_text)
     with write_txn(conn):
+        # A child can be left in tasks.status='running' even after its
+        # current run has already been closed as crashed/gave_up. When the
+        # parent is already resolved, this is stale bookkeeping, not fresh
+        # failing work: release the claim and make the child redispatchable
+        # according to dependency gating WITHOUT charging its failure budget.
+        orphan_rows = conn.execute(
+            """
+            SELECT t.id, t.current_run_id, t.worker_pid, t.claim_lock,
+                   COALESCE(r.outcome, r.status) AS run_outcome,
+                   r.ended_at,
+                   EXISTS (
+                       SELECT 1 FROM task_links l
+                       JOIN tasks p ON p.id = l.parent_id
+                       WHERE l.child_id = t.id AND p.status = 'done'
+                   ) AS has_done_parent,
+                   EXISTS (
+                       SELECT 1 FROM task_links l
+                       JOIN tasks p ON p.id = l.parent_id
+                       WHERE l.child_id = t.id AND p.status != 'done'
+                   ) AS has_unresolved_parent
+            FROM tasks t
+            JOIN task_runs r ON r.id = t.current_run_id
+            WHERE t.status = 'running'
+              AND t.current_run_id IS NOT NULL
+              AND r.ended_at IS NOT NULL
+              AND COALESCE(r.outcome, r.status) IN ('crashed', 'gave_up')
+            """
+        ).fetchall()
+        for orphan in orphan_rows:
+            if not orphan["has_done_parent"]:
+                continue
+            new_status = "todo" if orphan["has_unresolved_parent"] else "ready"
+            cur = conn.execute(
+                "UPDATE tasks SET status = ?, claim_lock = NULL, "
+                "claim_expires = NULL, worker_pid = NULL, "
+                "last_heartbeat_at = NULL, current_run_id = NULL "
+                "WHERE id = ? AND status = 'running' "
+                "  AND current_run_id = ?",
+                (new_status, orphan["id"], orphan["current_run_id"]),
+            )
+            if cur.rowcount != 1:
+                continue
+            conn.execute(
+                "UPDATE task_runs SET claim_lock = NULL, "
+                "claim_expires = NULL, worker_pid = NULL "
+                "WHERE id = ?",
+                (orphan["current_run_id"],),
+            )
+            payload = {
+                "reason": "resolved_parent_child_run_already_terminal",
+                "run_id": int(orphan["current_run_id"]),
+                "run_outcome": orphan["run_outcome"],
+                "run_ended_at": int(orphan["ended_at"]),
+                "next_status": new_status,
+                "prev_pid": int(orphan["worker_pid"]) if orphan["worker_pid"] else None,
+                "claimer": orphan["claim_lock"],
+                "failure_budget_counted": False,
+            }
+            _append_event(
+                conn,
+                orphan["id"],
+                "resolved_parent_orphan_reclaimed",
+                payload,
+                run_id=int(orphan["current_run_id"]),
+            )
+            resolved_parent_orphans.append(orphan["id"])
+
         rows = conn.execute(
             "SELECT id, worker_pid, claim_lock, started_at FROM tasks "
             "WHERE status = 'running' AND worker_pid IS NOT NULL"
@@ -7381,7 +7536,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
             if protocol_violation:
                 streak = _protocol_violation_streak(conn, tid)
                 trow = conn.execute(
-                    "SELECT max_retries FROM tasks WHERE id = ?", (tid,),
+                    "SELECT max_retries, consecutive_failures FROM tasks WHERE id = ?", (tid,),
                 ).fetchone()
                 if trow is None:
                     continue  # task deleted mid-loop
@@ -7400,7 +7555,16 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     # below-budget violation must not consume the unified
                     # failure budget, just as other failure kinds don't
                     # consume this one.
-                    continue
+                    #
+                    # EXCEPTION: if the task's unified consecutive_failures
+                    # counter has already hit the absolute max latch, trip
+                    # the breaker anyway — this catches edge cases where
+                    # the counter grew unbounded via schema migration or
+                    # manual edits and the violation-only streak maskes it
+                    # from the normal _record_task_failure path.
+                    t_cf = int(trow["consecutive_failures"] or 0)
+                    if t_cf < DISPATCHER_MAX_CONSECUTIVE_FAILURES:
+                        continue
                 # Streak reached the bound: trip the breaker. ``force_trip``
                 # skips the threshold resolution inside
                 # ``_record_task_failure`` because the decision — including
@@ -7445,6 +7609,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # Same side-channel for rate-limited requeues — these did NOT count a
     # failure and are NOT crashes, so they stay out of the ``crashed`` return.
     detect_crashed_workers._last_rate_limited = rate_limited  # type: ignore[attr-defined]
+    detect_crashed_workers._last_resolved_parent_orphans = resolved_parent_orphans  # type: ignore[attr-defined]
     return crashed
 
 
@@ -7489,6 +7654,10 @@ def _record_task_failure(
     context (e.g. pid on crash, elapsed on timeout).
 
     Resolution order for the effective threshold:
+      0. ``DISPATCHER_MAX_CONSECUTIVE_FAILURES`` — if the consecutive
+         failures counter reaches this absolute max, the breaker ALWAYS
+         trips, overriding everything below (takes precedence even over
+         ``force_trip=False`` to serve as an unbounded-retry kill-switch).
       1. per-task ``max_retries`` if set (nothing else overrides)
       2. caller-supplied ``failure_limit`` (gateway passes the config
          value from ``kanban.failure_limit``; tests pass fixed values)
@@ -7528,8 +7697,20 @@ def _record_task_failure(
             effective_limit = int(failure_limit)
             limit_source = "dispatcher"
 
+        # Absolute catch-all: no override can bypass this hard limit.
+        # When consecutive_failures reaches the absolute max, force the
+        # breaker to trip regardless of effective_limit or force_trip.
+        # This catches edge cases where the counter grows unbounded via
+        # schema migration, manual edits, or failure types that reset
+        # per-type streaks without resetting the unified counter.
+        if not force_trip and failures >= DISPATCHER_MAX_CONSECUTIVE_FAILURES:
+            effective_limit = DISPATCHER_MAX_CONSECUTIVE_FAILURES
+            limit_source = "absolute_max"
+            force_trip = True
+
         if force_trip or failures >= effective_limit:
-            # Trip the breaker.
+            # Trip the breaker.  Note: force_trip may have just been set by
+            # the absolute-max catch-all above.
             if release_claim:
                 # Spawn path: still running, also clear claim state.
                 conn.execute(
