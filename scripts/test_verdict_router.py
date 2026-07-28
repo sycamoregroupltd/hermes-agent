@@ -26,7 +26,9 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                 assignee TEXT,
                 status TEXT NOT NULL,
                 priority INTEGER DEFAULT 0,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                block_kind TEXT,
+                result TEXT
             );
             CREATE TABLE task_comments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,6 +36,14 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                 author TEXT NOT NULL,
                 body TEXT NOT NULL,
                 created_at INTEGER NOT NULL
+            );
+            CREATE TABLE task_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                run_id INTEGER,
+                kind TEXT NOT NULL,
+                payload TEXT,
+                created_at INTEGER
             );
             """
         )
@@ -44,8 +54,32 @@ class VerdictRouterRegressionTests(unittest.TestCase):
     def insert_task(self, board: vr.Board, task_id: str, body: str = "review-required source patch") -> None:
         con = sqlite3.connect(board.db)
         con.execute(
-            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
-            (task_id, "review-required source code patch", body, "devops", "blocked", 10, int(time.time())),
+            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at,block_kind) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (task_id, "review-required source code patch", body, "devops", "blocked", 10, int(time.time()), None),
+        )
+        con.commit()
+        con.close()
+
+    def add_blocked_event(self, board: vr.Board, task_id: str, reason: str, block_kind: str = "needs_input") -> None:
+        """Record a `blocked` task_event with the documented reason (C2, t_c3bbc27b).
+
+        Mirrors what the ``kanban_block`` tool persists: the reason lives in the
+        event payload JSON. The operator-gate detector must gate on this reason
+        (surface 2) and the structured block_kind (surface 1) — never on reviewer
+        comment prose.
+        """
+        import json as _json
+
+        con = sqlite3.connect(board.db)
+        con.execute(
+            "INSERT INTO task_events(task_id,kind,payload,created_at) VALUES (?,?,?,?)",
+            (task_id, "blocked", _json.dumps({"reason": reason, "kind": block_kind}), int(time.time())),
+        )
+        # Surface the structured block_kind on the task row too (first-class field).
+        con.execute(
+            "UPDATE tasks SET block_kind=? WHERE id=?",
+            (block_kind, task_id),
         )
         con.commit()
         con.close()
@@ -136,7 +170,8 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                     assignee TEXT,
                     status TEXT NOT NULL,
                     priority INTEGER DEFAULT 0,
-                    created_at INTEGER NOT NULL
+                    created_at INTEGER NOT NULL,
+                    block_kind TEXT
                 );
                 CREATE TABLE task_comments (
                     id TEXT PRIMARY KEY,
@@ -513,6 +548,104 @@ class VerdictRouterC4NegatedVerdictTests(VerdictRouterRegressionTests):
             self.assertEqual(vr.candidates_for_board(board), [])
             self.assertIsNone(vr.parse_verdict("do not post REVIEW_VERDICT=APPROVED"))
 
+    def test_c3b_structured_block_kind_capability_gates_even_without_prose_terms(self) -> None:
+        """C2 (t_c3bbc27b) surface 1 — structured block_kind gate.
+
+        A task whose recorded block_kind is 'capability' (system-recorded hard
+        wall: missing credentials / access / action no agent can perform) MUST
+        operator-gate even when its title/body carry NO FORBIDDEN_SCOPE_RE term
+        and its reviewer comment prose is an approval. Blocking on a structured
+        field is gating on recorded operator scope, never on reviewer prose.
+        """
+        task_id = "t_c3b0c0de"
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, task_id, body="review-required source patch")
+            self.add_blocked_event(
+                board,
+                task_id,
+                reason="needs_input: awaiting dependent card",
+                block_kind="capability",
+            )
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "REVIEW_VERDICT=APPROVED\nTarget: t_c3b0c0de. Source-only, approvable.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.scope_class, "operator_gated")
+            self.assertEqual(decision.action, "needs_operator")
+
+    def test_c3c_block_reason_with_gate_term_gates_even_when_title_body_clear(self) -> None:
+        """C2 (t_c3bbc27b) surface 2 — documented block-reason gate.
+
+        A task whose title/body contain NO FORBIDDEN_SCOPE_RE term but whose
+        documented block reason ('operator decision required: prod deploy') DOES
+        carry a gate term MUST operator-gate. This is the capability-preserving
+        half of C2: gating on the recorded block reason rather than reviewer
+        comment prose.
+        """
+        task_id = "t_c3c0c0de"
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, task_id, body="review-required source patch")
+            self.add_blocked_event(
+                board,
+                task_id,
+                reason="NEEDS-FRANK/operator decision: live prod deploy requires Frank approval",
+                block_kind="needs_input",
+            )
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "REVIEW_VERDICT=APPROVED\nTarget: t_c3c0c0de. Source-only, approvable.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.scope_class, "operator_gated")
+            self.assertEqual(decision.action, "needs_operator")
+
+    def test_c3d_block_reason_denial_does_not_gate_clear_card(self) -> None:
+        """C2 (t_c3bbc27b) surface 2 — gate-DENIAL in block reason is NOT a gate.
+
+        A block reason that *denies* a gate ('no prod, no credential or DB change;
+        safe') with no positive FORBIDDEN_SCOPE_RE assertion must NOT operator-gate
+        a title/body-clear card — the same negation-aware redaction that protects
+        title/body now protects the block-reason surface. Confirms C2 did not
+        weaken fail-closed: genuine positive gate reasons still gate (see c3c).
+        """
+        task_id = "t_c3d0c0de"
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, task_id, body="review-required source patch")
+            self.add_blocked_event(
+                board,
+                task_id,
+                reason="review-required: no prod, no credential or DB change; A3-safe patch",
+                block_kind="needs_input",
+            )
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "REVIEW_VERDICT=APPROVED\nTarget: t_c3d0c0de. Source-only, approvable.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertNotEqual(
+                decision.scope_class,
+                "operator_gated",
+                "gate-DENIAL block reason must not operator-gate a clear card",
+            )
+            self.assertEqual(decision.action, "complete")
+            self.assertEqual(decision.scope_class, "source_docs_spec_test_only")
+
     def test_c4_affirmative_verdict_in_separate_sentence_still_routes(self) -> None:
         """Positive control: a genuine affirmative REVIEW_VERDICT in its own
         sentence must still route, even if the comment contains a denial word
@@ -603,7 +736,7 @@ class VerdictRouterBoardExclusionTests(unittest.TestCase):
             con = sqlite3.connect(str(sync_db))
             con.executescript(
                 """
-                CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,assignee TEXT,status TEXT NOT NULL,priority INTEGER DEFAULT 0,created_at INTEGER NOT NULL);
+                CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,assignee TEXT,status TEXT NOT NULL,priority INTEGER DEFAULT 0,created_at INTEGER NOT NULL,block_kind TEXT);
                 CREATE TABLE task_comments (id INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL,author TEXT NOT NULL,body TEXT NOT NULL,created_at INTEGER NOT NULL);
                 """
             )
@@ -624,7 +757,7 @@ class VerdictRouterBoardExclusionTests(unittest.TestCase):
             con = sqlite3.connect(str(normal_db))
             con.executescript(
                 """
-                CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,assignee TEXT,status TEXT NOT NULL,priority INTEGER DEFAULT 0,created_at INTEGER NOT NULL);
+                CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,assignee TEXT,status TEXT NOT NULL,priority INTEGER DEFAULT 0,created_at INTEGER NOT NULL,block_kind TEXT);
                 CREATE TABLE task_comments (id INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL,author TEXT NOT NULL,body TEXT NOT NULL,created_at INTEGER NOT NULL);
                 """
             )

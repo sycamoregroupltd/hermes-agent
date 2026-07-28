@@ -190,24 +190,63 @@ def redact_gate_denials(text: str) -> str:
     return "".join(out)
 
 
-def operator_gate_terms(title: str, body: str, comment: str | None = None) -> "re.Match[str] | None":
-    """Operator-gated detection (C2 fix — t_8874b97b / proposal t_9a0af491).
+# C2 (t_c3bbc27b): structured block_kind values that already record an
+# operator/credential/A3/prod/DB/access wall. A task blocked with one of these
+# kinds is, by the system's own recorded state, outside source/docs/spec auto-
+# complete scope — so the operator-gate detector gates on it directly without
+# any lexical FORBIDDEN_SCOPE_RE match. This is gating on structured fields,
+# never on reviewer comment prose.
+_OPERATOR_GATE_BLOCK_KINDS = frozenset({"capability"})
 
-    Gate ONLY on task title/body scope (and, per the safety contract, block
-    reason / structured gate metadata) — NEVER on reviewer comment prose. The
+
+def operator_gate_terms(
+    title: str,
+    body: str,
+    block_reason: str | None = None,
+    block_kind: str | None = None,
+) -> "re.Match[str] | None":
+    """Operator-gated detection (C2 fix — t_8874b97b / proposal t_9a0af491 / t_c3bbc27b).
+
+    Gate ONLY on the task's OWN scope — title/body, the documented block reason,
+    and the structured block_kind — NEVER on reviewer comment prose. The
     proposal's corrected C2 mechanism explicitly excludes reviewer comment prose
     because a verdict that *denies* a gate must not strand an approved card.
 
-    Within the title/body, gate-DENIAL narration (a forbidden noun in a sentence
-    containing a denial cue like "no"/"not"/"do not"/"safe"/"A3-safe"/"preserved")
-    is redacted so it cannot trip the detector. A *positive* gate assertion
-    ("Run production DB migration and live runtime deploy") still gates. This is
-    general across all ~25 terms (not the rejected brittle 3-term patch). Over-
-    broad tokens that collide with code identifiers (database/auth/schema) are
-    scoped to gate-context phrases.
+    Scoping surfaces, in order:
+      1) block_kind == "capability": the system already recorded a hard wall
+         (missing credentials, access, or an action no agent can perform), which
+         is outside auto-complete scope by definition — gate immediately.
+      2) block_reason: the documented block reason text (task_events payload),
+         scanned with FORBIDDEN_SCOPE_RE. Genuine gate reasons ("operator
+         decision", "credential", "prod") gate; gate-DENIAL narration inside the
+         reason is redacted so a "no prod/cred change" reason cannot strand a
+         card whose body/title already cleared.
+      3) title/body: scanned with FORBIDDEN_SCOPE_RE + gate-DENIAL redaction.
+
+    Within surfaces 2 and 3, gate-DENIAL narration (a forbidden noun in a
+    sentence containing a denial cue like "no"/"not"/"do not"/"safe"/"A3-safe"/
+    "preserved") is redacted so it cannot trip the detector. A *positive* gate
+    assertion ("Run production DB migration and live runtime deploy") still gates.
+    This is general across all ~25 terms (not the rejected brittle 3-term patch).
+    Over-broad tokens that collide with code identifiers (database/auth/schema)
+    are scoped to gate-context phrases.
     """
-    # C2: reviewer comment prose is excluded from the operator-gate scan.
-    combined = "\n".join([title or "", body or ""])
+    # C2 (t_c3bbc27b): structured gate field — block_kind already records the
+    # operator/credential/A3/prod/DB wall, so gate without lexical matching.
+    if block_kind in _OPERATOR_GATE_BLOCK_KINDS:
+        # Return a synthetic match whose group(0) names the structured field so
+        # the caller's reason string is descriptive and auditable.
+        class _StructMatch:
+            @staticmethod
+            def group(_: int = 0) -> str:
+                return f"block_kind={block_kind}"
+        return _StructMatch()  # type: ignore[return-value]
+    # C2: reviewer comment prose is excluded from the operator-gate scan. Only
+    # the task's own title/body and documented block_reason are scanned.
+    surfaces: list[str] = [title or "", body or ""]
+    if block_reason:
+        surfaces.append(block_reason)
+    combined = "\n".join(surfaces)
     return FORBIDDEN_SCOPE_RE.search(redact_gate_denials(combined))
 
 SAFE_DELIVERABLE_RE = re.compile(
@@ -241,6 +280,11 @@ class Candidate:
     latest_comment_author: str
     latest_comment_body: str
     latest_comment_created_at: int
+    # C2 (t_c3bbc27b): structured gate signals surfaced from the task's own
+    # fields (NOT reviewer comment prose) so the operator-gate detector can gate
+    # on the documented block reason and the structured block_kind.
+    block_reason: str | None = None
+    block_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -420,6 +464,7 @@ def candidates_for_board(board: Board) -> list[Candidate]:
         rows = con.execute(
             """
             SELECT id, title, body, assignee
+                   , block_kind
               FROM tasks
              WHERE status = 'blocked'
              ORDER BY priority DESC, created_at ASC
@@ -450,6 +495,11 @@ def candidates_for_board(board: Board) -> list[Candidate]:
             task_text = "\n".join([row["title"] or "", row["body"] or ""])
             if not (REVIEW_REQUIRED_RE.search(task_text) or REVIEW_REQUIRED_RE.search(body) or verdict_declarations(body)):
                 continue
+            # C2 (t_c3bbc27b): surface the task's structured gate signals so the
+            # operator-gate detector can gate on them WITHOUT scanning reviewer
+            # comment prose. block_kind is a first-class task field; block_reason
+            # is the documented reason stored in the latest `blocked` task_event.
+            block_reason = latest_block_reason(con, row["id"])
             out.append(
                 Candidate(
                     board=board,
@@ -461,11 +511,53 @@ def candidates_for_board(board: Board) -> list[Candidate]:
                     latest_comment_author=comment["author"] or "",
                     latest_comment_body=body,
                     latest_comment_created_at=comment_created_at or 0,
+                    block_reason=block_reason,
+                    block_kind=row["block_kind"],
                 )
             )
         return out
     finally:
         con.close()
+
+
+def latest_block_reason(con: sqlite3.Connection, task_id: str) -> str | None:
+    """Return the documented block reason for ``task_id`` (C2, t_c3bbc27b).
+
+    Block reasons are stored as JSON in ``task_events.payload.reason`` for rows
+    with ``kind='blocked'`` — the same field the ``kanban_block`` tool writes.
+    We return the most recent blocked-event reason so the operator-gate detector
+    can gate on it (gating on the system's own recorded scope, never on a
+    reviewer's prose). Returns ``None`` when no blocked event exists, so callers
+    fail closed (no reason => no lexical match from this surface). Resilient to
+    malformed payload JSON and absent ``task_events`` table.
+    """
+    if not table_exists(con, "task_events"):
+        return None
+    try:
+        row = con.execute(
+            """
+            SELECT payload
+              FROM task_events
+             WHERE task_id=?
+               AND kind='blocked'
+             ORDER BY id DESC
+             LIMIT 1
+            """,
+            (task_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    payload = row["payload"]
+    if not payload:
+        return None
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    reason = data.get("reason") if isinstance(data, dict) else None
+    return reason if isinstance(reason, str) else None
 
 
 def parse_verdict(comment_body: str) -> str | None:
@@ -526,11 +618,20 @@ def first_finding_excerpt(comment_body: str) -> str:
 
 
 def classify_scope(candidate: Candidate, verdict: str | None) -> tuple[str, str]:
-    # C2 fix: operator-gate detection scans title/body only (reviewer comment
-    # prose excluded) and uses negation-aware redaction so gate-DENIAL narration
-    # ("no prod, no creds", "A3-safe", "schema.prisma" file path) cannot strand
-    # a card — see operator_gate_terms.
-    forbidden = operator_gate_terms(candidate.title, candidate.body)
+    # C2 fix (t_8874b97b / t_c3bbc27b): operator-gate detection scans the
+    # task's OWN scope only — title/body, the documented block reason, and the
+    # structured block_kind — NEVER reviewer comment prose. Within each surface
+    # it uses negation-aware redaction so gate-DENIAL narration ("no prod, no
+    # creds", "A3-safe", "schema.prisma" file path) cannot strand a card. The
+    # block reason / block_kind are first-class task fields (set by
+    # kanban_block / the dispatcher), so gating on them is gating on the
+    # operator/credential/A3/prod/DB scope the system already recorded — not on
+    # a reviewer's prose. See operator_gate_terms.
+    block_reason = candidate.block_reason
+    block_kind = candidate.block_kind
+    forbidden = operator_gate_terms(
+        candidate.title, candidate.body, block_reason=block_reason, block_kind=block_kind
+    )
     if forbidden:
         task_text = "\n".join([candidate.title or "", candidate.body or ""])
         if READ_ONLY_ASSERTION_RE.search(task_text):
