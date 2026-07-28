@@ -23,19 +23,13 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T12:10:28.858734+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T22:04:17.320389+01:00",
-      "next_run_at": "2026-07-04T22:34:17.358923+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -62,27 +56,20 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T22:56:02.352763+01:00",
-      "next_run_at": "2026-07-04T23:57:03.678871+01:00",
-      "last_run_at": "2026-07-04T22:57:03.678871+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank/sycode-trading/reports/catalyst-feed",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-trading/reports/catalyst-feed"
     },
     {
       "id": "8db4d896efe1",
@@ -105,19 +92,13 @@
       },
       "schedule_display": "once at 2026-07-06 00:15",
       "repeat": {
-        "times": 1,
-        "completed": 0
+        "times": 1
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T12:10:10.697308+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T16:31:06.683684+01:00",
-      "next_run_at": "2026-07-06T00:15:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "origin",
       "origin": null,
       "enabled_toolsets": null,
@@ -144,24 +125,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T12:10:29.237284+01:00",
       "paused_reason": null,
       "created_at": "2026-07-06T17:51:23.050613+01:00",
-      "next_run_at": "2026-07-06T18:52:05.441001+01:00",
-      "last_run_at": "2026-07-06T17:52:05.441001+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "748de258cba0",
@@ -184,19 +158,13 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T03:58:19.250715+01:00",
-      "next_run_at": "2026-07-08T04:58:19.250797+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -223,19 +191,13 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T12:10:10.977772+01:00",
       "paused_reason": null,
       "created_at": "2026-07-09T10:22:00.281109+01:00",
-      "next_run_at": "2026-07-09T11:22:00.311526+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -264,25 +226,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T12:23:42.837551+01:00",
       "paused_reason": null,
       "created_at": "2026-07-28T10:12:14.288075+01:00",
-      "next_run_at": "2026-07-28T11:12:41.517108+01:00",
-      "last_run_at": "2026-07-28T10:12:41.517108+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor",
-      "fire_claim": null
+      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor"
     }
-  ],
-  "updated_at": "2026-07-28T12:23:42.838007+01:00"
+  ]
 }

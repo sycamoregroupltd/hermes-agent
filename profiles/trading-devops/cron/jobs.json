@@ -21,24 +21,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-03T21:10:04.081864+01:00",
       "paused_reason": "t_564bdeab: trading-devops profile-local cron store has enabled jobs but no ticker_heartbeat/live gateway evidence; disabled so registered=>ticking detector is clean. Re-home into a live scheduler before re-enabling.",
       "created_at": "2026-07-03T21:09:36.463131+01:00",
-      "next_run_at": "2026-07-03T21:15:12.978316+01:00",
-      "last_run_at": "2026-07-03T21:10:12.978316+01:00",
-      "last_status": "error",
-      "last_error": "\ud83d\uded1 Sycode kill-switch observability canary failed\n- kill-switch status unreadable: url=http://127.0.0.1:3001/api/trading/controls/status status=404 error={\"error\":\"Not found\"}\nDiscord delivery failed: DISCORD_WEBHOOK_URL not available",
-      "last_delivery_error": "delivery error: Telegram send failed: Timed out; delivery error: WhatsApp bridge error (404): {}",
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "fire_claim": null,
       "disabled_by": "t_564bdeab",
       "disabled_reason": "t_564bdeab: trading-devops profile-local cron store has enabled jobs but no ticker_heartbeat/live gateway evidence; disabled so registered=>ticking detector is clean. Re-home into a live scheduler before re-enabling."
     },
@@ -63,19 +56,13 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-04T10:53:34.536341+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T08:53:18.282680+01:00",
-      "next_run_at": "2026-07-05T06:00:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
@@ -102,19 +89,13 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-04T12:57:00+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T11:51:51.800630+01:00",
-      "next_run_at": "2026-07-04T12:06:51.820156+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -145,24 +126,17 @@
       },
       "schedule_display": "0 7 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T12:20:57.592807+01:00",
-      "next_run_at": "2026-08-03T07:00:00+01:00",
-      "last_run_at": "2026-07-27T07:00:52.524708+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "d5125fbab45e",
@@ -185,24 +159,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 3526
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T13:04:54.063399+01:00",
-      "next_run_at": "2026-07-28T22:10:46.089945+01:00",
-      "last_run_at": "2026-07-28T22:05:46.089945+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/hyperliquid_watchdog.sh",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "604ab7a9b09a",
@@ -225,24 +192,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 296
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T18:13:16.337733+01:00",
-      "next_run_at": "2026-07-28T22:35:42.786942+01:00",
-      "last_run_at": "2026-07-28T21:35:42.786942+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-trading/.worktrees/t_9a2cdb2d",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-trading/.worktrees/t_9a2cdb2d"
     },
     {
       "id": "e84e0005ec3a",
@@ -265,24 +225,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 2932
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T22:02:13.152974+01:00",
-      "next_run_at": "2026-07-28T22:12:53.699885+01:00",
-      "last_run_at": "2026-07-28T22:07:53.699885+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": "platform 'telegram' not configured/enabled; delivery error: WhatsApp bridge error (404): {}",
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "965b5d5d4cb4",
@@ -305,24 +258,17 @@
       },
       "schedule_display": "0 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 18
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T22:29:27.067047+01:00",
-      "next_run_at": "2026-07-29T07:00:00+01:00",
-      "last_run_at": "2026-07-28T07:05:17.204265+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "705324a6972e",
@@ -345,24 +291,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 297
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T22:59:27.002325+01:00",
-      "next_run_at": "2026-07-28T22:35:43.139461+01:00",
-      "last_run_at": "2026-07-28T21:35:43.139461+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstderr:\npython3: can't open file '/home/frank/sycode-trading/execution/funding_rate_collector.py': [Errno 2] No such file or directory",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "53d45f13ff65",
@@ -385,24 +324,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 299
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T09:28:33.934195+01:00",
-      "next_run_at": "2026-07-28T22:35:43.178801+01:00",
-      "last_run_at": "2026-07-28T21:35:43.178801+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstdout:\npython3: can't open file '/home/frank/sycode-trading/tools/drift-monitor/drift_monitor.py': [Errno 2] No such file or directory",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "889710df1de7",
@@ -425,19 +357,13 @@
       },
       "schedule_display": "0 4 * * *",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-05T13:10:49.030190+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T13:10:28.919844+01:00",
-      "next_run_at": "2026-07-06T04:00:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -464,19 +390,13 @@
       },
       "schedule_display": "0 6 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-05T13:11:15.506186+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T13:11:04.866901+01:00",
-      "next_run_at": "2026-07-06T06:00:00+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -503,24 +423,17 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 295
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T12:23:42.614322+01:00",
       "paused_reason": null,
       "created_at": "2026-07-05T13:17:18.336004+01:00",
-      "next_run_at": "2026-07-28T13:00:00+01:00",
-      "last_run_at": "2026-07-28T12:00:00.441097+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/signal-fusion-fill-rate-check.sh",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "7f7e0828d728",
@@ -543,24 +456,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 57
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T13:50:01.695892+01:00",
-      "next_run_at": "2026-07-29T03:35:48.771451+01:00",
-      "last_run_at": "2026-07-28T21:35:48.771451+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "8b8e865234cb",
@@ -583,24 +489,17 @@
       },
       "schedule_display": "0 9 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T14:38:59.172277+01:00",
-      "next_run_at": "2026-08-02T09:00:00+01:00",
-      "last_run_at": "2026-07-26T09:01:00.017831+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e068c152c72a",
@@ -623,24 +522,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T15:19:22.757083+01:00",
-      "next_run_at": "2026-07-29T06:00:00+01:00",
-      "last_run_at": "2026-07-28T06:00:44.279605+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e1485759597b",
@@ -663,24 +555,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T15:32:16.991681+01:00",
-      "next_run_at": "2026-07-29T06:00:00+01:00",
-      "last_run_at": "2026-07-28T06:01:14.279680+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "7d677756f4b1",
@@ -703,24 +588,17 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 53
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T15:45:03.448878+01:00",
-      "next_run_at": "2026-07-29T00:00:00+01:00",
-      "last_run_at": "2026-07-28T21:35:43.555397+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": "platform 'telegram' not configured/enabled; delivery error: WhatsApp bridge error (404): {}",
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f20615ecc5ef",
@@ -743,19 +621,13 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-08T04:25:34.595436+01:00",
       "paused_reason": null,
       "created_at": "2026-07-06T07:58:07.053778+01:00",
-      "next_run_at": "2026-07-06T08:58:07.053889+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
@@ -782,24 +654,17 @@
       },
       "schedule_display": "45 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 18
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T08:25:20.921742+01:00",
-      "next_run_at": "2026-07-29T06:45:00+01:00",
-      "last_run_at": "2026-07-28T06:45:56.075729+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstderr:\nreport written: /home/frank/obsidian/sycode-trading/analytics/feature-density/2026-07-28.md\nstdout:\nALERT feature-density: liquidation_context dropped 15.5pp (94.8% on 2026-07-27 -> 79.3% on 2026-07-28, n=5222)",
-      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b8d57ab749af",
@@ -822,24 +687,17 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 300
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T08:27:33.263571+01:00",
-      "next_run_at": "2026-07-28T23:00:00+01:00",
-      "last_run_at": "2026-07-28T22:02:01.463248+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "edb436fe336a",
@@ -862,24 +720,17 @@
       },
       "schedule_display": "50 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 17
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T08:27:39.966587+01:00",
-      "next_run_at": "2026-07-29T06:50:00+01:00",
-      "last_run_at": "2026-07-28T06:51:03.694885+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstdout:\nreport written: /home/frank/obsidian/sycode-trading/analytics/clean-cohort-accrual/2026-07-28.md\nALERT clean-cohort-accrual: 274436 clean-epoch signals accrued but 0 final clean-epoch outcomes in the last 24h \u2014 outcome factory idle",
-      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "322e234ea2ec",
@@ -902,24 +753,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 589
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T23:16:48.212419+01:00",
-      "next_run_at": "2026-07-28T22:37:46.198718+01:00",
-      "last_run_at": "2026-07-28T21:37:43.105702+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e27809ad90a0",
@@ -942,24 +786,17 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 1186
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T02:45:40.409582+01:00",
-      "next_run_at": "2026-07-28T22:15:00+01:00",
-      "last_run_at": "2026-07-28T22:00:45.996883+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nALERT r-multiple-labeler: host-reachable DATABASE_URL unavailable (need server/.env.prod with @localhost/@127.0.0.1). Refusing to run.",
-      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f75b375b6522",
@@ -982,24 +819,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 553
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T10:16:40.731751+01:00",
-      "next_run_at": "2026-07-28T22:08:24.971064+01:00",
-      "last_run_at": "2026-07-28T21:38:24.971064+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ed6f7d2d4472",
@@ -1022,24 +852,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 1087
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T09:35:29.544353+01:00",
       "paused_reason": null,
       "created_at": "2026-07-07T10:27:22.587053+01:00",
-      "next_run_at": "2026-07-28T09:43:47.945772+01:00",
-      "last_run_at": "2026-07-28T09:28:47.945772+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstderr:\nclean-outcome-labeler-24h-v2: STALL \u2014 scanned 892 candidates but computed 0 labels (all permanent skips?). Investigate candle coverage/collector gaps.\nstdout:\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Drizzle ORM initialized\",\"connectionString\":\"postgresql://***:***@supabase-db:5432/postgres\",\"maxConnections\":30}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Using production Supabase configuration\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Supabase client initialized\",\"url\":\"http://supabase-kong:8000\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Using production Supabase configuration\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Supabase admin client initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"MarketContextService initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[TrueflationAdapter] TRUEFLATION_API_KEY not set, using fallback inflation data\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"RelativeStrengthService initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Feature flags initialized\",\"_meta\":{\"commit\":\"cb28a021\",\"deployed\":\"2026-01-10T12:00:00Z\",\"timestamp\":\"2026-07-28T08:27:56.244Z\"},\"researchMode\":{\"RESEARCH_MODE\":false},\"database\":{\"USE_DRIZZLE_ORM\":true,\"ENABLE_DUAL_WRITE\":true},\"security\":{\"ENABLE_JIT_KEYS\":true,\"ENABLE_SECURITY_HEADERS\":true},\"infrastructure\":{\"USE_UNIFIED_CIRCUIT_BREAKER\":true,\"USE_UNIFIED_DECIMAL\":true,\"USE_SHARED_TYPES\":true},\"remediation\":{\"ENABLE_POSITION_ROLLBACK\":true,\"ENABLE_DETERMINISTIC_FALLBACK\":true,\"ENABLE_ORPHAN_RECOVERY\":true,\"ENABLE_ATOMIC_ELO\":true,\"ENABLE_SIGNAL_DLQ\":true,\"ENFORCE_PROVIDER_HEALTH_GATE\":true},\"positionSizing\":{\"USE_REAL_EXCHANGE_BALANCE_FOR_SIZING\":true},\"positionTracking\":{\"ENABLE_DESTRUCTIVE_POSITION_SYNC\":false,\"ENABLE_REALTIME_STOP_LOSS\":true,\"ENABLE_TIMER_STOP_LOSS\":true,\"STRICT_EXIT_PRICE_REQUIRED\":false},\"outcomeRails\":{\"ENABLE_CANONICAL_OUTCOME_PROJECTORS\":true,\"ENABLE_CANONICAL_OUTCOME_READS\":false},\"tapTrading\":{\"ENABLE_TAP_TRADING\":true,\"TAP_TRADING_PAPER_MODE\":true,\"TAP_TRADING_TESTNET\":true,\"ENABLE_TAP_RATE_LIMITING\":true,\"TAP_SKIP_VALIDATION\":false,\"ENABLE_TAP_GAMIFICATION\":true,\"ENABLE_TAP_HOT_ZONES\":true,\"ENABLE_TAP_EXIT_VALIDATION\":true,\"ENABLE_TAP_LATENCY_METRICS\":true,\"ENABLE_TAP_LEDGER\":true},\"lensPack\":{\"ENABLE_LENSPACK_SYSTEM\":true,\"ENABLE_LENSPACK_IN_VALIDATION\":true,\"ENABLE_DISTRIBUTION_EXITS\":true,\"ENABLE_PARTIAL_EXIT_TIERS\":true,\"ENABLE_ADHERENCE_EXIT_NOW\":true,\"ENABLE_LENSPACK_LOGGING\":true,\"ENABLE_LENSPACK_SNAPSHOTS\":true,\"ENABLE_LENSPACK_INFLUENCE\":true},\"ensembleScoring\":{\"ENABLE_ENSEMBLE_SCORING\":true},\"calibration\":{\"ENABLE_CALIBRATION\":true},\"aiBatching\":{\"ENABLE_REQUEST_BATCHING\":true},\"liquidationRiskModulation\":{\"ENABLE_LIQUIDATION_RISK_MODULATION\":true,\"ENABLE_LIQUIDATION_CONFIDENCE_CALIBRATION\":true},\"trajectoryCapture\":{\"ENABLE_TRAJECTORY_CAPTURE\":true,\"ENABLE_TRAJECTORY_FEEDBACK\":true},\"strategyArena\":{\"ENABLE_STRATEGY_ARENA\":true,\"ENABLE_STRATEGY_ARENA_SCHEDULER\":true,\"ENABLE_STRATEGY_ARENA_COUNTERFACTUAL\":true,\"ENABLE_ARENA_UNFILTERED\":true},\"rustMarketDataGateway\":{\"ENABLE_MARKET_DATA_SHADOW_MODE\":true,\"USE_RUST_MARKET_DATA\":false}}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"AdapterRegistry initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"ExpectedReturnService initialized\",\"config\":{\"historicalWeight\":0.4,\"mlWeight\":0.6,\"minConfidence\":25,\"maxLeverageBoost\":1.5,\"maxKellyBoost\":1.3,\"forecastHorizon\":4}}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"PortfolioOptimizationService initialized\",\"maxExposure\":\"200%\",\"maxPosition\":\"25%\",\"maxPositions\":25}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"KellyCriterionService initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"FeatureImportanceService initialized\",\"featureCount\":31}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"SignalJourneyStore: Started cleanup interval\",\"intervalMs\":60000}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[BullMQWriteQueue] Initialized\",\"connection\":\"redis:6379\",\"concurrency\":10}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RollbackAutomation] Initialized\",\"config\":{\"aucDegradationThreshold\":0.08,\"calibrationErrorThreshold\":0.2,\"inferenceFailureRateThreshold\":0.05,\"minPredictionsForRollback\":100,\"minShadowHoursForRollback\":6,\"rollbackCooldownHours\":24,\"autoRollbackEnabled\":true}}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[QdrantClient] Initialized\",\"url\":\"http://qdrant:6333\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"ValidationCache initialized\",\"maxSize\":500,\"ttlMs\":60000}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"ValidationCache initialized\",\"maxSize\":200,\"ttlMs\":120000}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"OpenRouter account pool created\",\"accountCount\":3}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"AccountPool initialized\",\"providerId\":\"openrouter\",\"accountCount\":3,\"accountIds\":[\"openrouter_1\",\"openrouter_2\",\"openrouter_3\"]}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Prediction cleanup scheduler started\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Validation Risk Mode: MODERATE - Lane B - balanced mode (medium risk, quality without starving execution)\",\"riskMode\":\"moderate\",\"approveThreshold\":30,\"minApprovePercent\":50,\"triggerQueueThreshold\":60,\"note\":\"Change via VALIDATION_RISK_MODE env var (cautious|moderate|risky|hi_risk)\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[MLScorer] Phase active\",\"phase\":8,\"weights\":{\"confluence\":0.45,\"mfeFirst\":0,\"directionQuality\":0.4,\"riskReward\":0.15}}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[PreFilter] Config initialized\",\"rwrcGate\":{\"mode\":\"shadow\",\"minWinRate\":55},\"mtfGate\":{\"mode\":\"shadow\",\"minConfluence\":30},\"rrGate\":{\"mode\":\"shadow-block\",\"minRatio\":0.4},\"ddVsStop\":{\"mode\":\"shadow\",\"margin\":1},\"ddScorer\":\"shadow\",\"compositeScorer\":{\"mode\":\"shadow\",\"threshold\":\"0.50\"},\"adaptiveConfidence\":{\"mode\":\"off\",\"floor\":60},\"directionBias\":{\"longBoost\":1,\"shortPenalty\":-2},\"preFilterTimeoutMs\":3000,\"mfeFirstShadow\":false,\"ftTransformerOnnxPath\":\"<unset>\",\"onnxIntraOpThreads\":{\"value\":2,\"env\":\"<unset, default=2>\",\"services\":13},\"symbolWhitelistSize\":null,\"comboWhitelistSize\":null,\"blockedTimeframes\":null,\"blockedTradingHours\":null,\"lowQualityTradingHours\":[10,15,18],\"lowQualityHourPenalty\":-15}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"PositionAIContext: Initialized\",\"contextCount\":0,\"persistenceEnabled\":true,\"persistenceSource\":\"data\",\"persistenceFile\":\"/app/data/.position-context/position-contexts.json\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"PositionAnalyzer: Initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[SmartSizingAdjuster] Initialized\",\"dirQuality\":false,\"liqContext\":true,\"regression\":false,\"recentPerf\":true}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"EnhancedPositionSizer initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[KillSwitch] Initialized\",\"config\":{\"maxDailyLossUSD\":500,\"maxConsecutiveLosses\":5,\"maxDrawdownPercent\":10,\"gracefulShutdownTimeoutMs\":30000}}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"DerivativesService client initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"PositionActionExecutor: Initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"PartialExitManager initialized\",\"enabled\":true,\"stages\":3}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Position re-analysis service initialized\",\"enabled\":true,\"maxConcurrent\":5,\"queueDepthLimit\":20}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Signal cache initialized\",\"timeframes\":[\"1m\",\"5m\",\"15m\",\"1h\",\"4h\",\"1d\"],\"maxPerTimeframe\":100}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"AdaptiveConfigService initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[BullMQSignalQueue] Initialized\",\"connection\":\"redis:6379\",\"concurrency\":5}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[BullMQTimeBasedEvalQueue] Initialized\",\"connection\":\"redis:6379\",\"concurrency\":6}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Signal Queue: Started cleanup interval\",\"intervalMs\":30000}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"warn\",\"message\":\"[OracleFilters] CRITICAL filters are in SHADOW mode (not blocking!)\",\"shadowFilters\":[\"symbolCooldown\",\"shortLowVol\",\"counterTrend\",\"shortEloGate\"],\"action\":\"Set ORACLE_<FILTER>_MODE=block in env to enable blocking\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"MultiTimeframeAnalysisService initialized\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"FundingRateService client initialized\",\"mainnet\":true,\"tradingMode\":\"paper\",\"hasCredentials\":true}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[PersistentWriteQueue] Backup sync disabled for Stage 5b proof mode\",\"useBullMqWriteQueue\":\"true\",\"dualWriteMode\":\"false\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[PersistentWriteQueue] Initialized\",\"redisAvailable\":false,\"flushIntervalMs\":5000,\"cleanupIntervalMs\":3600000,\"retentionDays\":7}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"\ud83d\udcca Loki transport enabled\",\"lokiUrl\":\"http://loki:3100\",\"host\":\"http://loki:3100\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"AutoTrader state loaded\",\"openTrades\":0,\"closedTrades\":0,\"totalExecuted\":0,\"wasRunning\":true,\"autoResume\":true,\"willAutoResume\":true}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"User trades loaded\",\"totalTrades\":266,\"rating\":100}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Strategy version history loaded\",\"strategyCount\":2}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"MarketNewsService: Loaded state from Supabase cache\",\"newsCount\":50,\"lastFetch\":\"2026-07-28T08:22:55.640Z\",\"ageMinutes\":5}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[TickBufferRegistry] Started\",\"cleanupIntervalMs\":10000,\"maxBufferAgeMs\":120000}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[SharedRedis] ioredis connected\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[SharedRedis] Bun RedisClient connected\",\"url\":\"redis://redis:6379\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisAdapter] Connected via shared Redis client\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:trading\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:position\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:price\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:signal\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:circuit\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:system\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:connection\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:all\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:intent\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:strategy\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:execution\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[RedisPubSub] Connected\",\"channelPrefix\":\"sycode:outcome\",\"instanceId\":\"abc65921-bcf\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[WebhookDelivery] Worker ready\",\"concurrency\":5}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[OracleFilters] Warmed 18 cooldown entries from Redis\"}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"Loaded expert ratings from database\",\"experts\":462}\n{\"timestamp\":\"2026-07-28 08:27:56\",\"level\":\"info\",\"message\":\"[SymbolCacheService] Connected via shared Redis client\"}\n{\"timestamp\":\"2026-07-28 08:27:58\",\"level\":\"warn\",\"message\":\"[BullMQTimeBasedEvalQueue] Missing journey for evaluation\",\"signalId\":\"MANAUSDT-1m-LONG-43cab117\",\"journeyId\":\"f9bdab86-e74e-42e4-8398-791416f2b6dd\"}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"error\",\"message\":\"[BullMQWriteQueue] Write failed\",\"jobId\":\"write_1785227281138_faf2e3ec\",\"type\":\"signal_journey_event\",\"table\":\"signal_journey_events\",\"error\":\"Supabase upsert error on signal_journey_events: insert or update on table \\\"signal_journey_events\\\" violates foreign key constraint \\\"signal_journey_events_journey_id_fkey\\\"\",\"attempts\":1,\"maxAttempts\":5}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"AutoTrader: Auto-starting with server...\"}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"Slot cleanup task started\",\"intervalMs\":5000,\"timeoutMs\":60000}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"Starting MarketContextService\"}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"AutoTrader: Market Context Service started\"}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"Historical stats loaded\",\"trades\":100,\"winRate\":\"38.0%\",\"profitFactor\":\"0.57\",\"expectancy\":\"-2.83%\"}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"AutoTrader: Kelly Criterion historical stats loaded\"}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"AutoTrader: Circuit breaker portfolio initialized\",\"equityUSD\":101736.07268564153,\"initialPortfolioUSD\":100000,\"realizedPnlUSD\":1943.2800952132327,\"unrealizedPnlUSD\":0,\"source\":\"real_equity_provider\",\"exchange\":\"binance\"}\n{\"timestamp\":\"2026-07-28 08:28:01\",\"level\":\"info\",\"message\":\"Binance PriceFeed: Connecting to WebSocket\",\"url\":\"wss://stream.binance.com:9443/ws\",\"testnet\":true}\n{\"timestamp\":\"2026-07-28 08:28:02\",\"level\":\"warn\",\"message\":\"[MarketData] Fetch failed\",\"url\":\"https://api.coinpaprika.com/v1/global\",\"label\":\"CoinPaprika\",\"error\":\"CoinPaprika API error: 402\"}\n{\"timestamp\":\"2026-07-28 08:28:02\",\"level\":\"warn\",\"message\":\"[MarketData] CoinPaprika global fetch failed\",\"error\":\"CoinPaprika API error: 402\"}\n{\"timestamp\":\"2026-07-28 08:28:02\",\"level\":\"warn\",\"message\":\"[BullMQTimeBasedEvalQueue] Missing journey for evaluation\",\"signalId\":\"BANKUSDT-1m-LONG-fb341b44\",\"journeyId\":\"6d0d272a-bbe4-45ee-8591-32252d02b33a\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"Binance PriceFeed: WebSocket connected\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"AutoTrader: WebSocket price feed connected\",\"testnet\":true,\"subscribedSymbols\":0,\"subscriptionStrategy\":\"positions + pipeline approved (+watchlist, +bounded scan when not trigger mode)\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"AutoTrader: Starting real-time WebSocket signal detection\",\"mode\":\"unified-websocket\",\"description\":\"Real-time tick streaming with incremental indicators\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"Signal Queue: Approval callback registered\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"[BullMQSignalQueue] Approval callback registered\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"Starting signal detection service...\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"AssetDiscovery: Initializing...\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"warn\",\"message\":\"[BullMQTimeBasedEvalQueue] Missing journey for evaluation\",\"signalId\":\"EULUSDT-1m-LONG-0fa4a2c6\",\"journeyId\":\"00080d81-c44c-48f8-bb1b-3634e8e71053\"}\n{\"timestamp\":\"2026-07-28 08:28:03\",\"level\":\"info\",\"message\":\"AssetDiscovery: Preloaded SymbolRegistry from persistence\",\"baseSymbols\":598,\"durationMs\":291}\n{\"timestamp\":\"2026-07-28 08:28:04\",\"level\":\"warn\",\"message\":\"Russell 2000 snapshot unavailable\"}\n{\"timestamp\":\"2026-07-28 08:28:04\",\"level\":\"info\",\"message\":\"Market context updated\",\"fearGreed\":29,\"btcDominance\":\"58.8\",\"regime\":\"TRANSITIONING\",\"dataQuality\":\"live\"}\n{\"timestamp\":\"2026-07-28 08:28:05\",\"level\":\"info\",\"message\":\"AssetDiscovery: Fetched Hyperliquid assets\",\"count\":210}\n{\"timestamp\":\"2026-07-28 08:28:06\",\"level\":\"info\",\"message\":\"AssetDiscovery: Fetched Bybit spot assets\",\"count\":74}\n{\"timestamp\":\"2026-07-28 08:28:08\",\"level\":\"info\",\"message\":\"AssetDiscovery: Fetched Bybit assets\",\"count\":290}\n{\"timestamp\":\"2026-07-28 08:28:09\",\"level\":\"warn\",\"message\":\"[BullMQTimeBasedEvalQueue] Missing journey for evaluation\",\"signalId\":\"PARTIUSDT-1m-LONG-ee72ff26\",\"journeyId\":\"e4f76f9d-1d84-4b0b-9db3-5500117f5d4d\"}\n{\"coverageBackfill\":{\"producerId\":\"clean-label-coverage-backfill\",\"dryRun\":false,\"targets\":1,\"attempted\":1,\"symbolsFilled\":0,\"candlesInserted\":0,\"errors\":1,\"ranAt\":\"2026-07-28T08:27:56.459Z\"}}\n{\"timestamp\":\"2026-07-28 08:28:10\",\"level\":\"info\",\"message\":\"AssetDiscovery: Fetched Binance Spot assets\",\"count\":204}\n{\"timestamp\":\"2026-07-28 08:28:11\",\"level\":\"info\",\"message\":\"AssetDiscovery: Fetched Bybit options assets\",\"count\":1126}\n{\"timestamp\":\"2026-07-28 08:28:11\",\"level\":\"info\",\"message\":\"[SymbolRegistry] NEW symbol discovered\",\"symbol\":\"BTC-30JUL26-63250-P-USDT\",\"exchange\":\"bybit\",\"marketType\":\"options\"}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[SymbolRegistry] NEW symbol discovered\",\"symbol\":\"BTC-30JUL26-63250-C-USDT\",\"exchange\":\"bybit\",\"marketType\":\"options\"}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"AssetDiscovery: Refresh complete\",\"totalAssets\":1850,\"addedThisRefresh\":1904,\"durationMs\":8520,\"byExchange\":{\"binance\":204,\"binanceFutures\":0,\"hyperliquid\":210,\"bybit\":1436,\"aevo\":0,\"okx\":0,\"kucoin\":0,\"aster\":0,\"bitunix\":0},\"symbolRegistry\":{\"totalSymbols\":636,\"binance\":168,\"hyperliquid\":210,\"bybit\":300,\"okx\":0,\"kucoin\":0,\"aster\":0},\"persistence\":{\"newSymbols\":2,\"knownSymbols\":1902}}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"AssetDiscovery: Initialized\",\"totalAssets\":1850,\"binanceCount\":204,\"binanceFuturesCount\":0,\"hyperliquidCount\":210,\"bybitCount\":1436,\"aevoCount\":0,\"okxCount\":0,\"kucoinCount\":0,\"asterCount\":0}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[UnifiedTickBridge] Ownership map refreshed\",\"totalSymbols\":0,\"previousSymbols\":0,\"byExchange\":{}}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[UnifiedTickBridge] Registered on feed\",\"exchange\":\"binance\",\"connected\":true,\"subscriptions\":0}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[UnifiedTickBridge] Registered on feed\",\"exchange\":\"hyperliquid\",\"connected\":false,\"subscriptions\":0}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[UnifiedTickBridge] Registered on feed\",\"exchange\":\"bybit\",\"connected\":false,\"subscriptions\":0}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[UnifiedTickBridge] Registered on feed\",\"exchange\":\"okx\",\"connected\":false,\"subscriptions\":0}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[UnifiedTickBridge] Registered on feed\",\"exchange\":\"kucoin\",\"connected\":false,\"subscriptions\":0}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"WebSocket status changed\",\"binance\":{\"connected\":true,\"symbols\":0,\"lastTick\":0,\"secSinceLastTick\":-1},\"hyperliquid\":{\"connected\":false,\"symbols\":0,\"lastTick\":0,\"secSinceLastTick\":-1}}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[UnifiedTickBridge] Started\",\"exchanges\":[\"binance\"],\"totalOwnedSymbols\":0}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"Signal detection WebSocket connected successfully\"}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"Signal detection service started (INSTANT MODE)\",\"mode\":\"instant\",\"triggerDrainIntervalMs\":100,\"websocketConnected\":true,\"note\":\"Signals validated immediately in parallel, no queue delays\"}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"AutoTrader: WebSocket signal detection started successfully\"}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"AutoTrader started\",\"config\":{\"enabled\":true,\"mode\":\"paper\",\"exchange\":\"binance\",\"minConfidence\":30,\"maxOpenPositions\":25,\"positionSizeUSD\":10,\"maxDailyTrades\":192,\"signalIntervalMs\":120000,\"monitorIntervalMs\":15000,\"useSignalStops\":true,\"defaultStopPercent\":3,\"defaultTakeProfitPercent\":6,\"bypassExpertPanel\":false,\"useTriggerMode\":true,\"useUnifiedWebSocket\":true,\"triggerAssets\":[\"ADAUSDT\",\"XRPUSDT\",\"ATOMUSDT\",\"DOGEUSDT\",\"LTCUSDT\",\"ETHUSDT\",\"DOTUSDT\",\"NEARUSDT\",\"UNIUSDT\",\"LINKUSDT\",\"AVAXUSDT\"],\"triggerTimeframes\":[\"1m\",\"5m\",\"15m\",\"1h\",\"4h\",\"1d\"],\"useFutures\":false,\"defaultLeverage\":3,\"useIsolatedMargin\":true,\"autoResume\":true,\"fallbackToBinanceSpot\":true,\"minFallbackBalance\":50,\"minSpotExposurePercent\":30,\"allowPartialSpotExposure\":true,\"useStrategyPipeline\":true},\"openTrades\":0,\"websocketConnected\":true}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"AutoTrader: Successfully started with server\"}\n{\"timestamp\":\"2026-07-28 08:28:12\",\"level\":\"info\",\"message\":\"[Warmup] Starting symbol state warmup\",\"symbols\":147,\"skipped\":3,\"timeframes\":[\"1m\",\"5m\",\"15m\",\"1h\",\"4h\",\"1d\"]}\n{\"producerId\":\"clean-outcome-labeler-24h-v2\",\"labelVersion\":\"v2_2026-07-06_leakfree\",\"labelDef\":\"first_15m_close_at_or_after_triggered_at_plus_24h_net_12bps\",\"dryRun\":false,\"scanned\":892,\"pages\":2,\"computed\":0,\"applied\":0,\"skipped\":{\"no_candle\":74,\"stale_candle\":815,\"invalid_input\":3},\"excludedNoCoverage\":6,\"stalled\":true,\"epochStart\":\"2026-07-06T00:00:00.000Z\",\"ranAt\":\"2026-07-28T08:28:09.895Z\"}",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "67d64f30df2e",
@@ -1062,24 +885,17 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 295
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-08T03:05:35.847024+01:00",
-      "next_run_at": "2026-07-28T22:35:43.051476+01:00",
-      "last_run_at": "2026-07-28T21:35:43.051476+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-trading",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-trading"
     },
     {
       "id": "1da295a449a1",
@@ -1102,24 +918,17 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 2942
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-10T21:43:17.177565+01:00",
-      "next_run_at": "2026-07-28T22:07:48.300303+01:00",
-      "last_run_at": "2026-07-28T22:02:48.300303+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "1e5c8cbaa397",
@@ -1142,27 +951,20 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 52
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-10T23:59:39.835952+01:00",
-      "next_run_at": "2026-07-29T03:36:32.488367+01:00",
-      "last_run_at": "2026-07-28T21:36:32.488367+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "6c7d9976ffc3",
@@ -1185,24 +987,17 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 529
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-17T05:24:04.433188+01:00",
-      "next_run_at": "2026-07-28T22:36:50.854900+01:00",
-      "last_run_at": "2026-07-28T22:06:50.854900+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c4394e822f83",
@@ -1225,24 +1020,17 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 200
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-26T11:15:50.041400+01:00",
-      "next_run_at": "2026-07-28T22:15:00+01:00",
-      "last_run_at": "2026-07-28T22:00:46.627509+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c67dfed143c8",
@@ -1265,27 +1053,19 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-28T11:29:07.842458+01:00",
-      "next_run_at": "2026-07-28T23:00:00+01:00",
-      "last_run_at": "2026-07-28T22:01:56.411617+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     }
-  ],
-  "updated_at": "2026-07-28T22:07:53.700165+01:00"
+  ]
 }

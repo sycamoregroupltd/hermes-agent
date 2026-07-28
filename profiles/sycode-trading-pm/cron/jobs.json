@@ -22,24 +22,17 @@
       },
       "schedule_display": "0 9 * * *",
       "repeat": {
-        "times": null,
-        "completed": 22
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-25T14:08:40.869002+01:00",
-      "next_run_at": "2026-07-29T09:00:00+01:00",
-      "last_run_at": "2026-07-28T21:35:20.974702+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: HTTP 404: Model 'tencent/hy3:free' not found. The requested model does not exist in our configuration or OpenRouter catalog.",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-wt/candle-full-universe",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-wt/candle-full-universe"
     },
     {
       "id": "493f2d7f179b",
@@ -62,24 +55,17 @@
       },
       "schedule_display": "30 7 * * *",
       "repeat": {
-        "times": null,
-        "completed": 9
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-11T08:32:15.626536+01:00",
       "paused_reason": null,
       "created_at": "2026-07-03T12:21:56.657458+01:00",
-      "next_run_at": "2026-07-12T07:30:00+01:00",
-      "last_run_at": "2026-07-11T07:39:58.290371+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "5eea5079ff74",
@@ -103,19 +89,13 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 438
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T20:31:51.805288+01:00",
-      "next_run_at": "2026-07-28T23:00:00+01:00",
-      "last_run_at": "2026-07-28T22:01:35.950058+01:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: HTTP 404: Model 'tencent/hy3:free' not found. The requested model does not exist in our configuration or OpenRouter catalog.",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -123,8 +103,7 @@
         "file",
         "skills"
       ],
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "327083e3a0b0",
@@ -147,24 +126,17 @@
       },
       "schedule_display": "0 8 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:23:21.654671+01:00",
-      "next_run_at": "2026-08-03T08:00:00+01:00",
-      "last_run_at": "2026-07-28T21:37:20.366971+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "350b9809913b",
@@ -187,24 +159,17 @@
       },
       "schedule_display": "30 9 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T09:48:32.278962+01:00",
-      "next_run_at": "2026-08-03T09:30:00+01:00",
-      "last_run_at": "2026-07-28T21:37:20.522839+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstdout:\n/home/frank/.hermes/venvs/trading-ml/bin/python: can't open file '/home/frank/sycode-trading/execution/multi_sleeve_book.py': [Errno 2] No such file or directory",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4c8faff831c9",
@@ -227,24 +192,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 70
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T17:42:44.805827+01:00",
-      "next_run_at": "2026-07-29T03:37:44.712500+01:00",
-      "last_run_at": "2026-07-28T21:37:44.712500+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "6db455df07e6",
@@ -267,24 +225,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:17:01.403083+01:00",
-      "next_run_at": "2026-07-29T06:00:00+01:00",
-      "last_run_at": "2026-07-28T21:37:44.964075+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "66b39b558eb3",
@@ -307,24 +258,17 @@
       },
       "schedule_display": "0 9 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-05T18:20:27.072617+01:00",
-      "next_run_at": "2026-08-02T09:00:00+01:00",
-      "last_run_at": "2026-07-28T21:38:41.047515+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "84e3333b249e",
@@ -347,24 +291,17 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null,
-        "completed": 65
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T10:38:31.731457+01:00",
-      "next_run_at": "2026-07-29T03:38:41.317583+01:00",
-      "last_run_at": "2026-07-28T21:38:41.317583+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "171790695c94",
@@ -387,24 +324,17 @@
       },
       "schedule_display": "0 10 * * 0",
       "repeat": {
-        "times": null,
-        "completed": 4
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T22:45:34.230778+01:00",
-      "next_run_at": "2026-08-02T10:00:00+01:00",
-      "last_run_at": "2026-07-28T21:39:54.250622+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": "platform 'discord' not configured/enabled",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "d543688456a3",
@@ -427,27 +357,20 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 963
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T13:40:47.293690+01:00",
-      "next_run_at": "2026-07-28T22:20:58.288344+01:00",
-      "last_run_at": "2026-07-28T22:05:58.288344+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank/sycode-trading",
-      "fire_claim": null
+      "workdir": "/home/frank/sycode-trading"
     },
     {
       "id": "3228011cb8a3",
@@ -470,24 +393,17 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 14
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T14:19:58.389214+01:00",
-      "next_run_at": "2026-07-29T06:00:00+01:00",
-      "last_run_at": "2026-07-28T21:35:47.783447+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank",
-      "fire_claim": null
+      "workdir": "/home/frank"
     },
     {
       "id": "45e0b154b41c",
@@ -510,24 +426,17 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 418
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-14T10:26:05.602781+01:00",
-      "next_run_at": "2026-07-28T22:30:00+01:00",
-      "last_run_at": "2026-07-28T22:03:37.190035+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstdout:\nCANDLE PER-SYMBOL FRESHNESS @ 2026-07-28T21:03:37.166486+00:00\n  [OK] 1m: fresh=10 floor=10 baseline=10\n  [OK] 5m: fresh=10 floor=10 baseline=10\n  [OK] 15m: fresh=264 floor=250 baseline=280\n  [OK] 1h: fresh=10 floor=10 baseline=10\n  [XX] 4h: fresh=415 floor=416 baseline=n/a tradeable_universe=416\n  [OK] 1D: fresh=10 floor=10 baseline=10\nVERDICT: DEGRADED \u2014 1 timeframe(s) below coverage SLO\nRED-ALERT: candle coverage dropped (silent-writer-death check):\n  \ud83d\udd34 candles[4h]: only 415/416 tradeable symbols fresh (floor=416, budget=8h) \u2014 writer dead/eroded\nCheck the owning ingestion producer/subscription (CandleIngestionService + KlineFeed subscription set).",
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "361710e3dc14",
@@ -552,27 +461,20 @@
       },
       "schedule_display": "0 6 * * 1",
       "repeat": {
-        "times": null,
-        "completed": 3
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-17T02:59:15.241306+01:00",
-      "next_run_at": "2026-08-03T06:00:00+01:00",
-      "last_run_at": "2026-07-28T21:37:18.253970+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "file",
         "kanban"
       ],
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "acf44ef06042",
@@ -595,25 +497,17 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-23T13:25:25.381080+01:00",
-      "next_run_at": "2026-07-28T22:10:00+01:00",
-      "last_run_at": "2026-07-28T22:03:37.291082+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     }
-  ],
-  "updated_at": "2026-07-28T22:05:58.288605+01:00"
+  ]
 }

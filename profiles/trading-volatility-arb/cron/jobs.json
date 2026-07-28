@@ -20,24 +20,17 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 0
+        "times": null
       },
       "enabled": false,
       "state": "paused",
       "paused_at": "2026-07-28T12:23:42.313718+01:00",
       "paused_reason": null,
       "created_at": "2026-07-04T18:28:57.525883+01:00",
-      "next_run_at": "2026-07-04T18:43:57.543207+01:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_6fe34aa7"
     }
-  ],
-  "updated_at": "2026-07-28T12:23:42.314560+01:00"
+  ]
 }
