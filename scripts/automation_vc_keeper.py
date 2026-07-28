@@ -60,7 +60,15 @@ DENY_PARTS = {
 DENY_NAMES = {"auth.json", ".env"}
 DENY_SUFFIXES = (".db", ".bak")
 DENY_CONTAINS = ("/memories/", "/sessions/", "/logs/", "/cache/")
-FORCE_INCLUDE = {"scripts/automation_vc_keeper.py"}
+# Keep both the root keeper and the devops-profile dispatch wrapper durable on the
+# automation branch. The wrapper is referenced by the devops cron job (cron script
+# paths resolve to the owning profile's scripts/ dir), so if it is not tracked here
+# a DGX rebuild from the repo would restore the root script but not the wrapper the
+# cron expects -> the keeper would silently stop running. See runbook recovery step.
+FORCE_INCLUDE = {
+    "scripts/automation_vc_keeper.py",
+    "profiles/devops/scripts/automation-vc-keeper.sh",
+}
 
 
 def run(cmd: list[str], cwd: Path = REPO, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -93,13 +101,20 @@ def is_allowed(rel: str) -> bool:
         return True
     if fnmatch.fnmatch(rel, "profiles/*/cron/jobs.json"):
         return True
+    # The devops-profile keeper dispatcher wrapper is durable on this branch (see
+    # FORCE_INCLUDE). It holds no secrets and only delegates to the tracked root script.
+    if rel == "profiles/devops/scripts/automation-vc-keeper.sh":
+        return True
     return False
 
 
 def discover(include_untracked: bool) -> tuple[set[str], set[str]]:
     live_tracked = git_lines(["ls-files"])
     branch_tracked = git_lines(["ls-tree", "-r", "--name-only", f"{REMOTE}/{BRANCH}"])
-    candidates = {p for p in (live_tracked | branch_tracked | FORCE_INCLUDE) if is_allowed(p)}
+    # FORCE_INCLUDE bypasses the allowlist filter by design: these paths are the
+    # durable keeper mechanism itself and must always be considered even if the
+    # allowlist would otherwise exclude them (see FORCE_INCLUDE note).
+    candidates = {p for p in (live_tracked | branch_tracked) if is_allowed(p)} | FORCE_INCLUDE
     skipped_untracked: set[str] = set()
     if include_untracked:
         candidates |= {p for p in git_lines(["ls-files", "--others", "--exclude-standard"]) if is_allowed(p)}

@@ -58,6 +58,15 @@
 /profiles/*/cron/*
 !/profiles/*/cron/jobs.json
 
+# Durable automation-vc keeper dispatcher wrapper (task t_84980841). The devops
+# cron job references this file (cron script paths resolve to the owning profile's
+# scripts/ dir), so it MUST be tracked on the branch or a DGX rebuild would restore
+# the root keeper but not this wrapper, silently disabling the keeper. It holds no
+# secrets and only delegates to the tracked root script.
+!/profiles/devops/scripts/
+/profiles/devops/scripts/*
+!/profiles/devops/scripts/automation-vc-keeper.sh
+
 # NEVER track (belt-and-suspenders against future allowlist edits):
 auth.json
 auth.json.*
