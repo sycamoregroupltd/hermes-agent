@@ -203,6 +203,44 @@ def test_jarvis_ready_backlog_observability_does_not_block_main():
     assert record["jarvis_ready_backlog"]["oldest_ready_age_days"] == 10.0
 
 
+def test_legacy_substrate_bridge_stamps_fresh_health_canary_record():
+    # t_bd9d284e: the unified probe must re-stamp a fresh substrate record
+    # into the legacy health_canary.jsonl every cycle so legacy consumers
+    # (dgx_report_anomaly_detector.py, t_5311fb77 channel, spine-audit) never
+    # read the frozen ~24h-stale gateway_running left by the paused canary.
+    tmp = Path(tempfile.mkdtemp())
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.check_hermes_cli = lambda: (True, "ok", False)
+    uhealth.check_gateway_unit = lambda: (True, "ok", False)
+    uhealth.check_gateway_runtime = lambda: (True, True, "ok")
+    uhealth.check_cron_ticker = lambda: (True, "ok", False)
+    uhealth.check_canary_freshness = lambda: (True, "ok")
+    uhealth.check_docker = lambda: (True, "ok", False)
+    uhealth.check_disk = lambda: (True, "ok", False)
+    uhealth.check_mechanism_matrix = lambda: {
+        "available": True,
+        "overall": "GREEN",
+        "dead": 0,
+        "detail": "ok",
+        "fork_resource_pressure": False,
+    }
+    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+    uhealth.utc_now = lambda: datetime(2026, 7, 28, 17, 0, tzinfo=timezone.utc)
+
+    rc = uhealth.main()
+    assert rc == 0
+    legacy = uhealth.CRON_OUTPUT / "health_canary.jsonl"
+    assert legacy.exists(), "bridge must write legacy health_canary.jsonl"
+    lines = legacy.read_text(encoding="utf-8").splitlines()
+    assert lines, "bridge wrote at least one record"
+    rec = json.loads(lines[-1])
+    assert rec.get("substrate_source") == "unified-health-probe"
+    assert rec.get("hermes_cli") is True
+    assert rec.get("gateway_running") is True
+    assert rec.get("verdict") == "PASS"
+
+
 def test_check_kanban_crashes_treats_done_parent_active_child_as_stale():
     tmp = Path(tempfile.mkdtemp())
     boards = tmp / "boards"

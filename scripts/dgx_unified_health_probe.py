@@ -473,6 +473,69 @@ def check_jarvis_ready_backlog(now: dt.datetime | None = None) -> dict[str, Any]
 
 
 # ----------------------------------------------------------------------------
+# Legacy substrate-signal bridge (t_39c29d42 residual / t_bd9d284e)
+# ----------------------------------------------------------------------------
+# The historical substrate-liveness signal (hermes_cli + gateway_runtime) lived
+# in health_canary.jsonl, written by the now-consolidated + PAUSED
+# dgx-jarvis-health-canary job (8827640671f9). That job is intentionally kept
+# disabled; the unified probe owns substrate liveness now. To stop any legacy
+# consumer (dgx_report_anomaly_detector.py GATEWAY_RULES, t_5311fb77 house-
+# liveness channel, multi-day-spine-audit.py EXPECTED_LIVE_JOBS) from reading a
+# frozen (~24h-stale) gateway_running field and silently believing substrate is
+# healthy, this probe re-stamps a substrate record into health_canary.jsonl
+# every cycle. The record keeps the SAME field shape the consumers expect
+# (gateway_running: bool, hermes_cli: bool) plus a non-ambiguous
+# "substrate_source": "unified-health-probe" marker so downstream readers can
+# distinguish a live bridge record from the old canary and never mistake a
+# stale legacy hermes_cli:true record for fresh substrate state. Writes to
+# CRON_OUTPUT/health_canary.jsonl (same dir as unified log) so a test that
+# redirects CRON_OUTPUT does not touch the live file.
+LEGACY_SUBSTRATE_SOURCE = "unified-health-probe"
+
+
+def write_legacy_substrate_record(checks, verdict, now):
+    """Append a substrate-liveness record to the legacy health_canary.jsonl.
+
+    Best-effort: any failure must never break the unified probe. Returns the
+    written record dict, or None on failure.
+    """
+    legacy_path = CRON_OUTPUT / "health_canary.jsonl"
+    try:
+        by_name = {c["name"]: c for c in checks}
+        hermes_cli_ok = bool(by_name.get("hermes_cli", {}).get("ok", False))
+        gw_unit_ok = bool(by_name.get("gateway_unit", {}).get("ok", False))
+        gw_rt_ok = bool(by_name.get("gateway_runtime", {}).get("ok", False))
+        # "substrate up" requires the CLI usable AND the gateway actually running.
+        gateway_running = gw_unit_ok and gw_rt_ok
+        record = {
+            "ts": now.isoformat(),
+            "substrate_source": LEGACY_SUBSTRATE_SOURCE,
+            "hermes_cli": hermes_cli_ok,
+            "gateway_running": gateway_running,
+            "verdict": verdict,
+        }
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        with legacy_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+        # Preserve the historical 5000-line rotation the paused canary used to
+        # perform on this shared file (data-freshness-probe and
+        # news-macro-integrity-sentinel also append here, and nothing else
+        # rotates it now). Only rewrite when over the cap, matching the legacy
+        # behavior, so we don't rewrite the file every cycle.
+        try:
+            lines = legacy_path.read_text(encoding="utf-8").splitlines()
+            if len(lines) > 5000:
+                legacy_path.write_text(
+                    "\n".join(lines[-5000:]) + "\n", encoding="utf-8"
+                )
+        except Exception:
+            pass
+        return record
+    except Exception:
+        return None
+
+
+# ----------------------------------------------------------------------------
 # Aggregation + output
 # ----------------------------------------------------------------------------
 def main() -> int:
@@ -566,6 +629,10 @@ def main() -> int:
             f.write(json.dumps(record, sort_keys=True) + "\n")
     except Exception:
         pass
+    # Legacy substrate-signal bridge (t_bd9d284e): re-stamp a fresh substrate
+    # record into health_canary.jsonl every cycle so legacy consumers never
+    # read the frozen ~24h-stale gateway_running left by the paused canary job.
+    write_legacy_substrate_record(checks, record["verdict"], now)
 
     # DEGRADED path — fork() pressure exhausted but no real infra failure.
     # Emit a clearly-flagged verdict, exit 0 (probe healthy, liveness keeps
