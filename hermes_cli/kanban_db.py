@@ -8704,8 +8704,25 @@ def _dispatch_once_locked(
             ).fetchone()[0]
         )
 
+    # Audit blocked tasks: record that the dispatcher attempted to run
+    # but couldn't claim blocked cards. This produces a `blocked_dispatch_attempt`
+    # event for every blocked task on each tick, providing a durable audit trail.
+    if not dry_run:
+        blocked_rows = conn.execute(
+            "SELECT id, block_kind FROM tasks WHERE status = 'blocked' AND claim_lock IS NULL"
+        ).fetchall()
+        if blocked_rows:
+            at = _claimer_id()
+            for brow in blocked_rows:
+                _bk = brow["block_kind"] if brow["block_kind"] else "N/A"
+                with write_txn(conn):
+                    _append_event(
+                        conn, brow["id"], "blocked_dispatch_attempt",
+                        {"origin": at, "task_id": brow["id"], "block_kind": _bk, "gate": "initial_status"},
+                    )
+
     ready_rows = conn.execute(
-        "SELECT id, assignee FROM tasks "
+        "SELECT id, assignee, block_kind FROM tasks "
         "WHERE status = 'ready' AND claim_lock IS NULL "
         "ORDER BY priority DESC, created_at ASC"
     ).fetchall()
@@ -8771,13 +8788,23 @@ def _dispatch_once_locked(
         # skip the spawn so no claim is sent for a blocked card.
         if _has_sticky_block(conn, row["id"]):
             result.skipped_block_gate.append(row["id"])
+            _bk = row["block_kind"] if "block_kind" in row.keys() and row["block_kind"] else "unknown"
             if not dry_run:
                 at = _claimer_id()
                 with write_txn(conn):
                     _append_event(
                         conn, row["id"], "block_gate_audit",
-                        {"origin": at, "task_id": row["id"]},
+                        {"origin": at, "task_id": row["id"], "block_kind": _bk},
                     )
+                    _append_event(
+                        conn, row["id"], "blocked_dispatch_attempt",
+                        {"origin": at, "task_id": row["id"], "block_kind": _bk, "gate": "sticky_block"},
+                    )
+            _log.warning(
+                "kanban dispatch: skipped %s (block_gate_audit): task has "
+                "a sticky block, block_kind=%s",
+                row["id"], _bk,
+            )
             continue
 
         row_assignee = row["assignee"]
