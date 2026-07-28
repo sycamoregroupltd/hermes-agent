@@ -181,6 +181,46 @@ def test_repeated_failures_below_threshold_silent():
     assert kd.compute_task_diagnostics(task, [], []) == []
 
 
+def test_budget_exhausted_fires_for_blocked_cap_kill():
+    task = _task(
+        status="blocked",
+        consecutive_failures=1,
+        last_failure_error=(
+            "Iteration budget exhausted (90/90) — task could not complete "
+            "within the allowed iterations"
+        ),
+    )
+    diags = kd.compute_task_diagnostics(task, [], [])
+    budget = [d for d in diags if d.kind == "budget_exhausted"]
+    assert len(budget) == 1
+    assert budget[0].severity == "error"
+    assert budget[0].data["consecutive_failures"] == 1
+    assert any(a.suggested and "kanban_budget_exhausted_recovery.py" in a.label for a in budget[0].actions)
+
+
+def test_budget_exhausted_fires_for_ready_stale_cap_kill():
+    task = _task(
+        status="ready",
+        consecutive_failures=0,
+        last_failure_error="Iteration budget exhausted (90/90) — stale marker",
+    )
+    budget = [
+        d for d in kd.compute_task_diagnostics(task, [], [], now=300)
+        if d.kind == "budget_exhausted"
+    ]
+    assert len(budget) == 1
+    assert budget[0].severity == "warning"
+
+
+def test_budget_exhausted_ignores_non_budget_failures():
+    task = _task(
+        status="blocked",
+        consecutive_failures=1,
+        last_failure_error="elapsed 600s > limit 300s",
+    )
+    assert [d for d in kd.compute_task_diagnostics(task, [], []) if d.kind == "budget_exhausted"] == []
+
+
 def test_repeated_failures_default_matches_dispatcher_failure_limit():
     """Default dispatcher auto-blocks at 2 failures, so diagnostics must
     also surface at 2 instead of waiting for the stale threshold of 3.
