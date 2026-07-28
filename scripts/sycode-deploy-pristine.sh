@@ -20,6 +20,31 @@
 # Usage: sycode-deploy-pristine.sh [--holder <id>] [-- <extra deploy_sycodeserver.py args>]
 set -euo pipefail
 
+# --- cron-environment fixes (fable 2026-07-28) --------------------------------
+# Both faults below are CRON-ONLY: a manual deploy from an interactive shell
+# inherits a full PATH and a populated env, which is exactly what masked them.
+#
+# 1) cron runs with a minimal PATH and the crontab sets none, so `bun` was not
+#    found and scripts/migrate.sh died with exit 127 -> migration pre-flight gate
+#    failed -> deploy blocked, silently, every cycle.
+export PATH="/home/frank/.bun/bin:/home/frank/.local/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+
+# 2) server/.env.prod (the only env file carrying a HOST-reachable DATABASE_URL)
+#    is absent from the shared checkout, so migrate.sh fell back to server/.env,
+#    whose DATABASE_URL uses the docker-only alias `supabase-db` -> getaddrinfo
+#    ENOTFOUND from the host. migrate.sh honours SYCODE_MIGRATION_DATABASE_URL
+#    ahead of every other source, so derive a host-reachable URL from the existing
+#    env rather than hardcoding a password or inventing a secrets file. The DB is
+#    published on 127.0.0.1:5432 (docker port sycodetrading-supabase-db).
+if [[ -z "${SYCODE_MIGRATION_DATABASE_URL:-}" && -f /home/frank/sycode-trading/server/.env ]]; then
+  _dburl="$(grep -m1 '^DATABASE_URL=' /home/frank/sycode-trading/server/.env | cut -d= -f2-)"
+  if [[ "$_dburl" == *@supabase-db:5432/* ]]; then
+    export SYCODE_MIGRATION_DATABASE_URL="${_dburl/@supabase-db:5432/@127.0.0.1:5432}"
+  fi
+  unset _dburl
+fi
+# ------------------------------------------------------------------------------
+
 PATH="${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export PATH
 SHARED=/home/frank/sycode-trading
