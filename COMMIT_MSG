@@ -1,0 +1,8 @@
+fix(redact): preserve wrapping quotes on custom auth header values
+
+The regex value capture was pulling a trailing quote into the mask,
+corrupting format when a custom token header appeared in quotes
+(e.g. X-Example-Token: "value"). Captured the optional quote character
+separately so replacement leaves it intact.
+
+Also added quote-preservation regression tests.

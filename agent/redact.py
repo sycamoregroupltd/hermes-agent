@@ -211,7 +211,7 @@ _SECRET_HEADER_NAMES = (
     r"(?:[a-z0-9]+-)+(?:api-key|api-token|auth-token|access-token|token|secret))"
 )
 _SECRET_HEADER_RE = re.compile(
-    rf"({_SECRET_HEADER_NAMES}\s*:\s*)([^\s\"']+)",
+    rf"({_SECRET_HEADER_NAMES}\s*:\s*)([\"']?)([^\s\"']+)\2",
     re.IGNORECASE,
 )
 
@@ -667,7 +667,7 @@ def redact_sensitive_text(
     # colon-separated, so gate on ":" — the regex itself is the precise filter.
     if ":" in text:
         text = _SECRET_HEADER_RE.sub(
-            lambda m: m.group(1) + _mask_token(m.group(2)),
+            lambda m: m.group(1) + m.group(2) + _mask_token(m.group(3)) + m.group(2),
             text,
         )
 

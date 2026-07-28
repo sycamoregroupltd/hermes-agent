@@ -296,6 +296,16 @@ class TestApiKeyHeaders:
         assert secret not in result
         assert "X-Example-Token:" in result
 
+    @pytest.mark.parametrize("quote", ['"', "'"])
+    def test_custom_token_header_preserves_wrapping_quote(self, quote):
+        secret = "synthetic-auth-value-1234567890"
+        text = f"X-Example-Token: {quote}{secret}{quote}"
+
+        result = redact_sensitive_text(text, force=True)
+
+        assert secret not in result
+        assert result.count(quote) == 2
+
     def test_x_api_key_header_masked(self):
         text = "x-api-key: opaque-provider-key-1234567890"
         result = redact_sensitive_text(text)
