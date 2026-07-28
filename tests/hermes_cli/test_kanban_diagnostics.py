@@ -773,3 +773,33 @@ def test_severity_at_or_above_uses_threshold_semantics():
     assert kd.severity_at_or_above("error", "critical") is False
     assert kd.severity_at_or_above("mystery", "warning") is False
     assert kd.severity_at_or_above("warning", None) is True
+
+
+def test_dead_pid_error_precedes_skill_preload():
+    """Dead-PID error string in last_failure_error must be classified as
+    pid_not_alive_or_nonzero_crash, not skill_preload_crash, even when
+    other misclassification triggers are present in the combined text."""
+    task = _task(
+        status="ready",
+        last_failure_error="pid 123 not alive",
+        # 'result' is included in the classifier's combined text and
+        # would normally trigger skill_preload_crash; the PID check
+        # must fire first.
+        result="Unknown skill(s): trading-enricher",
+    )
+    # Task body mentions pid_not_alive and lists a failed skill —
+    # previously a source of misclassification before the PID check
+    # was elevated to highest precedence in classify_kanban_failure.
+    task["body"] = (
+        "Investigating pid_not_alive crash after preload failed. "
+        "Unknown skill(s): trading-enricher"
+    )
+    runs = [_run(outcome="crashed", run_id=1)]
+
+    classification = kd.classify_kanban_failure(task, [], runs)
+
+    assert classification.failure_class == "pid_not_alive_or_nonzero_crash"
+    assert classification.failure_class != "skill_preload_crash"
+    assert classification.confidence == "medium"
+    # Must include the actual pid-matching text as evidence
+    assert any("pid" in m for m in classification.evidence_markers)
