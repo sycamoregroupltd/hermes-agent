@@ -586,4 +586,3 @@ x_search:
   retries: 2
   timeout_seconds: 180
 
-# automation-vc-keeper-test: verified t_b2b40c2c by test-engineer 2026-07-28
