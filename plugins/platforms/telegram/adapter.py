@@ -16,6 +16,9 @@ import logging
 import os
 import html as _html
 import re
+import signal as _signal
+import sys
+import _thread
 import threading
 import time
 from contextvars import ContextVar
@@ -54,6 +57,30 @@ def _consume_abandoned_task(task: asyncio.Task) -> None:
 # timeout (including this helper's own expiry hand-off) goes silent, so the
 # gateway hangs at "attempt 1/8" with no further output (#63309).
 _LOOP_BLOCKED_DUMP_GRACE = 5.0
+
+# Signal the watchdog thread uses to interrupt the main thread when the event
+# loop is blocked in a synchronous C call (#63309 class). SIGALRM is unused by
+# asyncio's default signal handlers and carries no special semantics for the
+# Hermes gateway, making it a safe side-channel that raises TimeoutError at the
+# next PyErr_CheckSignals() point, which is guaranteed to fire when the blocking
+# C-level call returns EINTR.
+_LOOP_BLOCKED_BREAK_SIGNAL = _signal.SIGALRM
+
+
+def _loop_blocked_sigalrm_handler(signum: int, frame) -> None:
+    """SIGALRM handler: raise TimeoutError in the main thread's blocking call.
+
+    Registered temporarily by _await_with_thread_deadline so the watchdog
+    thread can interrupt a synchronous C-level blocking call (httpx connect /
+    DNS resolution) via _thread.interrupt_main().  The TimeoutError propagates
+    through the anyio/httpcore stack as a ConnectTimeout, which the
+    TelegramFallbackTransport treats as a retryable error — exactly the right
+    recovery path.
+    """
+    raise asyncio.TimeoutError(
+        "Telegram init deadline exceeded — interrupted blocked event loop via "
+        "SIGALRM (#63309 class)"
+    )
 
 
 def _dump_loop_blocked_diagnostics(timeout: float, grace: float) -> None:
@@ -102,6 +129,12 @@ async def _await_with_thread_deadline(awaitable, timeout: float, *, on_abandon=N
     # exits normally). threading.Event so the watchdog thread can read it
     # without touching asyncio state from off-loop.
     loop_processed_expiry = threading.Event()
+    # Install SIGALRM handler so the watchdog thread can forcibly interrupt
+    # the main thread even when loop.call_soon_threadsafe cannot deliver its
+    # expiry — the loop is stuck in a synchronous C call (#63309 class).
+    _old_sigalrm = _signal.signal(
+        _LOOP_BLOCKED_BREAK_SIGNAL, _loop_blocked_sigalrm_handler
+    )
 
     def _mark_expired() -> None:
         loop_processed_expiry.set()
@@ -117,6 +150,12 @@ async def _await_with_thread_deadline(awaitable, timeout: float, *, on_abandon=N
         # Diagnose from this thread — the loop can't.
         if not loop_processed_expiry.is_set():
             _dump_loop_blocked_diagnostics(timeout, _LOOP_BLOCKED_DUMP_GRACE)
+            # Forcibly interrupt the main thread's blocking C-level call so
+            # the signal handler raises TimeoutError, which propagates through
+            # the anyio/httpcore stack as a retryable ConnectTimeout. Without
+            # this break the loop stays stuck until the total watchdog fires
+            # much later (#63309 class, re-opened #t_tg_deadline_fix).
+            _thread.interrupt_main(_LOOP_BLOCKED_BREAK_SIGNAL)
 
     timer = threading.Timer(max(timeout, 0.0), _expire_from_thread)
     timer.daemon = True
@@ -153,6 +192,7 @@ async def _await_with_thread_deadline(awaitable, timeout: float, *, on_abandon=N
         # setting the event closes that race so a completed await can never
         # be misreported as a blocked loop.
         loop_processed_expiry.set()
+        _signal.signal(_LOOP_BLOCKED_BREAK_SIGNAL, _old_sigalrm)
 
 
 async def _first_completed(*futures: "asyncio.Future") -> None:
