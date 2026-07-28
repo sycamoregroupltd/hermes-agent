@@ -3123,6 +3123,11 @@ def create_task(
         task_id = _new_task_id()
         try:
             with write_txn(conn):
+                # Whether to also emit a ``blocked`` lifecycle event below.
+                # Set True only when the task enters directly in ``blocked``
+                # so that ``_has_sticky_block`` treats it as a durable gate
+                # (never auto-promoted by ``recompute_ready``).
+                _emit_blocked_event = False
                 # Determine task status from parent status, unless the caller
                 # parks it directly in blocked for human-ops review or in
                 # triage for a specifier.
@@ -3132,6 +3137,20 @@ def create_task(
                         missing = _find_missing_parents(conn, parents)
                         if missing:
                             raise ValueError(f"unknown parent task(s): {', '.join(missing)}")
+                    # A task entering directly in ``blocked`` (Frank-only A3
+                    # gate, operator-created gate, etc.) must be sticky: the
+                    # dispatcher's ``recompute_ready`` must never auto-promote
+                    # it to ``ready``.  ``_has_sticky_block`` keys off the most
+                    # recent ``{blocked, unblocked}`` event, so emit a
+                    # ``blocked`` event here to make the gate durable — exactly
+                    # like a worker/operator ``kanban_block`` (#28712). Without
+                    # this, ``create_task(initial_status='blocked')`` left
+                    # ``status='blocked'`` with no sticky event, and the
+                    # vacuous parent check (``all()`` over an empty parent list
+                    # is ``True``) let the dispatcher re-claim it every tick,
+                    # defeating Frank-only gates (t_jarvis_autopromote_20260728;
+                    # evidence: t_a9819a57).
+                    _emit_blocked_event = True
                 elif triage:
                     task_status = "triage"
                 else:
@@ -3233,6 +3252,20 @@ def create_task(
                         "provider_override": provider_override,
                     },
                 )
+                if _emit_blocked_event:
+                    # Make the directly-blocked task sticky: the dispatcher's
+                    # ``recompute_ready`` keys ``_has_sticky_block`` off the most
+                    # recent ``{blocked, unblocked}`` event. Without this event
+                    # the gate would be silently auto-promoted on the next tick
+                    # (see the comment in the ``initial_status == 'blocked'``
+                    # branch above). The only legitimate exit is ``unblock_task``.
+                    _append_event(
+                        conn,
+                        task_id,
+                        "blocked",
+                        {"reason": "initial_status=blocked (operator/Frank gate)",
+                         "kind": "capability"},
+                    )
                 _inherit_notify_subs(conn, task_id, parents, created_at=now)
             return task_id
         except sqlite3.IntegrityError:
