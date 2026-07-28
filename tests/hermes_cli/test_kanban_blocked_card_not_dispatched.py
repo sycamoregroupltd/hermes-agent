@@ -677,3 +677,135 @@ def test_sticky_blocked_card_with_done_parent_stays_blocked(
         assert kb.get_task(conn, child_id).status == "blocked"
         assert len(result.spawned) == 0
         assert child_id not in spy.calls
+
+
+# ── blocked_dispatch_attempt audit event ───────────────────────────────
+
+
+def test_blocked_card_records_blocked_dispatch_attempt_event(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A card created with ``initial_status='blocked'`` must produce a
+    ``blocked_dispatch_attempt`` event after ``dispatch_once`` runs, proving
+    that the dispatcher audited the blocked card (even though the SQL filter
+    prevents it from ever reaching the spawn loop).
+
+    Acceptance:
+      - Card stays blocked and unclaimed after dispatch_once.
+      - A ``blocked_dispatch_attempt`` event exists in ``task_events``.
+      - The ``run_count`` column in ``task_runs`` stays NULL (no attempt
+        to claim the card).
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="blocked-dispatch-attempt-audit-test",
+            assignee="test-profile",
+            initial_status="blocked",
+        )
+        assert kb.get_task(conn, tid).status == "blocked"
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+
+        # (a) Card stays blocked — not claimed
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked", (
+            f"Blocked card must stay blocked; got {task.status!r}"
+        )
+        assert task.claim_lock is None, (
+            f"Blocked card must not have a claim lock; "
+            f"got {task.claim_lock!r}"
+        )
+        assert len(result.spawned) == 0
+
+        # (b) A blocked_dispatch_attempt event exists
+        rows = conn.execute(
+            "SELECT payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'blocked_dispatch_attempt'",
+            (tid,),
+        ).fetchall()
+        assert len(rows) >= 1, (
+            f"Expected at least 1 'blocked_dispatch_attempt' event; "
+            f"got {len(rows)}"
+        )
+
+        # (c) Payload includes origin, task_id, block_kind, and gate fields
+        payload = rows[0]["payload"]
+        assert payload is not None, "blocked_dispatch_attempt payload must not be None"
+        pl = json.loads(payload)
+        assert "task_id" in pl, f"payload missing task_id: {pl}"
+        assert pl["task_id"] == tid, f"payload task_id mismatch: {pl['task_id']} != {tid}"
+        assert "block_kind" in pl, f"payload missing block_kind: {pl}"
+        assert "gate" in pl, f"payload missing gate field: {pl}"
+
+
+def test_ready_card_with_sticky_block_records_blocked_dispatch_attempt(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """A ``ready``-status card with a sticky block (a ``blocked`` event but
+    status still ``ready``) must produce a ``blocked_dispatch_attempt`` event
+    from the block-gate audit in ``_dispatch_once_locked``.
+
+    Tests the second code path: when a card passes the SQL filter (status='ready')
+    but has a sticky block, the dispatcher must emit ``blocked_dispatch_attempt``
+    alongside ``block_gate_audit``.
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="ready-with-sticky-block-audit-test",
+            assignee="test-profile",
+        )
+        # Card starts as 'ready' (no parents, valid assignee).
+        assert kb.get_task(conn, tid).status == "ready"
+
+        # Inject a 'blocked' event to create a sticky block.
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) "
+            "VALUES (?, 'blocked', ?, ?)",
+            (tid, '{"origin":"test-injection","reason":"blocked"}', now),
+        )
+        conn.commit()
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+
+        # (a) Card was NOT claimed/spawned
+        post_task = kb.get_task(conn, tid)
+        assert post_task.claim_lock is None, (
+            f"Sticky-blocked card was claimed despite block; "
+            f"claim_lock={post_task.claim_lock!r}"
+        )
+        assert tid not in result.spawned, (
+            f"Sticky-blocked card was spawned despite block"
+        )
+
+        # (b) Both block_gate_audit AND blocked_dispatch_attempt events exist
+        audit_rows = conn.execute(
+            "SELECT kind, payload FROM task_events "
+            "WHERE task_id = ? AND kind IN ('block_gate_audit', 'blocked_dispatch_attempt') "
+            "ORDER BY id",
+            (tid,),
+        ).fetchall()
+        audit_kinds = [r["kind"] for r in audit_rows]
+
+        assert "block_gate_audit" in audit_kinds, (
+            f"Missing block_gate_audit event; got kinds={audit_kinds}"
+        )
+        assert "blocked_dispatch_attempt" in audit_kinds, (
+            f"Missing blocked_dispatch_attempt event; got kinds={audit_kinds}"
+        )
+
+        # (c) Verify the blocked_dispatch_attempt payload includes gate field
+        bda_rows = [r for r in audit_rows if r["kind"] == "blocked_dispatch_attempt"]
+        assert len(bda_rows) >= 1
+        payload = bda_rows[0]["payload"]
+        assert payload is not None
+        pl = json.loads(payload)
+        assert "gate" in pl, f"blocked_dispatch_attempt payload missing gate: {pl}"
+        assert "block_kind" in pl, f"blocked_dispatch_attempt payload missing block_kind: {pl}"
+        assert "task_id" in pl
