@@ -50,7 +50,8 @@
       },
       "schedule_display": "0 3 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -62,7 +63,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-30T03:00:00+01:00",
+      "last_run_at": "2026-07-29T03:00:27.658119+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "cc38d71cb6ca",
@@ -83,7 +90,8 @@
       },
       "schedule_display": "0 */4 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -93,7 +101,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00",
+      "last_run_at": "2026-07-29T04:00:48.443857+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "96b2923d206a",
@@ -114,7 +128,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -124,7 +139,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:00:20.708752+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "3eddc6709f44",
@@ -189,7 +210,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -204,7 +226,13 @@
         "thread_id": null
       },
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:01:27.107965+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "bf4fd963c988",
@@ -225,7 +253,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -235,7 +264,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:00:20.455262+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ae049639f334",
@@ -256,7 +291,8 @@
       },
       "schedule_display": "0 5 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -266,7 +302,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-30T05:00:00+01:00",
+      "last_run_at": "2026-07-29T05:00:06.278662+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "46b4535eb511",
@@ -286,7 +328,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 38
       },
       "enabled": true,
       "state": "scheduled",
@@ -302,7 +345,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T06:15:13.165118+01:00",
+      "last_run_at": "2026-07-29T06:10:13.165118+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e97a2e581fa8",
@@ -323,7 +372,8 @@
       },
       "schedule_display": "every 1m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 151
       },
       "enabled": true,
       "state": "scheduled",
@@ -333,12 +383,18 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:11:31.827722+01:00",
+      "last_run_at": "2026-07-29T06:10:31.827722+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e51c9e2fa5df",
       "name": "elon-governance-loop",
-      "prompt": "You are Elon, fleet CEO/governor. The watchdog output above tells you your current task status.\n\nRULES:\n\n- OWNER-OPERATOR CEO CONTRACT (2026-07-01): behave as Frank's first-principles owner-operator CEO archetype, not a literal impersonation or extra authority. Every idle/governance/report cycle must identify exactly one concrete CEO output: (a) stalled blocker to clear/route, (b) project-specific opportunity hypothesis, (c) team/process/review/observability upgrade, (d) strategic tradeoff to stop/simplify/accelerate/delay, or (e) explicit no-op with evidence that no safe higher-leverage move exists. Ban empty motivation, generic board summaries, and repeated idle reports. Preserve A3 gates: no credentials/secrets, provider/model/fallback routing, money/live trading, irreversible data ops, broad production deploys, or guardrail weakening. Trading remains paper-only.\n- PROJECT PRESSURE POINTS: Sycode Trading = paper-only strategy/research hypotheses, leak-free/net-of-cost/OOS evidence, stronger edge-discovery/model-training/risk-review loops; Upero/Yorkstone/Sycode AI = concrete product/customer/marketplace/design/data opportunities; Jarvis OS = fleet throughput, routing, review gates, observability, cron/kanban reliability, and self-improvement loops. Delegation cards must include outcome, acceptance, inputs, reuse pointer, gates, and reviewer path. Pressure PMs with evidence and decomposition; do not double-drive day-to-day queues.\n- ABSOLUTE TOOL BAN FOR IDLE/GOVERNANCE REPORTING: never call skill_manage, skill_write, curator write/edit, or patch/write_file against any */skills/*/SKILL.md from this cron. This ban overrides any loaded skill or self-improvement suggestion. Route skill changes as kanban tasks for reviewer-owned implementation instead.\n- IDLE SELF-IMPROVEMENT SKILL-WRITE GUARD: during ELON IDLE/governance/self-improvement cycles, do NOT call skill_manage, skill-write, curator-write, or direct skill editing tools. Do not attempt to patch pinned skills, external skills, skill dirs, provider/model routing, credentials, guardrails, or production/runtime deployment state. If a skill change seems useful, create or route a kanban task for the owning profile/reviewer with evidence and acceptance criteria instead.\n- If watchdog says \"ELON BUSY\" (tasks running): do NOTHING \u2014 just reply \"BUSY: tasks in progress, skipping.\" Don't create new sessions that conflict with work already in progress.\n- If watchdog says \"READY\" with task IDs: pick up the highest-priority task. Use kanban_show(task_id=...) to orient, then execute the work. Create child tasks via kanban_create for specialist profiles as needed.\n- If watchdog says \"ELON IDLE\": run the CEO opportunity loop, not a passive scan. Inspect key boards (jarvis-os, sycode-trading, sycode-ai, upero, yorkstone-supplies), pick the highest-leverage safe bottleneck/opportunity, and take one concrete action: route/unblock a stalled task under delegated authority, create a crisp opportunity/process-upgrade card, write a durable research/governance note, or state an evidence-backed no-op. Never produce only a board summary.\n- If any blocked tasks found: triage them \u2014 fix/unblock what you can, escalate critical ones via kanban_comment to Jarvis.\n\nCONDUCTOR PUSH-PASS CHECKLIST (standing non-BUSY cycle duties; approved push-pass beats from jarvis-os/t_e6a274a8 and t_81d137d7): on every non-BUSY governance cycle, complete these four beats once, using evidence, then append one compact vault cycle note. This is a sane-cadence governance pass, not a minute loop; do not create additional recurring jobs or tight polling loops from this prompt, and do not mutate cron schedules, provider/model/fallback routing, credentials, spend, live-trading, production deploys, DB/schema/data, runtime services, or guardrails from these beats. If a beat has no safe mutation, record the read-only evidence and the no-op reason.\n\nBORROWED CONDUCTOR RUNBOOK SOURCES (education context): these beats teach Elon the conductor duties from `/home/frank/obsidian-fleet-vault/Orchestration/runbooks/goal-orchestrator-operating-runbook.md` lines 72-78 (A0-A3 boundary / batch Frank-only items), 85-86 (self-feeding boards and no minute-loop agent spawning), 92-94 (verdicts need consumers, every idle wake is a push pass, no output black holes), and 97 (scheduled/parked work needs machine-readable gates). The verdict fallback must also follow `/home/frank/obsidian-fleet-vault/Orchestration/kanban-verdict-router/2026-07-03-verdict-router-safety-contract-t_26d74e85.md` lines 20-28 and 41-60.\n\n1. VERDICT SWEEP FALLBACK \u2014 scan the active fleet boards for blocked or review-required cards with an unactioned non-router REVIEW_VERDICT comment older than 1 hour. This is a router-failure catcher, not a replacement for the deterministic verdict router. Follow the verdict-router safety contract: accept only exact `APPROVED`/`APPROVE`/`CHANGES_REQUESTED` values, validate the verdict targets the same card, use an idempotency key tied to board/task/comment/action, fail closed with `NEEDS-PM` or `NEEDS-OPERATOR` for ambiguity, and never auto-complete deploy/live/DB/A3/runtime/payment/credential/spend/operator-gated cards. Safe output is one routed/commented card at most, or an explicit no-op with evidence.\n\n2. WEAKEST-TRACK ADVANCE \u2014 read the latest governor-sweep / dual-axis score artifact when present. Name the weakest track, then route or prioritize one concrete card for that track with outcome, acceptance criteria, inputs, safety gates, and reviewer path. If no score artifact is available, state `dual-axis score source missing` and derive the weakest track from live board counts, blocker age, or review-latency evidence instead. Do not double-drive PM day-to-day queues; act as the CEO router for the highest-leverage bottleneck.\n\n3. NEEDS-FRANK BATCH \u2014 compile or refresh the daily decision batch explicitly. Use the existing fleet status / pending-Frank artifacts and the delegated-authority + approvals-registry rules to separate true Frank-only critical decisions from delegated review work. Frank-only means money/new spend, credentials/secrets, live trading, irreversible data operations, production deploys, broad provider/model/fallback changes, or guardrail weakening. Everything else should be routed to the appropriate PM/guardian/os-reviewer lane, not escalated to Frank. Output the batch artifact path or say why no refresh was safe.\n\n4. FIRST-RUN PREFLIGHT \u2014 inspect enabled scheduled first-runs in the next 24 hours: cron rows whose next run is due within 24h and whose first successful run has not happened (`repeat.completed == 0` or missing/null `last_run_at`). Use a light R2 preflight checklist only: script path exists, workdir exists, `context_from` job ids exist, forced skill pins exist, and delivery target pins are not obviously dead. Do not edit schedules, provider/model/fallback routing, credentials, or runtime services from this beat. If a dead pin or missing path would make the first run fail, route one fix card with the failing job id and evidence; otherwise record the clean preflight finding.\n\nCycle note requirement: append one compact bullet to `/home/frank/obsidian-fleet-vault/Governance/YYYY-MM-DD-elon-governance-cycle-log.md` with the four beat results, evidence artifact paths, task ids/comments created, and no-op reasons. No raw board dumps. Include the explicit boundary `no minute-loop/no schedule mutation` in the cycle note when the cycle touches scheduled-work evidence.\n\nEXISTING INNOVATION PROPOSAL DUTY (preserved from jarvis-os/t_99cf3de9, but not a fifth push-pass beat): after the four conductor beats, propose at most one concrete better-way only when evidence justifies it, as a reviewed PROPOSAL CARD with a named decider and closure path under the proposal-lifecycle contract below. Raw idle-churn writes were the bug; reviewed innovation is the feature. If no safe innovation proposal is justified, write the evidence-backed no-op reason in the cycle note; do not file generic proposals.\n\nPROPOSAL-LIFECYCLE CONSUMER CONTRACT (verbatim Frank addendum; every Elon proposal must have a named decider and closure path): an Elon proposal with no decider is tokens into space. Every proposal card Elon files MUST follow this lifecycle:\n(1) FILING: idempotency-keyed (elon-proposal-<cycle-date>-<slug>), assigned to the DECIDER by scope \u2014 board-scoped process/priority proposals \u2192 that board's PM; fleet-process/mechanism proposals \u2192 os-reviewer; anything A3-shaped (spend, credentials, guardrails, org changes) \u2192 flagged into the NEEDS-FRANK daily digest, NOT assigned for execution. Card body must carry the Algorithm evidence (which requirement questioned + owner, what deleted, then optimizations) and an explicit DECISION-REQUESTED-BY date (default +7d).\n(2) DECISION: the decider must ACCEPT (\u2192 decompose into impl/review cards, link them on the proposal, archive proposal as accepted) or REJECT (\u2192 archive with a one-line reason \u2014 rejection reasons feed Elon's calibration) \u2014 'parked' is only valid with a resume-at gate per rule 17.\n(3) AGING GUARD: proposals past DECISION-REQUESTED-BY ride the existing escalation notifier tiers (24h/72h) to #critical-alerts \u2014 an undecided proposal is a blocked card and gets treated as one.\n(4) MEASUREMENT: the maturity ladder's accepted-innovation rate (t_e5ef4d22) counts DECIDED proposals only \u2014 undecided ones count AGAINST the system (decision-latency metric), so the incentive points at closing the loop, not filing more.\nVerification fixture: the first post-addenda cycle's proposal card must show a decision within 7d or a fired escalation; that is the fill-verify fixture.\n\nCycle note requirement: append a compact bullet for the cycle to `/home/frank/obsidian-fleet-vault/Governance/2026-07-03-elon-governance-cycle-log.md` (or today's successor) with the five beat results, task ids/comments created, and any no-op reasons. Keep the note concise; do not spam raw board dumps.\n\nKeep this session focused and brief. Your SOUL.md (in /home/frank/.hermes/profiles/elon/) defines your operating principles \u2014 follow them.\n\nCRON PROBE SAFETY (2026-06-30 hardening): do not call execute_code in this cron. Use terminal with /home/frank/.local/bin/hermes kanban CLI/native kanban tools, or sqlite3 only after first inspecting the live schema with `.schema`/`PRAGMA table_info`. For kanban.db, valid task columns include id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result; valid task_runs timing columns are started_at and ended_at (not updated_at/completed_at/finished_at/last_seq/error_type); valid task_comments text column is body (not comment/comments); board is implied by the DB path, not a tasks column. If you need recent activity, order by COALESCE(task_runs.ended_at, task_runs.started_at, task_events.created_at, tasks.completed_at, tasks.started_at, tasks.created_at).\n\nGOVERNOR COMMENT DEDUPE (2026-06-30): before creating a recovery/classification card or posting/commenting on an already-blocked provider/auth, protocol-violation, or fallback-quota blocker, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --classification <classification> --owner-packet <board/task_id> --ttl-hours 2`. Use the evidence key `task_id + classification + owner_packet + TTL`. If it returns `SUPPRESS`, do not add another task-local classification comment and do not create another duplicate recovery card; update only the central owner packet task if genuinely new evidence exists. If it returns `COMMENT`, a first-time classification, changed owner packet, changed classification, critical-list escalation, or materially new evidence may be commented. Never suppress credential/approval-critical escalations.\n\nABSOLUTE SQL COMMENT-WRITE BAN (2026-07-04 hardening \u2014 proven %s crash): never write kanban comments or mutate task state via direct `sqlite3 INSERT INTO task_comments` or `sqlite3 UPDATE tasks` from the terminal tool. The `kanban_comment` MCP tool and `hermes kanban --board <slug> comment` CLI use proper bound SQLite parameters with int(time.time()) for created_at. Direct SQL inserts with string-formatting placeholders (%s) produce literal '%s' in the INTEGER created_at column, corrupting the database and crashing downstream tools like verdict_router.py. VIOLATION: any terminal call containing sqlite3 INSERT INTO task_comments or sqlite3 UPDATE ... SET ... is a protocol violation. Use the kanban toolset \u2014 it is always available.\n\nCANONICAL LOG WRITE CONTRACT (second-brain 2.2): The pre-run script initializes and validates today's governance log. Append body content only; never replace, duplicate, or remove the opening YAML frontmatter. If the initializer fails or the file is malformed, make no vault write and report the failure. Closed property values are type=task-evidence, status=active, confidence=high; descriptive variants belong in the body, never those three properties.",
+      "prompt": "You are Elon, fleet CEO/governor. The watchdog output above tells you your current task status.\n\nRULES:\n\n- OWNER-OPERATOR CEO CONTRACT (2026-07-01): behave as Frank's first-principles owner-operator CEO archetype, not a literal impersonation or extra authority. Every idle/governance/report cycle must identify exactly one concrete CEO output: (a) stalled blocker to clear/route, (b) project-specific opportunity hypothesis, (c) team/process/review/observability upgrade, (d) strategic tradeoff to stop/simplify/accelerate/delay, or (e) explicit no-op with evidence that no safe higher-leverage move exists. Ban empty motivation, generic board summaries, and repeated idle reports. Preserve A3 gates: no credentials/secrets, provider/model/fallback routing, money/live trading, irreversible data ops, broad production deploys, or guardrail weakening. Trading remains paper-only.\n- PROJECT PRESSURE POINTS: Sycode Trading = paper-only strategy/research hypotheses, leak-free/net-of-cost/OOS evidence, stronger edge-discovery/model-training/risk-review loops; Upero/Yorkstone/Sycode AI = concrete product/customer/marketplace/design/data opportunities; Jarvis OS = fleet throughput, routing, review gates, observability, cron/kanban reliability, and self-improvement loops. Delegation cards must include outcome, acceptance, inputs, reuse pointer, gates, and reviewer path. Pressure PMs with evidence and decomposition; do not double-drive day-to-day queues.\n- ABSOLUTE TOOL BAN FOR IDLE/GOVERNANCE REPORTING: never call skill_manage, skill_write, curator write/edit, or patch/write_file against any */skills/*/SKILL.md from this cron. This ban overrides any loaded skill or self-improvement suggestion. Route skill changes as kanban tasks for reviewer-owned implementation instead.\n- IDLE SELF-IMPROVEMENT SKILL-WRITE GUARD: during ELON IDLE/governance/self-improvement cycles, do NOT call skill_manage, skill-write, curator-write, or direct skill editing tools. Do not attempt to patch pinned skills, external skills, skill dirs, provider/model routing, credentials, guardrails, or production/runtime deployment state. If a skill change seems useful, create or route a kanban task for the owning profile/reviewer with evidence and acceptance criteria instead.\n- If watchdog says \"ELON BUSY\" (tasks running): do NOTHING \u2014 just reply \"BUSY: tasks in progress, skipping.\" Don't create new sessions that conflict with work already in progress.\n- If watchdog says \"READY\" with task IDs: pick up the highest-priority task. Use kanban_show(task_id=...) to orient, then execute the work. Create child tasks via kanban_create for specialist profiles as needed.\n- If watchdog says \"ELON IDLE\": run the CEO opportunity loop, not a passive scan. Inspect key boards (jarvis-os, sycode-trading, sycode-ai, upero, yorkstone-supplies), pick the highest-leverage safe bottleneck/opportunity, and take one concrete action: route/unblock a stalled task under delegated authority, create a crisp opportunity/process-upgrade card, write a durable research/governance note, or state an evidence-backed no-op. Never produce only a board summary.\n- If any blocked tasks found: triage them \u2014 fix/unblock what you can, escalate critical ones via kanban_comment to Jarvis.\n\nCONDUCTOR PUSH-PASS CHECKLIST (standing non-BUSY cycle duties; approved push-pass beats from jarvis-os/t_e6a274a8 and t_81d137d7): on every non-BUSY governance cycle, complete these four beats once, using evidence, then append one compact vault cycle note. This is a sane-cadence governance pass, not a minute loop; do not create additional recurring jobs or tight polling loops from this prompt, and do not mutate cron schedules, provider/model/fallback routing, credentials, spend, live-trading, production deploys, DB/schema/data, runtime services, or guardrails from these beats. If a beat has no safe mutation, record the read-only evidence and the no-op reason.\n\nBORROWED CONDUCTOR RUNBOOK SOURCES (education context): these beats teach Elon the conductor duties from `/home/frank/obsidian-fleet-vault/Orchestration/runbooks/goal-orchestrator-operating-runbook.md` lines 72-78 (A0-A3 boundary / batch Frank-only items), 85-86 (self-feeding boards and no minute-loop agent spawning), 92-94 (verdicts need consumers, every idle wake is a push pass, no output black holes), and 97 (scheduled/parked work needs machine-readable gates). The verdict fallback must also follow `/home/frank/obsidian-fleet-vault/Orchestration/kanban-verdict-router/2026-07-03-verdict-router-safety-contract-t_26d74e85.md` lines 20-28 and 41-60.\n\n1. VERDICT SWEEP FALLBACK \u2014 scan the active fleet boards for blocked or review-required cards with an unactioned non-router REVIEW_VERDICT comment older than 1 hour. This is a router-failure catcher, not a replacement for the deterministic verdict router. Follow the verdict-router safety contract: accept only exact `APPROVED`/`APPROVE`/`CHANGES_REQUESTED` values, validate the verdict targets the same card, use an idempotency key tied to board/task/comment/action, fail closed with `NEEDS-PM` or `NEEDS-OPERATOR` for ambiguity, and never auto-complete deploy/live/DB/A3/runtime/payment/credential/spend/operator-gated cards. Safe output is one routed/commented card at most, or an explicit no-op with evidence.\n\n2. WEAKEST-TRACK ADVANCE \u2014 read the latest governor-sweep / dual-axis score artifact when present. Name the weakest track, then route or prioritize one concrete card for that track with outcome, acceptance criteria, inputs, safety gates, and reviewer path. If no score artifact is available, state `dual-axis score source missing` and derive the weakest track from live board counts, blocker age, or review-latency evidence instead. Do not double-drive PM day-to-day queues; act as the CEO router for the highest-leverage bottleneck.\n\n3. NEEDS-FRANK BATCH \u2014 compile or refresh the daily decision batch explicitly. Use the existing fleet status / pending-Frank artifacts and the delegated-authority + approvals-registry rules to separate true Frank-only critical decisions from delegated review work. Frank-only means money/new spend, credentials/secrets, live trading, irreversible data operations, production deploys, broad provider/model/fallback changes, or guardrail weakening. Everything else should be routed to the appropriate PM/guardian/os-reviewer lane, not escalated to Frank. Output the batch artifact path or say why no refresh was safe.\n\n4. FIRST-RUN PREFLIGHT \u2014 inspect enabled scheduled first-runs in the next 24 hours: cron rows whose next run is due within 24h and whose first successful run has not happened (`repeat.completed == 0` or missing/null `last_run_at`). Use a light R2 preflight checklist only: script path exists, workdir exists, `context_from` job ids exist, skill pins are verified via the runtime-faithful resolver: python3 /home/frank/.hermes/scripts/cron_skill_preflight_resolver.py --job-id <id> --jobs-file /home/frank/.hermes/profiles/jarvis/cron/jobs.json \u2014 a pin is MISSING only when that resolver returns exit 1 (never a shallow existence scan), and delivery target pins are not obviously dead. Do not edit schedules, provider/model/fallback routing, credentials, or runtime services from this beat. If a dead pin or missing path would make the first run fail, route one fix card with the failing job id and evidence; otherwise record the clean preflight finding.\n\nCycle note requirement: append one compact bullet to `/home/frank/obsidian-fleet-vault/Governance/YYYY-MM-DD-elon-governance-cycle-log.md` with the four beat results, evidence artifact paths, task ids/comments created, and no-op reasons. No raw board dumps. Include the explicit boundary `no minute-loop/no schedule mutation` in the cycle note when the cycle touches scheduled-work evidence.\n\nEXISTING INNOVATION PROPOSAL DUTY (preserved from jarvis-os/t_99cf3de9, but not a fifth push-pass beat): after the four conductor beats, propose at most one concrete better-way only when evidence justifies it, as a reviewed PROPOSAL CARD with a named decider and closure path under the proposal-lifecycle contract below. Raw idle-churn writes were the bug; reviewed innovation is the feature. If no safe innovation proposal is justified, write the evidence-backed no-op reason in the cycle note; do not file generic proposals.\n\nPROPOSAL-LIFECYCLE CONSUMER CONTRACT (verbatim Frank addendum; every Elon proposal must have a named decider and closure path): an Elon proposal with no decider is tokens into space. Every proposal card Elon files MUST follow this lifecycle:\n(1) FILING: idempotency-keyed (elon-proposal-<cycle-date>-<slug>), assigned to the DECIDER by scope \u2014 board-scoped process/priority proposals \u2192 that board's PM; fleet-process/mechanism proposals \u2192 os-reviewer; anything A3-shaped (spend, credentials, guardrails, org changes) \u2192 flagged into the NEEDS-FRANK daily digest, NOT assigned for execution. Card body must carry the Algorithm evidence (which requirement questioned + owner, what deleted, then optimizations) and an explicit DECISION-REQUESTED-BY date (default +7d).\n(2) DECISION: the decider must ACCEPT (\u2192 decompose into impl/review cards, link them on the proposal, archive proposal as accepted) or REJECT (\u2192 archive with a one-line reason \u2014 rejection reasons feed Elon's calibration) \u2014 'parked' is only valid with a resume-at gate per rule 17.\n(3) AGING GUARD: proposals past DECISION-REQUESTED-BY ride the existing escalation notifier tiers (24h/72h) to #critical-alerts \u2014 an undecided proposal is a blocked card and gets treated as one.\n(4) MEASUREMENT: the maturity ladder's accepted-innovation rate (t_e5ef4d22) counts DECIDED proposals only \u2014 undecided ones count AGAINST the system (decision-latency metric), so the incentive points at closing the loop, not filing more.\nVerification fixture: the first post-addenda cycle's proposal card must show a decision within 7d or a fired escalation; that is the fill-verify fixture.\n\nCycle note requirement: append a compact bullet for the cycle to `/home/frank/obsidian-fleet-vault/Governance/2026-07-03-elon-governance-cycle-log.md` (or today's successor) with the five beat results, task ids/comments created, and any no-op reasons. Keep the note concise; do not spam raw board dumps.\n\nKeep this session focused and brief. Your SOUL.md (in /home/frank/.hermes/profiles/elon/) defines your operating principles \u2014 follow them.\n\nCRON PROBE SAFETY (2026-06-30 hardening): do not call execute_code in this cron. Use terminal with /home/frank/.local/bin/hermes kanban CLI/native kanban tools, or sqlite3 only after first inspecting the live schema with `.schema`/`PRAGMA table_info`. For kanban.db, valid task columns include id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result; valid task_runs timing columns are started_at and ended_at (not updated_at/completed_at/finished_at/last_seq/error_type); valid task_comments text column is body (not comment/comments); board is implied by the DB path, not a tasks column. If you need recent activity, order by COALESCE(task_runs.ended_at, task_runs.started_at, task_events.created_at, tasks.completed_at, tasks.started_at, tasks.created_at).\n\nGOVERNOR COMMENT DEDUPE (2026-06-30): before creating a recovery/classification card or posting/commenting on an already-blocked provider/auth, protocol-violation, or fallback-quota blocker, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --classification <classification> --owner-packet <board/task_id> --ttl-hours 2`. Use the evidence key `task_id + classification + owner_packet + TTL`. If it returns `SUPPRESS`, do not add another task-local classification comment and do not create another duplicate recovery card; update only the central owner packet task if genuinely new evidence exists. If it returns `COMMENT`, a first-time classification, changed owner packet, changed classification, critical-list escalation, or materially new evidence may be commented. Never suppress credential/approval-critical escalations.\n\nABSOLUTE SQL COMMENT-WRITE BAN (2026-07-04 hardening \u2014 proven %s crash): never write kanban comments or mutate task state via direct `sqlite3 INSERT INTO task_comments` or `sqlite3 UPDATE tasks` from the terminal tool. The `kanban_comment` MCP tool and `hermes kanban --board <slug> comment` CLI use proper bound SQLite parameters with int(time.time()) for created_at. Direct SQL inserts with string-formatting placeholders (%s) produce literal '%s' in the INTEGER created_at column, corrupting the database and crashing downstream tools like verdict_router.py. VIOLATION: any terminal call containing sqlite3 INSERT INTO task_comments or sqlite3 UPDATE ... SET ... is a protocol violation. Use the kanban toolset \u2014 it is always available.\n\nCANONICAL LOG WRITE CONTRACT (second-brain 2.2): The pre-run script initializes and validates today's governance log. Append body content only; never replace, duplicate, or remove the opening YAML frontmatter. If the initializer fails or the file is malformed, make no vault write and report the failure. Closed property values are type=task-evidence, status=active, confidence=high; descriptive variants belong in the body, never those three properties.",
       "skills": [
         "fleet-governor",
         "obsidian-knowledge-management"
@@ -359,7 +415,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 26
       },
       "enabled": true,
       "state": "scheduled",
@@ -377,7 +434,13 @@
       ],
       "workdir": "/home/frank/.hermes/profiles/elon",
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T06:13:52.953030+01:00",
+      "last_run_at": "2026-07-29T06:08:52.953030+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e435af190e9e",
@@ -398,7 +461,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 30
       },
       "enabled": true,
       "state": "scheduled",
@@ -414,7 +478,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T06:16:58.552178+01:00",
+      "last_run_at": "2026-07-29T06:06:58.552178+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b91117332832",
@@ -449,7 +519,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "5e7d12d0a6ec",
@@ -470,7 +541,8 @@
       },
       "schedule_display": "0 4 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -484,7 +556,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-30T04:00:00+01:00",
+      "last_run_at": "2026-07-29T04:01:09.778606+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "3ac9196fe0f0",
@@ -519,7 +597,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "11295230d374",
@@ -540,7 +619,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -555,7 +635,13 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:03:31.850350+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ea7e8125bfa0",
@@ -590,7 +676,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00"
     },
     {
       "id": "f85a3de37919",
@@ -625,7 +712,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-08-03T08:00:00+01:00"
     },
     {
       "id": "43d386fc9339",
@@ -657,7 +745,8 @@
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-02T05:00:00+01:00"
     },
     {
       "id": "96a24b35be15",
@@ -725,7 +814,8 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "a5900fd72486",
@@ -796,7 +886,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "7c802db3ba38",
@@ -817,7 +908,8 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -827,7 +919,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00",
+      "last_run_at": "2026-07-29T06:00:20.908822+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "13c1f9279025",
@@ -860,7 +958,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/scripts"
+      "workdir": "/home/frank/.hermes/scripts",
+      "next_run_at": "2026-07-29T06:37:00+01:00"
     },
     {
       "id": "dac3c580e9bb",
@@ -883,7 +982,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -893,7 +993,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/scripts"
+      "workdir": "/home/frank/.hermes/scripts",
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:00:19.158346+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "d52dfcc7cbf5",
@@ -926,7 +1032,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-01T01:02:01.211661+01:00"
     },
     {
       "id": "b701186fa79f",
@@ -949,7 +1056,8 @@
       },
       "schedule_display": "every 120m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
@@ -959,7 +1067,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:03:06.452610+01:00",
+      "last_run_at": "2026-07-29T05:03:06.452610+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ee57faa4538f",
@@ -982,7 +1096,8 @@
       },
       "schedule_display": "every 7m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 38
       },
       "enabled": true,
       "state": "scheduled",
@@ -992,7 +1107,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:17:47.712490+01:00",
+      "last_run_at": "2026-07-29T06:10:47.712490+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b563577e2300",
@@ -1015,7 +1136,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 20
       },
       "enabled": true,
       "state": "scheduled",
@@ -1025,7 +1147,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:25:52.861443+01:00",
+      "last_run_at": "2026-07-29T06:10:52.861443+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "d224c5b386b0",
@@ -1048,7 +1176,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 20
       },
       "enabled": true,
       "state": "scheduled",
@@ -1058,7 +1187,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:25:54.281478+01:00",
+      "last_run_at": "2026-07-29T06:10:54.281478+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "5f71a9e0462f",
@@ -1162,7 +1297,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:02:01.211661+01:00"
     },
     {
       "id": "0ddf67598a8c",
@@ -1306,7 +1442,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "645eac4c22b5",
@@ -1329,7 +1466,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -1339,7 +1477,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:06:58.661544+01:00",
+      "last_run_at": "2026-07-29T06:06:58.661544+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "082ceadcc6d6",
@@ -1362,7 +1506,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -1372,7 +1517,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:37:00.070475+01:00",
+      "last_run_at": "2026-07-29T06:07:00.070475+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b8d28c8e5f6e",
@@ -1395,7 +1546,8 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 106
       },
       "enabled": true,
       "state": "scheduled",
@@ -1405,7 +1557,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:54.821831+01:00",
+      "last_run_at": "2026-07-29T06:10:54.821831+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c0a27b1a63c6",
@@ -1426,7 +1584,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -1436,7 +1595,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:37:00.587650+01:00",
+      "last_run_at": "2026-07-29T06:07:00.587650+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0335d3de142b",
@@ -1495,7 +1660,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 18
       },
       "enabled": true,
       "state": "scheduled",
@@ -1508,7 +1674,13 @@
         "terminal",
         "file"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:36.830136+01:00",
+      "last_run_at": "2026-07-29T06:00:36.830136+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "35fd9cd6d157",
@@ -1531,7 +1703,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -1544,7 +1717,13 @@
         "terminal",
         "file"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:00:37.839487+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "502ce12743c5",
@@ -1567,7 +1746,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -1577,7 +1757,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:07:06.690184+01:00",
+      "last_run_at": "2026-07-29T06:07:06.690184+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "96ae5ae57f3c",
@@ -1636,7 +1822,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 9
       },
       "enabled": true,
       "state": "scheduled",
@@ -1646,7 +1833,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:10:21.901204+01:00",
+      "last_run_at": "2026-07-29T05:40:21.901204+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "565a6ee597b9",
@@ -1669,7 +1862,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 19
       },
       "enabled": true,
       "state": "scheduled",
@@ -1679,7 +1873,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:19.834449+01:00",
+      "last_run_at": "2026-07-29T05:57:19.834449+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c79a0939cfe7",
@@ -1702,7 +1902,8 @@
       },
       "schedule_display": "every 240m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -1712,7 +1913,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T09:02:06.085948+01:00",
+      "last_run_at": "2026-07-29T05:02:06.085948+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "7c783af2177f",
@@ -1735,7 +1942,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 50
       },
       "enabled": true,
       "state": "scheduled",
@@ -1745,7 +1953,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:10.730641+01:00",
+      "last_run_at": "2026-07-29T06:07:10.730641+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "4aecc19efac8",
@@ -1816,7 +2030,8 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00"
     },
     {
       "id": "7885ab69d7cb",
@@ -1839,7 +2054,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 51
       },
       "enabled": true,
       "state": "scheduled",
@@ -1849,7 +2065,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:57.869112+01:00",
+      "last_run_at": "2026-07-29T06:10:57.869112+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "67a0e9a36047",
@@ -1872,7 +2094,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 50
       },
       "enabled": true,
       "state": "scheduled",
@@ -1882,7 +2105,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:24.010751+01:00",
+      "last_run_at": "2026-07-29T06:07:24.010751+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "8c0e599c454a",
@@ -1905,7 +2134,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 52
       },
       "enabled": true,
       "state": "scheduled",
@@ -1915,7 +2145,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:33.989421+01:00",
+      "last_run_at": "2026-07-29T06:07:33.989421+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f2d0c8cfd508",
@@ -1938,7 +2174,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 20
       },
       "enabled": true,
       "state": "scheduled",
@@ -1948,7 +2185,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:25:55.008468+01:00",
+      "last_run_at": "2026-07-29T06:10:55.008468+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "edb00251077b",
@@ -1971,7 +2214,8 @@
       },
       "schedule_display": "0 2 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -1981,7 +2225,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-30T02:00:00+01:00",
+      "last_run_at": "2026-07-29T02:00:13.470554+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "4ea0cb3e41a8",
@@ -2002,7 +2252,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -2012,7 +2263,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:37:34.132181+01:00",
+      "last_run_at": "2026-07-29T06:07:34.132181+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0d8a9583dfb5",
@@ -2043,7 +2300,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-31T15:30:00+01:00"
     },
     {
       "id": "dd3863533d18",
@@ -2066,7 +2324,8 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -2076,7 +2335,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-30T06:00:00+01:00",
+      "last_run_at": "2026-07-29T06:03:13.133492+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "8d034f48dc1a",
@@ -2099,7 +2364,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 19
       },
       "enabled": true,
       "state": "scheduled",
@@ -2109,7 +2375,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:25:51.559579+01:00",
+      "last_run_at": "2026-07-29T06:10:51.559579+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f7107612eb02",
@@ -2132,7 +2404,8 @@
       },
       "schedule_display": "0 3 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -2142,7 +2415,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-30T03:00:00+01:00",
+      "last_run_at": "2026-07-29T03:00:28.223988+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0e8097519c6b",
@@ -2165,7 +2444,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 29
       },
       "enabled": true,
       "state": "scheduled",
@@ -2175,7 +2455,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:02.406347+01:00",
+      "last_run_at": "2026-07-29T06:05:02.406347+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "6747b083dce8",
@@ -2201,7 +2487,8 @@
       },
       "schedule_display": "0 4,10,16,22 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -2215,7 +2502,13 @@
         "file",
         "kanban"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T10:00:00+01:00",
+      "last_run_at": "2026-07-29T04:02:51.876433+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e44dcfaaed79",
@@ -2248,7 +2541,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "30d85640737e",
@@ -2281,7 +2575,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T08:00:00+01:00"
     },
     {
       "id": "1487a685282e",
@@ -2304,7 +2599,8 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -2314,7 +2610,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:30:00+01:00",
+      "last_run_at": "2026-07-29T06:01:49.233374+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "a9def8c365df",
@@ -2337,7 +2639,8 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 101
       },
       "enabled": true,
       "state": "scheduled",
@@ -2347,7 +2650,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:57.516810+01:00",
+      "last_run_at": "2026-07-29T06:10:57.516810+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c13949d88751",
@@ -2408,7 +2717,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 29
       },
       "enabled": true,
       "state": "scheduled",
@@ -2418,7 +2728,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:02.596563+01:00",
+      "last_run_at": "2026-07-29T06:05:02.596563+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "112dbf08692a",
@@ -2441,7 +2757,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 50
       },
       "enabled": true,
       "state": "scheduled",
@@ -2451,7 +2768,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:24.094240+01:00",
+      "last_run_at": "2026-07-29T06:07:24.094240+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ef64fb885946",
@@ -2484,7 +2807,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "a1646f47cb29",
@@ -2507,7 +2831,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -2517,7 +2842,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:07:26.996714+01:00",
+      "last_run_at": "2026-07-29T06:07:26.996714+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "db9010b23a48",
@@ -2550,7 +2881,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "2a8bd26381d2",
@@ -2571,7 +2903,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 19
       },
       "enabled": true,
       "state": "scheduled",
@@ -2581,7 +2914,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:22:27.972149+01:00",
+      "last_run_at": "2026-07-29T06:07:27.972149+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2ef03c710168",
@@ -2614,7 +2953,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T06:00:00+01:00"
     },
     {
       "id": "29675cd46541",
@@ -2647,7 +2987,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "00d811ecb8f5",
@@ -2680,7 +3021,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T09:00:00+01:00"
     },
     {
       "id": "474645983254",
@@ -2703,7 +3045,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 29
       },
       "enabled": true,
       "state": "scheduled",
@@ -2713,7 +3056,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:02.684134+01:00",
+      "last_run_at": "2026-07-29T06:05:02.684134+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "bdad1a33cd6c",
@@ -2746,7 +3095,8 @@
       },
       "schedule_display": "45 15 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports"
+      "deliver": "discord:#fleet-reports",
+      "next_run_at": "2026-07-29T15:45:00+01:00"
     },
     {
       "id": "938e55e7b15b",
@@ -2760,7 +3110,8 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "state": "scheduled",
       "paused_at": null,
@@ -2779,7 +3130,13 @@
       },
       "schedule_display": "every 60m",
       "enabled": true,
-      "deliver": "discord:#fleet-reports"
+      "deliver": "discord:#fleet-reports",
+      "next_run_at": "2026-07-29T07:07:28.038566+01:00",
+      "last_run_at": "2026-07-29T06:07:28.038566+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "66bb00df0c5d",
@@ -2793,7 +3150,8 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "state": "scheduled",
       "paused_at": null,
@@ -2812,7 +3170,13 @@
       },
       "schedule_display": "17 4 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports"
+      "deliver": "discord:#fleet-reports",
+      "next_run_at": "2026-07-30T04:17:00+01:00",
+      "last_run_at": "2026-07-29T04:17:54.765070+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "042823b6d8b7",
@@ -2909,7 +3273,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -2921,7 +3286,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617"
+      "migration_task": "t_86c82617",
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:01:54.660360+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e2bcff2ad299",
@@ -2964,7 +3335,8 @@
       ],
       "workdir": null,
       "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617"
+      "migration_task": "t_86c82617",
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "86c82617fd01",
@@ -2985,7 +3357,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -2997,7 +3370,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "migration_task": "t_86c82617",
-      "updated_by_task": "t_86c82617"
+      "updated_by_task": "t_86c82617",
+      "next_run_at": "2026-07-29T06:37:34.542992+01:00",
+      "last_run_at": "2026-07-29T06:07:34.542992+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "93ced04b18bf",
@@ -3020,7 +3399,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -3034,7 +3414,13 @@
       ],
       "workdir": null,
       "rehomed_from": "/home/frank/.hermes/profiles/devops/cron/jobs.json",
-      "rehomed_by": "t_564bdeab"
+      "rehomed_by": "t_564bdeab",
+      "next_run_at": "2026-07-29T07:07:28.995090+01:00",
+      "last_run_at": "2026-07-29T06:07:28.995090+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2d696b360c2b",
@@ -3055,7 +3441,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -3067,7 +3454,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T06:37:34.669357+01:00",
+      "last_run_at": "2026-07-29T06:07:34.669357+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "fe49f09f4e53",
@@ -3088,7 +3481,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -3100,7 +3494,13 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null
+      "model_snapshot": null,
+      "next_run_at": "2026-07-29T06:40:55.488857+01:00",
+      "last_run_at": "2026-07-29T06:10:55.488857+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "d042c6feafa6",
@@ -3123,7 +3523,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 29
       },
       "enabled": true,
       "state": "scheduled",
@@ -3133,7 +3534,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:17:29.313577+01:00",
+      "last_run_at": "2026-07-29T06:07:29.313577+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "0f39598f8210",
@@ -3166,7 +3573,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "e082a67768d6",
@@ -3199,7 +3607,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:15:00+01:00"
     },
     {
       "id": "b0e293bc701c",
@@ -3222,7 +3631,8 @@
       },
       "schedule_display": "*/5 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 62
       },
       "enabled": true,
       "state": "scheduled",
@@ -3232,7 +3642,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:00+01:00",
+      "last_run_at": "2026-07-29T06:10:57.593163+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c33973886990",
@@ -3255,7 +3671,8 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 31
       },
       "enabled": true,
       "state": "scheduled",
@@ -3265,7 +3682,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:20:00+01:00",
+      "last_run_at": "2026-07-29T06:10:58.093494+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "abc411626232",
@@ -3288,7 +3711,8 @@
       },
       "schedule_display": "*/1 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 278
       },
       "enabled": true,
       "state": "scheduled",
@@ -3298,7 +3722,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:11:00+01:00",
+      "last_run_at": "2026-07-29T06:10:50.412898+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "a547b49072e0",
@@ -3331,7 +3761,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "063fe9fb6f87",
@@ -3368,7 +3799,8 @@
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "next_run_at": "2026-07-29T09:05:00+01:00"
     },
     {
       "id": "55f23658ce51",
@@ -3401,7 +3833,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-02T04:20:00+01:00"
     },
     {
       "id": "edbfa1c95482",
@@ -3434,7 +3867,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T09:00:00+01:00"
     },
     {
       "id": "88c545dffd60",
@@ -3473,7 +3907,8 @@
         "terminal",
         "file"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:15:00+01:00"
     },
     {
       "id": "48d81cb5ba90",
@@ -3506,7 +3941,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-01T07:00:00+01:00"
     },
     {
       "id": "ac8f83c93959",
@@ -3542,7 +3978,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/profiles/elon"
+      "workdir": "/home/frank/.hermes/profiles/elon",
+      "next_run_at": "2026-08-01T07:15:00+01:00"
     },
     {
       "name": "channel-liveness-oob",
@@ -3576,7 +4013,8 @@
       "updated_at": "2026-07-04T01:25:14.678592+01:00",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00"
     },
     {
       "id": "1f6bac147b1b",
@@ -3675,7 +4113,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-02T04:00:00+01:00"
     },
     {
       "id": "ab17df99a336",
@@ -3698,7 +4137,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -3708,7 +4148,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:37:35.028704+01:00",
+      "last_run_at": "2026-07-29T06:07:35.028704+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "9a755435138f",
@@ -3731,7 +4177,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 7
       },
       "enabled": true,
       "state": "scheduled",
@@ -3741,7 +4188,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:07:29.395800+01:00",
+      "last_run_at": "2026-07-29T06:07:29.395800+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "4c80202279d2",
@@ -3764,7 +4217,8 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 7
       },
       "enabled": true,
       "state": "scheduled",
@@ -3774,7 +4228,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:07:29.473075+01:00",
+      "last_run_at": "2026-07-29T06:07:29.473075+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "cbc07fdf609f",
@@ -3797,7 +4257,8 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -3807,7 +4268,13 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-30T06:00:00+01:00",
+      "last_run_at": "2026-07-29T06:06:58.477661+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e909e7639aaf",
@@ -3830,7 +4297,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 50
       },
       "enabled": true,
       "state": "scheduled",
@@ -3840,7 +4308,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:24.199160+01:00",
+      "last_run_at": "2026-07-29T06:07:24.199160+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ef9126a21c6d",
@@ -3866,7 +4340,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 16
       },
       "enabled": true,
       "state": "scheduled",
@@ -3876,7 +4351,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "last_run_at": "2026-07-29T06:10:31.440143+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null,
+      "next_run_at": "2026-07-29T06:25:31.440143+01:00"
     },
     {
       "id": "79b3e3471877",
@@ -3899,7 +4380,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 19
       },
       "enabled": true,
       "state": "scheduled",
@@ -3909,7 +4391,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:25:50.639849+01:00",
+      "last_run_at": "2026-07-29T06:10:50.639849+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "14a08855fb8f",
@@ -3942,7 +4430,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T08:00:00+01:00"
     },
     {
       "id": "78a8c2d6b4f9",
@@ -4044,7 +4533,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-30T06:00:00+01:00"
     },
     {
       "id": "c27622ade5fd",
@@ -4067,7 +4557,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 50
       },
       "enabled": true,
       "state": "scheduled",
@@ -4077,7 +4568,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:24.852444+01:00",
+      "last_run_at": "2026-07-29T06:07:24.852444+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e53763f47144",
@@ -4183,7 +4680,8 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 16
       },
       "enabled": true,
       "state": "scheduled",
@@ -4199,7 +4697,13 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:00.112827+01:00",
+      "last_run_at": "2026-07-29T05:57:00.112827+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f05227128ac2",
@@ -4222,7 +4726,8 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -4238,7 +4743,13 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T12:00:00+01:00",
+      "last_run_at": "2026-07-29T06:04:54.834257+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f9aac66d5b49",
@@ -4300,7 +4811,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -4310,7 +4822,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:40:14.204067+01:00",
+      "last_run_at": "2026-07-29T06:10:14.204067+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c916a7bc343f",
@@ -4333,7 +4851,8 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -4343,7 +4862,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes"
+      "workdir": "/home/frank/.hermes",
+      "next_run_at": "2026-07-30T06:00:00+01:00",
+      "last_run_at": "2026-07-29T06:00:49.445392+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstdout:\nSECOND_BRAIN_HEALTH_BLOCKED findings=204 severity={\"high\": 3, \"low\": 42, \"medium\": 159} catalogs_current=false retrieval_current=true scheduled_writers_current=false agent_adoption_current=false report=/home/frank/obsidian-fleet-vault/Operations/second-brain-health/latest.md json=/home/frank/obsidian-fleet-vault/Operations/second-brain-health/latest.json",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "7ad0e11f7790",
@@ -4376,7 +4901,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-01T04:15:00+01:00"
     },
     {
       "id": "1324383c1d61",
@@ -4432,7 +4958,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -4442,7 +4969,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:40:14.295912+01:00",
+      "last_run_at": "2026-07-29T06:10:14.295912+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "f96bc59a9657",
@@ -4465,7 +4998,8 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 50
       },
       "enabled": true,
       "state": "scheduled",
@@ -4475,7 +5009,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:39.397866+01:00",
+      "last_run_at": "2026-07-29T06:10:39.397866+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "a70772892543",
@@ -4498,7 +5038,8 @@
       },
       "schedule_display": "2,17,32,47 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 20
       },
       "enabled": true,
       "state": "scheduled",
@@ -4508,7 +5049,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:17:00+01:00",
+      "last_run_at": "2026-07-29T06:06:05.429746+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "fac46dae8172",
@@ -4541,7 +5088,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-03T10:00:00+01:00"
     },
     {
       "id": "0ac3d8b6af91",
@@ -4564,7 +5112,8 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -4574,7 +5123,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00",
+      "last_run_at": "2026-07-29T06:04:55.286942+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "64b9e461b28f",
@@ -4597,7 +5152,8 @@
       },
       "schedule_display": "9,24,39,54 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 21
       },
       "enabled": true,
       "state": "scheduled",
@@ -4607,7 +5163,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:24:00+01:00",
+      "last_run_at": "2026-07-29T06:10:55.512758+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 1\nstderr:\nALERT r-multiple-labeler: host-reachable DATABASE_URL unavailable (need server/.env.prod with @localhost/@127.0.0.1). Refusing to run.",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2e26eefaccf8",
@@ -4630,7 +5192,8 @@
       },
       "schedule_display": "11,26,41,56 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 20
       },
       "enabled": true,
       "state": "scheduled",
@@ -4640,7 +5203,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:11:00+01:00",
+      "last_run_at": "2026-07-29T05:56:38.416662+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "62140b71270a",
@@ -4673,7 +5242,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:45:00+01:00"
     },
     {
       "id": "062d182994e0",
@@ -4696,7 +5266,8 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -4706,7 +5277,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00",
+      "last_run_at": "2026-07-29T06:05:01.305833+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b89302ef4383",
@@ -4729,7 +5306,8 @@
       },
       "schedule_display": "*/75 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 5
       },
       "enabled": true,
       "state": "scheduled",
@@ -4739,7 +5317,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T07:00:00+01:00",
+      "last_run_at": "2026-07-29T06:05:01.389418+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "unified-health-probe-39c29d42",
@@ -4762,7 +5346,8 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 28
       },
       "enabled": true,
       "state": "scheduled",
@@ -4775,7 +5360,13 @@
         "terminal"
       ],
       "workdir": null,
-      "pinned": false
+      "pinned": false,
+      "next_run_at": "2026-07-29T06:20:58.953909+01:00",
+      "last_run_at": "2026-07-29T06:10:58.953909+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "2f4dd10c9e23",
@@ -4798,7 +5389,8 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 9
       },
       "enabled": true,
       "state": "scheduled",
@@ -4808,7 +5400,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:11:40.152808+01:00",
+      "last_run_at": "2026-07-29T05:41:40.152808+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "8b84c382cfa8",
@@ -4858,7 +5456,8 @@
         "file",
         "delegation"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T13:02:01.211661+01:00"
     },
     {
       "id": "ed3aedb474d2",
@@ -4881,7 +5480,8 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -4891,7 +5491,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:30:00+01:00",
+      "last_run_at": "2026-07-29T06:05:01.542656+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "3ddf2469949e",
@@ -4914,7 +5520,8 @@
       },
       "schedule_display": "23 4 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -4924,7 +5531,13 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-30T04:23:00+01:00",
+      "last_run_at": "2026-07-29T04:24:02.737468+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 2\nstderr:\n/home/frank/.hermes/hermes-agent/venv/bin/python: can't open file '/home/frank/.hermes/scripts/fleet_knowledge_catalog_regen.py': [Errno 2] No such file or directory",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "06311c0fa116",
@@ -4945,7 +5558,8 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 99
       },
       "enabled": true,
       "state": "scheduled",
@@ -4955,7 +5569,13 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:12:51.655766+01:00",
+      "last_run_at": "2026-07-29T06:10:51.655766+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "eff5a150e679",
@@ -4988,7 +5608,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-02T05:00:00+01:00"
     },
     {
       "id": "c1c29c17b312",
@@ -5021,7 +5642,8 @@
       "deliver": "origin",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T21:45:00+01:00"
     },
     {
       "id": "cc05e9815067",
@@ -5044,7 +5666,8 @@
       },
       "schedule_display": "*/5 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 61
       },
       "enabled": true,
       "state": "scheduled",
@@ -5054,7 +5677,13 @@
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:00+01:00",
+      "last_run_at": "2026-07-29T06:10:58.177079+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "70a1c0a8504d",
@@ -5077,7 +5706,8 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 20
       },
       "enabled": true,
       "state": "scheduled",
@@ -5093,7 +5723,13 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-07-29T06:15:00+01:00",
+      "last_run_at": "2026-07-29T06:05:02.110133+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "319421d9afc4",
@@ -5130,5 +5766,6 @@
       "disabled_by": "t_5b07664c",
       "disabled_reason": "t_5b07664c: staged for review in disabled/paused state. To activate: review, then set enabled=true AND (separately) arm LIVE=true per the staging runbook. Rehomed from devops store (t_c8241b86 GATE B) to jarvis live store."
     }
-  ]
+  ],
+  "updated_at": "2026-07-29T06:10:58.954209+01:00"
 }
