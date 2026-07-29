@@ -120,12 +120,25 @@ echo "[pristine] $TREE @ $(git -C "$TREE" rev-parse --short HEAD) branch=$(git -
 
 # 2b) provision server/node_modules so the host-side migrate.sh preflight can find drizzle-kit
 # (`bun run drizzle-kit push` runs from $TREE/server). A fresh worktree has none and `bun install`
-# is OSV-blocked here; symlink the shared checkout's server/node_modules (gitignored → survives
-# `clean -fd`). [opus48 seat 2026-07-08]
+# is OSV-blocked here; symlink the shared checkout's server/node_modules (gitignored →
+# survives `clean -fd`). [opus48 seat 2026-07-08]
 if [[ ! -e "$TREE/server/node_modules" && -d "$SHARED/server/node_modules" ]]; then
   ln -s "$SHARED/server/node_modules" "$TREE/server/node_modules"
   echo "[pristine] linked server/node_modules -> $SHARED/server/node_modules"
 fi
+
+# 2c) SYNC bind-mount config files to deploy-owned location (GAP1 structural fix, t_70eb2622).
+# The deploy-owned config directory is branch-stable and persists across git resets.
+# After every pristine checkout, refresh the 4 docker bind-mount config files so the
+# deploy-owned copy is always current with origin/main.
+CONFIG_DIR=/home/frank/.hermes/deploy-state/sycode-config
+# Prefer installed path (/usr/local/sbin), fall back to workspace seed script
+SEED_SCRIPT="/usr/local/sbin/seed-sycode-config.sh"
+[[ -x "$SEED_SCRIPT" ]] || SEED_SCRIPT="/home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_ef7ed63e/deploy/seed-sycode-config.sh"
+[[ -x "$SEED_SCRIPT" ]] || { echo "[pristine] WARN: seed-sycode-config.sh not found anywhere"; }
+SYCODE_REPO="$TREE" SYCODE_CONFIG_DIR="$CONFIG_DIR" bash "$SEED_SCRIPT" && \
+  echo "[pristine] synced bind-mount configs to $CONFIG_DIR" || \
+  echo "[pristine] WARN: bind-mount config sync had errors"
 
 # 3) stage the gitignored runtime env files compose needs (from the shared checkout)
 for f in "${ENV_FILES[@]}"; do
