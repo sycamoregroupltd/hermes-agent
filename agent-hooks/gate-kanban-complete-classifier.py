@@ -41,7 +41,8 @@ WEB_PATTERNS: PatternList = [
     r"(^|[^a-z0-9])(marketplace|storefront|frontend|dashboard|render|renders|client|component|middleware|layout|ui)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])(page\.tsx|web page|app page|route page|page component)([^a-z0-9]|$)",
     r"apps/web",
-    r"(^|[^a-z0-9])(trpc|next\.js|nextjs|react|vite)([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])(trpc)([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^.\n]{0,120})(page|route|component|ui|frontend|app)([^a-z0-9]|$)",
     # Route only counts when it is clearly an app/web/API route surface, not a
     # generic verb like "route an enabled cron".
     r"(^|[^a-z0-9])((app|web|api|frontend) route|route handler|running route|route page|route component)([^a-z0-9]|$)",
@@ -86,7 +87,7 @@ COMPLETION_HOOK_CLASSIFIER_PATTERNS: PatternList = [
 
 CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
     r"apps/web",
-    r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^.\n]{0,120})(page|route|component|ui|frontend|app)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])dashboard([^.\n]{0,80})(route|page|component|frontend|react|ui|app)([^a-z0-9]|$)",
 ]
 
