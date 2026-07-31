@@ -72,7 +72,7 @@ def main():
         db = os.path.join(task_dir, "a2.db")
         con = sqlite3.connect(db); con.execute("create table task_comments (id integer primary key, task_id text, author text, body text)")
         packet["ownership"] = {"observed_head": head}; packet["packet_fingerprint"] = fp(packet)
-        body = (f"APPROVAL A2-DISPATCH canary_task={task} provider=claude-code seat=interactive-subscription scope=no-op cancellation=stop "
+        body = (f"APPROVAL A2-DISPATCH by=jarvis-orchestrator canary_task={task} provider=claude-code seat=interactive-subscription scope=no-op cancellation=stop "
                 f"packet_fingerprint={packet['packet_fingerprint']} observed_head={head}")
         con.execute("insert into task_comments values (1,?,?,?)", (task, "jarvis-orchestrator", body)); con.commit(); con.close()
         packet["approval_anchor"] = {"comment_id": 1}
