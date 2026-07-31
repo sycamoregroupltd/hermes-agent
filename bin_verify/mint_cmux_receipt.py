@@ -41,14 +41,22 @@ Fail-closed steps (any failure refuses, rc=2, nothing published):
       transport, then `ssh dgx cat <canonical seat-reservation.json>` obtains
       strict JSON whose record_kind and reservation_fingerprint are checked.
   C8  `--json rpc system.tree`: reserved workspace AND reserved surface found
-      by exact ID (surface inside that workspace)
-  C9  caller context PROVEN: --caller-surface (explicit claim, required) must
-      exist in the tree and must EQUAL the reservation's exact
-      cmux_surface_id — any other surface, including another pane/terminal in
-      the SAME reserved workspace, refuses (t_f0321a11 finding 1). A random
-      nonce written to this process's controlling tty must appear in
-      `--json read-screen --surface <claimed>` output whose surface_id echoes
-      the claim. No tty, wrong surface, or missing nonce refuses.
+      by exact identity (surface inside that workspace). The reservation may
+      name each seat node either by raw tree ID (UUID) or by stable CMUX ref
+      ("workspace:<n>"/"surface:<n>", the `ref` field system.tree reports on
+      every node). A stable ref is resolved to its exact tree ID by full
+      enumeration of the tree — it must resolve to exactly ONE live node;
+      absent or ambiguous refs refuse. Focus/active/selected fields and list
+      order are never consulted.
+  C9  caller context PROVEN: --caller-surface (explicit claim, required) may
+      be a raw tree ID or a stable surface ref; it is normalized to its exact
+      tree ID the same way as C8, must exist in the tree, and must resolve to
+      the SAME tree ID as the reservation's cmux_surface_id — any other
+      surface, including another pane/terminal in the SAME reserved workspace,
+      refuses (t_f0321a11 finding 1). A random nonce written to this process's
+      controlling tty must appear in `--json read-screen --surface <resolved
+      tree ID>` output whose surface_id echoes that exact tree ID. No tty,
+      wrong surface, or missing nonce refuses.
   C10 receipt minted: short-lived, bound to --canary-task and to the RESERVED
       workspace/surface ids (receipt_kind unchanged so DGX G3b validates it
       byte-for-byte the same way; caller/control-socket evidence is additive)
@@ -96,6 +104,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import stat
@@ -184,6 +193,14 @@ class Refuse(Exception):
     def __init__(self, step, detail):
         super().__init__(f"{step}: {detail}")
         self.step, self.detail = step, detail
+
+
+def is_stable_ref(value, kind):
+    """True iff value is a stable CMUX ref of the given kind ("workspace:26",
+    "surface:26", ...) — the `ref` field system.tree reports on every node.
+    Stable refs are syntactically disjoint from raw tree IDs (UUIDs), so a
+    value is interpreted as exactly one of the two, never both."""
+    return isinstance(value, str) and re.fullmatch(re.escape(kind) + r":[0-9]+", value) is not None
 
 
 def validate_task_artifact_rel(rel, canary_task, *, default):
@@ -372,32 +389,103 @@ class Mint:
         self.ok("C7-reservation", f"{self.args.dgx_host} via {self.args.dgx_transport}; "
                 f"ws={self.reserved_ws} surface={self.reserved_surface}")
 
+    def _resolve_tree_node(self, step, kind, wanted, live_ids, ref_ids):
+        """Resolve a reservation seat value to its exact live tree ID.
+
+        `wanted` is either a raw tree ID (must be present in `live_ids`) or a
+        stable "<kind>:<n>" ref (must resolve via `ref_ids` to exactly ONE
+        live tree ID — absent or ambiguous refs refuse). Resolution is by
+        full-enumeration lookup only, never focus or list position."""
+        if not isinstance(wanted, str) or not wanted:
+            raise Refuse(step, f"reserved {kind} identity {wanted!r} is not a usable id/ref")
+        if is_stable_ref(wanted, kind):
+            ids = sorted(ref_ids.get(wanted) or ())
+            if not ids:
+                raise Refuse(step, f"reserved {kind} ref {wanted!r} not live in system.tree")
+            if len(ids) > 1:
+                raise Refuse(step, f"reserved {kind} ref {wanted!r} names {len(ids)} live tree "
+                                   f"nodes {ids} — identity ambiguous, refuse")
+            return ids[0]
+        if wanted not in live_ids:
+            raise Refuse(step, f"reserved {kind} {wanted} not live in system.tree")
+        return wanted
+
     def c8_reserved_seat_live(self):
         tree = self.cmux_json("C8-tree", "--json", "rpc", "system.tree", timeout=30)
-        self.surface_workspace = {}
+        # Full exact enumeration of the live tree, both by raw tree ID and by
+        # stable ref. active/focused/selected fields and list order are never
+        # consulted.
+        self.surface_workspace = {}   # surface tree ID -> workspace tree ID
+        self.surface_ref_ids = {}     # stable surface ref -> {surface tree IDs}
+        workspace_ids = set()
+        workspace_ref_ids = {}
         for window in tree.get("windows") or []:
             for ws in window.get("workspaces") or []:
+                ws_id = ws.get("id")
+                if not isinstance(ws_id, str) or not ws_id:
+                    continue
+                workspace_ids.add(ws_id)
+                if isinstance(ws.get("ref"), str) and ws["ref"]:
+                    workspace_ref_ids.setdefault(ws["ref"], set()).add(ws_id)
                 for pane in ws.get("panes") or []:
                     for surface in pane.get("surfaces") or []:
-                        self.surface_workspace[surface.get("id")] = ws.get("id")
-        if self.reserved_ws not in set(self.surface_workspace.values()):
-            raise Refuse("C8-tree", f"reserved workspace {self.reserved_ws} not live in system.tree")
-        if self.surface_workspace.get(self.reserved_surface) != self.reserved_ws:
-            raise Refuse("C8-tree", f"reserved surface {self.reserved_surface} not live inside "
-                                    f"reserved workspace {self.reserved_ws}")
-        self.ok("C8-tree", "reserved workspace+surface live (exact-ID lookup, not focus)")
+                        s_id = surface.get("id")
+                        if not isinstance(s_id, str) or not s_id:
+                            continue
+                        if self.surface_workspace.get(s_id, ws_id) != ws_id:
+                            raise Refuse("C8-tree", f"surface {s_id} listed in more than one "
+                                                    "workspace — tree identity ambiguous, refuse")
+                        self.surface_workspace[s_id] = ws_id
+                        if isinstance(surface.get("ref"), str) and surface["ref"]:
+                            self.surface_ref_ids.setdefault(surface["ref"], set()).add(s_id)
+        self.reserved_ws_tree_id = self._resolve_tree_node(
+            "C8-tree", "workspace", self.reserved_ws, workspace_ids, workspace_ref_ids)
+        self.reserved_surface_tree_id = self._resolve_tree_node(
+            "C8-tree", "surface", self.reserved_surface, self.surface_workspace,
+            self.surface_ref_ids)
+        if self.surface_workspace.get(self.reserved_surface_tree_id) != self.reserved_ws_tree_id:
+            raise Refuse("C8-tree", f"reserved surface {self.reserved_surface} (tree id "
+                                    f"{self.reserved_surface_tree_id}) not live inside reserved "
+                                    f"workspace {self.reserved_ws} (tree id "
+                                    f"{self.reserved_ws_tree_id})")
+        self.evidence["C8-resolution"] = {
+            "reserved_workspace": self.reserved_ws,
+            "reserved_workspace_tree_id": self.reserved_ws_tree_id,
+            "reserved_surface": self.reserved_surface,
+            "reserved_surface_tree_id": self.reserved_surface_tree_id,
+        }
+        self.ok("C8-tree", "reserved workspace+surface live (exact id/ref resolution, not focus)")
 
     def c9_caller_proven(self):
         claimed = self.args.caller_surface
         if not claimed:
             raise Refuse("C9-caller", "--caller-surface is required: caller context must be "
                                       "claimed explicitly and is then verified, never inferred")
-        caller_ws = self.surface_workspace.get(claimed)
-        if caller_ws is None:
-            raise Refuse("C9-caller", f"claimed caller surface {claimed} not present in system.tree")
-        if claimed != self.reserved_surface:
-            raise Refuse("C9-caller", f"caller surface {claimed} (workspace {caller_ws}) is not the "
-                                      f"reserved seat surface {self.reserved_surface} — minting is "
+        # Normalize the explicit claim (raw tree ID or stable surface ref) to
+        # its exact tree ID with the same resolver as C8, then require identity
+        # with the resolved reserved surface. The nonce proof below always runs
+        # against the resolved tree ID.
+        if is_stable_ref(claimed, "surface"):
+            ids = sorted(self.surface_ref_ids.get(claimed) or ())
+            if not ids:
+                raise Refuse("C9-caller", f"claimed caller surface ref {claimed!r} not present "
+                                          "in system.tree")
+            if len(ids) > 1:
+                raise Refuse("C9-caller", f"claimed caller surface ref {claimed!r} names "
+                                          f"{len(ids)} live surfaces {ids} — identity ambiguous, "
+                                          "refuse")
+            claimed_id = ids[0]
+        else:
+            if claimed not in self.surface_workspace:
+                raise Refuse("C9-caller",
+                             f"claimed caller surface {claimed} not present in system.tree")
+            claimed_id = claimed
+        caller_ws = self.surface_workspace.get(claimed_id)
+        if claimed_id != self.reserved_surface_tree_id:
+            raise Refuse("C9-caller", f"caller surface {claimed} (tree id {claimed_id}, workspace "
+                                      f"{caller_ws}) is not the reserved seat surface "
+                                      f"{self.reserved_surface} (tree id "
+                                      f"{self.reserved_surface_tree_id}) — minting is "
                                       "only valid from the EXACT reserved surface; another "
                                       "pane/terminal in the same reserved workspace also refuses")
         tty_path = self.args.caller_tty
@@ -416,21 +504,22 @@ class Mint:
         screen = None
         for attempt in (1, 2):
             screen = self.cmux_json("C9-read-screen", "--json", "read-screen",
-                                    "--surface", claimed)
+                                    "--surface", claimed_id)
             if nonce in (screen.get("text") or ""):
                 break
             if attempt == 1:
                 time.sleep(0.5)
-        if screen.get("surface_id") != claimed:
+        if screen.get("surface_id") != claimed_id:
             raise Refuse("C9-caller", f"read-screen answered for {screen.get('surface_id')!r}, "
-                                      f"not the claimed surface {claimed!r}")
+                                      f"not the claimed surface tree id {claimed_id!r}")
         if nonce not in (screen.get("text") or ""):
             raise Refuse("C9-caller", "nonce not visible on the claimed surface — caller context "
                                       "cannot be proven, refuse")
-        self.caller_surface, self.caller_tty = claimed, tty_path
+        self.caller_surface, self.caller_tty = claimed_id, tty_path
         self.evidence["C9-caller"] = {"nonce_sha256": hashlib.sha256(nonce.encode()).hexdigest(),
-                                      "caller_surface": claimed, "caller_tty": tty_path}
-        self.ok("C9-caller", f"nonce round-trip proven on {claimed}")
+                                      "caller_surface_claimed": claimed,
+                                      "caller_surface": claimed_id, "caller_tty": tty_path}
+        self.ok("C9-caller", f"nonce round-trip proven on {claimed_id}")
 
     def c10_mint(self):
         now = datetime.datetime.now(datetime.timezone.utc)

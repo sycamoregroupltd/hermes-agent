@@ -50,6 +50,14 @@ CALLER_SURFACE = "33333333-AAAA-BBBB-CCCC-000000000003"
 FOREIGN_WS = "44444444-AAAA-BBBB-CCCC-000000000004"
 FOREIGN_SURFACE = "55555555-AAAA-BBBB-CCCC-000000000005"
 
+# Stable CMUX refs (the `ref` field system.tree reports on every node), as a
+# reservation may name the seat by ref instead of raw UUID.
+RESERVED_WS_REF = "workspace:26"
+RESERVED_SURFACE_REF = "surface:26"
+CALLER_SURFACE_REF = "surface:27"
+FOREIGN_WS_REF = "workspace:7"
+FOREIGN_SURFACE_REF = "surface:7"
+
 
 def make_reservation(td, ws=RESERVED_WS, surface=RESERVED_SURFACE, version="0.64.20",
                      tamper=False, name="seat-reservation.json"):
@@ -167,13 +175,18 @@ def base_stub_config(wt, res_path, tty_file):
                      "app_cli_path": res_path,       # any locally-existing path
                      "socket_path": sock, "caller": None,
                      "focused": {"surface_id": FOREIGN_SURFACE, "workspace_id": FOREIGN_WS}},
-        "tree": {"active": {"surface_id": FOREIGN_SURFACE, "workspace_id": FOREIGN_WS},
+        "tree": {"active": {"surface_id": FOREIGN_SURFACE, "workspace_id": FOREIGN_WS,
+                            "surface_ref": FOREIGN_SURFACE_REF, "workspace_ref": FOREIGN_WS_REF},
                  "caller": None,
-                 "windows": [{"id": "W1", "workspaces": [
-                     {"id": FOREIGN_WS, "panes": [{"surfaces": [{"id": FOREIGN_SURFACE, "tty": "3"}]}]},
-                     {"id": RESERVED_WS, "panes": [
-                         {"surfaces": [{"id": RESERVED_SURFACE, "tty": "ttys012"}]},
-                         {"surfaces": [{"id": CALLER_SURFACE, "tty": "ttys018"}]}]},
+                 "windows": [{"id": "W1", "ref": "window:1", "workspaces": [
+                     {"id": FOREIGN_WS, "ref": FOREIGN_WS_REF, "panes": [
+                         {"surfaces": [{"id": FOREIGN_SURFACE, "ref": FOREIGN_SURFACE_REF,
+                                        "tty": "3"}]}]},
+                     {"id": RESERVED_WS, "ref": RESERVED_WS_REF, "panes": [
+                         {"surfaces": [{"id": RESERVED_SURFACE, "ref": RESERVED_SURFACE_REF,
+                                        "tty": "ttys012"}]},
+                         {"surfaces": [{"id": CALLER_SURFACE, "ref": CALLER_SURFACE_REF,
+                                        "tty": "ttys018"}]}]},
                  ]}]},
         "read_screen_base": {"workspace_id": RESERVED_WS, "window_id": "W1"},
         "screen_tty_file": tty_file,
@@ -490,6 +503,126 @@ def main():
         rc, rep = e.run()
         check("reserved surface absent from live tree refuses (C8)",
               rc == 2 and refused_at(rep) == "C8-tree")
+        e.close()
+
+        # -- stable CMUX refs resolve to exact tree IDs (C8/C9) ---------------
+        # A reservation may name the seat by stable ref (workspace:26 /
+        # surface:26); the mint resolves each ref to its exact tree ID by full
+        # enumeration and compares identity consistently — never focus, never
+        # first-listed.
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
+        rc, rep = e.run()
+        check("stable-ref reservation + raw caller claim mints (refs resolved, rc=0)",
+              rc == 0 and rep.get("verdict") == "MINTED-AND-PUBLISHED",
+              json.dumps(rep.get("refused_at", {})))
+        rec = json.load(open(e.receipt_path())) if e.published() else {}
+        check("stable-ref receipt binds the reservation's refs VERBATIM",
+              rec.get("cmux_workspace_id") == RESERVED_WS_REF
+              and rec.get("cmux_surface_id") == RESERVED_SURFACE_REF)
+        check("stable-ref receipt caller context proves the RESOLVED tree id",
+              rec.get("caller_context", {}).get("surface_id") == RESERVED_SURFACE
+              and rec.get("caller_context", {}).get("proof") == "nonce-read-screen")
+        ok, detail = gate_mod.validate_cmux_receipt(e.receipt_path(), e.res_path, "t_beefcafe")
+        check("stable-ref receipt passes the UNMODIFIED DGX G3b validator", ok, detail)
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
+        rc, rep = e.run("--caller-surface", RESERVED_SURFACE_REF)
+        # The read-screen echo is checked against the resolved tree ID, so
+        # this passing proves the nonce proof ran on the resolved UUID, not
+        # the ref string.
+        check("stable-ref caller claim resolves and proves nonce on resolved tree id",
+              rc == 0 and rep.get("verdict") == "MINTED-AND-PUBLISHED"
+              and (rep.get("evidence", {}).get("C9-caller", {}).get("caller_surface")
+                   == RESERVED_SURFACE),
+              json.dumps(rep.get("refused_at", {})))
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path), ws=RESERVED_WS_REF, surface="surface:99")
+        rc, rep = e.run()
+        check("stable surface ref absent from live tree refuses (C8)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path), ws="workspace:99",
+                         surface=RESERVED_SURFACE_REF)
+        rc, rep = e.run()
+        check("stable workspace ref absent from live tree refuses (C8)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
+        e.cfg["tree"]["windows"][0]["workspaces"].append(
+            {"id": "88888888-AAAA-BBBB-CCCC-000000000008", "ref": RESERVED_WS_REF,
+             "panes": [{"surfaces": [{"id": "88888888-AAAA-BBBB-CCCC-000000000018",
+                                      "ref": "surface:88", "tty": "ttys088"}]}]})
+        e.flush_cfg()
+        rc, rep = e.run()
+        check("ambiguous workspace ref (two live tree nodes) refuses (C8)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published()
+              and "ambiguous" in (rep.get("refused_at") or {}).get("detail", ""))
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
+        e.cfg["tree"]["windows"][0]["workspaces"].append(
+            {"id": "88888888-AAAA-BBBB-CCCC-000000000008", "ref": "workspace:88",
+             "panes": [{"surfaces": [{"id": "88888888-AAAA-BBBB-CCCC-000000000018",
+                                      "ref": RESERVED_SURFACE_REF, "tty": "ttys088"}]}]})
+        e.flush_cfg()
+        rc, rep = e.run()
+        check("ambiguous surface ref (two live tree nodes) refuses (C8)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published()
+              and "ambiguous" in (rep.get("refused_at") or {}).get("detail", ""))
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=FOREIGN_SURFACE_REF)
+        rc, rep = e.run()
+        check("surface ref resolving OUTSIDE the reserved workspace refuses (C8 containment)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=RESERVED_WS_REF)
+        rc, rep = e.run()
+        check("wrong-kind ref in surface field refuses (C8, never cross-kind resolved)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
+        rc, rep = e.run("--caller-surface", FOREIGN_SURFACE_REF)
+        check("caller claim by FOREIGN surface ref refuses (C9)",
+              rc == 2 and refused_at(rep) == "C9-caller" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
+        rc, rep = e.run("--caller-surface", CALLER_SURFACE_REF)
+        check("caller claim by same-workspace OTHER-surface ref refuses (C9 exact identity)",
+              rc == 2 and refused_at(rep) == "C9-caller" and not e.published()
+              and "EXACT reserved surface" in (rep.get("refused_at") or {}).get("detail", ""))
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        rc, rep = e.run("--caller-surface", RESERVED_SURFACE_REF)
+        check("raw-UUID reservation also accepts a stable-ref caller claim for the SAME surface",
+              rc == 0 and rep.get("verdict") == "MINTED-AND-PUBLISHED",
+              json.dumps(rep.get("refused_at", {})))
         e.close()
 
         # -- caller context ---------------------------------------------------
