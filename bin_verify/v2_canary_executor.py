@@ -6,8 +6,8 @@ contained a raw direct Claude bootstrap subprocess on the production green
 path (real_bootstrap). That is GONE: this module contains NO provider
 subprocess of any kind. The ONLY provider boundary in the entire v2 path is
 ClaudeProcessRunner inside the armed canonical ClaudeResumeExecutor
-(SubprocessClaudeRunner in production, a canned-event stub in the
-no-provider suite).
+(a gate-injected SubprocessClaudeRunner in production, a canned-event stub
+in the no-provider suite). This module never constructs that real runner.
 
 Because no session is ever created here, the session to resume MUST already
 exist as a PRE-EXISTING persisted interactive session-binding artifact
@@ -35,12 +35,11 @@ Failure at any point after the session binding is recorded retires that
 binding (best effort, recorded) and removes the canary workspace; no sealed
 terminal result can be accepted on the failure path.
 
-Determinism/test seams: dispatch_canary(runner=...) accepts a stand-in for
-the single provider boundary; StubRunner (TEST ONLY) replays canned events
-from a stub dir and can simulate adversarial mid-run conditions (post-launch
-A3 revocation latch, claim loss) against a FIXTURE board. Production callers
-leave runner=None, and the DEFAULT GATE INVOCATION STILL REFUSES long before
-this module is reached.
+Determinism/test seams: public dispatch_canary(runner=...) is StubRunner-only
+and replays canned events from a stub dir. It can simulate adversarial
+mid-run conditions (post-launch A3 revocation latch, claim loss) against a
+FIXTURE board. The private gate-owned route receives the real runner only
+from dispatch_gate_v2 after all gates and the O_EXCL lease have passed.
 """
 
 from __future__ import annotations
@@ -62,10 +61,7 @@ if str(BIN_VERIFY_ROOT) not in sys.path:
     sys.path.insert(0, str(BIN_VERIFY_ROOT))
 
 from hermes_cli import kanban_db as kb  # noqa: E402
-from hermes_cli.claude_executor import (  # noqa: E402
-    ClaudeResumeExecutor,
-    SubprocessClaudeRunner,
-)
+from hermes_cli.claude_executor import ClaudeResumeExecutor  # noqa: E402
 import issue_cmux_claude_session_binding as cmux_binding  # noqa: E402
 
 V2_MARKER = "V2_GOVERNED_CANARY_OK"
@@ -80,44 +76,6 @@ SESSION_BINDING_MAX_WINDOW_SECONDS = cmux_binding.MAX_BINDING_TTL_SECONDS
 
 class DispatchError(RuntimeError):
     """Deterministic canonical-lifecycle failure (fail-closed, no retry)."""
-
-
-# Deliberately opaque, process-local proof that dispatch_gate_v2 both passed
-# every gate and atomically consumed its one-shot lease. It is not a boolean,
-# serialisable record, or caller-supplied token. Python cannot provide a
-# cryptographic module boundary, but the private seal means normal direct API
-# callers cannot manufacture a valid capability from data alone.
-_DISPATCH_GATE_CAPABILITY_SEAL = object()
-
-
-class _DispatchGateCapability:
-    __slots__ = ("_seal", "canary_task", "lease_file")
-
-    def __init__(self, seal, *, canary_task, lease_file):
-        if seal is not _DISPATCH_GATE_CAPABILITY_SEAL:
-            raise DispatchError("dispatch capability may only be minted by the governed gate")
-        self._seal = seal
-        self.canary_task = canary_task
-        self.lease_file = str(Path(lease_file).resolve())
-
-
-def _mint_dispatch_gate_capability(*, canary_task, lease_file):
-    """Private gate-side capability mint, called only after G1-G6 and O_EXCL."""
-    if not isinstance(canary_task, str) or not canary_task:
-        raise DispatchError("gate capability requires a canary task")
-    if not lease_file or not os.path.isfile(lease_file):
-        raise DispatchError("gate capability requires the consumed one-shot lease")
-    return _DispatchGateCapability(_DISPATCH_GATE_CAPABILITY_SEAL,
-                                   canary_task=canary_task, lease_file=lease_file)
-
-
-def _require_dispatch_gate_capability(capability, *, canary_task):
-    if not isinstance(capability, _DispatchGateCapability):
-        raise DispatchError("direct real executor invocation refused: missing opaque dispatch-gate capability")
-    if capability._seal is not _DISPATCH_GATE_CAPABILITY_SEAL or capability.canary_task != canary_task:
-        raise DispatchError("direct real executor invocation refused: invalid dispatch-gate capability")
-    if not os.path.isfile(capability.lease_file):
-        raise DispatchError("direct real executor invocation refused: consumed gate lease missing")
 
 
 def digest(value: str) -> str:
@@ -280,9 +238,8 @@ class StubRunner:
         return list(cfg["events"])
 
 
-def dispatch_canary(*, board_db, canary_task, workspace_root,
-                    session_binding_path, cmux_receipt_path, reservation_path, issuer_path, hermes_home, runner=None,
-                    execution_capability=None,
+def _dispatch_gate_owned_canary(*, board_db, canary_task, workspace_root,
+                    session_binding_path, cmux_receipt_path, reservation_path, issuer_path, hermes_home, runner,
                     instruction=V2_INSTRUCTION,
                     claimer_prefix="v2-governed-canary") -> dict:
     """Execute the one governed no-op canary through the canonical lifecycle.
@@ -291,11 +248,8 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
     underlying kb error) on any failure — the caller (dispatch_gate_v2) has
     already consumed the one-shot lease, so a failure is terminal: no retry.
     """
-    # Explicit test runners remain valid deterministic seams. The only path
-    # that could start Claude is runner=None, and it requires the opaque
-    # capability minted by dispatch_gate_v2 after all gates and O_EXCL pass.
     if runner is None:
-        _require_dispatch_gate_capability(execution_capability, canary_task=canary_task)
+        raise DispatchError("gate-owned executor route requires an explicit runner")
     board_db = Path(board_db)
     workspace_root = Path(workspace_root).resolve()
     hermes_home = Path(hermes_home).resolve() if hermes_home else None
@@ -401,7 +355,7 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
                                        "a latch aborts the run before any seal",
         }
 
-        base_runner = runner or SubprocessClaudeRunner()
+        base_runner = runner
 
         class _GovernedHeartbeatRunner:
             """Wraps the run-bound heartbeat: every renewal FIRST re-checks the
@@ -480,3 +434,25 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
         if binding_artifact is not None:
             record["binding_artifact_retired"] = retire_session_binding_artifact(session_binding_path, binding_artifact)
         conn.close()
+
+
+def dispatch_canary(*, board_db, canary_task, workspace_root,
+                    session_binding_path, cmux_receipt_path, reservation_path,
+                    issuer_path, hermes_home, runner=None, instruction=V2_INSTRUCTION,
+                    claimer_prefix="v2-governed-canary") -> dict:
+    """Public deterministic fixture API; never a real-provider entry point.
+
+    Real Claude execution is deliberately not reachable through this public
+    helper. The only production route is the private gate-owned entry point
+    called by dispatch_gate_v2 after G1-G6 and the O_EXCL lease have passed.
+    """
+    if not isinstance(runner, StubRunner):
+        raise DispatchError(
+            "public dispatch_canary is fixture-only; an explicit StubRunner is required "
+            "and real provider runners are refused")
+    return _dispatch_gate_owned_canary(
+        board_db=board_db, canary_task=canary_task, workspace_root=workspace_root,
+        session_binding_path=session_binding_path, cmux_receipt_path=cmux_receipt_path,
+        reservation_path=reservation_path, issuer_path=issuer_path,
+        hermes_home=hermes_home, runner=runner, instruction=instruction,
+        claimer_prefix=claimer_prefix)

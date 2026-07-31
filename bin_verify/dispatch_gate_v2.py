@@ -64,6 +64,7 @@ BIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if BIN_DIR not in sys.path:
     sys.path.insert(0, BIN_DIR)
 import cmux_dual_anchor_contract as dual_anchor
+import verify_activation_packet as activation_verifier
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BOARD_DB = "/home/frank/.hermes/kanban/boards/jarvis-os/kanban.db"
@@ -203,9 +204,10 @@ def evaluate_gates(args):
             "and body like 'APPROVAL A2-DISPATCH%' order by id", (args.packet_card,)).fetchall()
         matches = []
         for cid, author, body in rows:
-            m = DISPATCH_RE.match(body)
-            if m and author == DISPATCH_AUTHOR:
-                matches.append((cid, m.group(1), hashlib.sha256(body.encode()).hexdigest()))
+            fields = activation_verifier.parse_a2_dispatch_fields(
+                body, require_packet_pins=False)
+            if fields and author == DISPATCH_AUTHOR:
+                matches.append((cid, fields["canary_task"], hashlib.sha256(body.encode()).hexdigest()))
 
         # A supplied canary task narrows approval to that exact disposable
         # task. Historical compliant comments for spent/different canaries
@@ -460,18 +462,17 @@ def main(argv):
         # ClaudeResumeExecutor/task-run lifecycle (t_4d09e0d9). There is no
         # raw provider subprocess path; a lifecycle failure is terminal.
         import v2_canary_executor as v2ce
-        runner = v2ce.StubRunner(args.stub_events_dir) if args.stub_events_dir else None
-        # This opaque capability is minted only after every gate has passed
-        # and this dispatcher has won the O_EXCL one-shot lease. The executor
-        # refuses runner=None without it; direct callers therefore cannot
-        # instantiate a real SubprocessClaudeRunner by bypassing this gate.
-        execution_capability = (None if runner is not None else
-                                v2ce._mint_dispatch_gate_capability(
-                                    canary_task=dispatch_task,
-                                    lease_file=args.lease_file))
+        # The gate alone owns construction of the real provider boundary, and
+        # reaches the private gate-owned executor route only after G1-G6 and
+        # the O_EXCL lease mint. The executor's public API is StubRunner-only.
+        if args.stub_events_dir:
+            runner = v2ce.StubRunner(args.stub_events_dir)
+        else:
+            from hermes_cli.claude_executor import SubprocessClaudeRunner
+            runner = SubprocessClaudeRunner()
         rec_path = os.path.join(ROOT, "evidence", "v2-dispatch-record.json")
         try:
-            record = v2ce.dispatch_canary(
+            record = v2ce._dispatch_gate_owned_canary(
                 board_db=args.board_db, canary_task=dispatch_task,
                 workspace_root=args.workspace_root,
                 session_binding_path=args.session_binding,
@@ -480,7 +481,6 @@ def main(argv):
                 issuer_path=args.binding_issuer,
                 hermes_home=args.hermes_home,
                 runner=runner,
-                execution_capability=execution_capability,
             )
             record["lease_file"] = args.lease_file
             verdict, rc = "DISPATCHED-ONCE", RC_OK

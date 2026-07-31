@@ -81,6 +81,15 @@ def main():
         con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (body.replace(body.split("packet_fingerprint=")[1].split()[0], packet["packet_fingerprint"]),)); con.commit(); con.close()
         ok, detail = mod.validate_task_a2(packet, db)
         check("external A2 validates exact task/author/semantic fingerprint/head", ok, detail)
+        malformed = body.replace("provider=claude-code", "provider=claude-code-evil")
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (malformed,)); con.commit(); con.close()
+        ok, _ = mod.validate_task_a2(packet, db)
+        check("A2 provider prefix/suffix substitution refuses", not ok)
+        duplicate = body + " provider=claude-code"
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (duplicate,)); con.commit(); con.close()
+        ok, _ = mod.validate_task_a2(packet, db)
+        check("A2 duplicate semantic key refuses", not ok)
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (body,)); con.commit(); con.close()
         tampered = dict(packet); tampered["packet_fingerprint"] = "sha256:forged"
         ok, _ = mod.validate_task_a2(tampered, db)
         check("packet replacement after valid A2 is refused", not ok)

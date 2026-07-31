@@ -527,9 +527,8 @@ def main():
         finally:
             shutil.rmtree(stop_parent, ignore_errors=True)
 
-        # The direct executor API may still accept an explicit StubRunner for
-        # deterministic fixtures, but runner=None cannot construct the real
-        # SubprocessClaudeRunner without the opaque post-gate capability.
+        # The public executor API is fixture-only: neither runner=None nor an
+        # explicitly supplied real Claude runner may reach the provider path.
         executor_spec = importlib.util.spec_from_file_location(
             "v2_executor_direct_capability", os.path.join(ROOT, "bin_verify", "v2_canary_executor.py"))
         executor_mod = importlib.util.module_from_spec(executor_spec)
@@ -545,9 +544,25 @@ def main():
                 hermes_home=os.path.join(td, "unused-profile"), runner=None)
             direct_real_refused = False
         except executor_mod.DispatchError as exc:
-            direct_real_refused = "dispatch-gate capability" in str(exc)
-        check("direct runner=None executor invocation refuses without opaque gate capability",
+            direct_real_refused = "fixture-only" in str(exc)
+        check("public runner=None executor invocation is refused before provider creation",
               direct_real_refused)
+        from hermes_cli.claude_executor import SubprocessClaudeRunner
+        try:
+            executor_mod.dispatch_canary(
+                board_db=os.path.join(td, "unused-real.db"), canary_task="t_beefcafe",
+                workspace_root=os.path.join(td, "unused-real-workspace"),
+                session_binding_path=os.path.join(td, "unused-real-binding.json"),
+                cmux_receipt_path=os.path.join(td, "unused-real-receipt.json"),
+                reservation_path=os.path.join(td, "unused-real-reservation.json"),
+                issuer_path=os.path.join(td, "unused-real-issuer.py"),
+                hermes_home=os.path.join(td, "unused-real-profile"),
+                runner=SubprocessClaudeRunner())
+            direct_explicit_real_refused = False
+        except executor_mod.DispatchError as exc:
+            direct_explicit_real_refused = "fixture-only" in str(exc)
+        check("public explicit real runner is refused before provider call",
+              direct_explicit_real_refused)
 
 
         # G3d is a provider boundary: it must refuse an otherwise-valid

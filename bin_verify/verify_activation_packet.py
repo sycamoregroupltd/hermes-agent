@@ -12,6 +12,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -53,6 +54,24 @@ MANDATORY_SOURCE_FILES = (
 A2_AUTHOR = "jarvis-orchestrator"
 EXTERNAL_RESERVATION_TOOL = "/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/t_d7e6c034/bin/seat_reservation.py"
 
+A2_REQUIRED_FIELDS = ("by", "canary_task", "provider", "seat", "scope", "cancellation",
+                      "packet_fingerprint", "observed_head")
+
+
+def parse_a2_dispatch_fields(body, *, require_packet_pins=True):
+    """Parse exact, duplicate-free A2 key/value fields without substrings."""
+    if not isinstance(body, str) or not body.startswith("APPROVAL A2-DISPATCH"):
+        return None
+    fields = {}
+    for key, value in re.findall(r"(?:^|\s)([a-z_]+)=([^\s]+)", body):
+        if key in fields:
+            return None
+        fields[key] = value
+    required = A2_REQUIRED_FIELDS if require_packet_pins else A2_REQUIRED_FIELDS[:6]
+    if any(not fields.get(key) for key in required):
+        return None
+    return fields
+
 
 def validate_task_a2(packet, board_db=CANONICAL_BOARD_DB):
     """Validate external board A2 binding; packet cannot self-authorize."""
@@ -62,14 +81,12 @@ def validate_task_a2(packet, board_db=CANONICAL_BOARD_DB):
         con = sqlite3.connect(f"file:{board_db}?mode=ro", uri=True)
         row = con.execute("select task_id,author,body from task_comments where id=?", (cid,)).fetchone(); con.close()
         if not row or row[0] != task or row[1] != A2_AUTHOR: return False, "A2 comment absent/task/author mismatch"
-        body = row[2]
-        required = ("APPROVAL A2-DISPATCH", "by=jarvis-orchestrator", f"canary_task={task}", "provider=claude-code",
-                    "seat=interactive-subscription", "scope=no-op", "cancellation=",
-                    f"packet_fingerprint={packet.get('packet_fingerprint')}", f"observed_head={head}")
-        if not all(x in body for x in required): return False, "A2 semantic/fingerprint/head contract mismatch"
-        import re
-        if not re.search(r"(?:^|\s)by=jarvis-orchestrator(?=\s|$)", body): return False, "A2 by grammar invalid"
-        if not re.search(r"(?:^|\s)cancellation=\S+", body): return False, "A2 cancellation missing/empty"
+        fields = parse_a2_dispatch_fields(row[2])
+        expected = {"by": A2_AUTHOR, "canary_task": task, "provider": "claude-code",
+                    "seat": "interactive-subscription", "scope": "no-op",
+                    "packet_fingerprint": packet.get("packet_fingerprint"), "observed_head": head}
+        if fields is None or any(fields.get(key) != value for key, value in expected.items()):
+            return False, "A2 semantic/fingerprint/head contract mismatch"
         return True, ""
     except (KeyError, ValueError, sqlite3.Error) as exc: return False, str(exc)
 
