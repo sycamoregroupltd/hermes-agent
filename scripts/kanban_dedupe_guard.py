@@ -168,6 +168,101 @@ def title_role(title: str) -> str:
     return "review" if REVIEW_TITLE_RE.search(title or "") else "work"
 
 
+# --- RULE 6: reviewer-routing terminal-capability gate -------------------
+# Review-class cards (REVIEW / REWORK / RISK-VERDICT / risk-review / post-state
+# review / terminal review) must only be assigned to profiles that carry the
+# `terminal` toolset (i.e. can actually execute/verify the work). A review card
+# routed to a terminal-less profile spawns, fails on capability, and re-blocks
+# (the 2026-07-28 blocked-refill churn: 30/254 re-blocked within hours).
+#
+# Capability is encoded as the `terminal` toolset in each profile config.yaml.
+# It is verified at runtime by profile_has_terminal() — NEVER a hard-coded name
+# allowlist — so newly added terminal-capable profiles are honored automatically
+# and renamed/removed ones are re-checked. This supersedes the stale 2026-07-28
+# allowlist that wrongly listed `devops` (whose toolsets are [hermes-cli, kanban]
+# — no terminal) as terminal-capable.
+REVIEW_TITLE_LEAD_RE = re.compile(
+    r"^\s*(?:PRE[- ]REVIEW\s+|POST[- ]STATE\s+REVIEW\s+|TERMINAL\s+REVIEW\s+|"
+    r"REVIEW\s+|REWORK\s+|VERDICT\s+)",
+    re.IGNORECASE,
+)
+REVIEW_VERDICT_BODY_RE = re.compile(
+    r"(?i)(REVIEW_VERDICT|REWORK_REQUIRED|post-state\s+review|terminal\s+review"
+    r"|\brisk[- ]verdict\b)",
+)
+TERMINAL_TOOLSET = "terminal"
+
+
+def profile_has_terminal(profile: str) -> bool:
+    """Return True iff <profile> exists and its config.yaml `toolsets:` include
+    the terminal toolset. Unknown/missing profile or unreadable config => False
+    (fail-closed: a profile we cannot prove terminal is NOT reviewer-capable)."""
+    cfg = PROFILES_DIR / profile / "config.yaml"
+    try:
+        text = cfg.read_text(errors="replace")
+    except OSError:
+        return False
+    # Parse the top-level `toolsets:` block: collect `- item` list entries until
+    # the next top-level (zero-indent) key ends the block.
+    in_block = False
+    toolsets: list[str] = []
+    for line in text.splitlines():
+        if re.match(r"^toolsets\s*:", line):  # top-level key only
+            in_block = True
+            continue
+        if in_block:
+            stripped = line.strip()
+            if re.match(r"^- ", stripped):
+                toolsets.append(stripped[2:].strip())
+            elif line and not line[0].isspace() and not stripped.startswith("- "):
+                break  # next top-level key ends the block
+    return TERMINAL_TOOLSET in toolsets
+
+
+def review_assignee_block_reason(title: str, body: str, assignee: str) -> str | None:
+    """RULE 6: block review-class cards from non-terminal-capable assignees.
+
+    A card is review-class when its title LEADS with a review term
+    (REVIEW/REWORK/VERDICT/Pre-review/Post-state review/Terminal review) or its
+    body carries an explicit review-verdict marker. Implementation cards that
+    merely mention review after the leading verb (e.g. "IMPLEMENT AFTER REVIEW")
+    are NOT review-class and pass through.
+
+    Returns a block reason string when the card must NOT be routed to the given
+    assignee, else None (allowed). A blank/unassigned review-class card is also
+    blocked — a review card with no terminal-capable owner cannot be executed.
+    """
+    title = title or ""
+    body = body or ""
+    assignee = (assignee or "").strip()
+
+    is_review_title = bool(REVIEW_TITLE_LEAD_RE.match(title))
+    is_review_body = bool(REVIEW_VERDICT_BODY_RE.search(body))
+    if not (is_review_title or is_review_body):
+        return None  # not a review-class card
+
+    if not assignee:
+        return (
+            f"BLOCKED by {GUARD_AUTHOR}: review-class card is UNASSIGNED. "
+            f"Review/REWORK/RISK-VERDICT cards must be routed to a "
+            f"terminal-capable reviewer profile (one whose config.yaml toolsets "
+            f"include 'terminal'). Assign a capable profile before creation. "
+            f"Ref: jarvis-os/t_2a069cba"
+        )
+
+    if not profile_has_terminal(assignee):
+        return (
+            f"BLOCKED by {GUARD_AUTHOR}: review-class card assigned to "
+            f"'{assignee}', which is NOT terminal-capable (its config.yaml "
+            f"toolsets lack 'terminal'). Review/REWORK/RISK-VERDICT cards must "
+            f"route only to terminal-capable reviewer profiles — routing to a "
+            f"terminal-less profile spawns, fails on capability, and re-blocks. "
+            f"Reassign to a terminal-capable reviewer. "
+            f"Ref: jarvis-os/t_2a069cba"
+        )
+    return None  # terminal-capable reviewer — allowed
+
+
 def title_high_allowed(title_a: str, title_b: str, toks_a: set[str], toks_b: set[str]) -> bool:
     """False-positive guard for RULE 3 HIGH.
 
@@ -626,6 +721,17 @@ def scan_board(board: str, *, include_archived: bool, assume_blocked: set[str],
                             state, dry_run, report)
                     break
 
+        # RULE 6: review-class card assigned to a non-terminal-capable profile.
+        # Active candidates only (pre-dispatch guard). Blocks todo/ready and
+        # comments running — mirrors RULE 2. This is the persistent backstop for
+        # the dispatcher capability gate: it catches cards that already exist on
+        # the board with a terminal-less reviewer assignee.
+        if t["status"] in ACTIVE_STATUSES:
+            r6 = review_assignee_block_reason(t["title"], t["body"], t["assignee"])
+            if r6:
+                act(board, t, "RULE6-reviewer-not-terminal-capable", r6,
+                    state, dry_run, report)
+
     # RULE 4: stale-reference blocked lanes (phantom blockers that
     # reference an already-done source task). Conservative: report-only
     # unless resolve=True. Reuses the shared state/comment/complete path.
@@ -722,6 +828,12 @@ def hook_check() -> None:
             f"profile (e.g. trading-devops) or escalate to Frank. Ref: {INCIDENT_NOTE}"
         )
 
+
+    # RULE 6 at create time: review-class card -> non-terminal assignee.
+    r6 = review_assignee_block_reason(title, body, assignee)
+    if r6:
+        print(r6)
+        return
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
