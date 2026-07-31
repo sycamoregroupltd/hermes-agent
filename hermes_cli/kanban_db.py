@@ -311,6 +311,53 @@ DEFAULT_CRASH_GRACE_SECONDS = 30
 # 0/1/2 codes the worker uses for success / generic failure / usage error.
 KANBAN_RATE_LIMIT_EXIT_CODE = 75
 
+# Minimum spacing between persisted block-gate audit events for the SAME
+# card (t_2a652a17). Without this, a card that is parked ``blocked`` while
+# still surfacing in the ready queue (e.g. upero/t_2fa4b632, which sat for
+# 87.4h) emits a ``block_gate_audit`` + ``blocked_dispatch_attempt`` pair on
+# EVERY dispatcher tick (~1/min), flooding ``task_events`` with thousands of
+# duplicate rows and drowning real signal. We still guarantee at least one
+# audit event per card so telemetry can prove a blocked card was refused, but
+# we coalesce the repeats: after the first audit, subsequent refusals within
+# the window increment an in-memory attempt counter and are re-emitted at most
+# once per window (carrying ``suppressed_since`` / ``attempts_in_window`` so a
+# watchdog can still see the sustained starvation without the event spam).
+BLOCK_GATE_AUDIT_MIN_INTERVAL_SECONDS = 900
+
+# In-memory audit rate-limit ledger: ``task_id -> (last_emit_epoch,
+# attempts_since_last_emit)``. Process-local; a dispatcher restart re-emits
+# one audit per card, which is the desired "prove it's still blocked" signal.
+_block_gate_audit_ledger: "dict[str, tuple[float, int]]" = {}
+
+
+def _should_emit_block_gate_audit(
+    task_id: str, now: float, min_interval: float = BLOCK_GATE_AUDIT_MIN_INTERVAL_SECONDS
+) -> "tuple[bool, int]":
+    """Rate-limit block-gate audit events for a single card (t_2a652a17).
+
+    Returns ``(should_emit, attempts_in_window)``:
+
+    * ``should_emit`` is ``True`` on the first refusal for a card and again
+      only after ``min_interval`` seconds have elapsed since the last emit.
+    * ``attempts_in_window`` is the number of refusals coalesced since the
+      last emitted audit (0 on the first emit) so the re-emitted event can
+      report how many ticks the card has been starving.
+
+    Refusals inside the window increment the counter and return
+    ``(False, ...)`` so the caller skips the DB write entirely.
+    """
+    entry = _block_gate_audit_ledger.get(task_id)
+    if entry is None:
+        _block_gate_audit_ledger[task_id] = (now, 0)
+        return (True, 0)
+    last_emit, attempts = entry
+    if now - last_emit >= min_interval:
+        coalesced = attempts + 1
+        _block_gate_audit_ledger[task_id] = (now, 0)
+        return (True, coalesced)
+    _block_gate_audit_ledger[task_id] = (last_emit, attempts + 1)
+    return (False, attempts + 1)
+
 
 def _resolve_crash_grace_seconds() -> int:
     """Return the crash-detection grace period in seconds.
@@ -8823,37 +8870,50 @@ def _dispatch_once_locked(
             if not dry_run:
                 at = _claimer_id()
                 at_ts = int(time.time())
-                with write_txn(conn):
-                    # Legacy audit event — emit for the sticky-block path so
-                    # existing dashboards / soak watchers that read
-                    # ``block_gate_audit`` keep working (registered design at
-                    # Incidents/Audits/2026-07-28-t_f85428fe-...). The
-                    # non-sticky blind-spot case (status='blocked' with no
-                    # blocked event) is covered only by the new
-                    # ``blocked_dispatch_attempt`` event below.
-                    if _sticky:
+                # Rate-limit the persisted audit events (t_2a652a17). A card
+                # that stays blocked while resurfacing in the ready queue
+                # (upero/t_2fa4b632 sat 87.4h) would otherwise emit an audit
+                # pair every tick. We always record the first refusal, then
+                # coalesce repeats to at most one event per window, carrying
+                # the suppressed-attempt count so a watchdog still sees the
+                # sustained starvation without the event-table flood.
+                _emit_audit, _attempts_in_window = _should_emit_block_gate_audit(
+                    row["id"], at_ts
+                )
+                if _emit_audit:
+                    with write_txn(conn):
+                        # Legacy audit event — emit for the sticky-block path so
+                        # existing dashboards / soak watchers that read
+                        # ``block_gate_audit`` keep working (registered design at
+                        # Incidents/Audits/2026-07-28-t_f85428fe-...). The
+                        # non-sticky blind-spot case (status='blocked' with no
+                        # blocked event) is covered only by the new
+                        # ``blocked_dispatch_attempt`` event below.
+                        if _sticky:
+                            _append_event(
+                                conn, row["id"], "block_gate_audit",
+                                {
+                                    "origin": at,
+                                    "task_id": row["id"],
+                                    "timestamp": at_ts,
+                                    "attempts_in_window": _attempts_in_window,
+                                },
+                            )
+                        # New t_73a70cde audit event — every blocked-card claim
+                        # attempt (sticky OR blind-spot status='blocked') carries
+                        # the required metadata: card id, timestamp, dispatcher id.
                         _append_event(
-                            conn, row["id"], "block_gate_audit",
+                            conn, row["id"], "blocked_dispatch_attempt",
                             {
-                                "origin": at,
                                 "task_id": row["id"],
+                                "dispatcher_id": at,
                                 "timestamp": at_ts,
+                                "status_column": _blocked_row_status,
+                                "sticky_block": _sticky,
+                                "attempts_in_window": _attempts_in_window,
+                                "reason": "dispatcher refused to claim a blocked card",
                             },
                         )
-                    # New t_73a70cde audit event — every blocked-card claim
-                    # attempt (sticky OR blind-spot status='blocked') carries
-                    # the required metadata: card id, timestamp, dispatcher id.
-                    _append_event(
-                        conn, row["id"], "blocked_dispatch_attempt",
-                        {
-                            "task_id": row["id"],
-                            "dispatcher_id": at,
-                            "timestamp": at_ts,
-                            "status_column": _blocked_row_status,
-                            "sticky_block": _sticky,
-                            "reason": "dispatcher refused to claim a blocked card",
-                        },
-                    )
             continue
 
         row_assignee = row["assignee"]

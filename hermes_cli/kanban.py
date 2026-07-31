@@ -2532,6 +2532,8 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             ],
             "skipped_unassigned": res.skipped_unassigned,
             "skipped_nonspawnable": res.skipped_nonspawnable,
+            "skipped_block_gate": res.skipped_block_gate,
+            "blocked_claim_attempts": res.blocked_claim_attempts,
             "skipped_per_profile_capped": [
                 {"task_id": tid, "assignee": who, "current": current}
                 for (tid, who, current) in res.skipped_per_profile_capped
@@ -2574,6 +2576,22 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             f"Skipped (non-spawnable assignee — terminal lane, OK): "
             f"{', '.join(res.skipped_nonspawnable)}"
         )
+    if res.blocked_claim_attempts:
+        # t_2a652a17: surface block-gate starvation. A card that keeps
+        # resurfacing in the ready queue while blocked (the sticky
+        # block-gate starvation upero/t_2fa4b632 hit) is otherwise invisible
+        # in the dispatch summary — the operator only sees Spawned:0 with no
+        # explanation. Count them here so `hermes kanban dispatch` makes the
+        # refusal visible without trawling task_events.
+        print(
+            f"Blocked (refused to claim — needs unblock): "
+            f"{len(res.blocked_claim_attempts)}"
+        )
+        print(f"  {', '.join(res.blocked_claim_attempts)}")
+        if res.skipped_block_gate:
+            print(
+                f"  (sticky block gate: {', '.join(res.skipped_block_gate)})"
+            )
     return 0
 
 

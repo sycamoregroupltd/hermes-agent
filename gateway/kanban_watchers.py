@@ -1437,7 +1437,17 @@ class GatewayKanbanWatchersMixin:
                     await asyncio.to_thread(_auto_decompose_tick, _ad_per_tick)
                 results = await asyncio.to_thread(_tick_once)
                 any_spawned = False
+                blocked_starved: list[str] = []
                 for slug, res in (results or []):
+                    if res is not None:
+                        # t_2a652a17: aggregate block-gate refusals across
+                        # boards so the stuck-warn can name the real cause.
+                        # A card that shows ``ready`` but is refused by the
+                        # block gate every tick (upero/t_2fa4b632 sat 87.4h)
+                        # is a starvation signal, NOT a broken profile.
+                        _bca = getattr(res, "blocked_claim_attempts", None)
+                        if _bca:
+                            blocked_starved.extend(f"{slug}/{tid}" for tid in _bca)
                     if res is not None and getattr(res, "spawned", None):
                         any_spawned = True
                         # Quiet by default — only log when something actually
@@ -1462,13 +1472,28 @@ class GatewayKanbanWatchersMixin:
                 if bad_ticks >= HEALTH_WINDOW:
                     now = int(time.time())
                     if now - last_warn_at >= 300:
-                        logger.warning(
-                            "kanban dispatcher stuck: ready queue non-empty for "
-                            "%d consecutive ticks but 0 workers spawned. Check "
-                            "profile health (venv, PATH, credentials) and "
-                            "`hermes kanban list --status ready`.",
-                            bad_ticks,
-                        )
+                        if blocked_starved:
+                            # Block-gate starvation: cards are refused because
+                            # they carry an unresolved block, not because a
+                            # profile is broken. Name the cards + the fix so
+                            # an operator can unblock them (t_2a652a17).
+                            logger.warning(
+                                "kanban dispatcher stuck: ready queue non-empty "
+                                "for %d consecutive ticks but 0 workers spawned. "
+                                "%d card(s) are being refused by the block gate "
+                                "(need `hermes kanban unblock`): %s",
+                                bad_ticks,
+                                len(blocked_starved),
+                                ", ".join(sorted(set(blocked_starved))[:20]),
+                            )
+                        else:
+                            logger.warning(
+                                "kanban dispatcher stuck: ready queue non-empty for "
+                                "%d consecutive ticks but 0 workers spawned. Check "
+                                "profile health (venv, PATH, credentials) and "
+                                "`hermes kanban list --status ready`.",
+                                bad_ticks,
+                            )
                         last_warn_at = now
             except asyncio.CancelledError:
                 logger.debug("kanban dispatcher: cancelled")
