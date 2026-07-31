@@ -51,6 +51,7 @@ MANDATORY_SOURCE_FILES = (
     "bin_verify/issue_cmux_claude_session_binding.py", "bin_verify/cmux_dual_anchor_contract.py",
 )
 A2_AUTHOR = "jarvis-orchestrator"
+EXTERNAL_RESERVATION_TOOL = "/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/t_d7e6c034/bin/seat_reservation.py"
 
 
 def validate_task_a2(packet, board_db=CANONICAL_BOARD_DB):
@@ -163,6 +164,12 @@ def main(argv=None):
         evidence_hashes = reviewed.get("evidence", {})
         check("schema-v2 has nonempty reviewed source hashes", isinstance(source_hashes, dict) and bool(source_hashes))
         check("schema-v2 has nonempty reviewed evidence hashes", isinstance(evidence_hashes, dict) and bool(evidence_hashes))
+        external = reviewed.get("external_sources", {})
+        external_hash = external.get(EXTERNAL_RESERVATION_TOOL)
+        check("schema-v2 pins canonical external reservation writer", isinstance(external_hash, str) and len(external_hash) == 64)
+        got_external = sha256_file(EXTERNAL_RESERVATION_TOOL) if os.path.isfile(EXTERNAL_RESERVATION_TOOL) else "MISSING"
+        check("external reservation writer hash matches immutable manifest pin", got_external == external_hash,
+              f"expected={str(external_hash)[:16]} current={got_external[:16]}")
         check("schema-v2 includes every mandatory executor/gate source", set(MANDATORY_SOURCE_FILES).issubset(source_hashes),
               "missing=" + repr(sorted(set(MANDATORY_SOURCE_FILES) - set(source_hashes))))
         for category in ("sources", "review_docs", "evidence"):

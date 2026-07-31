@@ -47,6 +47,8 @@ def main():
         source_sha = hashlib.sha256(open(os.path.join(ROOT, source_rel), "rb").read()).hexdigest()
         evidence_rel = "reservation/task-artifacts/t_beefcafe/test-evidence.json"
         evidence_sha = hashlib.sha256(open(evidence, "rb").read()).hexdigest()
+        external_path = "/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/t_d7e6c034/bin/seat_reservation.py"
+        external_sha = hashlib.sha256(open(external_path, "rb").read()).hexdigest()
         head = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         packet = {
             "schema_version": 2, "task_id": task, "status": "draft-preflight-only",
@@ -55,7 +57,8 @@ def main():
             "caps": {"one_run_only": True, "max_retries": 0},
             "ownership": {"observed_head": head},
             "reviewed_hashes": {"sources": {source_rel: source_sha}, "review_docs": {},
-                                "evidence": {evidence_rel: evidence_sha}},
+                                "evidence": {evidence_rel: evidence_sha},
+                                "external_sources": {external_path: external_sha}},
         }
         packet["packet_fingerprint"] = fp(packet)
         open(packet_path, "w").write(json.dumps(packet, sort_keys=True))
@@ -81,6 +84,13 @@ def main():
         tampered = dict(packet); tampered["packet_fingerprint"] = "sha256:forged"
         ok, _ = mod.validate_task_a2(tampered, db)
         check("packet replacement after valid A2 is refused", not ok)
+
+        bad_external = dict(packet); bad_external["reviewed_hashes"] = dict(packet["reviewed_hashes"])
+        bad_external["reviewed_hashes"]["external_sources"] = {external_path: "0" * 64}; bad_external["packet_fingerprint"] = fp(bad_external)
+        open(packet_path, "w").write(json.dumps(bad_external))
+        rc, out = run(packet_path, task)
+        check("altered external reservation writer pin refuses", rc == 4 and "external reservation writer hash" in failures(out), failures(out))
+        open(packet_path, "w").write(json.dumps(packet, sort_keys=True))
 
         forged = dict(packet); forged["source_root"] = "/tmp/forged-root"; forged["packet_fingerprint"] = fp(forged)
         forged_path = "/tmp/forged-activation-packet.json"
