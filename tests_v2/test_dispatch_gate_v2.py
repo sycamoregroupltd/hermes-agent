@@ -314,7 +314,21 @@ def main():
                            "--stop-file", os.path.join(td, "STOP"),
                            "--packet-verifier", stub_verifier_ok(td),
                            "--reservation-tool", stub_reservation_ok(td))
-        check("mismatched canary id refused", rc == 5 and gate_status(rep, "G2b") is False)
+        check("mismatched canary id refused", rc == 5 and gate_status(rep, "G2 ") is False)
+        os.remove(board)
+
+        # A spent, valid historical A2 comment for a different disposable task
+        # must not poison a fresh exact-task approval on the same packet card.
+        historical = GOOD_DISPATCH.replace("t_beefcafe", "t_deadbeef")
+        board = make_board(td, [("jarvis-orchestrator", historical),
+                                ("jarvis-orchestrator", GOOD_DISPATCH)])
+        rc, rep = run_gate("--canary-task", "t_beefcafe", "--board-db", board,
+                           "--lease-file", os.path.join(td, "l3.json"),
+                           "--stop-file", os.path.join(td, "STOP"),
+                           "--packet-verifier", stub_verifier_ok(td),
+                           "--reservation-tool", stub_reservation_ok(td))
+        check("historical other-task A2 comment does not block requested task",
+              gate_status(rep, "G2 ") is True and gate_status(rep, "G2b") is True)
         os.remove(board)
 
         # 2b. Mac-receipt validation matrix (G3b): stale / mismatched / missing / tampered.

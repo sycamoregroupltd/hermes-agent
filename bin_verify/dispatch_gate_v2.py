@@ -172,19 +172,29 @@ def evaluate_gates(args):
             m = DISPATCH_RE.match(body)
             if m and author == DISPATCH_AUTHOR:
                 matches.append((cid, m.group(1), hashlib.sha256(body.encode()).hexdigest()))
-        if len(matches) == 1:
-            cid, dispatch_task, body_sha = matches[0]
+
+        # A supplied canary task narrows approval to that exact disposable
+        # task. Historical compliant comments for spent/different canaries
+        # remain audit evidence, not a second approval for this task. Duplicate
+        # comments naming this same requested task stay ambiguous and refuse.
+        relevant = matches if args.canary_task is None else [
+            item for item in matches if item[1] == args.canary_task
+        ]
+        if len(relevant) == 1:
+            cid, dispatch_task, body_sha = relevant[0]
             g2 = True
             detail = ""
-        elif not matches:
-            g2, detail = False, "no exact A2 dispatch comment present — dispatch not approved"
+        elif not relevant:
+            g2 = False
+            detail = ("no exact A2 dispatch comment naming the requested canary task"
+                      if args.canary_task else
+                      "no exact A2 dispatch comment present — dispatch not approved")
         else:
-            g2, detail = False, f"{len(matches)} matching dispatch comments — ambiguous, refuse"
+            g2 = False
+            detail = (f"{len(relevant)} matching dispatch comments for requested task "
+                      f"{args.canary_task} — ambiguous, refuse")
         gate_result(gates, "G2 exact A2 dispatch comment (grammar+author, exactly one)", g2, detail)
-        if g2 and args.canary_task and dispatch_task != args.canary_task:
-            gate_result(gates, "G2b dispatch comment names the requested canary task", False,
-                        f"comment names {dispatch_task}, requested {args.canary_task}")
-        elif g2:
+        if g2:
             gate_result(gates, "G2b dispatch comment names the requested canary task",
                         args.canary_task is None or dispatch_task == args.canary_task)
     except sqlite3.Error as e:
