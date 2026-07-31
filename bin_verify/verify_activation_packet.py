@@ -67,6 +67,9 @@ def validate_task_a2(packet, board_db=CANONICAL_BOARD_DB):
                     "seat=interactive-subscription", "scope=no-op", "cancellation=",
                     f"packet_fingerprint={packet.get('packet_fingerprint')}", f"observed_head={head}")
         if not all(x in body for x in required): return False, "A2 semantic/fingerprint/head contract mismatch"
+        import re
+        if not re.search(r"(?:^|\s)by=jarvis-orchestrator(?=\s|$)", body): return False, "A2 by grammar invalid"
+        if not re.search(r"(?:^|\s)cancellation=\S+", body): return False, "A2 cancellation missing/empty"
         return True, ""
     except (KeyError, ValueError, sqlite3.Error) as exc: return False, str(exc)
 

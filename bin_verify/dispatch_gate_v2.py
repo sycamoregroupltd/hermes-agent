@@ -354,13 +354,18 @@ def main(argv):
 
     # Real runner derives the task packet itself; callers cannot select it.
     if args.canary_task and args.stub_events_dir is None:
-        args.activation_packet = os.path.join(ROOT, "reservation", "task-artifacts", args.canary_task,
-                                              f"ACTIVATION-PACKET-{args.canary_task}.json")
+        task_artifacts = os.path.join(ROOT, "reservation", "task-artifacts", args.canary_task)
+        args.activation_packet = os.path.join(task_artifacts, f"ACTIVATION-PACKET-{args.canary_task}.json")
+        args.reservation_json = os.path.join("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces", args.canary_task, "reservation", "seat-reservation.json")
+        args.cmux_receipt = os.path.join(task_artifacts, "cmux-reservation-receipt.json")
+        args.session_binding = os.path.join(task_artifacts, "cmux-interactive-session-binding.json")
+        args.packet_card = args.canary_task
+        args.workspace_root = os.path.join(ROOT, "reservation", "task-workspaces", args.canary_task)
         canonical = {"packet_verifier": DEFAULT_VERIFIER, "board_db": DEFAULT_BOARD_DB,
-            "reservation_tool": DEFAULT_RESERVATION_TOOL, "reservation_json": DEFAULT_RESERVATION_JSON,
-            "cmux_receipt": DEFAULT_CMUX_RECEIPT, "session_binding": DEFAULT_SESSION_BINDING,
-            "binding_issuer": DEFAULT_BINDING_ISSUER, "workspace_root": DEFAULT_WORKSPACE_ROOT,
-            "packet_card": PACKET_CARD}
+            "reservation_tool": DEFAULT_RESERVATION_TOOL, "reservation_json": args.reservation_json,
+            "cmux_receipt": args.cmux_receipt, "session_binding": args.session_binding,
+            "binding_issuer": DEFAULT_BINDING_ISSUER, "workspace_root": args.workspace_root,
+            "packet_card": args.packet_card}
         alternate = [k for k, v in canonical.items() if getattr(args, k) != v]
         if alternate:
             report = {"verdict":"REFUSE", "run_flag":args.run, "all_gates_green":False,
