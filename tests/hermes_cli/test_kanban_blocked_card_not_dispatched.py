@@ -15,6 +15,7 @@ Acceptance:
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -484,3 +485,97 @@ def test_dispatch_once_skips_blocked_card_at_spawn_time(
             f"Card must be in skipped_block_gate; "
             f"got {result.skipped_block_gate!r}"
         )
+
+
+# ── t_73a70cde: blocked-card exclusion + audit logging ────────────────────
+
+
+def _blocked_dispatch_attempt_events(conn, task_id: str) -> list[dict]:
+    """Return parsed ``blocked_dispatch_attempt`` events for ``task_id``."""
+    rows = conn.execute(
+        "SELECT payload FROM task_events "
+        "WHERE task_id = ? AND kind = 'blocked_dispatch_attempt'",
+        (task_id,),
+    ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        try:
+            out.append(json.loads(r["payload"]) if r["payload"] else {})
+        except (json.JSONDecodeError, TypeError):
+            out.append({})
+    return out
+
+
+def test_t73a70cde_sticky_block_audit_event_metadata(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """t_73a70cde acceptance (b): every blocked-card claim attempt logs a
+    ``blocked_dispatch_attempt`` event carrying card id, timestamp, and
+    dispatcher id — for the normal sticky-block (human-parked) case.
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn, title="t73-sticky", assignee="test-profile",
+        )
+        assert kb.get_task(conn, tid).status == "ready"
+        # Sticky block via injected blocked event (human/worker park).
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) "
+            "VALUES (?, 'blocked', ?, ?)",
+            (tid, '{"origin":"test","reason":"parked"}', now),
+        )
+        conn.commit()
+        assert kb._has_sticky_block(conn, tid)
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+        # (a) not claimed
+        assert tid not in result.spawned
+        assert tid in result.skipped_block_gate
+        # (b) audit event present with required metadata
+        assert tid in result.blocked_claim_attempts
+        events = _blocked_dispatch_attempt_events(conn, tid)
+        assert events, "blocked_dispatch_attempt event was not created"
+        ev = events[0]
+        assert ev.get("task_id") == tid
+        assert isinstance(ev.get("timestamp"), int) and ev["timestamp"] > 0
+        assert ev.get("dispatcher_id")  # host:pid identifier
+        assert ev.get("sticky_block") is True
+
+
+def test_t73a70cde_blind_spot_status_blocked_excluded_from_claim(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """t_73a70cde acceptance (a): a card carrying ``status='blocked'`` with
+    NO blocked event (the recompute_ready blind-spot safety net) must never
+    be claimed/running.
+
+    Mechanism: ``dispatch_once`` only selects ``WHERE status='ready'``, and
+    ``recompute_ready``'s blind-spot guard refuses to promote
+    ``status='blocked'`` rows, so such a card can never reach the claim loop.
+    We assert it is absent from every spawned/audit bucket and stays blocked.
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn, title="t73-blindspot", assignee="test-profile",
+        )
+        assert kb.get_task(conn, tid).status == "ready"
+        # Blind-spot: flip status to blocked WITHOUT a blocked event.
+        conn.execute("UPDATE tasks SET status = 'blocked' WHERE id = ?", (tid,))
+        conn.commit()
+
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+        # (a) never claim a blocked card
+        assert tid not in result.spawned
+        assert len(spy.calls) == 0
+        # The card carries no blocked event, so the loop's sticky check does
+        # not fire and no audit event is expected for this path — the
+        # upstream blind-spot guard is the control.
+        assert tid not in result.blocked_claim_attempts
+        assert tid not in result.skipped_block_gate
+        # Card remains blocked (not promoted to ready, not claimed).
+        assert kb.get_task(conn, tid).status == "blocked"
