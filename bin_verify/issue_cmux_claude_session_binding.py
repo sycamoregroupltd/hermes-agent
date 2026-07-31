@@ -139,7 +139,7 @@ def validate_caller_context(receipt: dict[str, Any], seat: dict[str, Any]) -> No
     level while caller_context records the tree ID the mint resolved on the
     Mac; DGX cannot resolve refs (it never touches a CMUX socket), so that
     field must then be exactly a well-formed raw tree ID — never a ref."""
-    caller = receipt.get("caller_context")
+    caller = receipt.get("mint_control_context")
     if not isinstance(caller, dict):
         raise Refuse("CMUX receipt caller_context missing or malformed")
     if caller.get("proof") != CALLER_PROOF_MARKER:
@@ -169,18 +169,22 @@ def validate_contract(
     now: dt.datetime,
 ) -> tuple[dict[str, Any], dict[str, Any], dt.datetime, dt.datetime]:
     """Validate the already-published Mac provenance, never probing a provider."""
-    if reservation.get("record_kind") != "cmux-manual-seat-reservation":
-        raise Refuse("reservation has wrong record_kind")
+    if reservation.get("record_kind") != "cmux-manual-seat-reservation" or reservation.get("schema_version") != 2:
+        raise Refuse("reservation must be dual-anchor schema_version 2")
     if reservation.get("reservation_fingerprint") != reservation_fingerprint(reservation):
         raise Refuse("reservation fingerprint mismatch")
     seat = reservation.get("seat")
-    if not isinstance(seat, dict):
-        raise Refuse("reservation seat malformed")
+    mint = reservation.get("mint_control")
+    if not isinstance(seat, dict) or not isinstance(mint, dict):
+        raise Refuse("reservation seat or mint_control malformed")
     if seat.get("provider") != "claude-code" or seat.get("kind") != "cmux-interactive-claude-max":
         raise Refuse("reservation is not the Claude interactive CMUX seat")
     for field in ("cmux_workspace_id", "cmux_surface_id", "cmux_daemon_version"):
         if not isinstance(seat.get(field), str) or not str(seat[field]).strip():
             raise Refuse(f"reservation seat {field} missing")
+    for field in ("cmux_workspace_id", "cmux_surface_id"):
+        if not isinstance(mint.get(field), str) or not str(mint[field]).strip():
+            raise Refuse(f"reservation mint_control {field} missing")
     reserved_session = require_identifier(
         str(seat.get("provider_session_uuid", "")), "reservation provider_session_uuid", UUID_RE
     )
@@ -194,13 +198,13 @@ def validate_contract(
     if receipt.get("canary_task") != task_id:
         raise Refuse("CMUX receipt is bound to a different Hermes task")
     if receipt.get("cmux_workspace_id") != seat["cmux_workspace_id"]:
-        raise Refuse("CMUX receipt workspace does not match reservation")
+        raise Refuse("CMUX receipt workspace does not match provider reservation")
     if receipt.get("cmux_surface_id") != seat["cmux_surface_id"]:
-        raise Refuse("CMUX receipt surface does not match reservation")
+        raise Refuse("CMUX receipt surface does not match provider reservation")
     control = receipt.get("control_socket")
     if not isinstance(control, dict) or control.get("cmux_daemon_version") != seat["cmux_daemon_version"]:
         raise Refuse("CMUX receipt daemon identity does not match reservation")
-    validate_caller_context(receipt, seat)
+    validate_caller_context(receipt, mint)
     issued = parse_utc(receipt.get("minted_at_utc"), "CMUX receipt minted_at_utc")
     expires = parse_utc(receipt.get("expires_at_utc"), "CMUX receipt expires_at_utc")
     if issued > now:

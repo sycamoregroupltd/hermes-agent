@@ -63,12 +63,13 @@ def make_reservation(td, ws=RESERVED_WS, surface=RESERVED_SURFACE, version="0.64
                      tamper=False, name="seat-reservation.json"):
     res = {
         "record_kind": "cmux-manual-seat-reservation",
-        "schema_version": 1,
+        "schema_version": 2,
         "seat": {"cmux_workspace_id": ws, "cmux_surface_id": surface,
                  "cmux_window_id": "66666666-AAAA-BBBB-CCCC-000000000006",
                  "cmux_daemon_version": version, "provider": "claude-code",
                  "kind": "cmux-interactive-claude-max",
                  "provider_session_uuid": "77777777-aaaa-bbbb-cccc-000000000007"},
+        "mint_control": {"cmux_workspace_id": ws, "cmux_surface_id": surface},
     }
     res["reservation_fingerprint"] = mint_mod.reservation_fingerprint(res)
     if tamper:

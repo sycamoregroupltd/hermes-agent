@@ -33,7 +33,7 @@ WORKSPACE = "9A3E7E93-963F-45AB-9A00-79E218190B5D"
 SURFACE = "577E1920-C0EE-4140-A649-361647B6B9A5"
 FOREIGN_SURFACE = "55555555-AAAA-BBBB-CCCC-000000000005"
 # Stable CMUX refs, as written verbatim into ref-pinned reservations/receipts
-# by the repaired mint; caller_context then carries the resolved raw tree id.
+# by the repaired mint; mint_control_context then carries the resolved raw tree id.
 WORKSPACE_REF = "workspace:26"
 SURFACE_REF = "surface:26"
 NONCE_SHA256 = hashlib.sha256(b"CMUX-CALLER-PROOF-fixture").hexdigest()
@@ -62,7 +62,7 @@ def fixture(root: Path, *, workspace: str = WORKSPACE, surface: str = SURFACE,
     (worktree / "bin_verify" / "dispatch_gate_v2.py").write_text("# marker\n")
     reservation = {
         "record_kind": "cmux-manual-seat-reservation",
-        "schema_version": 1,
+        "schema_version": 2,
         "seat": {
             "cmux_workspace_id": workspace,
             "cmux_surface_id": surface,
@@ -71,31 +71,29 @@ def fixture(root: Path, *, workspace: str = WORKSPACE, surface: str = SURFACE,
             "kind": "cmux-interactive-claude-max",
             "provider_session_uuid": SESSION,
         },
+        "mint_control": {"cmux_workspace_id": workspace, "cmux_surface_id": surface},
     }
     reservation["reservation_fingerprint"] = issuer.reservation_fingerprint(reservation)
     reservation_path = root / "reservation.json"
     write_json(reservation_path, reservation)
     receipt = {
         "receipt_kind": "mac-cmux-reservation-receipt",
-        "schema_version": 2,
+        "schema_version": 3,
         "minted_at_utc": iso(NOW - dt.timedelta(seconds=60)),
         "expires_at_utc": iso(NOW + dt.timedelta(seconds=300)),
         "canary_task": TASK,
         "cmux_workspace_id": workspace,
         "cmux_surface_id": surface,
-        # As the repaired mint records it: proven caller identity, with the
-        # surface as a raw tree id (resolved when the seat is ref-pinned) and
-        # the workspace as the reservation seat value verbatim.
-        "caller_context": {
+        "mint_control_context": {
             "surface_id": caller_surface if caller_surface is not None else surface,
             "workspace_id": caller_workspace if caller_workspace is not None else workspace,
-            "tty": "/dev/ttys012",
-            "proof": "nonce-read-screen",
-            "nonce_sha256": NONCE_SHA256,
+            "tty": "/dev/ttys012", "proof": "nonce-read-screen", "nonce_sha256": NONCE_SHA256,
         },
         "control_socket": {"bundle_identifier": "com.cmuxterm.app", "cmux_daemon_version": "0.64.20"},
     }
     receipt["receipt_fingerprint"] = issuer.receipt_fingerprint(receipt)
+    receipt_path = root / "receipt.json"
+    write_json(receipt_path, receipt)
     receipt_path = root / "receipt.json"
     write_json(receipt_path, receipt)
     board = root / "board.db"
@@ -197,7 +195,7 @@ def main() -> int:
         conn = sqlite3.connect(board); conn.execute("INSERT INTO task_runs (task_id) VALUES (?)", (TASK,)); conn.commit(); conn.close()
         cases.append(("task with existing run refuses", refuses(worktree, board, reservation, receipt)))
 
-    # -- caller_context defence in depth (t_a6365be3) -------------------------
+    # -- mint_control_context defence in depth (t_a6365be3) -------------------------
     # Every hostile receipt below is RE-SIGNED (fingerprint recomputed), so
     # only the caller-context re-check itself can refuse it.
     def resign(receipt_path: Path, mutate) -> None:
@@ -212,37 +210,37 @@ def main() -> int:
             resign(receipt, mutate)
             cases.append((name, refuses(worktree, board, reservation, receipt)))
 
-    caller_case("re-signed receipt with caller_context ABSENT refuses",
-                lambda d: d.pop("caller_context"))
-    caller_case("re-signed receipt with non-object caller_context refuses",
-                lambda d: d.update(caller_context="proven, trust me"))
+    caller_case("re-signed receipt with mint_control_context ABSENT refuses",
+                lambda d: d.pop("mint_control_context"))
+    caller_case("re-signed receipt with non-object mint_control_context refuses",
+                lambda d: d.update(mint_control_context="proven, trust me"))
     caller_case("re-signed receipt with FOREIGN caller surface refuses",
-                lambda d: d["caller_context"].update(surface_id=FOREIGN_SURFACE))
+                lambda d: d["mint_control_context"].update(surface_id=FOREIGN_SURFACE))
     caller_case("re-signed receipt with FOREIGN caller workspace refuses",
-                lambda d: d["caller_context"].update(
+                lambda d: d["mint_control_context"].update(
                     workspace_id="44444444-AAAA-BBBB-CCCC-000000000004"))
     caller_case("re-signed receipt with wrong proof marker refuses",
-                lambda d: d["caller_context"].update(proof="focus-inferred"))
+                lambda d: d["mint_control_context"].update(proof="focus-inferred"))
     caller_case("re-signed receipt with missing proof marker refuses",
-                lambda d: d["caller_context"].pop("proof"))
+                lambda d: d["mint_control_context"].pop("proof"))
     caller_case("re-signed receipt with truncated nonce digest refuses",
-                lambda d: d["caller_context"].update(nonce_sha256=NONCE_SHA256[:40]))
+                lambda d: d["mint_control_context"].update(nonce_sha256=NONCE_SHA256[:40]))
     caller_case("re-signed receipt with non-hex nonce digest refuses",
-                lambda d: d["caller_context"].update(nonce_sha256="Z" * 64))
+                lambda d: d["mint_control_context"].update(nonce_sha256="Z" * 64))
     caller_case("re-signed receipt with uppercase nonce digest refuses (not hexdigest form)",
-                lambda d: d["caller_context"].update(nonce_sha256=NONCE_SHA256.upper()))
+                lambda d: d["mint_control_context"].update(nonce_sha256=NONCE_SHA256.upper()))
     caller_case("re-signed receipt with empty tty refuses",
-                lambda d: d["caller_context"].update(tty="   "))
+                lambda d: d["mint_control_context"].update(tty="   "))
     caller_case("re-signed receipt with missing tty refuses",
-                lambda d: d["caller_context"].pop("tty"))
+                lambda d: d["mint_control_context"].pop("tty"))
 
     for name, result in cases:
         check(name, result != "DID_NOT_REFUSE", result)
 
     # -- stable-ref receipt compatibility (repaired mint normalizer) ----------
     # A ref-pinned reservation keeps workspace:26/surface:26 verbatim in the
-    # reservation, receipt top level, and caller_context.workspace_id, while
-    # caller_context.surface_id carries the raw tree id resolved on the Mac.
+    # reservation, receipt top level, and mint_control_context.workspace_id, while
+    # mint_control_context.surface_id carries the raw tree id resolved on the Mac.
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         worktree, board, reservation, receipt = fixture(

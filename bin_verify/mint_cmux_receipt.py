@@ -372,14 +372,18 @@ class Mint:
             raise Refuse("C7-reservation", "reservation is not valid JSON — refuse")
         if res.get("record_kind") != "cmux-manual-seat-reservation":
             raise Refuse("C7-reservation", f"wrong record_kind {res.get('record_kind')!r}")
+        if res.get("schema_version") != 2 or not isinstance(res.get("mint_control"), dict):
+            raise Refuse("C7-reservation", "dual-anchor reservation schema_version 2 with mint_control is required")
         if res.get("reservation_fingerprint") != reservation_fingerprint(res):
             raise Refuse("C7-reservation", "reservation fingerprint mismatch (tampered/corrupt)")
         try:
             seat = res["seat"]
             self.reserved_ws = seat["cmux_workspace_id"]
             self.reserved_surface = seat["cmux_surface_id"]
+            self.mint_ws = res["mint_control"]["cmux_workspace_id"]
+            self.mint_surface = res["mint_control"]["cmux_surface_id"]
         except (KeyError, TypeError):
-            raise Refuse("C7-reservation", "reservation missing seat workspace/surface ids")
+            raise Refuse("C7-reservation", "dual-anchor reservation workspace/surface ids missing")
         self.reservation = res
         self.evidence["C7-reservation"] = {
             "argv": argv, "pinned_dgx_identity": self.args.dgx_host,
