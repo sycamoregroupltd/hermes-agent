@@ -381,7 +381,9 @@ def main(argv):
             print(json.dumps(report, indent=2, sort_keys=True) if args.json else "REFUSE: real-run canonical-input boundary")
             return RC_REFUSE
 
-    if not args.canary_task:
+    if args.stub_events_dir is not None or not args.canary_task:
+        # Fixture/legacy mode only: restore omitted historical defaults. StubRunner
+        # cannot reach ClaudeProcessRunner; real named mode never enters here.
         args.reservation_json = args.reservation_json or DEFAULT_RESERVATION_JSON
         args.cmux_receipt = args.cmux_receipt or DEFAULT_CMUX_RECEIPT
         args.session_binding = args.session_binding or DEFAULT_SESSION_BINDING
