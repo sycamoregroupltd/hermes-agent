@@ -9,6 +9,10 @@ The v1 receipt is hash-proven untouched. Run: python3 tests_v2/test_dispatch_gat
 
 import datetime
 import hashlib
+import hmac
+import importlib.util
+import secrets
+import time
 import json
 import os
 import shutil
@@ -565,21 +569,56 @@ def main():
             direct_explicit_real_refused = "fixture-only" in str(exc)
         check("public explicit real runner is refused before provider call",
               direct_explicit_real_refused)
+        check("fixture module exposes no real gate-owned lifecycle",
+              not hasattr(executor_mod, "_dispatch_gate_owned_canary"))
+
+        # The real child cannot reach Claude merely by being executed: an
+        # inherited authority FD is mandatory and is consumed before the
+        # delayed provider import/construction.
+        child = os.path.join(ROOT, "bin_verify", "v2_real_executor_child.py")
+        raw = subprocess.run([sys.executable, child, "--auth-fd", "0",
+                              "--board-db", os.path.join(td, "unused-child.db"),
+                              "--canary-task", "t_beefcafe",
+                              "--workspace-root", os.path.join(td, "unused-workspace"),
+                              "--session-binding", os.path.join(td, "unused-binding.json"),
+                              "--cmux-receipt", os.path.join(td, "unused-receipt.json"),
+                              "--reservation-json", os.path.join(td, "unused-reservation.json"),
+                              "--binding-issuer", os.path.join(td, "unused-issuer.py"),
+                              "--hermes-home", os.path.join(td, "unused-profile"),
+                              "--lease-file", os.path.join(td, "unused-lease.json")],
+                             text=True, capture_output=True)
+        check("real child refuses missing private authority before Claude construction",
+              raw.returncode != 0 and "authority envelope" in (raw.stdout + raw.stderr))
+        child_spec = importlib.util.spec_from_file_location("v2_real_child_wire", child)
+        child_mod = importlib.util.module_from_spec(child_spec)
+        child_spec.loader.exec_module(child_mod)
+        lease = os.path.join(td, "wire-lease.json")
+        open(lease, "w").write("consumed\n")
+        expected = {"task_id": "t_beefcafe", "board_db": os.path.realpath(os.path.join(td, "wire.db")),
+                    "workspace_root": os.path.realpath(os.path.join(td, "wire-workspace")),
+                    "session_binding": os.path.realpath(os.path.join(td, "wire-binding.json")),
+                    "cmux_receipt": os.path.realpath(os.path.join(td, "wire-receipt.json")),
+                    "reservation_json": os.path.realpath(os.path.join(td, "wire-reservation.json")),
+                    "binding_issuer": os.path.realpath(os.path.join(td, "wire-issuer.py")),
+                    "hermes_home": os.path.realpath(os.path.join(td, "wire-home")),
+                    "lease_file": os.path.realpath(lease)}
+        envelope = dict(expected, lease_realpath=os.path.realpath(lease), lease_sha256=sha(lease),
+                        source_head=subprocess.check_output(["git", "-C", ROOT, "rev-parse", "HEAD"], text=True).strip(),
+                        expires_at=int(time.time()) + 30, nonce=secrets.token_hex(32))
+        key = secrets.token_bytes(32)
+        canonical = child_mod._canonical_json(envelope)
+        envelope.update(hmac_key=key.hex(), hmac_sha256=hmac.new(key, canonical, hashlib.sha256).hexdigest())
+        rfd, wfd = os.pipe(); os.write(wfd, json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()); os.close(wfd)
+        child_mod._read_authority(rfd, expected)
+        check("private-FD HMAC/nonce authority accepts exact fresh task-bound envelope", True)
+        envelope["hmac_sha256"] = "0" * 64
+        rfd, wfd = os.pipe(); os.write(wfd, json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()); os.close(wfd)
         try:
-            executor_mod._dispatch_gate_owned_canary(
-                board_db=os.path.join(td, "unused-private-real.db"), canary_task="t_beefcafe",
-                workspace_root=os.path.join(td, "unused-private-real-workspace"),
-                session_binding_path=os.path.join(td, "unused-private-real-binding.json"),
-                cmux_receipt_path=os.path.join(td, "unused-private-real-receipt.json"),
-                reservation_path=os.path.join(td, "unused-private-real-reservation.json"),
-                issuer_path=os.path.join(td, "unused-private-real-issuer.py"),
-                hermes_home=os.path.join(td, "unused-private-real-profile"),
-                runner=SubprocessClaudeRunner())
-            private_real_refused = False
-        except executor_mod.DispatchError as exc:
-            private_real_refused = "must be invoked directly by dispatch_gate_v2" in str(exc)
-        check("direct private gate route with real runner refuses before provider lifecycle",
-              private_real_refused)
+            child_mod._read_authority(rfd, expected); tampered_authority_refused = False
+        except child_mod.DispatchError:
+            tampered_authority_refused = True
+        check("private-FD HMAC tampering refuses before child lifecycle", tampered_authority_refused)
+
 
 
         # G3d is a provider boundary: it must refuse an otherwise-valid

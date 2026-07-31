@@ -53,12 +53,16 @@ two provider boundaries.
 import argparse
 import datetime
 import hashlib
+import hmac
+import secrets
 import json
 import os
 import re
 import sqlite3
 import subprocess
 import sys
+import time
+from pathlib import Path
 
 BIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if BIN_DIR not in sys.path:
@@ -458,40 +462,74 @@ def main(argv):
                     "another dispatcher won the one-shot lease; refuse, no retry")
         verdict, rc = "REFUSE (lease contention)", RC_REFUSE
     else:
-        # Lease consumed: dispatch EXACTLY ONCE through the canonical
-        # ClaudeResumeExecutor/task-run lifecycle (t_4d09e0d9). There is no
-        # raw provider subprocess path; a lifecycle failure is terminal.
+        # Lease consumed: the fixture remains in-process; the real provider
+        # route is a separate child, authority-gated over an inherited private
+        # FD.  No provider class is imported or constructed in this gate.
         import v2_canary_executor as v2ce
-        # The gate alone owns construction of the real provider boundary, and
-        # reaches the private gate-owned executor route only after G1-G6 and
-        # the O_EXCL lease mint. The executor's public API is StubRunner-only.
-        if args.stub_events_dir:
-            runner = v2ce.StubRunner(args.stub_events_dir)
-        else:
-            from hermes_cli.claude_executor import SubprocessClaudeRunner
-            runner = SubprocessClaudeRunner()
         rec_path = os.path.join(ROOT, "evidence", "v2-dispatch-record.json")
         try:
-            record = v2ce._dispatch_gate_owned_canary(
-                board_db=args.board_db, canary_task=dispatch_task,
-                workspace_root=args.workspace_root,
-                session_binding_path=args.session_binding,
-                cmux_receipt_path=args.cmux_receipt,
-                reservation_path=args.reservation_json,
-                issuer_path=args.binding_issuer,
-                hermes_home=args.hermes_home,
-                runner=runner,
-            )
+            if args.stub_events_dir:
+                record = v2ce.dispatch_canary(
+                    board_db=args.board_db, canary_task=dispatch_task,
+                    workspace_root=args.workspace_root,
+                    session_binding_path=args.session_binding,
+                    cmux_receipt_path=args.cmux_receipt,
+                    reservation_path=args.reservation_json,
+                    issuer_path=args.binding_issuer,
+                    hermes_home=args.hermes_home,
+                    runner=v2ce.StubRunner(args.stub_events_dir))
+            else:
+                key = secrets.token_bytes(32)
+                envelope = {
+                    "task_id": dispatch_task,
+                    "board_db": str(Path(args.board_db).resolve()),
+                    "workspace_root": str(Path(args.workspace_root).resolve()),
+                    "session_binding": str(Path(args.session_binding).resolve()),
+                    "cmux_receipt": str(Path(args.cmux_receipt).resolve()),
+                    "reservation_json": str(Path(args.reservation_json).resolve()),
+                    "binding_issuer": str(Path(args.binding_issuer).resolve()),
+                    "hermes_home": str(Path(args.hermes_home).resolve()),
+                    "lease_file": str(Path(args.lease_file).resolve()),
+                    "lease_realpath": str(Path(args.lease_file).resolve()),
+                    "lease_sha256": hashlib.sha256(Path(args.lease_file).read_bytes()).hexdigest(),
+                    "source_head": subprocess.check_output(["git", "-C", ROOT, "rev-parse", "HEAD"], text=True).strip(),
+                    "expires_at": int(time.time()) + 30,
+                    "nonce": secrets.token_hex(32),
+                }
+                canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                envelope["hmac_key"] = key.hex()
+                envelope["hmac_sha256"] = hmac.new(key, canonical, hashlib.sha256).hexdigest()
+                read_fd, write_fd = os.pipe()
+                try:
+                    os.write(write_fd, json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+                finally:
+                    os.close(write_fd)
+                child = os.path.join(BIN_DIR, "v2_real_executor_child.py")
+                command = [sys.executable, child, "--auth-fd", str(read_fd),
+                           "--board-db", args.board_db, "--canary-task", dispatch_task,
+                           "--workspace-root", args.workspace_root, "--session-binding", args.session_binding,
+                           "--cmux-receipt", args.cmux_receipt, "--reservation-json", args.reservation_json,
+                           "--binding-issuer", args.binding_issuer, "--hermes-home", args.hermes_home,
+                           "--lease-file", args.lease_file]
+                try:
+                    child_run = subprocess.run(command, pass_fds=(read_fd,), text=True,
+                                               capture_output=True, timeout=180)
+                finally:
+                    os.close(read_fd)
+                try:
+                    record = json.loads(child_run.stdout.strip().splitlines()[-1])
+                except (ValueError, IndexError):
+                    record = {"status": "DISPATCH-ERRORED", "error": child_run.stderr[-500:]}
+                if child_run.returncode:
+                    raise RuntimeError(record.get("error", "real executor child failed"))
             record["lease_file"] = args.lease_file
             verdict, rc = "DISPATCHED-ONCE", RC_OK
         except Exception as exc:
-            record = dict(getattr(exc, "v2_record", {}) or {})
-            record.update({
-                "record_kind": "v2-dispatch-record", "canary_task": dispatch_task,
-                "executor": "ClaudeResumeExecutor", "status": "DISPATCH-ERRORED",
-                "error_type": type(exc).__name__, "error": str(exc)[:500],
-                "lease_file": args.lease_file,
-            })
+            record = dict(getattr(exc, "v2_record", {}) or locals().get("record", {}) or {})
+            record.update({"record_kind": "v2-dispatch-record", "canary_task": dispatch_task,
+                           "executor": "ClaudeResumeExecutor", "status": "DISPATCH-ERRORED",
+                           "error_type": type(exc).__name__, "error": str(exc)[:500],
+                           "lease_file": args.lease_file})
             verdict, rc = "DISPATCH-ERRORED (no retry)", RC_REFUSE
         with open(rec_path, "w", encoding="utf-8") as fh:
             json.dump(record, fh, indent=2, sort_keys=True)
