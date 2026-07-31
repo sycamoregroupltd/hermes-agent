@@ -84,6 +84,10 @@ def main():
         tampered = dict(packet); tampered["packet_fingerprint"] = "sha256:forged"
         ok, _ = mod.validate_task_a2(tampered, db)
         check("packet replacement after valid A2 is refused", not ok)
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (body.replace("APPROVAL A2-DISPATCH", "APPROVAL A2-DISPATCH by=wrong"),)); con.commit(); con.close()
+        ok, _ = mod.validate_task_a2(packet, db)
+        check("missing required A2 by=jarvis-orchestrator marker refuses", not ok)
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (body,)); con.commit(); con.close()
 
         bad_external = dict(packet); bad_external["reviewed_hashes"] = dict(packet["reviewed_hashes"])
         bad_external["reviewed_hashes"]["external_sources"] = {external_path: "0" * 64}; bad_external["packet_fingerprint"] = fp(bad_external)

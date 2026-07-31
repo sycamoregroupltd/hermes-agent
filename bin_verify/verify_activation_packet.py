@@ -63,7 +63,7 @@ def validate_task_a2(packet, board_db=CANONICAL_BOARD_DB):
         row = con.execute("select task_id,author,body from task_comments where id=?", (cid,)).fetchone(); con.close()
         if not row or row[0] != task or row[1] != A2_AUTHOR: return False, "A2 comment absent/task/author mismatch"
         body = row[2]
-        required = ("APPROVAL A2-DISPATCH", f"canary_task={task}", "provider=claude-code",
+        required = ("APPROVAL A2-DISPATCH", "by=jarvis-orchestrator", f"canary_task={task}", "provider=claude-code",
                     "seat=interactive-subscription", "scope=no-op", "cancellation=",
                     f"packet_fingerprint={packet.get('packet_fingerprint')}", f"observed_head={head}")
         if not all(x in body for x in required): return False, "A2 semantic/fingerprint/head contract mismatch"
