@@ -330,30 +330,37 @@ def main(argv):
     ap.add_argument("--stop-file", default=DEFAULT_STOP)
     ap.add_argument("--packet-verifier", default=DEFAULT_VERIFIER)
     ap.add_argument("--reservation-tool", default=DEFAULT_RESERVATION_TOOL)
-    ap.add_argument("--reservation-json", default=DEFAULT_RESERVATION_JSON)
-    ap.add_argument("--workspace-root", default=DEFAULT_WORKSPACE_ROOT,
+    ap.add_argument("--reservation-json", default=None)
+    ap.add_argument("--workspace-root", default=None,
                     help="declared root under which the canary task workspace is created")
     ap.add_argument("--stub-events-dir", default=None,
                     help="TEST ONLY: canned bootstrap/resume streams for the canonical "
                          "executor harness; production leaves this unset")
-    ap.add_argument("--packet-card", default=PACKET_CARD,
+    ap.add_argument("--packet-card", default=None,
                     help="packet card holding the A2 dispatch comment (test seam)")
-    ap.add_argument("--activation-packet", default=os.path.join(ROOT, "ACTIVATION-PACKET-CLAUDE-WORKER.json"),
+    ap.add_argument("--activation-packet", default=None,
                     help="activation packet whose structural caps are re-read (test seam)")
-    ap.add_argument("--session-binding", default=DEFAULT_SESSION_BINDING,
+    ap.add_argument("--session-binding", default=None,
                     help="PRE-EXISTING persisted interactive session-binding artifact "
                          "(G3c); the v2 path never creates a session")
     ap.add_argument("--binding-issuer", default=DEFAULT_BINDING_ISSUER,
                     help="reviewed CMUX binding issuer whose exact source hash is pinned by the artifact")
     ap.add_argument("--hermes-home", default=None,
                     help="required existing absolute Hermes profile directory passed explicitly to Claude child")
-    ap.add_argument("--cmux-receipt", default=DEFAULT_CMUX_RECEIPT,
+    ap.add_argument("--cmux-receipt", default=None,
                     help="Mac-minted task-bound CMUX reservation receipt (validated on DGX)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
     # Real runner derives the task packet itself; callers cannot select it.
     if args.canary_task and args.stub_events_dir is None:
+        supplied_task_args = {k: getattr(args, k) for k in ("reservation_json", "cmux_receipt", "session_binding", "workspace_root", "packet_card", "activation_packet") if getattr(args, k) is not None}
+        if supplied_task_args:
+            report = {"verdict":"REFUSE", "run_flag":args.run, "all_gates_green":False,
+                      "gates":[{"gate":"G0 real-run canonical-input boundary", "pass":False,
+                                "detail":"explicit task-bound override: " + ",".join(sorted(supplied_task_args))}], "rc":RC_REFUSE}
+            print(json.dumps(report, indent=2, sort_keys=True) if args.json else "REFUSE: real-run canonical-input boundary")
+            return RC_REFUSE
         task_artifacts = os.path.join(ROOT, "reservation", "task-artifacts", args.canary_task)
         args.activation_packet = os.path.join(task_artifacts, f"ACTIVATION-PACKET-{args.canary_task}.json")
         args.reservation_json = os.path.join("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces", args.canary_task, "reservation", "seat-reservation.json")
@@ -373,6 +380,14 @@ def main(argv):
                                 "detail":"noncanonical override: " + ",".join(alternate)}], "rc":RC_REFUSE}
             print(json.dumps(report, indent=2, sort_keys=True) if args.json else "REFUSE: real-run canonical-input boundary")
             return RC_REFUSE
+
+    if not args.canary_task:
+        args.reservation_json = args.reservation_json or DEFAULT_RESERVATION_JSON
+        args.cmux_receipt = args.cmux_receipt or DEFAULT_CMUX_RECEIPT
+        args.session_binding = args.session_binding or DEFAULT_SESSION_BINDING
+        args.workspace_root = args.workspace_root or DEFAULT_WORKSPACE_ROOT
+        args.packet_card = args.packet_card or PACKET_CARD
+        args.activation_packet = args.activation_packet or os.path.join(ROOT, "ACTIVATION-PACKET-CLAUDE-WORKER.json")
 
     # Preserve the historical global default only for the legacy unnamed path.
     # Named canaries never accept a caller-supplied lease. Test fixture runs
