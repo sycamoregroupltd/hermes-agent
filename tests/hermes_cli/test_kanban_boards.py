@@ -16,6 +16,7 @@ Covers the pieces added when boards became a first-class concept:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -127,11 +128,59 @@ class TestPathResolution:
         )
 
     def test_env_var_db_override_still_wins(self, fresh_home, tmp_path, monkeypatch):
-        """``HERMES_KANBAN_DB`` pins the file regardless of board= arg."""
+        """``HERMES_KANBAN_DB`` pins the file when no explicit board= is given.
+
+        The dispatcher→worker handoff (board=None) must keep resolving to the
+        env-pinned DB. This is the defense-in-depth case the docstring protects.
+        See kanban task t_e96dd0cb — an *explicit* board= is a different case.
+        """
         forced = tmp_path / "custom.db"
         monkeypatch.setenv("HERMES_KANBAN_DB", str(forced))
         assert kb.kanban_db_path() == forced
-        assert kb.kanban_db_path(board="ignored") == forced
+        assert kb.kanban_db_path(board=None) == forced
+        # An explicit board="default" that resolves to a *different* DB than the
+        # pin is now the conflict case: it must NOT silently return the pinned
+        # path (the old bug) — it returns the default board db and warns.
+        assert kb.kanban_db_path(board="default") == fresh_home / "kanban.db"
+
+    def test_explicit_board_overrides_env_pin_when_different(
+        self, fresh_home, tmp_path, monkeypatch, caplog
+    ):
+        """Explicit board= must NOT be shadowed by an unrelated HERMES_KANBAN_DB.
+
+        This is the t_e96dd0cb regression: a dispatched worker (env pinned to its
+        own board) doing a deliberate cross-board read must reach the requested
+        board, and must emit a loud warning about the disagreement.
+        """
+        pinned = tmp_path / "pinned" / "kanban.db"
+        pinned.parent.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(pinned))
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+
+        target = kb.kanban_db_path(board="ai-restaurant")
+        assert target != pinned
+        assert target == kb.board_dir("ai-restaurant") / "kanban.db"
+        assert any(
+            "conflict" in r.message.lower()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
+    def test_explicit_board_no_warning_when_pin_matches(
+        self, fresh_home, tmp_path, monkeypatch, caplog
+    ):
+        """When the env pin already names the requested board, no warning fires."""
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        pinned = kb.board_dir("ai-restaurant") / "kanban.db"
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(pinned))
+
+        target = kb.kanban_db_path(board="ai-restaurant")
+        assert target == pinned
+        assert not any(
+            "conflict" in r.message.lower()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
 
     def test_env_var_workspaces_override(self, fresh_home, tmp_path, monkeypatch):
         forced = tmp_path / "ws"
