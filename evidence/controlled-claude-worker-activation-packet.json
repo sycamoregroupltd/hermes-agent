@@ -1,0 +1,74 @@
+{
+  "schema": "hermes.controlled-claude-worker-activation.v1",
+  "status": "ready_for_final_packet_review",
+  "project": "control-plane",
+  "authority": "user-goal-1-7; normal orchestration only",
+  "activation_scope": {
+    "provider": "claude-code",
+    "workers": 1,
+    "concurrency": 1,
+    "mode": "explicit one-shot invocation only",
+    "scheduler": "disabled",
+    "broker_mode": "shadow",
+    "provider_fallback": "disabled",
+    "eligible_tasks": "only the fixed no-op task profile created by scripts/run_controlled_claude_worker_activation.py on the pinned canonical orchestrator-sync board, with a pre-acquired global one-shot lease, receipt-bound task/body/capsule digest, current dispatcher-owned binding, positive A3 gate, and claimed run",
+    "workspace": "the claimed task's declared task-id workspace only"
+  },
+  "limits": {
+    "claim_ttl_seconds": 180,
+    "heartbeat_interval_seconds": 20,
+    "resume_timeout_seconds": 120,
+    "max_session_bootstrap_invocations": 1,
+    "max_executor_resume_invocations": 1,
+    "max_total_provider_invocations": 2,
+    "max_resume_attempts": 1,
+    "max_broker_events_per_shadow_pass": 8,
+    "budget_policy": "use existing Claude subscription only; abort on rate-limit or provider error; no automatic retry"
+  },
+  "stop_switch": {
+    "primary": "latch native A3 revocation on the named task",
+    "effect": "preparation and terminal interpretation refuse; the result cannot complete the task",
+    "secondary": "reclaim is a bounded abort request: it fences the result immediately; the executor observes lost ownership on its next 20-second heartbeat and terminates its own registered Claude process group",
+    "replacement_rule": "do not start a replacement worker until the aborted group exit is recorded",
+    "persistent_service_stop": "not applicable: no daemon, cron, launchd, systemd unit, or warm pool is enabled"
+  },
+  "rollback": [
+    "Do not invoke again after any failure, timeout, rate limit, fence loss, A3 revocation, parser error, or reviewer objection.",
+    "Record the native refusal or blocked state; reclaim only the named task if still running; wait for and record executor group exit before any replacement.",
+    "Remove only the task-owned temporary workspace after the task lifecycle is terminal and evidence is retained.",
+    "Leave broker wrapper disabled/shadow-only and do not alter provider credentials, config, routing, deployments, trading, or external messaging."
+  ],
+  "preconditions": [
+    "All source and controlled-invocation harness hashes below match the worktree at invocation time.",
+    "Both retained disposable canary evidences have independent PASS review.",
+    "The live task is explicitly named in an invocation receipt before Claude starts.",
+    "The one-time bootstrap creates only the persisted Claude session binding; the one controlled worker execution is exactly one resume through the executor wrapper.",
+    "Both calls use provider-enforced plan mode, an explicit built-in tool denylist, safe mode, strict MCP configuration, and max-turns=1; no generic task can be invoked by this packet.",
+    "A durable global one-shot lease is acquired before task creation and pins the execution to the canonical orchestrator-sync board; any existing lease causes refusal.",
+    "The task's provider is claude-code and its mapping is dispatcher-owned, fresh, and unretired.",
+    "A positive A3 gate is present immediately before preparation and is not revoked at terminal handling.",
+    "No second controlled worker currently has an active claimed run."
+  ],
+  "evidence": {
+    "positive_canary": "evidence/real-claude-executor-canary-latest.json",
+    "positive_canary_independent_verdict": "PASS",
+    "adverse_abort_canary": "evidence/real-claude-executor-abort-canary-latest.json",
+    "adverse_abort_canary_independent_verdict": "PASS",
+    "source_sha256": {
+      "hermes_cli/kanban_db.py": "9a688e5f3b407d051a6a0c1d0314710f3d870748791f2c0ca42d7e832b16e9af",
+      "hermes_cli/claude_executor.py": "37c59e752dafe0cfca34fe09d10f40291ad7aed4abb0035713899f7a167184ac",
+      "hermes_cli/broker_shadow.py": "822eccf434a708d710b9ef3570e62ce01dda2ff76474a2944b323c8b71836d5c",
+      "scripts/verify_real_claude_executor_canary.py": "d5863cd92737ce03aa6b0ceecff8d8047060255a17bea683fc2bc3b925681ebc",
+      "scripts/verify_real_claude_executor_abort_canary.py": "0bc6f4670a9c45b9c5b9b9a2c4ed69a27e28cacfc296edb61f30a8a62eadce8c",
+      "scripts/run_controlled_claude_worker_activation.py": "9724dc8010a903a30b3fac57e8a8f5344cdadb617f7755ddf5d15ef299fe9fc3"
+    }
+  },
+  "excluded": [
+    "live trading or paper-order execution",
+    "deployments, merges, pushes, pull requests, or production runtime mutation",
+    "credentials, tokens, password access, or provider-account changes",
+    "external messages or notifications",
+    "cross-provider routing, automatic retries, or scheduler activation"
+  ],
+  "next_gate": "independent final activation-packet review, then one named controlled task only"
+}

@@ -1,0 +1,86 @@
+{
+  "schema": "hermes.provider-onboarding-gate.v1",
+  "status": "no_additional_provider_admitted",
+  "project": "control-plane",
+  "validated_at": "2026-07-31",
+  "baseline": {
+    "claude-code": {
+      "version": "2.1.220",
+      "state": "only provider activated, and only for the one completed fixed no-op worker"
+    },
+    "cursor": {
+      "version": "installed DGX Cursor Agent binary",
+      "state": "CLI present and authenticated on DGX; current local inspection reports no MCP servers configured and exposes read-only plan/ask modes plus an explicit sandbox flag. It remains blocked from non-interactive activation because Cursor documents full tool/write access in print mode until a dedicated deny-first project configuration and restricted canary are independently verified",
+      "observed_models": ["auto", "composer-2.5", "composer-2.5-fast", "cursor-grok-4.5-low", "cursor-grok-4.5-medium", "cursor-grok-4.5-high"],
+      "local_mcp_state": "no MCP servers configured"
+    },
+    "grok": {
+      "version": "0.2.117",
+      "state": "CLI present with provider-native plan mode, tool deny controls, max-turns, no-memory/no-subagents flags, and sandbox profiles; blocked because the current discovered configuration inherits active command lifecycle hooks from the shared Claude/Grok environment",
+      "local_mcp_state": "no MCP servers configured",
+      "safety_disposition": "do not run an orchestration canary until a dedicated clean configuration proves hooks, skills, plugins, inherited settings, and MCP surfaces are absent or inert"
+    },
+    "gemini": {
+      "version": "0.47.0",
+      "state": "CLI present; entitlement, capability, cost, and isolated safety canary not yet validated"
+    },
+    "ollama": {
+      "version": "0.13.5",
+      "state": "CLI and local Qwen model present; blocked because the disposable no-history local inference canary failed while the Ollama service attempted to load the model"
+    }
+  },
+  "admission_contract": [
+    "One provider and one fixed task class at a time; no cross-provider fallback.",
+    "Read the provider's current official CLI and permission documentation before implementation.",
+    "Prove authentication/entitlement without exposing credentials or account data.",
+    "Record a declared cost ceiling and fail-closed rate-limit behavior.",
+    "Build a provider-specific persisted-session adapter and restricted disposable canary.",
+    "Independently review the adapter, canary, stop behavior, provenance, and terminal fence handling.",
+    "Use a named activation packet and one bounded no-op before any broader task class.",
+    "Keep the broker shadow-only and do not enable scheduler, warm pool, or fallback without a separate review."
+  ],
+  "official_research": {
+    "cursor_cli_usage": "https://docs.cursor.com/en/cli/using",
+    "cursor_permissions": "https://docs.cursor.com/cli/reference/permissions",
+    "cursor_parameters": "https://docs.cursor.com/en/cli/reference/parameters",
+    "cursor_pricing": "https://docs.cursor.com/account/pricing"
+  },
+  "cursor_disposable_canary": {
+    "result": "blocked_before_provider_response",
+    "command_surface": "empty temporary workspace; --print --output-format stream-json --mode ask --sandbox enabled --trust --model composer-2.5",
+    "observed": "Cursor refused because sandbox mode is enabled but unavailable on this DGX due to AppArmor configuration; no stream output and no model response were produced",
+    "safety_disposition": "do not use the suggested sandbox-disable/allowlist fallback for Hermes admission",
+    "bubblewrap_followup": {
+      "result": "filesystem boundary proved; authentication unavailable inside boundary",
+      "observed": "Bubblewrap successfully isolated an empty writable workspace, read-only Cursor runtime/config roots, and an ephemeral Cursor projects path. Cursor refused to run because its current authentication was not available in that isolated surface.",
+      "safety_disposition": "do not broaden home-directory mounts, copy credentials, or pass an API key into the sandbox",
+      "next_gate": "complete Cursor browser login directly into a dedicated sandboxed profile/root, then rerun the exact read-only Bubblewrap canary"
+    },
+    "next_gate": "repair and independently verify the DGX Cursor sandbox prerequisite, or complete a dedicated sandboxed-profile login for the reviewed Bubblewrap boundary, then rerun the exact disposable read-only canary"
+  },
+  "grok_inspection": {
+    "result": "blocked_before_provider_canary",
+    "observed": "empty-workspace inspection reported no MCP servers, but discovered one Grok session_start command hook and three enabled Claude-compatible lifecycle hooks",
+    "safety_disposition": "no canary or provider routing attempted under the inherited configuration",
+    "isolation_mechanism": "Grok supports GROK_HOME to override its configuration root",
+    "next_gate": "create a dedicated GROK_HOME with an independently authorized authentication path and no inherited hooks, skills, plugins, MCP, cross-session memory, subagents, web search, or broad tool permissions; then independently verify it before a disposable no-op canary",
+    "credential_boundary": "do not copy, symlink, or expose existing ~/.grok authentication material into the clean provider root"
+  },
+  "ollama_disposable_canary": {
+    "result": "blocked_before_model_response",
+    "command_surface": "temporary workspace; OLLAMA_NOHISTORY=1; qwen3:8b-fp16; think disabled; keepalive=0",
+    "observed": "Ollama returned HTTP 500 while loading the local model through its local load endpoint; no response was produced",
+    "safety_disposition": "do not treat installed models as eligible capacity until local runtime load, model identity, bounded inference, and stop/cleanup behavior are proven",
+    "next_gate": "diagnose the local Ollama serving/load failure read-only, then rerun the disposable no-history canary"
+  },
+  "next_candidate": "no next provider is admitted: repair Cursor sandbox support, build a clean Grok configuration, or diagnose the local Ollama load failure first; then repeat the full per-provider capability/cost/safety and independent-review gate",
+  "excluded": [
+    "provider routing",
+    "scheduler activation",
+    "fallback",
+    "credentials changes",
+    "trading",
+    "deployments",
+    "external messaging"
+  ]
+}

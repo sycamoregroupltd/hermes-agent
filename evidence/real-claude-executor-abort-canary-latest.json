@@ -1,0 +1,53 @@
+{
+  "exclusions": [
+    "trading",
+    "deployments",
+    "credentials",
+    "external messages",
+    "scheduler",
+    "daemon",
+    "provider fallback"
+  ],
+  "finished_at": 1785474000,
+  "meaning": "The separate connection reclaimed the exact registered run. The executor then observed ClaimLeaseLost and its own process-group cleanup completed before a terminal result could be accepted.",
+  "redacted": {
+    "initial_run": 1,
+    "process_group_sha256": "85caa02eb3b0b17b71430157dd8e3df67cb9fc2773ef1dc4f57971a4fe244862",
+    "resumed_run": 2,
+    "session_sha256": "14152ecabc161fbfa0bf0bc260b59466afefe672b34cfc65d4add549137061f2",
+    "task_sha256": "0ad79ea38844d24aeb43fdb5087cce2604e939b436377e88e91687893d706475"
+  },
+  "restricted_surface": {
+    "bootstrap_system_subtypes": [
+      "init"
+    ],
+    "denied_tools": "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task",
+    "max_turns": 1,
+    "permission_mode": "plan",
+    "resume_command_system_subtypes": "not observable because reclaim follows native PID registration before stream read; current positive canary attests init-only resume stream for the same canonical command",
+    "safe_mode": true,
+    "strict_mcp_config": true
+  },
+  "result": {
+    "claim_lease_lost": true,
+    "completed_events": 0,
+    "external_executor_started_seen_from_separate_connection": true,
+    "process_group_gone": true,
+    "run_status": "reclaimed",
+    "run_worker_pid_cleared": true,
+    "separate_connection_reclaimed": true,
+    "task_status": "ready",
+    "task_worker_pid_cleared": true
+  },
+  "schema": "hermes.real-claude-executor-abort-canary.v2",
+  "scope": "fresh temporary Hermes board and task workspace only; no live board",
+  "source_sha256": {
+    "claude_executor.py": "37c59e752dafe0cfca34fe09d10f40291ad7aed4abb0035713899f7a167184ac",
+    "harness": "0bc6f4670a9c45b9c5b9b9a2c4ed69a27e28cacfc296edb61f30a8a62eadce8c",
+    "kanban_db.py": "9a688e5f3b407d051a6a0c1d0314710f3d870748791f2c0ca42d7e832b16e9af"
+  },
+  "started_at": 1785473993,
+  "status": "PASS",
+  "temporary_root_removed": true,
+  "temporary_root_sha256": "7336bcc6ec3934564980b0cb67568d65b35c59e6ec00a260a5bc2f12d9fcdfe1"
+}

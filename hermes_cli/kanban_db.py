@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -85,9 +86,9 @@ import threading
 import logging
 import time
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional, Protocol
 
 from hermes_cli.sqlite_util import add_column_if_missing as _add_column_if_missing
 from toolsets import get_toolset_names
@@ -1364,6 +1365,52 @@ CREATE TABLE IF NOT EXISTS kanban_notify_subs (
     PRIMARY KEY (task_id, platform, chat_id, thread_id)
 );
 
+-- Per-board broker/orchestrator consumer cursor. Same shape and same atomic
+-- claim discipline as ``kanban_notify_subs`` (BEGIN IMMEDIATE + CAS on
+-- ``last_event_id``), but scoped to the whole board rather than one task, so a
+-- control-loop consumer can tail ``task_events`` across every card on this
+-- board exactly once.
+--
+-- There is deliberately no separate cursor file, JSON sidecar, or Markdown
+-- marker: ``task_events.id`` is the only cursor authority, and it lives in the
+-- same DB and the same transaction as the rows it orders.
+CREATE TABLE IF NOT EXISTS kanban_broker_subs (
+    consumer      TEXT NOT NULL,
+    last_event_id INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    -- SHA-256 of a shared secret, when the consumer registered with one.
+    -- NULL = unauthenticated (legacy/local use); a non-NULL digest makes the
+    -- name unusable without the matching token.
+    token_sha256  TEXT,
+    PRIMARY KEY (consumer)
+);
+
+-- The ONLY authority for a provider/session mapping. A binding that is not in
+-- this table does not exist: request preparation reads it here and nowhere
+-- else, so an in-memory SessionBinding can no longer drive a resume.
+--
+-- One row per run: the run is the natural idempotency key, and a run cannot
+-- have two live sessions without the ambiguity this slice refuses to resolve.
+-- `retired_at IS NULL` means live; retirement is a durable fact, not a flag
+-- the caller passes in.
+CREATE TABLE IF NOT EXISTS kanban_session_bindings (
+    run_id      INTEGER NOT NULL,
+    task_id     TEXT    NOT NULL,
+    provider    TEXT    NOT NULL,
+    session_id  TEXT    NOT NULL,
+    -- Provenance vocabulary: 'dispatcher_spawn' | 'operator_declared'.
+    -- 'inferred' is rejected at write time and can never be stored.
+    source      TEXT    NOT NULL,
+    seat_id     TEXT,
+    owner       TEXT    NOT NULL,
+    issued_at   INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    retired_at  INTEGER,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (run_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_links_child           ON task_links(child_id);
@@ -2496,6 +2543,23 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
         "ON task_events(run_id, id)"
     )
 
+    # Exactly-once guard for observed worker completions. One terminal run may
+    # produce at most one ``worker_completion_observed`` event on this board and
+    # the database enforces it, rather than an application-side ledger that a
+    # restart or a second consumer could disagree with. Partial, so every other
+    # event kind keeps its normal many-rows-per-run shape.
+    #
+    # Same ordering rule as ``idx_events_run`` directly above: this must be
+    # created after the additive ``run_id`` migration, never from SCHEMA_SQL,
+    # or a legacy ``task_events`` table fails to open.
+    _create_completion_dedup_index(conn)
+
+    # Executor idempotency. One execution claim per run: the second insert
+    # violates this index, which is what makes redelivery unable to execute
+    # twice. Same partial-UNIQUE pattern and the same post-``run_id`` ordering
+    # rule as the completion guard above; deliberately NOT a separate ledger.
+    _create_execution_claim_index(conn)
+
     notify_table_exists = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='kanban_notify_subs'"
     ).fetchone() is not None
@@ -2588,6 +2652,33 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
 
     _rebuild_drifted_tables(conn)
 
+    # Worker-session linkage for the control loop. MUST be added after
+    # ``_rebuild_drifted_tables`` above: a rebuild recreates ``task_runs`` from
+    # the canonical spec in ``_REBUILD_SPECS``, which would drop any column
+    # added earlier in this same pass.
+    #
+    # ``tasks.session_id`` is the session that *created* the task. It is NOT
+    # the worker session, and using it as a resume target would hand work to
+    # the wrong session. This column records the session a dispatched worker
+    # actually ran in, which is the only sound target for a ``continue`` route.
+    # Nothing in this slice populates it — the dispatcher spawn path is the
+    # producer, and that is a separate change.
+    # Guarded on table existence, like the ``kanban_notify_subs`` pass above:
+    # this function is also called directly against partial schemas, where an
+    # unguarded ALTER raises "no such table".
+    run_cols = {row["name"] for row in conn.execute("PRAGMA table_info(task_runs)")}
+    if run_cols and "worker_session_id" not in run_cols:
+        _add_column_if_missing(
+            conn, "task_runs", "worker_session_id", "worker_session_id TEXT"
+        )
+    # Provenance for that mapping. A session id alone does not say whether it
+    # is trustworthy enough to hand work back to; the source does. Same
+    # post-rebuild placement and existence guard as above.
+    if run_cols and "worker_session_source" not in run_cols:
+        _add_column_if_missing(
+            conn, "task_runs", "worker_session_source", "worker_session_source TEXT"
+        )
+
 
 # Legacy DBs defined these tables with a ``TEXT PRIMARY KEY`` id (or, for
 # ``kanban_notify_subs``, a nullable ``TEXT last_event_id``). The current
@@ -2611,6 +2702,12 @@ _REBUILD_SPECS = {
         (
             "CREATE INDEX idx_events_task ON task_events(task_id, created_at)",
             "CREATE INDEX idx_events_run ON task_events(run_id, id)",
+            "CREATE UNIQUE INDEX idx_events_completion_once "
+            "ON task_events(run_id, kind) "
+            "WHERE kind = 'worker_completion_observed'",
+            "CREATE UNIQUE INDEX idx_events_execution_claim_once "
+            "ON task_events(run_id, kind) "
+            "WHERE kind = 'session_execution_claimed'",
         ),
     ),
     "task_comments": (
@@ -2644,6 +2741,151 @@ _REBUILD_SPECS = {
         ("CREATE INDEX idx_notify_task ON kanban_notify_subs(task_id)",),
     ),
 }
+
+
+def quarantine_duplicate_completion_events(conn: sqlite3.Connection) -> int:
+    """Make a board safe for the completion dedup index. Returns rows moved.
+
+    A board that already carries more than one ``worker_completion_observed``
+    row for the same ``run_id`` — written by an older or foreign producer —
+    would make ``CREATE UNIQUE INDEX`` fail, and because the index is built
+    during ``connect()`` that would make the board **unopenable**. Bricking a
+    board is a far worse outcome than a missing index.
+
+    The repair is deterministic and lossless: for each duplicated ``run_id``
+    keep the **lowest event id** (the earliest observation, which is the one a
+    consumer would already have acted on) and re-kind the rest to
+    ``worker_completion_observed_duplicate``. Nothing is deleted, and the
+    quarantined rows stay queryable under their new kind, so the repair can be
+    audited or reversed.
+
+    Rows with ``run_id IS NULL`` are left alone — see
+    :func:`_create_completion_dedup_index` for why they are outside the index's
+    reach entirely.
+    """
+    rows = conn.execute(
+        "SELECT run_id, MIN(id) AS keep_id, COUNT(*) AS n FROM task_events "
+        "WHERE kind = ? AND run_id IS NOT NULL "
+        "GROUP BY run_id HAVING n > 1",
+        (BROKER_EVENT_WORKER_COMPLETION,),
+    ).fetchall()
+    if not rows:
+        return 0
+    moved = 0
+    for row in rows:
+        cur = conn.execute(
+            "UPDATE task_events SET kind = ? "
+            "WHERE kind = ? AND run_id = ? AND id != ?",
+            (
+                BROKER_EVENT_WORKER_COMPLETION_DUPLICATE,
+                BROKER_EVENT_WORKER_COMPLETION,
+                row["run_id"],
+                int(row["keep_id"]),
+            ),
+        )
+        moved += cur.rowcount
+    _log.warning(
+        "kanban: quarantined %d duplicate %s event(s) across %d run(s) so the "
+        "exactly-once index could be created; they are preserved under kind %r",
+        moved,
+        BROKER_EVENT_WORKER_COMPLETION,
+        len(rows),
+        BROKER_EVENT_WORKER_COMPLETION_DUPLICATE,
+    )
+    return moved
+
+
+def _create_completion_dedup_index(conn: sqlite3.Connection) -> bool:
+    """Create the completion dedup index, repairing duplicates first.
+
+    Returns True when the index exists afterwards.
+
+    **Index semantics, stated explicitly.** SQLite treats NULLs as distinct in
+    a UNIQUE index, so rows with ``run_id IS NULL`` are *not* constrained by
+    it. This slice's writer can never produce one — ``run_id`` is a required
+    ``int`` in :func:`validate_broker_event_payload` and
+    :func:`record_worker_completion_events` always supplies the run's real id —
+    and the consumer reports any NULL-``run_id`` completion row it meets as
+    malformed rather than interpreting it. The index constrains real runs; it
+    is not a general uniqueness claim over the kind.
+
+    If the index still cannot be created after the repair, the board is left
+    **openable without it** and a warning is logged. Dedup then degrades from a
+    database guarantee to the writer's ``NOT EXISTS`` guard, which is weaker
+    under concurrency — that degradation is logged rather than hidden.
+    """
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_completion_once "
+            "ON task_events(run_id, kind) "
+            "WHERE kind = 'worker_completion_observed'"
+        )
+        return True
+    except sqlite3.IntegrityError:
+        pass
+    except sqlite3.OperationalError:
+        # e.g. a partial-index-unaware SQLite build. Never fatal to opening.
+        _log.warning(
+            "kanban: could not create %s; this board CANNOT enforce "
+            "exactly-once completion folding and is not safe to schedule a "
+            "broker consumer against (see broker_health)",
+            COMPLETION_DEDUP_INDEX,
+        )
+        _write_broker_health_marker(conn)
+        return False
+
+    quarantine_duplicate_completion_events(conn)
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_completion_once "
+            "ON task_events(run_id, kind) "
+            "WHERE kind = 'worker_completion_observed'"
+        )
+        return True
+    except sqlite3.Error as exc:
+        _log.warning(
+            "kanban: %s still unavailable after repair (%s); the board remains "
+            "openable but CANNOT enforce exactly-once completion folding and is "
+            "not safe to schedule a broker consumer against (see broker_health)",
+            COMPLETION_DEDUP_INDEX,
+            exc,
+        )
+        _write_broker_health_marker(conn)
+        return False
+
+
+def _create_execution_claim_index(conn: sqlite3.Connection) -> bool:
+    """Create the executor idempotency guard, never bricking the board.
+
+    Same posture as :func:`_create_completion_dedup_index`: if the index cannot
+    be built the board still opens, and the degradation is logged rather than
+    hidden. A caller that needs the guarantee checks
+    :func:`execution_claim_index_present`.
+    """
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_execution_claim_once "
+            "ON task_events(run_id, kind) "
+            "WHERE kind = 'session_execution_claimed'"
+        )
+        return True
+    except sqlite3.Error as exc:
+        _log.warning(
+            "kanban: could not create %s (%s); executor idempotency cannot be "
+            "enforced by the database and execution must not be scheduled",
+            EXECUTION_CLAIM_INDEX,
+            exc,
+        )
+        return False
+
+
+def execution_claim_index_present(conn: sqlite3.Connection) -> bool:
+    """Live check for the executor idempotency guard."""
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+        (EXECUTION_CLAIM_INDEX,),
+    ).fetchone()
+    return row is not None
 
 
 def _table_has_drifted(conn: sqlite3.Connection, table: str) -> bool:
@@ -4775,6 +5017,92 @@ def heartbeat_claim(
         return False
 
 
+class ClaimLeaseLost(RuntimeError):
+    """An external executor no longer owns the native Hermes task claim."""
+
+
+def require_claim_heartbeat(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    claimer: str,
+    expected_run_id: int,
+    ttl_seconds: Optional[int] = None,
+) -> None:
+    """Renew one exact native claim or fail closed.
+
+    This is intentionally synchronous and transport-agnostic: a real executor
+    owns the periodic loop and must call it on a cadence safely below its TTL,
+    including immediately before accepting an external result.  A false return
+    from the native CAS is a lost lease, never a reason to continue or apply a
+    stale provider result.
+    """
+    if not isinstance(claimer, str) or not claimer.strip():
+        raise ValueError("claimer must be a non-empty string")
+    if isinstance(expected_run_id, bool) or not isinstance(expected_run_id, int) or expected_run_id <= 0:
+        raise ValueError("expected_run_id must be a positive integer")
+    expires = int(time.time()) + _resolve_claim_ttl_seconds(ttl_seconds)
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE tasks SET claim_expires = ? WHERE id = ? "
+            "AND status = 'running' AND claim_lock = ? AND current_run_id = ?",
+            (expires, task_id, claimer, expected_run_id),
+        )
+        if cur.rowcount == 1:
+            run = conn.execute(
+                "UPDATE task_runs SET claim_expires = ? WHERE id = ? AND task_id = ? "
+                "AND status = 'running'",
+                (expires, expected_run_id, task_id),
+            )
+            if run.rowcount == 1:
+                return
+        # Raise *inside* the transaction so the preceding task-row renewal
+        # rolls back too.  A split lease (task renewed, run not renewed) is not
+        # safe evidence of ownership.
+        raise ClaimLeaseLost(
+            f"lost Hermes claim for task {task_id!r}; refusing external result"
+        )
+
+
+def register_claim_process(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    claimer: str,
+    expected_run_id: int,
+    pid: int,
+) -> None:
+    """Bind one real executor process to the exact live Hermes claim.
+
+    This is deliberately stricter than the legacy spawn helper: a process is
+    recorded only while the named task, lock, and run still match.  A reclaim
+    makes the next executor heartbeat fail, and the executor's local cleanup
+    terminates its own process group rather than trusting a later task owner.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        raise ValueError("pid must be a positive integer")
+    with write_txn(conn):
+        task = conn.execute(
+            "UPDATE tasks SET worker_pid=? WHERE id=? AND status='running' "
+            "AND claim_lock=? AND current_run_id=?",
+            (pid, task_id, claimer, expected_run_id),
+        )
+        run = conn.execute(
+            "UPDATE task_runs SET worker_pid=? WHERE id=? AND task_id=? "
+            "AND status='running' AND claim_lock=?",
+            (pid, expected_run_id, task_id, claimer),
+        )
+        if task.rowcount != 1 or run.rowcount != 1:
+            raise ClaimLeaseLost(
+                f"lost Hermes claim for task {task_id!r}; refusing process registration"
+            )
+        _append_event(
+            conn, task_id, "external_executor_started",
+            {"pid": pid, "run_id": expected_run_id, "claimer": claimer},
+            run_id=expected_run_id,
+        )
+
+
 def release_stale_claims(
     conn: sqlite3.Connection,
     *,
@@ -5166,6 +5494,7 @@ def complete_task(
     metadata: Optional[dict] = None,
     created_cards: Optional[Iterable[str]] = None,
     expected_run_id: Optional[int] = None,
+    a3_guard: bool = False,
 ) -> bool:
     """Transition ``running|ready -> done`` and record ``result``.
 
@@ -5228,6 +5557,16 @@ def complete_task(
         conn, task_id, metadata, summary=summary, result=result,
     )
     with write_txn(conn):
+        # Terminal-time kill guard (default OFF — existing callers are
+        # unaffected). Evaluated INSIDE this transaction, alongside the
+        # expected_run_id CAS, so a latch landing between an earlier check and
+        # this write cannot slip through. Raising here rolls the transaction
+        # back, so no partial mutation survives.
+        if a3_guard and a3_revocation_latched(conn, task_id):
+            raise ExecutionNotPermitted(
+                f"A3 revocation is latched for {task_id}; refusing terminal "
+                "board mutation"
+            )
         if expected_run_id is None:
             cur = conn.execute(
                 """
@@ -5946,6 +6285,7 @@ def block_task(
     reason: Optional[str] = None,
     kind: Optional[str] = None,
     expected_run_id: Optional[int] = None,
+    a3_guard: bool = False,
 ) -> bool:
     """Transition ``running``/``ready`` → ``blocked`` (or route elsewhere).
 
@@ -5981,6 +6321,16 @@ def block_task(
     routed_to = "blocked"
     recurrences = 0
     with write_txn(conn):
+        # Terminal-time kill guard (default OFF — existing callers are
+        # unaffected). Evaluated INSIDE this transaction, alongside the
+        # expected_run_id CAS, so a latch landing between an earlier check and
+        # this write cannot slip through. Raising here rolls the transaction
+        # back, so no partial mutation survives.
+        if a3_guard and a3_revocation_latched(conn, task_id):
+            raise ExecutionNotPermitted(
+                f"A3 revocation is latched for {task_id}; refusing terminal "
+                "board mutation"
+            )
         cur_row = conn.execute(
             "SELECT status, block_kind, block_recurrences FROM tasks WHERE id = ?",
             (task_id,),
@@ -10263,6 +10613,3742 @@ def rewind_notify_cursor(
 
 
 # ---------------------------------------------------------------------------
+# Broker / orchestrator control-loop slice (INERT)
+# ---------------------------------------------------------------------------
+#
+# Scope of this slice, deliberately small:
+#
+#   1. typed validation for two new event kinds;
+#   2. a per-board consumer cursor + atomic claim, reusing the
+#      ``kanban_notify_subs`` discipline (BEGIN IMMEDIATE + CAS);
+#   3. dedup of terminal ``task_runs`` into exactly one typed completion event;
+#   4. a PURE route decision function.
+#
+# Authority: native per-board ``task_events`` / ``task_runs`` / ``tasks`` only.
+# There is no parallel queue, no lease file, no JSON cursor and no Markdown
+# anywhere in this path. ``task_events.id`` is the cursor, the partial UNIQUE
+# index is the dedup, and ``task_runs`` is the completion record — each of them
+# already transactional with the rows it orders.
+#
+# Inertness: nothing here spawns a worker, invokes a provider, or resumes a
+# session. :func:`decide_route` is pure — it takes rows and returns a decision,
+# performing no I/O — and every decision it can produce carries
+# ``spawn = False``. Acting on a decision is a separate, separately-approved
+# change.
+
+#: Emitted when a terminal ``task_runs`` row has been observed by the loop.
+BROKER_EVENT_WORKER_COMPLETION = "worker_completion_observed"
+#: Emitted when the loop has decided what should happen next about a task.
+BROKER_EVENT_ROUTE_DECIDED = "orchestrator_route_decided"
+#: Emitted when a run is mapped to an already-known worker session.
+BROKER_EVENT_SESSION_MAPPED = "worker_session_mapped"
+
+BROKER_EVENT_KINDS = frozenset(
+    {
+        BROKER_EVENT_WORKER_COMPLETION,
+        BROKER_EVENT_ROUTE_DECIDED,
+        BROKER_EVENT_SESSION_MAPPED,
+    }
+)
+
+# --- worker-session provenance -------------------------------------------
+#
+# How a run came to be associated with a worker session. A session id on its
+# own says nothing about whether it is safe to hand work back to; the source
+# does. Only *declared* sources are eligible to drive a CONTINUE.
+
+#: The dispatcher recorded the session when it spawned the worker.
+SESSION_SOURCE_DISPATCHER = "dispatcher_spawn"
+#: An operator explicitly declared the mapping.
+SESSION_SOURCE_OPERATOR = "operator_declared"
+#: Derived from observation (log scraping, workspace matching, …). Recorded for
+#: visibility, never trusted to drive work.
+SESSION_SOURCE_INFERRED = "inferred"
+
+VALID_SESSION_SOURCES = frozenset(
+    {SESSION_SOURCE_DISPATCHER, SESSION_SOURCE_OPERATOR, SESSION_SOURCE_INFERRED}
+)
+
+#: Sources whose mapping may drive a ``continue``. Inference never qualifies.
+CONTINUE_ELIGIBLE_SESSION_SOURCES = frozenset(
+    {SESSION_SOURCE_DISPATCHER, SESSION_SOURCE_OPERATOR}
+)
+
+#: Terminal ``task_runs.outcome`` values, verbatim from the schema comment.
+TERMINAL_RUN_OUTCOMES = frozenset(
+    {
+        "completed",
+        "blocked",
+        "crashed",
+        "timed_out",
+        "spawn_failed",
+        "gave_up",
+        "reclaimed",
+    }
+)
+
+#: Outcomes that may be retried in the worker's existing session.
+RETRYABLE_RUN_OUTCOMES = frozenset(
+    {"crashed", "timed_out", "spawn_failed", "reclaimed"}
+)
+
+ROUTE_CONTINUE = "continue"
+ROUTE_REVIEW = "review"
+ROUTE_BLOCK = "block"
+ROUTE_CLOSE = "close"
+
+VALID_ROUTES = frozenset({ROUTE_CONTINUE, ROUTE_REVIEW, ROUTE_BLOCK, ROUTE_CLOSE})
+
+# Status vocabulary is reconciled against the native ``VALID_STATUSES``
+# (triage, todo, scheduled, ready, running, blocked, review, done, archived).
+# An earlier version of this slice invented ``review-required``, which is not a
+# native status and could never match; it is removed.
+#
+# Note there is no native ``cancelled`` or ``in_progress`` status — ``running``
+# is the native in-flight status. Anything outside ``VALID_STATUSES`` is
+# treated as unknown and routed to REVIEW rather than interpreted, so a future
+# status added elsewhere cannot silently acquire a routing meaning here.
+_CLOSED_TASK_STATUSES = frozenset({"done", "archived"})
+_REVIEW_TASK_STATUSES = frozenset({"review", "triage"})
+_BLOCKED_TASK_STATUSES = frozenset({"blocked"})
+#: Statuses this router understands. Must stay a subset of VALID_STATUSES.
+_ROUTABLE_TASK_STATUSES = (
+    _CLOSED_TASK_STATUSES
+    | _REVIEW_TASK_STATUSES
+    | _BLOCKED_TASK_STATUSES
+    | frozenset({"todo", "scheduled", "ready", "running"})
+)
+
+#: Default bound on how many rows one pass may fetch or drain.
+BROKER_DEFAULT_LIMIT = 200
+
+#: Hard ceiling. A caller cannot raise its own bound past this — an unbounded
+#: pass is the failure mode this whole slice is built to avoid, so the bound is
+#: enforced rather than merely defaulted.
+BROKER_MAX_LIMIT = 1000
+
+
+def _enforce_limit(limit: int) -> int:
+    """Clamp a caller-supplied bound into ``[1, BROKER_MAX_LIMIT]``.
+
+    L1: a fractional limit is **rejected**, not truncated. ``int(2.7)`` silently
+    became 2, so a caller asking for a bound the system cannot honour got a
+    different bound without being told. A whole-valued float (``5.0``) is
+    accepted as the integer it exactly represents; ``bool`` is not an integer
+    for this purpose.
+    """
+    if isinstance(limit, bool):
+        raise ValueError(f"limit must be an integer, got bool {limit!r}")
+    if isinstance(limit, int):
+        value = limit
+    elif isinstance(limit, float):
+        if not limit.is_integer():
+            raise ValueError(f"limit must be a whole number, got {limit!r}")
+        value = int(limit)
+    else:
+        raise ValueError(f"limit must be an integer, got {limit!r}")
+    if value < 1:
+        raise ValueError(f"limit must be >= 1, got {value}")
+    return min(value, BROKER_MAX_LIMIT)
+
+#: Quarantine kind for legacy duplicate completion rows. Renamed, never
+#: deleted, so a repair cannot lose data.
+BROKER_EVENT_WORKER_COMPLETION_DUPLICATE = "worker_completion_observed_duplicate"
+
+
+#: Name of the exactly-once guard, so health checks and repairs agree on it.
+COMPLETION_DEDUP_INDEX = "idx_events_completion_once"
+
+
+class BrokerEventValidationError(ValueError):
+    """A broker event payload does not match its declared schema."""
+
+
+class BrokerUnsafeError(RuntimeError):
+    """The board cannot provide exactly-once folding.
+
+    Raised instead of silently degrading. See :func:`broker_health`.
+    """
+
+
+@dataclass(frozen=True)
+class BrokerHealth:
+    """Queryable health of the broker substrate on one board."""
+
+    dedup_index_present: bool
+    #: Duplicate completion rows visible right now (0 when the index holds).
+    duplicate_completion_rows: int
+    degraded_reason: Optional[str] = None
+
+    @property
+    def healthy(self) -> bool:
+        return self.dedup_index_present and self.duplicate_completion_rows == 0
+
+    @property
+    def safe_to_schedule(self) -> bool:
+        """Whether a consumer may be scheduled/activated against this board.
+
+        Without the dedup index, exactly-once folding is not enforceable — a
+        multiprocess race produces duplicate completion events. That is a
+        no-schedule condition, not a warning.
+        """
+        return self.dedup_index_present
+
+    def to_json(self) -> dict:
+        return {
+            "dedup_index_present": self.dedup_index_present,
+            "duplicate_completion_rows": self.duplicate_completion_rows,
+            "degraded_reason": self.degraded_reason,
+            "healthy": self.healthy,
+            "safe_to_schedule": self.safe_to_schedule,
+        }
+
+
+def completion_dedup_index_present(conn: sqlite3.Connection) -> bool:
+    """Live check: does the exactly-once guard exist on this board?"""
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+        (COMPLETION_DEDUP_INDEX,),
+    ).fetchone()
+    return row is not None
+
+
+@dataclass(frozen=True)
+class ConsumerFreshness:
+    """How far behind a named consumer is, and how stale that makes it."""
+
+    consumer: str
+    cursor: int
+    max_event_id: int
+    #: Events past the cursor right now.
+    lag: int
+    #: Seconds since the consumer last advanced, or None if it never has.
+    seconds_since_advance: Optional[int]
+    #: Age of the oldest unconsumed event, or None when caught up.
+    oldest_unconsumed_age_seconds: Optional[int]
+
+    def stale(self, max_lag_seconds: int) -> bool:
+        age = self.oldest_unconsumed_age_seconds
+        return age is not None and age > max_lag_seconds
+
+    def to_json(self) -> dict:
+        return {
+            "consumer": self.consumer,
+            "cursor": self.cursor,
+            "max_event_id": self.max_event_id,
+            "lag": self.lag,
+            "seconds_since_advance": self.seconds_since_advance,
+            "oldest_unconsumed_age_seconds": self.oldest_unconsumed_age_seconds,
+        }
+
+
+def consumer_freshness(
+    conn: sqlite3.Connection,
+    *,
+    consumer: str,
+    now: Optional[int] = None,
+) -> Optional[ConsumerFreshness]:
+    """Freshness for one named consumer, or None if it is not registered.
+
+    Lag is measured in *events* and in *seconds of unconsumed backlog*, because
+    a consumer that stopped is indistinguishable from an idle one by cursor
+    position alone — the age of the oldest thing it has not read is what makes
+    a stall visible.
+    """
+    row = conn.execute(
+        "SELECT last_event_id, updated_at FROM kanban_broker_subs WHERE consumer = ?",
+        (consumer,),
+    ).fetchone()
+    if row is None:
+        return None
+    stamp = int(now if now is not None else time.time())
+    cursor = int(row["last_event_id"])
+    top = conn.execute("SELECT COALESCE(MAX(id), 0) AS m FROM task_events").fetchone()
+    max_id = int(top["m"] if top and top["m"] else 0)
+    lag_row = conn.execute(
+        "SELECT COUNT(*) AS c, MIN(created_at) AS oldest FROM task_events WHERE id > ?",
+        (cursor,),
+    ).fetchone()
+    lag = int(lag_row["c"] or 0)
+    oldest = lag_row["oldest"]
+    return ConsumerFreshness(
+        consumer=consumer,
+        cursor=cursor,
+        max_event_id=max_id,
+        lag=lag,
+        seconds_since_advance=(
+            stamp - int(row["updated_at"]) if row["updated_at"] is not None else None
+        ),
+        oldest_unconsumed_age_seconds=(
+            stamp - int(oldest) if oldest is not None else None
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class NotificationProjection:
+    """A testable, transport-independent view of one routing decision.
+
+    Kept separate from the rendered string so a consumer can assert on typed
+    fields rather than parse text, and so a future transport can format it
+    differently without changing the decision.
+    """
+
+    task_id: str
+    run_id: int
+    route: str
+    reason: str
+    outcome: str
+    session_id: Optional[str]
+    provider: Optional[str]
+    seat: Optional[str]
+    spawn: bool
+    text: str
+
+    def to_json(self) -> dict:
+        return {
+            "task_id": self.task_id,
+            "run_id": self.run_id,
+            "route": self.route,
+            "reason": self.reason,
+            "outcome": self.outcome,
+            "session_id": self.session_id,
+            "provider": self.provider,
+            "seat": self.seat,
+            "spawn": self.spawn,
+            "text": self.text,
+        }
+
+
+def project_notification(decision: "RouteDecision") -> NotificationProjection:
+    """Project a decision into its typed notification form."""
+    return NotificationProjection(
+        task_id=decision.task_id,
+        run_id=decision.run_id,
+        route=decision.route,
+        reason=decision.reason,
+        outcome=decision.outcome,
+        session_id=decision.session_id,
+        provider=decision.provider,
+        seat=decision.seat,
+        spawn=decision.spawn,
+        text=render_route_notification(decision),
+    )
+
+
+def broker_health(conn: sqlite3.Connection) -> BrokerHealth:
+    """Explicit, queryable health. The live schema is the source of truth.
+
+    A persisted marker is also written by :func:`_create_completion_dedup_index`
+    when the index could not be created, so an operator can see *why* a board
+    degraded even after a later connect repairs it. The live check always wins
+    for the scheduling decision — a stale marker must never gate a healthy
+    board, and a healthy-looking marker must never unblock a degraded one.
+    """
+    present = completion_dedup_index_present(conn)
+    duplicates = conn.execute(
+        "SELECT COALESCE(SUM(n - 1), 0) AS d FROM ("
+        "  SELECT COUNT(*) AS n FROM task_events"
+        "   WHERE kind = ? AND run_id IS NOT NULL"
+        "   GROUP BY run_id HAVING n > 1)",
+        (BROKER_EVENT_WORKER_COMPLETION,),
+    ).fetchone()
+    duplicate_rows = int(duplicates["d"] if duplicates and duplicates["d"] else 0)
+
+    reason = None
+    if not present:
+        reason = _read_broker_health_marker(conn) or "dedup_index_absent"
+    elif duplicate_rows:
+        reason = "duplicate_completion_rows_present"
+    return BrokerHealth(
+        dedup_index_present=present,
+        duplicate_completion_rows=duplicate_rows,
+        degraded_reason=reason,
+    )
+
+
+def assert_broker_safe_to_schedule(conn: sqlite3.Connection) -> BrokerHealth:
+    """Hard gate. Raises :class:`BrokerUnsafeError` when not safe.
+
+    Intended as the check a scheduler/activation path must call before running
+    a consumer against a board. Degrading silently is what this replaces.
+    """
+    health = broker_health(conn)
+    if not health.safe_to_schedule:
+        raise BrokerUnsafeError(
+            "board cannot enforce exactly-once completion folding "
+            f"({health.degraded_reason}); refusing to schedule a broker consumer"
+        )
+    return health
+
+
+def _read_broker_health_marker(conn: sqlite3.Connection) -> Optional[str]:
+    try:
+        row = conn.execute(
+            "SELECT last_event_id FROM kanban_broker_subs WHERE consumer = ?",
+            (_BROKER_HEALTH_MARKER_CONSUMER,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    return "dedup_index_creation_failed"
+
+
+def _write_broker_health_marker(conn: sqlite3.Connection) -> None:
+    """Persist that this board failed to build the dedup index.
+
+    Stored as a reserved row in ``kanban_broker_subs`` rather than a new table,
+    so the degraded state survives a restart without widening the schema. It is
+    diagnostic only: :func:`broker_health` always re-checks the live schema.
+    """
+    now = int(time.time())
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO kanban_broker_subs "
+            "(consumer, last_event_id, created_at, updated_at) VALUES (?, 0, ?, ?)",
+            (_BROKER_HEALTH_MARKER_CONSUMER, now, now),
+        )
+    except sqlite3.Error:
+        pass
+
+
+#: Reserved consumer name used only as a persistent degraded-state marker.
+_BROKER_HEALTH_MARKER_CONSUMER = "__broker_health__dedup_index_failed"
+
+
+# field -> (python types, required)
+_BROKER_EVENT_SPECS: dict[str, dict[str, tuple[tuple[type, ...], bool]]] = {
+    BROKER_EVENT_WORKER_COMPLETION: {
+        "run_id": ((int,), True),
+        "task_id": ((str,), True),
+        "outcome": ((str,), True),
+        "run_status": ((str,), True),
+        "profile": ((str, type(None)), False),
+        "started_at": ((int, type(None)), False),
+        "ended_at": ((int, type(None)), False),
+        "error": ((str, type(None)), False),
+        # The session the worker actually ran in, when the dispatcher recorded
+        # one. NULL until the producer-side change lands; a NULL here is what
+        # makes a ``continue`` route fail closed to REVIEW.
+        "worker_session_id": ((str, type(None)), False),
+        # N1: provenance travels WITH the completion. A payload without it is
+        # unprovenanced and fails closed at the router — enforcement must not
+        # depend on a caller remembering to pass an optional kwarg.
+        "worker_session_source": ((str, type(None)), False),
+    },
+    BROKER_EVENT_ROUTE_DECIDED: {
+        "run_id": ((int,), True),
+        "task_id": ((str,), True),
+        "route": ((str,), True),
+        "reason": ((str,), True),
+        "outcome": ((str,), True),
+        "spawn": ((bool,), True),
+        "session_id": ((str, type(None)), False),
+        "provider": ((str, type(None)), False),
+        "seat": ((str, type(None)), False),
+    },
+    BROKER_EVENT_SESSION_MAPPED: {
+        "run_id": ((int,), True),
+        "task_id": ((str,), True),
+        "worker_session_id": ((str,), True),
+        "source": ((str,), True),
+        "continue_eligible": ((bool,), True),
+    },
+}
+
+
+def validate_broker_event_payload(kind: str, payload: Optional[dict]) -> dict:
+    """Validate + normalise a broker event payload. Pure; raises on mismatch.
+
+    ``task_events.kind`` is free-form text and ``_append_event`` accepts any
+    payload, which is fine for human-facing history but not for rows a control
+    loop will make decisions from. These two kinds are typed at the boundary so
+    a malformed producer fails loudly here rather than being silently
+    interpreted downstream.
+    """
+    if kind not in _BROKER_EVENT_SPECS:
+        raise BrokerEventValidationError(f"not a broker event kind: {kind!r}")
+    if not isinstance(payload, dict):
+        raise BrokerEventValidationError(
+            f"{kind}: payload must be a dict, got {type(payload).__name__}"
+        )
+
+    spec = _BROKER_EVENT_SPECS[kind]
+    unknown = sorted(set(payload) - set(spec))
+    if unknown:
+        raise BrokerEventValidationError(f"{kind}: unknown field(s) {unknown}")
+
+    out: dict[str, Any] = {}
+    for field, (types_, required) in spec.items():
+        if field not in payload:
+            if required:
+                raise BrokerEventValidationError(f"{kind}: missing required field {field!r}")
+            continue
+        value = payload[field]
+        # bool is a subclass of int; keep the two from satisfying each other.
+        if bool in types_ and not isinstance(value, bool):
+            raise BrokerEventValidationError(
+                f"{kind}: field {field!r} must be bool, got {type(value).__name__}"
+            )
+        if bool not in types_ and isinstance(value, bool) and int in types_:
+            raise BrokerEventValidationError(
+                f"{kind}: field {field!r} must be int, got bool"
+            )
+        if not isinstance(value, types_):
+            names = "/".join(t.__name__ for t in types_)
+            raise BrokerEventValidationError(
+                f"{kind}: field {field!r} must be {names}, got {type(value).__name__}"
+            )
+        out[field] = value
+
+    # Both kinds must name a real run. SQLite treats NULLs as distinct in a
+    # UNIQUE index, so a NULL/0 run_id would sit outside the dedup guard
+    # entirely and could be recorded without limit; a decision about run 0 is
+    # equally meaningless.
+    if out["run_id"] <= 0:
+        raise BrokerEventValidationError(
+            f"{kind}: run_id must be a positive run id, got {out['run_id']!r}"
+        )
+
+    if kind == BROKER_EVENT_WORKER_COMPLETION:
+        if out["outcome"] not in TERMINAL_RUN_OUTCOMES:
+            raise BrokerEventValidationError(
+                f"{kind}: outcome {out['outcome']!r} is not terminal"
+            )
+    elif kind == BROKER_EVENT_SESSION_MAPPED:
+        if out["source"] not in VALID_SESSION_SOURCES:
+            raise BrokerEventValidationError(
+                f"{kind}: unknown session source {out['source']!r}"
+            )
+        expected = out["source"] in CONTINUE_ELIGIBLE_SESSION_SOURCES
+        if out["continue_eligible"] is not expected:
+            raise BrokerEventValidationError(
+                f"{kind}: continue_eligible must be {expected} for source "
+                f"{out['source']!r}"
+            )
+    else:
+        if out["route"] not in VALID_ROUTES:
+            raise BrokerEventValidationError(f"{kind}: unknown route {out['route']!r}")
+        if out["spawn"] is not False:
+            # Structural guard: this slice cannot express a spawning decision.
+            raise BrokerEventValidationError(f"{kind}: spawn must be False in this slice")
+    return out
+
+
+# --- per-board consumer cursor + atomic claim ------------------------------
+
+
+class BrokerAuthError(RuntimeError):
+    """A named consumer was used without, or with the wrong, token."""
+
+
+def _token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _authenticate_consumer(
+    conn: sqlite3.Connection, consumer: str, token: Optional[str]
+) -> None:
+    """Enforce a registered consumer's token. Constant-time comparison.
+
+    A consumer registered *without* a token stays usable without one (local and
+    legacy callers), but once a token is set the name cannot be used without
+    it — so a second process cannot quietly share, or steal, another
+    consumer's cursor.
+    """
+    row = conn.execute(
+        "SELECT token_sha256 FROM kanban_broker_subs WHERE consumer = ?", (consumer,)
+    ).fetchone()
+    if row is None:
+        return
+    expected = row["token_sha256"] if "token_sha256" in row.keys() else None
+    if not expected:
+        return
+    if not token:
+        raise BrokerAuthError(f"consumer {consumer!r} requires a token")
+    if not hmac.compare_digest(str(expected), _token_digest(token)):
+        raise BrokerAuthError(f"invalid token for consumer {consumer!r}")
+
+
+def ensure_broker_sub(
+    conn: sqlite3.Connection, *, consumer: str, token: Optional[str] = None,
+) -> int:
+    """Create the consumer row if absent. Returns its current cursor.
+
+    Passing ``token`` on first registration binds the name to that secret; a
+    later call must present the same token. Re-registering with a different
+    token raises rather than silently rebinding the name.
+    """
+    if not consumer or not isinstance(consumer, str):
+        raise ValueError("consumer must be a non-empty string")
+    _authenticate_consumer(conn, consumer, token)
+    now = int(time.time())
+    digest_value = _token_digest(token) if token else None
+    with write_txn(conn):
+        conn.execute(
+            "INSERT OR IGNORE INTO kanban_broker_subs "
+            "(consumer, last_event_id, created_at, updated_at, token_sha256) "
+            "VALUES (?, 0, ?, ?, ?)",
+            (consumer, now, now, digest_value),
+        )
+        if digest_value:
+            # Bind the token on a row that predates it, but never overwrite a
+            # different one — _authenticate_consumer already rejected that.
+            conn.execute(
+                "UPDATE kanban_broker_subs SET token_sha256 = ?, updated_at = ? "
+                "WHERE consumer = ? AND token_sha256 IS NULL",
+                (digest_value, now, consumer),
+            )
+    row = conn.execute(
+        "SELECT last_event_id FROM kanban_broker_subs WHERE consumer = ?", (consumer,),
+    ).fetchone()
+    return int(row["last_event_id"]) if row else 0
+
+
+def broker_cursor(conn: sqlite3.Connection, *, consumer: str) -> int:
+    row = conn.execute(
+        "SELECT last_event_id FROM kanban_broker_subs WHERE consumer = ?", (consumer,),
+    ).fetchone()
+    return int(row["last_event_id"]) if row else 0
+
+
+def unseen_events_for_broker(
+    conn: sqlite3.Connection,
+    *,
+    consumer: str,
+    kinds: Optional[Iterable[str]] = None,
+    limit: int = BROKER_DEFAULT_LIMIT,
+) -> tuple[int, list[Event]]:
+    """Return ``(new_cursor, events)`` past this consumer's cursor.
+
+    Board-wide (every task), ordered by ``task_events.id``, and **bounded** by
+    ``limit`` so one pass cannot try to drain an arbitrarily large backlog. The
+    cursor is not advanced here.
+    """
+    row = conn.execute(
+        "SELECT last_event_id FROM kanban_broker_subs WHERE consumer = ?", (consumer,),
+    ).fetchone()
+    if row is None:
+        return 0, []
+    cursor = int(row["last_event_id"])
+    kind_list = list(kinds) if kinds else None
+    q = (
+        "SELECT * FROM task_events WHERE id > ? "
+        + ("AND kind IN (" + ",".join("?" * len(kind_list)) + ") " if kind_list else "")
+        + "ORDER BY id ASC LIMIT ?"
+    )
+    params: list[Any] = [cursor]
+    if kind_list:
+        params.extend(kind_list)
+    params.append(_enforce_limit(limit))
+    rows = conn.execute(q, params).fetchall()
+    out: list[Event] = []
+    max_id = cursor
+    for r in rows:
+        try:
+            payload = json.loads(r["payload"]) if r["payload"] else None
+        except Exception:
+            payload = None
+        out.append(
+            Event(
+                id=r["id"],
+                task_id=r["task_id"],
+                kind=r["kind"],
+                payload=payload,
+                created_at=r["created_at"],
+                run_id=(
+                    int(r["run_id"])
+                    if "run_id" in r.keys() and r["run_id"] is not None
+                    else None
+                ),
+            )
+        )
+        max_id = max(max_id, int(r["id"]))
+    return max_id, out
+
+
+def claim_unseen_events_for_broker(
+    conn: sqlite3.Connection,
+    *,
+    consumer: str,
+    kinds: Optional[Iterable[str]] = None,
+    limit: int = BROKER_DEFAULT_LIMIT,
+    token: Optional[str] = None,
+) -> tuple[int, int, list[Event]]:
+    """Atomically claim this consumer's unseen events board-wide.
+
+    Returns ``(old_cursor, new_cursor, events)``. Exactly the discipline
+    :func:`claim_unseen_events_for_sub` uses: the read and the cursor advance
+    happen inside one ``BEGIN IMMEDIATE`` transaction, and the ``UPDATE`` is
+    guarded by a CAS on the previous ``last_event_id``. Concurrent consumers
+    with the same name serialize on SQLite's writer lock, so a given event
+    range is claimed once.
+
+    On a delivery/processing failure the caller calls
+    :func:`rewind_broker_cursor`, which only rewinds if nobody else advanced
+    past the claim.
+    """
+    _authenticate_consumer(conn, consumer, token)
+    limit = _enforce_limit(limit)
+    with write_txn(conn):
+        row = conn.execute(
+            "SELECT last_event_id FROM kanban_broker_subs WHERE consumer = ?",
+            (consumer,),
+        ).fetchone()
+        if row is None:
+            return 0, 0, []
+        old_cursor = int(row["last_event_id"])
+        new_cursor, events = unseen_events_for_broker(
+            conn, consumer=consumer, kinds=kinds, limit=limit
+        )
+        if not events:
+            return old_cursor, old_cursor, []
+        if int(new_cursor) <= int(old_cursor):
+            # Monotonic guard: a cursor may only move forward. Anything else
+            # would re-deliver or rewind silently.
+            return old_cursor, old_cursor, []
+        cur = conn.execute(
+            "UPDATE kanban_broker_subs SET last_event_id = ?, updated_at = ? "
+            "WHERE consumer = ? AND last_event_id = ?",
+            (int(new_cursor), int(time.time()), consumer, int(old_cursor)),
+        )
+        if cur.rowcount != 1:
+            # The CAS lost: another claimer advanced this consumer between our
+            # read and our write. Claiming without advancing would hand the
+            # same events to two owners, so we yield the range entirely.
+            return old_cursor, old_cursor, []
+        return old_cursor, new_cursor, events
+
+
+def advance_broker_cursor(
+    conn: sqlite3.Connection, *, consumer: str, new_cursor: int,
+) -> bool:
+    """Move a consumer's cursor **forward only**. Returns True if it moved.
+
+    The ``last_event_id <= ?`` guard makes this monotonic: an advance can never
+    rewind a cursor. Deliberate rewinds go through
+    :func:`rewind_broker_cursor`, which is CAS-guarded on the exact claim.
+    """
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE kanban_broker_subs SET last_event_id = ?, updated_at = ? "
+            "WHERE consumer = ? AND last_event_id <= ?",
+            (int(new_cursor), int(time.time()), consumer, int(new_cursor)),
+        )
+    return cur.rowcount > 0
+
+
+def rewind_broker_cursor(
+    conn: sqlite3.Connection,
+    *,
+    consumer: str,
+    claimed_cursor: int,
+    old_cursor: int,
+) -> bool:
+    """Undo a claim after a failed pass. CAS-guarded; True if it rewound."""
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE kanban_broker_subs SET last_event_id = ?, updated_at = ? "
+            "WHERE consumer = ? AND last_event_id = ?",
+            (int(old_cursor), int(time.time()), consumer, int(claimed_cursor)),
+        )
+    return cur.rowcount > 0
+
+
+# --- terminal runs -> exactly one typed completion event -------------------
+
+
+def record_worker_completion_events(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = BROKER_DEFAULT_LIMIT,
+    allow_degraded: bool = False,
+) -> list[int]:
+    """Fold terminal ``task_runs`` into typed completion events, exactly once.
+
+    A run qualifies when it has both ``ended_at`` and a terminal ``outcome``.
+    Non-terminal (still-running, or ended without an outcome) rows are ignored,
+    so an in-flight attempt is never mistaken for a completion.
+
+    Exactly-once is enforced by the database — the partial UNIQUE index on
+    ``task_events(run_id, kind)`` — and the insert is ``INSERT OR IGNORE``
+    inside a single ``BEGIN IMMEDIATE``. A crash mid-pass, a restart, or a
+    second consumer racing the same board therefore converges on one event per
+    run rather than relying on any application-side ledger.
+
+    Returns the run ids newly recorded by this call. Bounded by ``limit``.
+
+    **Refuses to run without the dedup index.** The ``NOT EXISTS`` subquery
+    below is a read in the same transaction as the insert, but SQLite's
+    snapshot does not serialise two processes doing read-then-insert on
+    different connections — a multiprocess race therefore produces duplicate
+    completion events when the index is absent. Rather than degrade silently,
+    this raises :class:`BrokerUnsafeError`; a caller that genuinely accepts
+    at-least-once folding must opt in with ``allow_degraded=True``, which makes
+    the unsafe mode explicit at the call site instead of a log line nobody
+    reads.
+    """
+    if not allow_degraded and not completion_dedup_index_present(conn):
+        raise BrokerUnsafeError(
+            f"{COMPLETION_DEDUP_INDEX} is absent: exactly-once completion "
+            "folding cannot be enforced on this board. Pass allow_degraded=True "
+            "to accept at-least-once folding explicitly."
+        )
+    rows = conn.execute(
+        """
+        SELECT r.id AS run_id, r.task_id, r.profile, r.status, r.outcome,
+               r.started_at, r.ended_at, r.error, r.worker_session_id,
+               r.worker_session_source
+          FROM task_runs r
+         WHERE r.ended_at IS NOT NULL
+           AND r.outcome IS NOT NULL
+           AND NOT EXISTS (
+                 SELECT 1 FROM task_events e
+                  WHERE e.run_id = r.id AND e.kind = ?
+               )
+         ORDER BY r.id ASC
+         LIMIT ?
+        """,
+        (BROKER_EVENT_WORKER_COMPLETION, _enforce_limit(limit)),
+    ).fetchall()
+
+    recorded: list[int] = []
+    if not rows:
+        return recorded
+
+    with write_txn(conn):
+        for r in rows:
+            outcome = (r["outcome"] or "").strip()
+            if outcome not in TERMINAL_RUN_OUTCOMES:
+                # Unknown outcome: not a completion this slice understands.
+                # Left alone rather than guessed at.
+                continue
+            payload = validate_broker_event_payload(
+                BROKER_EVENT_WORKER_COMPLETION,
+                {
+                    "run_id": int(r["run_id"]),
+                    "task_id": str(r["task_id"]),
+                    "outcome": outcome,
+                    "run_status": str(r["status"] or ""),
+                    "profile": r["profile"],
+                    "started_at": int(r["started_at"]) if r["started_at"] is not None else None,
+                    "ended_at": int(r["ended_at"]) if r["ended_at"] is not None else None,
+                    "error": r["error"],
+                    "worker_session_id": r["worker_session_id"],
+                    "worker_session_source": r["worker_session_source"],
+                },
+            )
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO task_events "
+                "(task_id, run_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    payload["task_id"],
+                    payload["run_id"],
+                    BROKER_EVENT_WORKER_COMPLETION,
+                    json.dumps(payload, ensure_ascii=False),
+                    int(time.time()),
+                ),
+            )
+            if cur.rowcount:
+                recorded.append(payload["run_id"])
+    return recorded
+
+
+# --- pure route decision ---------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    """What should happen next about a task. Inert: ``spawn`` is always False."""
+
+    route: str
+    reason: str
+    task_id: str
+    run_id: int
+    outcome: str
+    session_id: Optional[str] = None
+    provider: Optional[str] = None
+    spawn: bool = False
+    #: Declared seat this decision would reuse, when one resolved.
+    seat: Optional[str] = None
+
+    def to_payload(self) -> dict:
+        return {
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "route": self.route,
+            "reason": self.reason,
+            "outcome": self.outcome,
+            "spawn": self.spawn,
+            "session_id": self.session_id,
+            "provider": self.provider,
+            "seat": self.seat,
+        }
+
+
+def _failure_limit_for(task_row: Any, failure_limit: Optional[int] = None) -> int:
+    """Resolve the effective failure limit in the **native** order.
+
+    Identical to ``recompute_ready`` / ``_record_task_failure`` so the loop and
+    the circuit breaker never disagree about when a task is permanently
+    blocked:
+
+      1. per-task ``max_retries`` if set
+      2. caller-supplied ``failure_limit`` (the dispatcher's
+         ``kanban.failure_limit`` config value)
+      3. ``DEFAULT_FAILURE_LIMIT``
+
+    An earlier version of this slice carried its own constant of 3, which
+    silently disagreed with the native default of 2.
+    """
+    try:
+        value = task_row["max_retries"]
+    except (KeyError, IndexError, TypeError):
+        value = None
+    if isinstance(value, int) and value > 0:
+        return value
+    if failure_limit is not None:
+        return int(failure_limit)
+    return DEFAULT_FAILURE_LIMIT
+
+
+def _row_get(row: Any, key: str) -> Any:
+    if row is None:
+        return None
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def decide_route(
+    *,
+    completion: dict,
+    task_row: Any,
+    provider_resolver: Optional[Callable[[Optional[str]], Optional[str]]] = None,
+    failure_limit: Optional[int] = None,
+    seats: Optional[SeatRegistry] = None,
+) -> RouteDecision:
+    """Decide continue / review / block / close for one completion. **Pure.**
+
+    No I/O, no writes, no spawning: this takes a validated completion payload
+    plus the ``tasks`` row and returns a decision.
+
+    **The resume target is the worker session, not the originating session.**
+    ``tasks.session_id`` records the chat/agent session that *created* the
+    task; handing work back to it would drive the wrong session. The only
+    sound target is ``task_runs.worker_session_id`` — the session the worker
+    actually ran in — which arrives on the completion payload.
+
+    ``continue`` is the only route that hands work back to an existing session,
+    so it requires an unambiguous target: a worker session **and** a resolvable
+    provider. Either missing or ambiguous ⇒ ``review``, never a spawn.
+
+    ``provider_resolver`` maps a profile name to its configured provider, for
+    tasks that do not set ``provider_override``. It is injected rather than
+    read from config here so this layer stays pure and free of a config
+    dependency; without it, only an explicit override counts as resolved.
+    """
+    payload = validate_broker_event_payload(BROKER_EVENT_WORKER_COMPLETION, completion)
+    task_id = payload["task_id"]
+    run_id = payload["run_id"]
+    outcome = payload["outcome"]
+
+    def _clean(value: Any) -> Optional[str]:
+        return value if isinstance(value, str) and value.strip() else None
+
+    # The worker session the run executed in — the resume target — and the
+    # provenance of that mapping. Both come from the validated payload, which
+    # `record_worker_completion_events` fills from the run row, so the
+    # canonical path always carries them (N1).
+    session_id = _clean(payload.get("worker_session_id"))
+    session_source = _clean(payload.get("worker_session_source"))
+
+    provider = _clean(_row_get(task_row, "provider_override"))
+    if provider is None and provider_resolver is not None:
+        try:
+            provider = _clean(provider_resolver(payload.get("profile")))
+        except Exception:
+            # A resolver that raises is an ambiguous mapping, not a crash.
+            provider = None
+
+    seat = seats.eligible_for_session(session_id) if seats is not None else None
+    if seat is not None and provider is None:
+        provider = seat.provider
+
+    def decision(route: str, reason: str) -> RouteDecision:
+        return RouteDecision(
+            route=route,
+            reason=reason,
+            task_id=task_id,
+            run_id=run_id,
+            outcome=outcome,
+            session_id=session_id,
+            provider=provider,
+            spawn=False,
+            seat=seat.seat_id if seat is not None else None,
+        )
+
+    if task_row is None:
+        return decision(ROUTE_REVIEW, "task_not_found")
+
+    status = _row_get(task_row, "status")
+    status = str(status) if status is not None else ""
+
+    if status not in _ROUTABLE_TASK_STATUSES:
+        # Not a status this router understands (including any future or
+        # foreign value such as ``cancelled`` / ``in_progress``, neither of
+        # which is native). Never interpreted, never continued.
+        return decision(ROUTE_REVIEW, f"unknown_task_status:{status or 'none'}")
+
+    if status in _CLOSED_TASK_STATUSES:
+        return decision(ROUTE_CLOSE, f"task_already_{status}")
+    if status in _BLOCKED_TASK_STATUSES:
+        return decision(ROUTE_BLOCK, "task_already_blocked")
+
+    if outcome == "completed":
+        if status in _REVIEW_TASK_STATUSES:
+            return decision(ROUTE_REVIEW, "completed_pending_review")
+        # The loop does not close a card on the worker's say-so.
+        return decision(ROUTE_REVIEW, "completed_awaiting_verdict")
+
+    if outcome in ("blocked", "gave_up"):
+        return decision(ROUTE_BLOCK, f"run_{outcome}")
+
+    if outcome in RETRYABLE_RUN_OUTCOMES:
+        failures = _row_get(task_row, "consecutive_failures") or 0
+        try:
+            failures = int(failures)
+        except (TypeError, ValueError):
+            failures = 0
+        limit = _failure_limit_for(task_row, failure_limit)
+        if failures >= limit:
+            return decision(ROUTE_BLOCK, f"failure_limit_reached:{failures}/{limit}")
+        if session_id is None:
+            return decision(ROUTE_REVIEW, "missing_worker_session")
+        # N1 — provenance gate, read from the AUTHORITATIVE completion payload.
+        #
+        # An earlier version took the source from an optional kwarg, so the
+        # canonical fold -> claim -> route path never enforced it: a session id
+        # with no provenance at all sailed through to CONTINUE. Enforcement
+        # must not depend on a caller remembering to pass something.
+        #
+        # Missing, inferred, and unknown all fail closed. Only the declared
+        # sources in CONTINUE_ELIGIBLE_SESSION_SOURCES may drive reuse.
+        if session_source is None:
+            return decision(ROUTE_REVIEW, "missing_session_provenance")
+        if session_source not in VALID_SESSION_SOURCES:
+            return decision(ROUTE_REVIEW, f"unknown_session_provenance:{session_source}")
+        if session_source not in CONTINUE_ELIGIBLE_SESSION_SOURCES:
+            return decision(ROUTE_REVIEW, f"session_source_not_eligible:{session_source}")
+        # Seat gate: when a registry is supplied, only a declared eligible seat
+        # may be reused. No registry means no seat-based reuse is claimed.
+        if seats is not None and seat is None:
+            return decision(ROUTE_REVIEW, "no_declared_eligible_seat")
+        if provider is None:
+            return decision(ROUTE_REVIEW, "ambiguous_provider_mapping")
+        return decision(ROUTE_CONTINUE, f"retryable_{outcome}:{failures}/{limit}")
+
+    # Unreachable for validated payloads, but never guess toward continuing.
+    return decision(ROUTE_REVIEW, f"unrecognised_outcome:{outcome}")
+
+
+def set_run_worker_session(
+    conn: sqlite3.Connection, *, run_id: int, worker_session_id: str,
+) -> bool:
+    """Record the session a dispatched worker ran in. Producer-side API.
+
+    Provided so the linkage is *expressible* natively; this slice never calls
+    it. The dispatcher spawn path is the intended caller, and wiring it there
+    is a separate change against a live write path.
+    """
+    if not worker_session_id or not isinstance(worker_session_id, str):
+        raise ValueError("worker_session_id must be a non-empty string")
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE task_runs SET worker_session_id = ? WHERE id = ?",
+            (worker_session_id, int(run_id)),
+        )
+    return cur.rowcount > 0
+
+
+# --- worker-session provenance (slice 3.1) --------------------------------
+
+
+@dataclass(frozen=True)
+class WorkerSessionMapping:
+    """A run's association with an already-known worker session."""
+
+    run_id: int
+    task_id: str
+    worker_session_id: str
+    source: str
+
+    @property
+    def continue_eligible(self) -> bool:
+        return self.source in CONTINUE_ELIGIBLE_SESSION_SOURCES
+
+
+class ProvenanceDowngradeError(ValueError):
+    """A declared provenance would be replaced by a weaker one."""
+
+
+def record_worker_session_provenance(
+    conn: sqlite3.Connection,
+    *,
+    run_id: int,
+    worker_session_id: str,
+    source: str,
+    allow_downgrade: bool = False,
+) -> WorkerSessionMapping:
+    """Map an existing run to an already-known worker session, with provenance.
+
+    **Records; never spawns.** This associates a run with a session that
+    already exists somewhere else — it does not create, resume, or contact one.
+
+    ``source`` is closed (:data:`VALID_SESSION_SOURCES`). Only *declared*
+    sources are CONTINUE-eligible: an ``inferred`` mapping is stored and
+    reported so an operator can see it, but the router will not hand work back
+    on the strength of a guess.
+    """
+    if source not in VALID_SESSION_SOURCES:
+        raise ValueError(
+            f"unknown worker session source {source!r}; "
+            f"expected one of {sorted(VALID_SESSION_SOURCES)}"
+        )
+    if not worker_session_id or not isinstance(worker_session_id, str):
+        raise ValueError("worker_session_id must be a non-empty string")
+
+    row = conn.execute(
+        "SELECT task_id, worker_session_source FROM task_runs WHERE id = ?",
+        (int(run_id),),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"no such run: {run_id}")
+    task_id = str(row["task_id"])
+
+    # Monotonic provenance: a declared mapping is never quietly weakened.
+    # Defence in depth alongside `revalidate_decision_provenance` — this closes
+    # the ordinary write path, that one closes the action boundary against a
+    # direct SQL write which bypasses this function entirely.
+    existing = row["worker_session_source"]
+    if (
+        not allow_downgrade
+        and isinstance(existing, str)
+        and existing in CONTINUE_ELIGIBLE_SESSION_SOURCES
+        and source not in CONTINUE_ELIGIBLE_SESSION_SOURCES
+    ):
+        raise ProvenanceDowngradeError(
+            f"run {run_id} already has declared provenance {existing!r}; "
+            f"refusing to downgrade to {source!r}. A deliberate downgrade is an "
+            "A3 action and must pass allow_downgrade=True explicitly."
+        )
+
+    mapping = WorkerSessionMapping(
+        run_id=int(run_id),
+        task_id=task_id,
+        worker_session_id=worker_session_id,
+        source=source,
+    )
+    payload = validate_broker_event_payload(
+        BROKER_EVENT_SESSION_MAPPED,
+        {
+            "run_id": mapping.run_id,
+            "task_id": mapping.task_id,
+            "worker_session_id": mapping.worker_session_id,
+            "source": mapping.source,
+            "continue_eligible": mapping.continue_eligible,
+        },
+    )
+    with write_txn(conn):
+        conn.execute(
+            "UPDATE task_runs SET worker_session_id = ?, worker_session_source = ? "
+            "WHERE id = ?",
+            (worker_session_id, source, int(run_id)),
+        )
+        conn.execute(
+            "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                task_id,
+                int(run_id),
+                BROKER_EVENT_SESSION_MAPPED,
+                json.dumps(payload, ensure_ascii=False),
+                int(time.time()),
+            ),
+        )
+    return mapping
+
+
+# --- declared seat registry (slice 3.3) -----------------------------------
+
+
+@dataclass(frozen=True)
+class Seat:
+    """A declared, already-existing worker seat."""
+
+    seat_id: str
+    provider: str
+    worker_session_id: str
+    eligible: bool = False
+
+
+class SeatRegistry:
+    """Declared eligible seats, injected — never read from live config.
+
+    Provider resolution **fails closed**: a task continues only when its run's
+    worker session maps to a declared seat that is marked eligible and carries
+    a provider. Nothing here discovers seats, and an unknown session resolves
+    to ``None`` rather than to a guess.
+    """
+
+    def __init__(self, seats: Iterable[Seat] = ()) -> None:
+        self._by_session: dict[str, Seat] = {}
+        for seat in seats:
+            if not seat.worker_session_id:
+                raise ValueError(f"seat {seat.seat_id!r} has no worker_session_id")
+            self._by_session[seat.worker_session_id] = seat
+
+    def __len__(self) -> int:
+        return len(self._by_session)
+
+    def for_session(self, worker_session_id: Optional[str]) -> Optional[Seat]:
+        if not worker_session_id:
+            return None
+        return self._by_session.get(worker_session_id)
+
+    def eligible_for_session(self, worker_session_id: Optional[str]) -> Optional[Seat]:
+        seat = self.for_session(worker_session_id)
+        if seat is None or not seat.eligible or not seat.provider:
+            return None
+        return seat
+
+
+# --- A3 gate + action policy (slice 3.2) ----------------------------------
+
+#: Positive A3 marker, mirroring the native ``REVIEW_VERDICT=APPROVED`` idiom
+#: that :func:`apply_approvals` already recognises.
+A3_GATE_MARKERS = ("A3_GATE=GRANTED", "A3_GATE: GRANTED")
+
+_A3_NEGATED_RE = re.compile(
+    r"\b(no|not|without|never|revoke[d]?|deny|denied|refus\w*)\b[^.\n]{0,40}A3_GATE",
+    re.IGNORECASE,
+)
+_A3_REVOKED_RE = re.compile(r"A3_GATE\s*[=:]\s*(REVOKED|DENIED)", re.IGNORECASE)
+
+
+class ActionNotPermittedError(RuntimeError):
+    """A real (non-simulated) action was attempted without a positive A3 gate."""
+
+
+#: Durable, append-only latch kinds for L2. Stored as ``task_events`` rows —
+#: native, append-only, and NOT removable by deleting a comment.
+A3_EVENT_REVOKED = "a3_gate_revoked"
+A3_EVENT_REVOCATION_CLEARED = "a3_gate_revocation_cleared"
+
+
+def latch_a3_revocation(
+    conn: sqlite3.Connection, *, task_id: str, reason: str,
+) -> int:
+    """Durably latch an A3 revocation. **Guarded: never called by this slice.**
+
+    L2 — comment-based revocation was reversible: delete the revoking comment
+    and a previously granted gate came back to life. A veto that an attacker
+    (or an accidental cleanup) can erase is not a veto.
+
+    The latch is an append-only ``task_events`` row, so removing a *comment*
+    cannot revive the gate. Once latched, :func:`a3_gate_granted` returns False
+    regardless of any grant comment, until an operator explicitly calls
+    :func:`clear_a3_revocation_latch`.
+
+    **This function performs a DB write and is deliberately not invoked
+    anywhere in this slice** — not by the router, the policy, or the consumer.
+    It exists so the latch is testable and so an operator interface exists to
+    review. Against a live board it is an A3 action; see the activation delta.
+    """
+    if not reason or not isinstance(reason, str):
+        raise ValueError("reason must be a non-empty string")
+    with write_txn(conn):
+        cur = conn.execute(
+            "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+            "VALUES (?, NULL, ?, ?, ?)",
+            (
+                task_id,
+                A3_EVENT_REVOKED,
+                json.dumps({"reason": reason}, ensure_ascii=False),
+                int(time.time()),
+            ),
+        )
+    return int(cur.lastrowid)
+
+
+def clear_a3_revocation_latch(
+    conn: sqlite3.Connection, *, task_id: str, reason: str,
+) -> int:
+    """Release a latched revocation. **Guarded: never called by this slice.**
+
+    Appends a ``a3_gate_revocation_cleared`` row. The gate re-opens only if a
+    valid grant comment also exists — clearing the latch does not itself grant
+    anything. Same live-write caveat as :func:`latch_a3_revocation`.
+    """
+    if not reason or not isinstance(reason, str):
+        raise ValueError("reason must be a non-empty string")
+    with write_txn(conn):
+        cur = conn.execute(
+            "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+            "VALUES (?, NULL, ?, ?, ?)",
+            (
+                task_id,
+                A3_EVENT_REVOCATION_CLEARED,
+                json.dumps({"reason": reason}, ensure_ascii=False),
+                int(time.time()),
+            ),
+        )
+    return int(cur.lastrowid)
+
+
+def a3_revocation_latched(conn: sqlite3.Connection, task_id: str) -> bool:
+    """True when a durable revocation latch is in force (read-only)."""
+    row = conn.execute(
+        "SELECT kind FROM task_events WHERE task_id = ? AND kind IN (?, ?) "
+        "ORDER BY id DESC LIMIT 1",
+        (task_id, A3_EVENT_REVOKED, A3_EVENT_REVOCATION_CLEARED),
+    ).fetchone()
+    if row is None:
+        return False
+    return str(row["kind"]) == A3_EVENT_REVOKED
+
+
+def a3_gate_granted(conn: sqlite3.Connection, task_id: str) -> bool:
+    """Is there a live, non-negated A3 grant for this task?
+
+    Deliberately the same shape as the native approval scan: a marker comment,
+    negation detection, and a later revocation wins. Absence is a denial.
+
+    A durable revocation latch (L2) overrides everything: while latched, no
+    combination of comments can re-open the gate.
+    """
+    if a3_revocation_latched(conn, task_id):
+        return False
+    rows = conn.execute(
+        "SELECT id, body FROM task_comments WHERE task_id = ? ORDER BY id ASC",
+        (task_id,),
+    ).fetchall()
+    granted_at: Optional[int] = None
+    revoked_at: Optional[int] = None
+    for row in rows:
+        body = row["body"] or ""
+        if _A3_REVOKED_RE.search(body):
+            revoked_at = int(row["id"])
+            continue
+        if any(marker in body for marker in A3_GATE_MARKERS):
+            if _A3_NEGATED_RE.search(body):
+                continue
+            granted_at = int(row["id"])
+    if granted_at is None:
+        return False
+    if revoked_at is not None and revoked_at > granted_at:
+        return False
+    return True
+
+
+class ActionTransport(Protocol):
+    """Something that can observe a routing outcome."""
+
+    name: str
+    simulated: bool
+
+    def observe(self, decision: "RouteDecision") -> None:  # pragma: no cover
+        ...
+
+
+@dataclass
+class SimulatedTransport:
+    """Records outcomes. Contacts nothing, resumes nothing, spawns nothing."""
+
+    name: str = "simulated"
+    simulated: bool = True
+    observed: list["RouteDecision"] = field(default_factory=list)
+
+    def observe(self, decision: "RouteDecision") -> None:
+        self.observed.append(decision)
+
+
+class ActionPolicy:
+    """Who may observe an outcome, and whether real action is permitted.
+
+    **Trust is owned by the policy, never declared by the transport (N2).**
+
+    An earlier version consulted ``transport.simulated``. That is
+    self-declaration: any object could set ``simulated = True`` and bypass both
+    the ``allow_real_action`` flag and the A3 gate. A transport asserting its
+    own harmlessness is exactly the claim that must not be taken at face value.
+
+    Now the policy holds **references** to the transports it considers
+    simulated, and membership is tested by object identity. A caller cannot
+    forge that: to be trusted, the very object must have been handed to the
+    policy's constructor. ``transport.simulated`` is never read.
+
+    Anything not registered is treated as real, and real action requires
+    **both** ``allow_real_action=True`` **and** a positive A3 gate on the task.
+    """
+
+    def __init__(
+        self,
+        allow_real_action: bool = False,
+        simulated_transports: Iterable[ActionTransport] = (),
+    ) -> None:
+        self.allow_real_action = bool(allow_real_action)
+        # Identity set: `is`-comparison against the exact objects registered.
+        self._simulated: list[ActionTransport] = list(simulated_transports)
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return (
+            f"ActionPolicy(allow_real_action={self.allow_real_action}, "
+            f"registered_simulated={len(self._simulated)})"
+        )
+
+    def is_registered_simulated(self, transport: ActionTransport) -> bool:
+        """Identity membership. Never consults the transport's own claim."""
+        return any(candidate is transport for candidate in self._simulated)
+
+    def permit(
+        self,
+        conn: sqlite3.Connection,
+        transport: ActionTransport,
+        decision: "RouteDecision",
+    ) -> None:
+        """Raise :class:`ActionNotPermittedError` unless this is allowed."""
+        if self.is_registered_simulated(transport):
+            return
+        name = getattr(transport, "name", type(transport).__name__)
+        if not self.allow_real_action:
+            raise ActionNotPermittedError(
+                f"transport {name!r} is not a registered simulated transport and "
+                "this policy does not allow real action (allow_real_action=False)"
+            )
+        if not a3_gate_granted(conn, decision.task_id):
+            raise ActionNotPermittedError(
+                f"transport {name!r} requires a positive A3 gate on "
+                f"task {decision.task_id}; none found (or it was revoked)"
+            )
+
+
+class ProvenanceChangedError(ActionNotPermittedError):
+    """The run's provenance no longer supports a decision made earlier."""
+
+
+def current_run_provenance(
+    conn: sqlite3.Connection, run_id: int,
+) -> tuple[Optional[str], Optional[str]]:
+    """Read a run's *current* ``(worker_session_id, worker_session_source)``.
+
+    Read-only. This is the live value, not the snapshot a decision was made
+    from.
+    """
+    row = conn.execute(
+        "SELECT worker_session_id, worker_session_source FROM task_runs WHERE id = ?",
+        (int(run_id),),
+    ).fetchone()
+    if row is None:
+        return None, None
+
+    def _clean(value: Any) -> Optional[str]:
+        return value if isinstance(value, str) and value.strip() else None
+
+    return _clean(row["worker_session_id"]), _clean(row["worker_session_source"])
+
+
+def revalidate_decision_provenance(
+    conn: sqlite3.Connection, decision: "RouteDecision",
+) -> None:
+    """Re-check a CONTINUE decision against the run's provenance *right now*.
+
+    Provenance is captured into the completion payload at fold time and is then
+    immutable, so a decision folded while the mapping said ``dispatcher_spawn``
+    stayed CONTINUE-eligible even if ``task_runs.worker_session_source`` was
+    later downgraded to ``inferred``. Nothing acts today, but a decision must
+    not carry a stale warrant into the moment it would.
+
+    This is deliberately checked **at the action boundary** rather than inside
+    :func:`decide_route`: the router stays pure and free of I/O, folding and
+    exactly-once semantics are untouched, and no new control plane or state is
+    introduced — it is one read of the same native row.
+
+    Only ``continue`` is revalidated; it is the only route that would hand work
+    back to a session. Any drift fails closed with
+    :class:`ProvenanceChangedError`.
+    """
+    if decision.route != ROUTE_CONTINUE:
+        return
+    session_id, source = current_run_provenance(conn, decision.run_id)
+    if source is None:
+        raise ProvenanceChangedError(
+            f"run {decision.run_id} has no provenance now; refusing to act on a "
+            "decision made when it did"
+        )
+    if source not in CONTINUE_ELIGIBLE_SESSION_SOURCES:
+        raise ProvenanceChangedError(
+            f"run {decision.run_id} provenance is now {source!r}, which is not "
+            "continue-eligible; refusing to act on a stale decision"
+        )
+    if session_id != decision.session_id:
+        raise ProvenanceChangedError(
+            f"run {decision.run_id} worker session changed "
+            f"({decision.session_id!r} -> {session_id!r}); refusing to act"
+        )
+
+
+def dispatch_outcome(
+    conn: sqlite3.Connection,
+    decision: "RouteDecision",
+    *,
+    transport: ActionTransport,
+    policy: Optional[ActionPolicy] = None,
+) -> bool:
+    """Hand one outcome to a transport, subject to policy. Returns True if observed.
+
+    This is the only place an outcome reaches anything outside the database,
+    and by default the only transport that may receive one is simulated.
+
+    Two independent gates, both fail-closed, checked before anything is
+    observed: the decision's warrant must still hold
+    (:func:`revalidate_decision_provenance`), and the policy must permit the
+    transport (:meth:`ActionPolicy.permit`).
+
+    **R11 — the CONTINUE boundary is serialized.** Those two checks and the
+    observation used to be three separate statements, so a provenance downgrade
+    or an A3 revocation landing between them was not seen: the warrant was
+    verified, then invalidated, then acted on. For ``continue`` — the only route
+    that hands work back to a session — the whole boundary now runs inside a
+    single :func:`write_txn` (``BEGIN IMMEDIATE``). That takes SQLite's RESERVED
+    lock, so any concurrent writer of ``task_runs.worker_session_source`` or of
+    an A3 latch blocks until we finish; there is no window in which the checks
+    can be undermined before the act.
+
+    No new primitive, table, or lock is introduced — this reuses the same write
+    transaction the rest of the module already serializes on, and it writes
+    nothing: the transaction is used purely as the mutual-exclusion boundary.
+
+    **Constraint this places on any future real transport:** the writer lock is
+    held across ``observe``. That is correct and cheap for the in-process
+    transports that exist here, but a slow or network-bound transport would
+    block every writer on the board for its duration. Such a transport must
+    either be fast and non-blocking, or the design must change (e.g. take a
+    fence/claim, commit, then act). This is recorded in the evidence report as
+    a residual and belongs in the A3 packet.
+
+    Non-``continue`` routes carry no warrant, take no action on a session, and
+    are deliberately left on the unserialized path.
+    """
+    policy = policy or ActionPolicy()
+
+    if decision.route != ROUTE_CONTINUE:
+        policy.permit(conn, transport, decision)
+        transport.observe(decision)
+        return True
+
+    with write_txn(conn):
+        revalidate_decision_provenance(conn, decision)
+        policy.permit(conn, transport, decision)
+        transport.observe(decision)
+    return True
+
+
+def render_route_notification(decision: RouteDecision) -> str:
+    """One concise line for a routing decision.
+
+    Deliberately short and free of sender-controlled prose: the fields are ids,
+    an enum route and a bounded reason, so the line stays safe to forward to a
+    notifier without re-scanning it for secrets.
+    """
+    target = f" session={decision.session_id}" if decision.route == ROUTE_CONTINUE else ""
+    return (
+        f"{decision.route.upper()} task={decision.task_id} run={decision.run_id} "
+        f"outcome={decision.outcome} reason={decision.reason}{target} spawn=false"
+    )
+
+
+def render_route_summary(decisions: Iterable[RouteDecision]) -> str:
+    """One concise line for a whole pass. An empty pass says so."""
+    counts: dict[str, int] = {}
+    total = 0
+    for decision in decisions:
+        counts[decision.route] = counts.get(decision.route, 0) + 1
+        total += 1
+    if not total:
+        return "hermes control loop: no new completions"
+    parts = " ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    return f"hermes control loop: {total} completion(s) routed — {parts} (inert, spawn=false)"
+
+
+@dataclass(frozen=True)
+class RouteDelivery:
+    """One claimed batch of route notifications, with its claim window.
+
+    ``old_cursor`` / ``new_cursor`` are exposed so a caller that owns delivery
+    can undo the claim via :func:`rewind_broker_cursor` when its own send
+    fails. Without them the claim would be at-most-once and a failed send would
+    lose the notification silently.
+    """
+
+    lines: tuple[str, ...]
+    old_cursor: int
+    new_cursor: int
+
+    @property
+    def claimed(self) -> bool:
+        return self.new_cursor > self.old_cursor
+
+
+def drain_route_notifications(
+    conn: sqlite3.Connection,
+    *,
+    consumer: str,
+    limit: int = BROKER_DEFAULT_LIMIT,
+    deliver: Optional[Callable[[list[str]], Any]] = None,
+    token: Optional[str] = None,
+) -> RouteDelivery:
+    """Claim decided-route events for ``consumer`` and render notification lines.
+
+    The consuming half: ``orchestrator_route_decided`` rows are claimed through
+    the same atomic board cursor and turned into concise lines. It reads and
+    advances its own cursor; it never acts on a decision.
+
+    **Delivery semantics are explicit.**
+
+    * With ``deliver``: **at-least-once**. The callable is invoked with the
+      rendered lines inside this call; if it raises, the cursor is rewound
+      (CAS-guarded) and the exception propagates, so the same batch is
+      redelivered on a later pass. A duplicate notification is strictly better
+      than a lost one.
+    * Without ``deliver``: the caller owns delivery and therefore owns the
+      retry decision. The returned :class:`RouteDelivery` carries the claim
+      window so the caller can rewind. If it neither delivers nor rewinds, the
+      batch is **at-most-once** — that is the caller's choice, not a silent
+      default.
+    """
+    old_cursor, new_cursor, events = claim_unseen_events_for_broker(
+        conn,
+        consumer=consumer,
+        kinds=[BROKER_EVENT_ROUTE_DECIDED],
+        limit=limit,
+        token=token,
+    )
+    lines: list[str] = []
+    for event in events:
+        payload = event.payload or {}
+        try:
+            payload = validate_broker_event_payload(BROKER_EVENT_ROUTE_DECIDED, payload)
+        except BrokerEventValidationError as exc:
+            # A malformed decision row is reported, never silently dropped and
+            # never interpreted.
+            lines.append(
+                f"MALFORMED task={event.task_id} event={event.id} reason={exc}"
+            )
+            continue
+        lines.append(
+            render_route_notification(
+                RouteDecision(
+                    route=payload["route"],
+                    reason=payload["reason"],
+                    task_id=payload["task_id"],
+                    run_id=payload["run_id"],
+                    outcome=payload["outcome"],
+                    session_id=payload.get("session_id"),
+                    provider=payload.get("provider"),
+                    spawn=False,
+                )
+            )
+        )
+
+    if deliver is not None and lines:
+        try:
+            deliver(lines)
+        except BaseException:
+            # BaseException, not Exception: ``asyncio.CancelledError`` (a
+            # BaseException since 3.8), ``KeyboardInterrupt`` and ``SystemExit``
+            # are exactly the shutdown paths where a claimed-but-undelivered
+            # batch would be lost silently. Rewind first, then re-raise so the
+            # cancellation/shutdown still propagates unchanged.
+            rewind_broker_cursor(
+                conn,
+                consumer=consumer,
+                claimed_cursor=new_cursor,
+                old_cursor=old_cursor,
+            )
+            raise
+
+    return RouteDelivery(
+        lines=tuple(lines), old_cursor=old_cursor, new_cursor=new_cursor
+    )
+
+
+def record_route_decision_event(
+    conn: sqlite3.Connection, decision: RouteDecision,
+) -> bool:
+    """Append one validated ``orchestrator_route_decided`` event.
+
+    Separate from :func:`decide_route` on purpose: deciding is pure, recording
+    is the only part that touches the DB.
+    """
+    payload = validate_broker_event_payload(
+        BROKER_EVENT_ROUTE_DECIDED, decision.to_payload()
+    )
+    with write_txn(conn):
+        cur = conn.execute(
+            "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                payload["task_id"],
+                payload["run_id"],
+                BROKER_EVENT_ROUTE_DECIDED,
+                json.dumps(payload, ensure_ascii=False),
+                int(time.time()),
+            ),
+        )
+    return cur.rowcount > 0
+
+
+@dataclass(frozen=True)
+class BrokerPass:
+    """One bounded native completion-routing pass.
+
+    The cursor advance and all resulting route-decision records commit in one
+    transaction.  Therefore a crash leaves the range unclaimed, while a
+    successful pass cannot advance past a completion without its durable route
+    and notification projection being available to the next layer.
+    """
+
+    consumer: str
+    old_cursor: int
+    new_cursor: int
+    folded_run_ids: tuple[int, ...]
+    decisions: tuple[RouteDecision, ...]
+    notifications: tuple[NotificationProjection, ...]
+
+
+def run_native_broker_pass(
+    conn: sqlite3.Connection,
+    *,
+    consumer: str,
+    token: Optional[str] = None,
+    limit: int = BROKER_DEFAULT_LIMIT,
+    provider_resolver: Optional[Callable[[Optional[str]], Optional[str]]] = None,
+    seats: Optional[SeatRegistry] = None,
+) -> BrokerPass:
+    """Fold and route one bounded completion batch using native Hermes state.
+
+    This is deliberately a board-local, no-spawn control-loop pass.  It has no
+    provider invocation, scheduler, notification transport, or terminal task
+    mutation.  Consumers receive concise projections and decide separately how
+    to deliver them.  The source of truth remains ``task_runs`` and
+    ``task_events``; no queue, sidecar cursor, or lease is introduced.
+    """
+    assert_broker_safe_to_schedule(conn)
+    bounded = _enforce_limit(limit)
+    ensure_broker_sub(conn, consumer=consumer, token=token)
+    folded = tuple(record_worker_completion_events(conn, limit=bounded))
+
+    _authenticate_consumer(conn, consumer, token)
+    with write_txn(conn):
+        row = conn.execute(
+            "SELECT last_event_id FROM kanban_broker_subs WHERE consumer = ?",
+            (consumer,),
+        ).fetchone()
+        if row is None:  # defensive: ensure_broker_sub succeeded above
+            raise BrokerAuthError(f"consumer {consumer!r} is not registered")
+        old_cursor = int(row["last_event_id"])
+        rows = conn.execute(
+            "SELECT * FROM task_events WHERE id > ? AND kind = ? "
+            "ORDER BY id ASC LIMIT ?",
+            (old_cursor, BROKER_EVENT_WORKER_COMPLETION, bounded),
+        ).fetchall()
+        decisions: list[RouteDecision] = []
+        projections: list[NotificationProjection] = []
+        new_cursor = old_cursor
+        for event_row in rows:
+            try:
+                payload = json.loads(event_row["payload"])
+            except Exception as exc:  # malformed durable input must not skip ahead
+                raise BrokerEventValidationError(
+                    f"completion event {event_row['id']} has invalid JSON"
+                ) from exc
+            completion = validate_broker_event_payload(
+                BROKER_EVENT_WORKER_COMPLETION, payload
+            )
+            task_row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (completion["task_id"],)
+            ).fetchone()
+            decision = decide_route(
+                completion=completion,
+                task_row=task_row,
+                provider_resolver=provider_resolver,
+                seats=seats,
+            )
+            route_payload = validate_broker_event_payload(
+                BROKER_EVENT_ROUTE_DECIDED, decision.to_payload()
+            )
+            conn.execute(
+                "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (route_payload["task_id"], route_payload["run_id"],
+                 BROKER_EVENT_ROUTE_DECIDED,
+                 json.dumps(route_payload, ensure_ascii=False), int(time.time())),
+            )
+            decisions.append(decision)
+            projections.append(project_notification(decision))
+            new_cursor = int(event_row["id"])
+        if new_cursor != old_cursor:
+            cur = conn.execute(
+                "UPDATE kanban_broker_subs SET last_event_id = ?, updated_at = ? "
+                "WHERE consumer = ? AND last_event_id = ?",
+                (new_cursor, int(time.time()), consumer, old_cursor),
+            )
+            if cur.rowcount != 1:
+                raise BrokerUnsafeError("broker cursor CAS lost; route batch rolled back")
+    return BrokerPass(
+        consumer=consumer,
+        old_cursor=old_cursor,
+        new_cursor=new_cursor,
+        folded_run_ids=folded,
+        decisions=tuple(decisions),
+        notifications=tuple(projections),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session-resume invocation contract (slice 4 — pre-activation, INERT)
+# ---------------------------------------------------------------------------
+#
+# What this is: a **specification** of the one command a future, separately
+# A3-gated executor would run to hand work back to an already-existing worker
+# session. It is not an executor and contains no execution path.
+#
+# What it must never do, structurally rather than by convention:
+#   * spawn a subprocess or import ``subprocess`` for its own use
+#   * read a config file, environment variable, credential, or secret
+#   * resume, create, attach to, or discover any real session
+#   * write a board, schedule anything, or notify anything external
+#   * alter :func:`dispatch_once`, :func:`decide_route`, or
+#     :func:`dispatch_outcome` — none of them call into this section, and
+#     nothing here calls back into them
+#
+# Everything below is a pure function over values the caller already holds.
+# The only inputs are a validated :class:`RouteDecision` and a *declared*
+# :class:`SessionBinding`; nothing is inferred, discovered, or defaulted from
+# the environment. Every rejection raises :class:`InvocationPlanError`.
+
+#: The only provider whose resume command this contract knows how to render.
+PROVIDER_CLAUDE_CODE = "claude-code"
+
+#: Providers a plan may be rendered for. Anything outside this set fails
+#: closed. A "best effort" command for an unknown provider is exactly the kind
+#: of guess that becomes a real invocation later, so it is refused instead.
+RESUME_CAPABLE_PROVIDERS = frozenset({PROVIDER_CLAUDE_CODE})
+
+#: Bounds on the executor timeout a plan may declare. An unbounded or absurd
+#: timeout is the wedge failure mode this slice exists to avoid, so the bound
+#: is enforced at plan time rather than left to the executor.
+RESUME_MIN_TIMEOUT_SECONDS = 30
+RESUME_DEFAULT_TIMEOUT_SECONDS = 900
+RESUME_MAX_TIMEOUT_SECONDS = 3600
+
+#: Capsule schema version. Bumped when the capsule shape changes so a future
+#: executor can refuse a capsule it does not understand.
+RESUME_CAPSULE_VERSION = 1
+
+#: Hard bounds on capsule content. A capsule is a control-plane artifact, not a
+#: transcript: it carries identifiers and a bounded instruction, nothing more.
+RESUME_CAPSULE_MAX_INSTRUCTION_CHARS = 4000
+RESUME_CAPSULE_MAX_NOTE_CHARS = 500
+RESUME_CAPSULE_MAX_NOTES = 8
+
+#: Declared JSON schema for the ``stream-json`` events a resumed session emits.
+#: Carried BY the plan rather than rendered as a CLI flag: no Claude Code flag
+#: that accepts an output schema was verified to exist, and inventing one here
+#: would produce a command that is wrong at activation while looking complete.
+#: A future executor validates observed events against this instead.
+RESUME_STREAM_EVENT_SCHEMA: dict = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "hermes.session_resume.stream_event",
+    "type": "object",
+    "required": ["type"],
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": [
+                "system", "assistant", "user", "result", "hook_event",
+                "rate_limit_event",
+            ],
+        },
+        "subtype": {"type": "string"},
+        "session_id": {"type": "string"},
+        "hook_event_name": {"type": "string"},
+        "is_error": {"type": "boolean"},
+    },
+    "allOf": [
+        {
+            "if": {
+                "properties": {"type": {"const": "rate_limit_event"}},
+                "required": ["type"],
+            },
+            "then": {
+                "required": ["session_id", "rate_limit_info"],
+                "properties": {
+                    "session_id": {"type": "string", "minLength": 1},
+                    "rate_limit_info": {"type": "object"},
+                },
+            },
+        },
+    ],
+    "additionalProperties": True,
+}
+
+
+class InvocationPlanError(ValueError):
+    """A session-resume plan could not be built. Always fail closed."""
+
+
+# ---------------------------------------------------------------------------
+# Executor boundary (SOURCE-ONLY, DEFAULT-OFF)
+# ---------------------------------------------------------------------------
+#
+# Consumes an already-claimed, persisted route decision and drives a
+# **deterministic fake transport**. Nothing here spawns a process, resumes a
+# session, opens a socket, reads a credential, or schedules anything.
+#
+# Ordering (the whole point of this boundary):
+#
+#     write_txn #1  warrant recheck -> persist execution claim + fence  [COMMIT]
+#       (no transaction)  binding freshness -> A3/kill -> fake execute (timeout)
+#     write_txn #2  fence recheck -> canonical terminal write (expected_run_id)
+#
+# Why a fence rather than a lock: ``dispatch_outcome`` (the R11 path) serializes
+# by holding ``write_txn`` across its observation, which blocks every writer on
+# the board for the duration. That is acceptable for an in-process observation
+# and unacceptable for an external execution. Here the claim is committed first
+# and the fence is *rechecked* afterwards, so interleaving is **detected and
+# discarded** instead of prevented by blocking. The two paths therefore have
+# deliberately different scope:
+#
+#   dispatch_outcome  — observation only, no external call, lock-serialized.
+#   execute_planned_resume — external call, unlocked, fence-validated.
+#
+# Both fail closed; neither can perform a terminal write on a stale warrant.
+
+EXECUTION_CLAIM_INDEX = "idx_events_execution_claim_once"
+
+#: Typed executor events. Append-only; the claim doubles as the idempotency key.
+EXEC_EVENT_CLAIMED = "session_execution_claimed"
+EXEC_EVENT_COMPLETED = "session_execution_completed"
+EXEC_EVENT_DISCARDED = "session_execution_discarded"
+EXEC_EVENT_REFUSED = "session_execution_refused"
+#: Truthful NON-terminal marker: the result was validated and the fence held,
+#: but the canonical terminal transition has not been attempted yet. Recording
+#: EXEC_EVENT_COMPLETED at that point would claim a lifecycle that may still be
+#: refused by the in-transaction A3 guard.
+EXEC_EVENT_VALIDATED = "session_execution_validated"
+
+#: Only a binding minted by the dispatcher may drive an execution.
+DISPATCHER_BINDING_OWNER = "hermes-dispatcher"
+
+#: Terminal statuses a transport may report, and the route each maps to.
+EXECUTION_STATUS_TO_ROUTE = {
+    "completed": ROUTE_CLOSE,
+    "blocked": ROUTE_BLOCK,
+    "needs_review": ROUTE_REVIEW,
+    "incomplete": ROUTE_CONTINUE,
+}
+
+#: Bound on the free-text summary a transport may return.
+EXECUTION_MAX_SUMMARY_CHARS = 2000
+
+
+class ExecutorError(RuntimeError):
+    """Base for every executor-boundary refusal. All fail closed."""
+
+
+class ExecutionNotPermitted(ExecutorError):
+    """Policy refused this executor, or the A3/kill gate is not open."""
+
+
+class DuplicateExecutionError(ExecutorError):
+    """An execution was already claimed for this run."""
+
+
+class BindingNotFreshError(ExecutorError):
+    """The session mapping is retired, expired, or not dispatcher-owned."""
+
+
+class ExecutorUnavailableError(ExecutorError):
+    """The transport could not be reached or raised before producing a result."""
+
+
+class ExecutionTimeoutError(ExecutorError):
+    """The transport exceeded its bounded timeout."""
+
+
+class ExecutionResultInvalid(ExecutorError):
+    """The transport returned a malformed or non-conforming terminal result."""
+
+
+class ExecutionFenceLost(ExecutorError):
+    """The fence moved during execution; the result must be discarded."""
+
+
+class ExecutorTransport(Protocol):
+    """Something that can execute a plan. In this tree, only fakes exist."""
+
+    name: str
+
+    def execute(
+        self, plan: "InvocationPlan", *, timeout_seconds: int
+    ) -> dict:  # pragma: no cover - protocol
+        ...
+
+
+class ExecutorPolicy:
+    """Who may execute. Trust is owned by the policy, never self-declared.
+
+    Same identity-based model as :class:`ActionPolicy` (the N2 repair): the
+    policy holds references to the fake transports it trusts and compares with
+    ``is``. A transport that merely *claims* to be a fake is refused.
+
+    ``allow_real_execution`` is False and there is no real transport in this
+    tree; even set True, a non-registered executor additionally requires a
+    positive A3 gate on the task.
+    """
+
+    def __init__(
+        self,
+        allow_real_execution: bool = False,
+        fake_executors: Iterable[ExecutorTransport] = (),
+    ) -> None:
+        self.allow_real_execution = bool(allow_real_execution)
+        self._fakes: list[ExecutorTransport] = list(fake_executors)
+
+    def is_registered_fake(self, executor: ExecutorTransport) -> bool:
+        return any(candidate is executor for candidate in self._fakes)
+
+    def permit(
+        self, conn: sqlite3.Connection, executor: ExecutorTransport, task_id: str,
+    ) -> None:
+        if self.is_registered_fake(executor):
+            return
+        name = getattr(executor, "name", type(executor).__name__)
+        if not self.allow_real_execution:
+            raise ExecutionNotPermitted(
+                f"executor {name!r} is not a registered fake and this policy does "
+                "not allow real execution (allow_real_execution=False)"
+            )
+        if not a3_gate_granted(conn, task_id):
+            raise ExecutionNotPermitted(
+                f"executor {name!r} requires a positive A3 gate on task {task_id}; "
+                "none found (or it was revoked)"
+            )
+
+
+@dataclass(frozen=True)
+class ExecutionFence:
+    """What must still be true when the result comes back."""
+
+    claim_event_id: int
+    run_id: int
+    task_id: str
+    current_run_id: Optional[int]
+
+    def to_payload(self) -> dict:
+        return {
+            "claim_event_id": self.claim_event_id,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "current_run_id": self.current_run_id,
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionOutcome:
+    """Result of one executor pass. ``executed`` refers to the FAKE transport."""
+
+    fence: ExecutionFence
+    status: str
+    route: str
+    summary: str
+    terminal_write: bool
+    notification: "NotificationProjection"
+    executed_against_real_provider: bool = False
+
+    def to_payload(self) -> dict:
+        return {
+            "fence": self.fence.to_payload(),
+            "status": self.status,
+            "route": self.route,
+            "summary": self.summary,
+            "terminal_write": self.terminal_write,
+            "executed_against_real_provider": self.executed_against_real_provider,
+            "notification": self.notification.to_json(),
+        }
+
+
+def validate_binding_freshness(
+    binding: Any, *, now: int, owner: str = DISPATCHER_BINDING_OWNER,
+) -> SessionBinding:
+    """Eligible, fresh, non-retired, dispatcher-owned — or fail closed (G1).
+
+    Checked **at execution time**, not only when the plan was built: a mapping
+    can retire or expire between planning and acting, and that is precisely the
+    window an executor must not walk into.
+    """
+    if not isinstance(binding, SessionBinding):
+        raise BindingNotFreshError(
+            f"binding must be a SessionBinding, got {type(binding).__name__}"
+        )
+    if binding.retired:
+        raise BindingNotFreshError(
+            f"session mapping for {binding.session_id!r} is retired"
+        )
+    if binding.owner != owner:
+        raise BindingNotFreshError(
+            f"session mapping owner {binding.owner!r} is not {owner!r}; only a "
+            "dispatcher-owned mapping may drive an execution"
+        )
+    if binding.source not in CONTINUE_ELIGIBLE_SESSION_SOURCES:
+        raise BindingNotFreshError(
+            f"session source {binding.source!r} is not continue-eligible"
+        )
+    for field in ("issued_at", "expires_at"):
+        value = getattr(binding, field)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise BindingNotFreshError(f"binding.{field} must be a positive integer")
+    if binding.expires_at <= binding.issued_at:
+        raise BindingNotFreshError(
+            "binding.expires_at must be after binding.issued_at"
+        )
+    if now >= binding.expires_at:
+        raise BindingNotFreshError(
+            f"session mapping expired at {binding.expires_at} (now {now})"
+        )
+    if now < binding.issued_at:
+        raise BindingNotFreshError(
+            f"binding.issued_at {binding.issued_at} is in the future (now {now}); "
+            "refusing to trust an implausible window"
+        )
+    return binding
+
+
+def _validate_execution_result(result: Any, fence: ExecutionFence) -> tuple[str, str]:
+    """Strict structured terminal result, or fail closed."""
+    if not isinstance(result, dict):
+        raise ExecutionResultInvalid(
+            f"result must be a dict, got {type(result).__name__}"
+        )
+    allowed = {"status", "summary", "run_id"}
+    unknown = sorted(set(result) - allowed)
+    if unknown:
+        raise ExecutionResultInvalid(f"result carries unknown field(s) {unknown}")
+    for field in ("status", "summary", "run_id"):
+        if field not in result:
+            raise ExecutionResultInvalid(f"result missing required field {field!r}")
+
+    status = result["status"]
+    if not isinstance(status, str) or status not in EXECUTION_STATUS_TO_ROUTE:
+        raise ExecutionResultInvalid(
+            f"result.status must be one of {sorted(EXECUTION_STATUS_TO_ROUTE)}, "
+            f"got {status!r}"
+        )
+    run_id = result["run_id"]
+    if isinstance(run_id, bool) or not isinstance(run_id, int):
+        raise ExecutionResultInvalid("result.run_id must be an integer")
+    if run_id != fence.run_id:
+        raise ExecutionResultInvalid(
+            f"result.run_id {run_id} does not match the executed run {fence.run_id}"
+        )
+    try:
+        summary = _require_bounded_text(
+            result["summary"], "result.summary", EXECUTION_MAX_SUMMARY_CHARS
+        )
+    except InvocationPlanError as exc:
+        # Translate: a transport's malformed summary is an *execution* fault.
+        # Leaking InvocationPlanError here escaped the ExecutorError handler
+        # entirely, so no refusal was recorded and the caller saw the wrong
+        # exception type.
+        raise ExecutionResultInvalid(str(exc)) from exc
+    return status, summary
+
+
+def _record_exec_event(
+    conn: sqlite3.Connection, *, task_id: str, run_id: Optional[int], kind: str,
+    payload: dict,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (task_id, run_id, kind, json.dumps(payload, ensure_ascii=False),
+         int(time.time())),
+    )
+    return int(cur.lastrowid)
+
+
+def _refuse(
+    conn: sqlite3.Connection, *, task_id: str, run_id: Optional[int], reason: str,
+) -> None:
+    """Record a refusal. Best-effort: never masks the original failure."""
+    try:
+        with write_txn(conn):
+            _record_exec_event(
+                conn, task_id=task_id, run_id=run_id, kind=EXEC_EVENT_REFUSED,
+                payload={"reason": reason},
+            )
+    except Exception:  # noqa: BLE001 - diagnostics must not shadow the refusal
+        pass
+
+
+def claim_execution_fence(
+    conn: sqlite3.Connection, *, plan: "InvocationPlan",
+) -> ExecutionFence:
+    """Persist and COMMIT an execution claim. Step 1 of the boundary.
+
+    The claim is the idempotency key: the partial UNIQUE index means a second
+    claim for the same run raises :class:`DuplicateExecutionError`, so a
+    redelivered decision cannot execute twice.
+
+    Returns after commit, so the external call in step 2 holds no transaction.
+    """
+    decision = plan.decision
+    if decision.route != ROUTE_CONTINUE:
+        raise ExecutionNotPermitted(
+            f"only a {ROUTE_CONTINUE!r} decision may be executed, got "
+            f"{decision.route!r}"
+        )
+    if not execution_claim_index_present(conn):
+        raise ExecutionNotPermitted(
+            f"{EXECUTION_CLAIM_INDEX} is absent: executor idempotency cannot be "
+            "enforced, refusing to claim"
+        )
+
+    try:
+        with write_txn(conn):
+            # The warrant must still hold at claim time.
+            revalidate_decision_provenance(conn, decision)
+            row = conn.execute(
+                "SELECT current_run_id FROM tasks WHERE id = ?", (decision.task_id,),
+            ).fetchone()
+            if row is None:
+                raise ExecutionNotPermitted(f"no such task: {decision.task_id}")
+            current_run_id = (
+                int(row["current_run_id"]) if row["current_run_id"] is not None else None
+            )
+            claim_id = _record_exec_event(
+                conn,
+                task_id=decision.task_id,
+                run_id=decision.run_id,
+                kind=EXEC_EVENT_CLAIMED,
+                payload={
+                    "run_id": decision.run_id,
+                    "task_id": decision.task_id,
+                    "current_run_id": current_run_id,
+                    "session_id": decision.session_id,
+                },
+            )
+    except sqlite3.IntegrityError as exc:
+        raise DuplicateExecutionError(
+            f"run {decision.run_id} already has an execution claim; refusing to "
+            "execute a redelivered decision twice"
+        ) from exc
+
+    return ExecutionFence(
+        claim_event_id=claim_id,
+        run_id=decision.run_id,
+        task_id=decision.task_id,
+        current_run_id=current_run_id,
+    )
+
+
+def _fence_intact(conn: sqlite3.Connection, fence: ExecutionFence) -> Optional[str]:
+    """Return a reason string when the fence moved, else None."""
+    claim = conn.execute(
+        "SELECT id FROM task_events WHERE id = ? AND kind = ?",
+        (fence.claim_event_id, EXEC_EVENT_CLAIMED),
+    ).fetchone()
+    if claim is None:
+        return "claim_event_missing"
+    row = conn.execute(
+        "SELECT current_run_id FROM tasks WHERE id = ?", (fence.task_id,)
+    ).fetchone()
+    if row is None:
+        return "task_missing"
+    current = int(row["current_run_id"]) if row["current_run_id"] is not None else None
+    if current != fence.current_run_id:
+        return f"current_run_id_changed:{fence.current_run_id}->{current}"
+    return None
+
+
+def execute_planned_resume(
+    conn: sqlite3.Connection,
+    *,
+    plan: "InvocationPlan",
+    binding: SessionBinding,
+    executor: ExecutorTransport,
+    policy: Optional[ExecutorPolicy] = None,
+    now: Optional[int] = None,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> ExecutionOutcome:
+    """Drive a FAKE transport for one already-claimed decision. Fails closed.
+
+    Nothing here spawns a process, resumes a session, opens a socket, reads a
+    credential, or schedules work. ``executor`` must be a registered fake.
+
+    Sequence, and why each step sits where it does:
+
+    1. :func:`claim_execution_fence` — warrant recheck plus a committed claim.
+       Committed *before* the external call so the call holds no lock, and so a
+       crash mid-execution leaves a durable record that an execution was
+       attempted.
+    2. Outside any transaction: binding freshness, then **one** authoritative
+       A3/kill check immediately before the call, then the bounded call.
+    3. A second transaction: recheck the fence, and only then write the terminal
+       outcome through the canonical API with ``expected_run_id`` — the native
+       CAS — so a stale executor cannot land a result.
+    """
+    policy = policy or ExecutorPolicy()
+    stamp = int(now if now is not None else time.time())
+    fence = claim_execution_fence(conn, plan=plan)
+
+    try:
+        # --- step 2: outside any transaction ---------------------------
+        validate_binding_freshness(binding, now=stamp)
+        if binding.session_id != plan.decision.session_id:
+            raise BindingNotFreshError(
+                f"binding session {binding.session_id!r} does not match the "
+                f"decision session {plan.decision.session_id!r}"
+            )
+        # One authoritative kill/A3 check, immediately before the call.
+        policy.permit(conn, executor, fence.task_id)
+        if a3_revocation_latched(conn, fence.task_id):
+            raise ExecutionNotPermitted(
+                f"A3 revocation is latched for task {fence.task_id}; refusing to "
+                "execute"
+            )
+
+        timeout_seconds = plan.command.timeout_seconds
+        started = monotonic()
+        try:
+            raw = executor.execute(plan, timeout_seconds=timeout_seconds)
+        except (TimeoutError, ExecutionTimeoutError) as exc:
+            raise ExecutionTimeoutError(
+                f"executor exceeded {timeout_seconds}s"
+            ) from exc
+        except ExecutorError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - any transport failure is closed
+            raise ExecutorUnavailableError(f"executor failed: {exc}") from exc
+        elapsed = monotonic() - started
+        if elapsed > timeout_seconds:
+            raise ExecutionTimeoutError(
+                f"executor took {elapsed:.3f}s, exceeding {timeout_seconds}s"
+            )
+
+        status, summary = _validate_execution_result(raw, fence)
+        route = EXECUTION_STATUS_TO_ROUTE[status]
+
+        # --- step 3: fence recheck, then canonical terminal routing ----
+        with write_txn(conn):
+            moved = _fence_intact(conn, fence)
+            if moved is None:
+                _record_exec_event(
+                    conn, task_id=fence.task_id, run_id=fence.run_id,
+                    kind=EXEC_EVENT_COMPLETED,
+                    payload={"status": status, "route": route, "summary": summary},
+                )
+        if moved is not None:
+            # Recorded in its OWN committed transaction, and only after the
+            # one above has closed. Writing the discard inside that block and
+            # then raising rolled it back — destroying the only evidence that a
+            # result had been discarded.
+            with write_txn(conn):
+                _record_exec_event(
+                    conn, task_id=fence.task_id, run_id=fence.run_id,
+                    kind=EXEC_EVENT_DISCARDED, payload={"reason": moved},
+                )
+            raise ExecutionFenceLost(
+                f"fence moved during execution ({moved}); result discarded"
+            )
+
+        terminal_write = False
+        if route == ROUTE_CLOSE:
+            terminal_write = complete_task(
+                conn, fence.task_id, summary=summary,
+                expected_run_id=fence.current_run_id,
+            )
+        elif route == ROUTE_BLOCK:
+            terminal_write = block_task(
+                conn, fence.task_id, reason=summary, kind="needs_input",
+                expected_run_id=fence.current_run_id,
+            )
+        # REVIEW and CONTINUE deliberately write no task status: a verdict and a
+        # re-drive are decisions for the loop and a human, not for the executor.
+
+        decision = plan.decision
+        notification = project_notification(
+            RouteDecision(
+                route=route,
+                reason=f"execution_{status}",
+                task_id=decision.task_id,
+                run_id=decision.run_id,
+                outcome=decision.outcome,
+                session_id=decision.session_id,
+                provider=decision.provider,
+                spawn=False,
+                seat=decision.seat,
+            )
+        )
+        return ExecutionOutcome(
+            fence=fence,
+            status=status,
+            route=route,
+            summary=summary,
+            terminal_write=bool(terminal_write),
+            notification=notification,
+            executed_against_real_provider=False,
+        )
+    except ExecutorError as exc:
+        _refuse(
+            conn, task_id=fence.task_id, run_id=fence.run_id,
+            reason=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+
+
+def resume_stream_event_schema() -> dict:
+    """Return a fresh deep copy of the declared stream-event schema.
+
+    A copy, not the module constant: a caller that mutated the shared dict
+    would silently change the contract for every later plan.
+
+    Round-tripped through JSON rather than ``copy.deepcopy`` so this section
+    adds no import to the module: the schema is pure JSON by construction, so
+    the round trip is an exact deep copy and also asserts that property.
+    """
+    return json.loads(json.dumps(RESUME_STREAM_EVENT_SCHEMA))
+
+
+@dataclass(frozen=True)
+class SessionBinding:
+    """A **declared** provider/session mapping. Never inferred here.
+
+    This is the caller's assertion that ``session_id`` is a real, reusable
+    worker session for ``provider``, obtained from a declared source. It is
+    validated against the decision it is paired with; it is not looked up,
+    discovered, or defaulted.
+    """
+
+    provider: str
+    session_id: str
+    source: str
+    seat_id: Optional[str] = None
+    #: Validity window and ownership of the mapping itself (G1).
+    #:
+    #: Deliberately NOT derived from ``task_runs.last_heartbeat_at``: that is
+    #: the *worker's* liveness, not the *binding's* validity. Conflating them
+    #: would let a heartbeating worker keep a retired mapping alive.
+    #:
+    #: Defaulted so every existing construction site keeps working. The
+    #: defaults are not a valid binding — they fail
+    #: :func:`validate_binding_freshness` — so the executor path cannot be
+    #: entered by accident with an undeclared window.
+    issued_at: int = 0
+    expires_at: int = 0
+    owner: str = ""
+    retired: bool = False
+
+
+@dataclass(frozen=True)
+class ResumeCapsule:
+    """A bounded, structured description of the work to resume.
+
+    Deliberately small and typed: identifiers plus one bounded instruction and
+    a few bounded notes. No transcript, no payload passthrough, no nested
+    free-form structure that could smuggle content past the bounds.
+    """
+
+    capsule_version: int
+    task_id: str
+    run_id: int
+    outcome: str
+    reason: str
+    instruction: str
+    notes: tuple[str, ...] = ()
+
+    def to_payload(self) -> dict:
+        return {
+            "capsule_version": self.capsule_version,
+            "task_id": self.task_id,
+            "run_id": self.run_id,
+            "outcome": self.outcome,
+            "reason": self.reason,
+            "instruction": self.instruction,
+            "notes": list(self.notes),
+        }
+
+    def to_json(self) -> str:
+        """Canonical JSON. Sorted keys so the rendering is deterministic."""
+        return json.dumps(
+            self.to_payload(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+
+
+@dataclass(frozen=True)
+class ResumeCommandSpec:
+    """An explicit command specification. Rendering it does not run it.
+
+    ``argv`` is a tuple, not a list, so a holder cannot append to a spec that
+    has already been reviewed.
+    """
+
+    provider: str
+    session_id: str
+    argv: tuple[str, ...]
+    output_schema_json: str
+    timeout_seconds: int
+    #: The sole canonical JSONL input record for ``--input-format stream-json``.
+    #: It is data only; this module never opens a process or writes stdin.
+    input_jsonl: str = ""
+    #: Structural marker: nothing in this module ever sets this True.
+    executed: bool = False
+
+    def to_payload(self) -> dict:
+        return {
+            "provider": self.provider,
+            "session_id": self.session_id,
+            "argv": list(self.argv),
+            "output_schema_json": self.output_schema_json,
+            "timeout_seconds": self.timeout_seconds,
+            "input_jsonl": self.input_jsonl,
+            "executed": self.executed,
+        }
+
+
+@dataclass(frozen=True)
+class InvocationPlan:
+    """An inert plan. Suitable ONLY for a future A3-gated executor.
+
+    ``executed`` is hard-wired False and ``requires_a3_gate`` hard-wired True:
+    this module never flips either, so a plan cannot claim to have run, and
+    cannot claim to be exempt from the gate that
+    :class:`ActionPolicy` already enforces for real action.
+    """
+
+    decision: "RouteDecision"
+    binding: SessionBinding
+    capsule: ResumeCapsule
+    command: ResumeCommandSpec
+    executed: bool = False
+    requires_a3_gate: bool = True
+
+    def to_payload(self) -> dict:
+        return {
+            "route": self.decision.route,
+            "task_id": self.decision.task_id,
+            "run_id": self.decision.run_id,
+            "provider": self.binding.provider,
+            "session_id": self.binding.session_id,
+            "session_source": self.binding.source,
+            "seat": self.binding.seat_id,
+            "capsule": self.capsule.to_payload(),
+            "command": self.command.to_payload(),
+            "executed": self.executed,
+            "requires_a3_gate": self.requires_a3_gate,
+        }
+
+
+#: Characters that must never survive into a rendered capsule or command.
+#: Broader than the original ``\r\n\x00`` check: every C0 control, DEL, and the
+#: Unicode line-breaking characters, which split lines in some renderers and log
+#: pipelines even though ``str.splitlines`` is the only thing most code tests
+#: against.
+#:
+#: ``U+0085`` (NEL) is included explicitly: it is a C1 control, so it sits above
+#: the ``< 0x20`` C0 range and would otherwise pass, yet Python's own
+#: ``str.splitlines`` treats it as a line break — exactly the class of
+#: smuggling this check exists to stop.
+_FORBIDDEN_TEXT_CHARS = "  \x7f"
+
+
+def _has_control_chars(value: str) -> bool:
+    return any(ch in _FORBIDDEN_TEXT_CHARS or ord(ch) < 0x20 for ch in value)
+
+
+def _require_identifier(value: Any, field: str) -> str:
+    """A non-empty, single-line, stripped string, or fail closed."""
+    if not isinstance(value, str):
+        raise InvocationPlanError(
+            f"{field} must be a string, got {type(value).__name__}"
+        )
+    cleaned = value.strip()
+    if not cleaned:
+        raise InvocationPlanError(f"{field} must be a non-empty string")
+    if _has_control_chars(cleaned):
+        raise InvocationPlanError(f"{field} must not contain control characters")
+    return cleaned
+
+
+def _require_bounded_text(value: Any, field: str, max_chars: int) -> str:
+    """Bounded free-ish text: string, non-blank, control-free, within bound.
+
+    Used for the instruction and for each note. Same rules as
+    :func:`_require_identifier` plus an explicit length bound, so the two
+    entry points into a capsule — the builder and the plan-boundary
+    revalidation — cannot disagree about what is acceptable.
+    """
+    cleaned = _require_identifier(value, field)
+    if len(cleaned) > max_chars:
+        raise InvocationPlanError(
+            f"{field} exceeds {max_chars} chars ({len(cleaned)})"
+        )
+    return cleaned
+
+
+def _validate_timeout(timeout_seconds: Any) -> int:
+    """Bounded integer seconds. bool is not an int for this purpose."""
+    if isinstance(timeout_seconds, bool):
+        raise InvocationPlanError(
+            f"timeout_seconds must be an integer, got bool {timeout_seconds!r}"
+        )
+    if not isinstance(timeout_seconds, int):
+        raise InvocationPlanError(
+            f"timeout_seconds must be an integer, got {type(timeout_seconds).__name__}"
+        )
+    if not (RESUME_MIN_TIMEOUT_SECONDS <= timeout_seconds <= RESUME_MAX_TIMEOUT_SECONDS):
+        raise InvocationPlanError(
+            f"timeout_seconds must be within "
+            f"[{RESUME_MIN_TIMEOUT_SECONDS}, {RESUME_MAX_TIMEOUT_SECONDS}], "
+            f"got {timeout_seconds}"
+        )
+    return timeout_seconds
+
+
+def build_resume_capsule(
+    *,
+    decision: "RouteDecision",
+    instruction: str,
+    notes: Iterable[str] = (),
+) -> ResumeCapsule:
+    """Build a bounded capsule from a CONTINUE decision. **Pure.**
+
+    Every field is validated and bounded here so a malformed capsule can never
+    reach :func:`plan_session_resume`.
+    """
+    if not isinstance(decision, RouteDecision):
+        raise InvocationPlanError(
+            f"decision must be a RouteDecision, got {type(decision).__name__}"
+        )
+    if decision.route != ROUTE_CONTINUE:
+        raise InvocationPlanError(
+            f"capsule requires route {ROUTE_CONTINUE!r}, got {decision.route!r}"
+        )
+
+    task_id = _require_identifier(decision.task_id, "decision.task_id")
+    if not isinstance(decision.run_id, int) or isinstance(decision.run_id, bool):
+        raise InvocationPlanError("decision.run_id must be an integer run id")
+    if decision.run_id <= 0:
+        raise InvocationPlanError(
+            f"decision.run_id must be positive, got {decision.run_id!r}"
+        )
+
+    # Same rule the plan boundary applies, so the builder cannot mint a capsule
+    # its own revalidation would reject — control characters in the instruction
+    # previously passed here and were only caught later.
+    cleaned_instruction = _require_bounded_text(
+        instruction, "instruction", RESUME_CAPSULE_MAX_INSTRUCTION_CHARS
+    )
+
+    if isinstance(notes, (str, bytes)):
+        raise InvocationPlanError("notes must be an iterable of strings, not a string")
+    cleaned_notes: list[str] = []
+    for index, note in enumerate(notes):
+        if not isinstance(note, str):
+            raise InvocationPlanError(
+                f"note must be a string, got {type(note).__name__}"
+            )
+        if not note.strip():
+            # A blank note carries nothing; dropping it is not a silent repair
+            # of malformed input, it is omission of an empty item.
+            continue
+        cleaned_notes.append(
+            _require_bounded_text(
+                note, f"notes[{index}]", RESUME_CAPSULE_MAX_NOTE_CHARS
+            )
+        )
+    if len(cleaned_notes) > RESUME_CAPSULE_MAX_NOTES:
+        raise InvocationPlanError(
+            f"at most {RESUME_CAPSULE_MAX_NOTES} notes, got {len(cleaned_notes)}"
+        )
+
+    return ResumeCapsule(
+        capsule_version=RESUME_CAPSULE_VERSION,
+        task_id=task_id,
+        run_id=int(decision.run_id),
+        outcome=_require_identifier(decision.outcome, "decision.outcome"),
+        reason=_require_identifier(decision.reason, "decision.reason"),
+        instruction=cleaned_instruction,
+        notes=tuple(cleaned_notes),
+    )
+
+
+def _validate_capsule(capsule: Any) -> ResumeCapsule:
+    """Re-validate a capsule at the plan boundary. Fail closed on drift.
+
+    ``ResumeCapsule`` is a frozen dataclass, but frozen is not validated:
+    ``ResumeCapsule(...)`` can be constructed directly with any field values,
+    bypassing :func:`build_resume_capsule` entirely. This boundary therefore
+    re-checks **every** field to the same rules the builder applies, rather
+    than spot-checking a few.
+
+    The earlier version checked only ``capsule_version``, ``task_id``,
+    ``instruction`` (identifier rule), ``run_id`` and the note *count*. A
+    directly-constructed capsule could carry a non-string or over-length
+    ``outcome``/``reason``, a ``notes`` value that was not a tuple of strings,
+    or notes that were blank, control-character-bearing, or over-length. All of
+    those now fail closed here.
+    """
+    if not isinstance(capsule, ResumeCapsule):
+        raise InvocationPlanError(
+            f"capsule must be a ResumeCapsule, got {type(capsule).__name__}"
+        )
+    if isinstance(capsule.capsule_version, bool) or not isinstance(
+        capsule.capsule_version, int
+    ):
+        raise InvocationPlanError(
+            "capsule.capsule_version must be an integer, got "
+            f"{type(capsule.capsule_version).__name__}"
+        )
+    if capsule.capsule_version != RESUME_CAPSULE_VERSION:
+        raise InvocationPlanError(
+            f"unsupported capsule_version {capsule.capsule_version!r}; "
+            f"this contract renders version {RESUME_CAPSULE_VERSION}"
+        )
+
+    _require_identifier(capsule.task_id, "capsule.task_id")
+    _require_identifier(capsule.outcome, "capsule.outcome")
+    _require_identifier(capsule.reason, "capsule.reason")
+    _require_bounded_text(
+        capsule.instruction, "capsule.instruction", RESUME_CAPSULE_MAX_INSTRUCTION_CHARS
+    )
+
+    if not isinstance(capsule.run_id, int) or isinstance(capsule.run_id, bool):
+        raise InvocationPlanError("capsule.run_id must be an integer run id")
+    if capsule.run_id <= 0:
+        raise InvocationPlanError(
+            f"capsule.run_id must be positive, got {capsule.run_id!r}"
+        )
+
+    # The container itself, before its contents: a list is mutable and a bare
+    # string is an iterable of characters, so neither may stand in for the
+    # declared tuple.
+    if not isinstance(capsule.notes, tuple):
+        raise InvocationPlanError(
+            f"capsule.notes must be a tuple, got {type(capsule.notes).__name__}"
+        )
+    if len(capsule.notes) > RESUME_CAPSULE_MAX_NOTES:
+        raise InvocationPlanError("capsule carries too many notes")
+    for index, note in enumerate(capsule.notes):
+        _require_bounded_text(
+            note, f"capsule.notes[{index}]", RESUME_CAPSULE_MAX_NOTE_CHARS
+        )
+    return capsule
+
+
+def _validate_binding(binding: Any, decision: "RouteDecision") -> SessionBinding:
+    """Validate a declared mapping against the decision it is paired with.
+
+    Three independent things must agree before a resume can even be described:
+    the provider must be one this contract can render, the session source must
+    be continue-eligible (``inferred`` never is), and the mapping must match
+    the decision's own session/provider. Any disagreement fails closed rather
+    than picking a winner.
+    """
+    if not isinstance(binding, SessionBinding):
+        raise InvocationPlanError(
+            f"binding must be a SessionBinding, got {type(binding).__name__}"
+        )
+
+    provider = _require_identifier(binding.provider, "binding.provider")
+    if provider not in RESUME_CAPABLE_PROVIDERS:
+        raise InvocationPlanError(
+            f"provider {provider!r} is not resume-capable in this contract "
+            f"(known: {sorted(RESUME_CAPABLE_PROVIDERS)})"
+        )
+
+    session_id = _require_identifier(binding.session_id, "binding.session_id")
+
+    source = _require_identifier(binding.source, "binding.source")
+    if source not in VALID_SESSION_SOURCES:
+        raise InvocationPlanError(f"unknown session source {source!r}")
+    if source not in CONTINUE_ELIGIBLE_SESSION_SOURCES:
+        raise InvocationPlanError(
+            f"session source {source!r} is not continue-eligible; refusing to "
+            "describe a resume for an unprovenanced session"
+        )
+
+    # The decision carries its own view of provider/session. If it has one and
+    # it disagrees with the declared mapping, that is exactly the ambiguity
+    # that must not be resolved silently.
+    if decision.session_id is not None and decision.session_id != session_id:
+        raise InvocationPlanError(
+            f"binding session {session_id!r} does not match decision session "
+            f"{decision.session_id!r}"
+        )
+    if decision.provider is not None and decision.provider != provider:
+        raise InvocationPlanError(
+            f"binding provider {provider!r} does not match decision provider "
+            f"{decision.provider!r}"
+        )
+
+    seat_id = binding.seat_id
+    if seat_id is not None:
+        seat_id = _require_identifier(seat_id, "binding.seat_id")
+        if decision.seat is not None and decision.seat != seat_id:
+            raise InvocationPlanError(
+                f"binding seat {seat_id!r} does not match decision seat "
+                f"{decision.seat!r}"
+            )
+
+    # Carry the G1 window through. Rebuilding without it let `plan.binding`
+    # report owner='' / retired=False for a mapping that was in fact retired —
+    # a fabrication. It failed *safe* (an empty owner never satisfies
+    # validate_binding_freshness), but a plan must not misdescribe its own
+    # binding. Freshness is still checked at execution time, not here.
+    return SessionBinding(
+        provider=provider, session_id=session_id, source=source, seat_id=seat_id,
+        issued_at=binding.issued_at, expires_at=binding.expires_at,
+        owner=binding.owner, retired=binding.retired,
+    )
+
+
+def render_resume_command(
+    *,
+    provider: str,
+    session_id: str,
+    timeout_seconds: int = RESUME_DEFAULT_TIMEOUT_SECONDS,
+) -> ResumeCommandSpec:
+    """Deterministically render the resume command spec. **Pure.**
+
+    Same inputs always produce the same ``argv``, in the same order. Nothing is
+    read from the environment, so the rendering cannot drift with the host.
+
+    The flags are fixed by contract, not composed from options:
+
+      ``--resume <session-id>``   reuse the existing session, never create one
+      ``--print``                 non-interactive, single result
+      ``--input-format stream-json``   structured capsule in, not loose prose
+      ``--output-format stream-json``  machine-parseable event stream
+      ``--include-hook-events``   hook events are part of the observable record
+      ``--permission-mode plan``  provider-enforced no-mutation/no-shell mode
+      ``--max-turns 1``           one bounded response, never an agent loop
+      ``--disallowedTools …``     deny the built-in execution/read/network tools
+      ``--safe-mode``             disable hooks, skills, plugins and custom MCP
+      ``--strict-mcp-config``     ignore every MCP source unless explicitly given
+
+    The output schema is carried on the spec (``output_schema_json``) rather
+    than as a CLI flag — see :data:`RESUME_STREAM_EVENT_SCHEMA`.
+    """
+    if provider not in RESUME_CAPABLE_PROVIDERS:
+        raise InvocationPlanError(
+            f"provider {provider!r} is not resume-capable in this contract"
+        )
+    session = _require_identifier(session_id, "session_id")
+    timeout = _validate_timeout(timeout_seconds)
+
+    argv: tuple[str, ...] = (
+        "claude",
+        "--resume",
+        session,
+        "--print",
+        # Claude CLI requires verbose stream records when --print is paired
+        # with stream-json output. Without this the real transport exits
+        # before emitting the bound init/result pair the parser requires.
+        "--verbose",
+        # Structured BOTH ways. Without --input-format the capsule would have to
+        # be handed over as loose prose on stdin, which is exactly the
+        # unstructured channel this contract exists to avoid.
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--include-hook-events",
+        # The only real transport currently admitted by the activation packet
+        # is the harmless control-plane echo.  Retain this restriction in the
+        # canonical command rather than trusting capsule prose.  A future
+        # task class with tools must use a separate reviewed adapter contract.
+        "--permission-mode",
+        "plan",
+        "--disallowedTools",
+        "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task",
+        "--safe-mode",
+        "--strict-mcp-config",
+        "--max-turns",
+        "1",
+    )
+    return ResumeCommandSpec(
+        provider=provider,
+        session_id=session,
+        argv=argv,
+        output_schema_json=json.dumps(
+            RESUME_STREAM_EVENT_SCHEMA,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        timeout_seconds=timeout,
+        executed=False,
+    )
+
+
+def render_claude_stream_input(capsule: ResumeCapsule) -> str:
+    """Render exactly one canonical Claude Code ``stream-json`` user record.
+
+    Claude Code's documented stream input is JSON Lines containing a user
+    message envelope.  The capsule is validated before serialisation, framed
+    as data rather than instructions supplied by a caller, and emitted as one
+    newline-terminated record.  This is deliberately a pure renderer: it does
+    not open stdin, create a process, or contact a provider.
+    """
+    checked = _validate_capsule(capsule)
+    content = (
+        "Hermes resume capsule (schema v1; bounded task data):\n"
+        + checked.to_json()
+    )
+    envelope = {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": content}],
+        },
+    }
+    return json.dumps(
+        envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ) + "\n"
+
+
+def plan_session_resume(
+    *,
+    decision: "RouteDecision",
+    binding: SessionBinding,
+    capsule: ResumeCapsule,
+    timeout_seconds: int = RESUME_DEFAULT_TIMEOUT_SECONDS,
+) -> InvocationPlan:
+    """Build an INERT session-resume plan. **Pure; executes nothing.**
+
+    Accepts only a validated CONTINUE :class:`RouteDecision` plus a declared
+    :class:`SessionBinding`, and returns a plan a future **separately
+    A3-gated** executor could act on. This function does not act on it, and
+    nothing else in this module consumes an :class:`InvocationPlan`.
+
+    Fails closed on: a non-CONTINUE decision, a decision that claims to spawn,
+    an unknown or non-resume-capable provider, a missing/blank session id or
+    task id, provenance that is not continue-eligible, a binding that
+    contradicts the decision, an out-of-range timeout, or a malformed capsule.
+    """
+    if not isinstance(decision, RouteDecision):
+        raise InvocationPlanError(
+            f"decision must be a RouteDecision, got {type(decision).__name__}"
+        )
+    if decision.route != ROUTE_CONTINUE:
+        raise InvocationPlanError(
+            f"only a {ROUTE_CONTINUE!r} decision can be resumed, got "
+            f"{decision.route!r}"
+        )
+    if decision.spawn is not False:
+        # Structural guard mirroring validate_broker_event_payload: this slice
+        # cannot express a spawning decision, so it cannot plan one either.
+        raise InvocationPlanError("decision.spawn must be False in this slice")
+
+    _require_identifier(decision.task_id, "decision.task_id")
+    checked_binding = _validate_binding(binding, decision)
+    checked_capsule = _validate_capsule(capsule)
+
+    if checked_capsule.task_id != decision.task_id.strip():
+        raise InvocationPlanError(
+            f"capsule task {checked_capsule.task_id!r} does not match decision "
+            f"task {decision.task_id!r}"
+        )
+    if checked_capsule.run_id != decision.run_id:
+        raise InvocationPlanError(
+            f"capsule run {checked_capsule.run_id!r} does not match decision "
+            f"run {decision.run_id!r}"
+        )
+
+    command = render_resume_command(
+        provider=checked_binding.provider,
+        session_id=checked_binding.session_id,
+        timeout_seconds=timeout_seconds,
+    )
+    return InvocationPlan(
+        decision=decision,
+        binding=checked_binding,
+        capsule=checked_capsule,
+        command=command,
+        executed=False,
+        requires_a3_gate=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provider-adapter slice — persisted mapping, request preparation, result
+# interpretation. Source-only: nothing here invokes a provider.
+#
+# The executor slice above still accepts a caller-supplied SessionBinding. That
+# is the weakness this slice closes: a mapping is now a persisted, durable,
+# dispatcher-owned row, and `prepare_resume_request` will read it from nowhere
+# else. An in-memory binding can no longer authorise a resume.
+#
+# Ordering note: the binding and A3 checks run BEFORE the fence claim. Claiming
+# first would burn the run's one idempotency slot on a request that was never
+# admissible, and — because the claim index is UNIQUE per run — no corrected
+# retry could ever claim again. Validation failures therefore cost nothing; only
+# an admissible request consumes the claim, and the ResumeRequest object is only
+# constructed after that claim has COMMITTED.
+# ---------------------------------------------------------------------------
+
+class BindingNotFoundError(BindingNotFreshError):
+    """No persisted mapping for this run. Unknown is not a licence to guess."""
+
+
+class BindingConflictError(BindingNotFreshError):
+    """A different live mapping already exists for this run."""
+
+
+def record_session_binding(
+    conn: sqlite3.Connection,
+    *,
+    run_id: int,
+    task_id: str,
+    provider: str,
+    session_id: str,
+    source: str,
+    issued_at: int,
+    expires_at: int,
+    owner: str = DISPATCHER_BINDING_OWNER,
+    seat_id: Optional[str] = None,
+    now: Optional[int] = None,
+) -> None:
+    """Persist a dispatcher-owned mapping. Idempotent; never silently rebinds.
+
+    Re-recording an identical mapping is a no-op, so a redelivered registration
+    is harmless. Recording a *different* session for a run that already has a
+    live one raises :class:`BindingConflictError` — the ambiguity is exactly
+    what must not be resolved by last-writer-wins.
+    """
+    stamp = int(time.time()) if now is None else int(now)
+    provider = _require_identifier(provider, "provider")
+    if provider not in RESUME_CAPABLE_PROVIDERS:
+        raise InvocationPlanError(
+            f"provider {provider!r} is not resume-capable in this contract"
+        )
+    session_id = _require_identifier(session_id, "session_id")
+    task_id = _require_identifier(task_id, "task_id")
+    source = _require_identifier(source, "source")
+    if source not in VALID_SESSION_SOURCES:
+        raise InvocationPlanError(f"unknown session source {source!r}")
+    if source not in CONTINUE_ELIGIBLE_SESSION_SOURCES:
+        # `inferred` provenance can never be stored, so it can never be loaded.
+        raise InvocationPlanError(
+            f"session source {source!r} is not continue-eligible; refusing to "
+            "persist an unprovenanced mapping"
+        )
+    owner = _require_identifier(owner, "owner")
+    for field, value in (("issued_at", issued_at), ("expires_at", expires_at)):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise InvocationPlanError(f"{field} must be a positive integer")
+    if expires_at <= issued_at:
+        raise InvocationPlanError("expires_at must be after issued_at")
+    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+        raise InvocationPlanError("run_id must be a positive integer")
+    if seat_id is not None:
+        seat_id = _require_identifier(seat_id, "seat_id")
+
+    with write_txn(conn):
+        row = conn.execute(
+            "SELECT provider, session_id, source, seat_id, owner, issued_at, "
+            "expires_at, retired_at, task_id FROM kanban_session_bindings "
+            "WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is not None:
+            same = (
+                row["provider"] == provider
+                and row["session_id"] == session_id
+                and row["source"] == source
+                and row["seat_id"] == seat_id
+                and row["owner"] == owner
+                and int(row["issued_at"]) == issued_at
+                and int(row["expires_at"]) == expires_at
+                and row["task_id"] == task_id
+            )
+            if same:
+                return  # idempotent re-registration
+            if row["retired_at"] is None:
+                raise BindingConflictError(
+                    f"run {run_id} already has a live mapping to session "
+                    f"{row['session_id']!r}; refusing to rebind to "
+                    f"{session_id!r}"
+                )
+            conn.execute(
+                "DELETE FROM kanban_session_bindings WHERE run_id = ?", (run_id,)
+            )
+        conn.execute(
+            "INSERT INTO kanban_session_bindings "
+            "(run_id, task_id, provider, session_id, source, seat_id, owner, "
+            " issued_at, expires_at, retired_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+            (run_id, task_id, provider, session_id, source, seat_id, owner,
+             issued_at, expires_at, stamp),
+        )
+
+
+def retire_session_binding(
+    conn: sqlite3.Connection, *, run_id: int, now: Optional[int] = None,
+) -> bool:
+    """Retire a mapping durably. Returns False if there was nothing live."""
+    stamp = int(time.time()) if now is None else int(now)
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE kanban_session_bindings SET retired_at = ? "
+            "WHERE run_id = ? AND retired_at IS NULL",
+            (stamp, run_id),
+        )
+        return cur.rowcount == 1
+
+
+def load_session_binding(
+    conn: sqlite3.Connection, *, run_id: int, task_id: Optional[str] = None,
+) -> SessionBinding:
+    """Load the persisted mapping for a run, or fail closed.
+
+    Read-only. Returns the mapping as recorded — including retirement — so the
+    caller's freshness check sees the real state rather than a reconstruction.
+    """
+    row = conn.execute(
+        "SELECT task_id, provider, session_id, source, seat_id, owner, "
+        "issued_at, expires_at, retired_at FROM kanban_session_bindings "
+        "WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        raise BindingNotFoundError(
+            f"no persisted session mapping for run {run_id}; refusing to infer one"
+        )
+    if task_id is not None and row["task_id"] != task_id:
+        raise BindingConflictError(
+            f"mapping for run {run_id} belongs to task {row['task_id']!r}, "
+            f"not {task_id!r}"
+        )
+    return SessionBinding(
+        provider=row["provider"],
+        session_id=row["session_id"],
+        source=row["source"],
+        seat_id=row["seat_id"],
+        issued_at=int(row["issued_at"]),
+        expires_at=int(row["expires_at"]),
+        owner=row["owner"],
+        retired=row["retired_at"] is not None,
+    )
+
+
+@dataclass(frozen=True)
+class ResumeRequest:
+    """An inert, fully-prepared resume request backed by a committed claim.
+
+    ``executed`` is hard-wired False: preparing a request is not performing one,
+    and nothing in this module flips it.
+    """
+
+    fence: ExecutionFence
+    plan: InvocationPlan
+    binding: SessionBinding
+    prepared_at: int
+    executed: bool = False
+
+    @property
+    def argv(self) -> tuple[str, ...]:
+        return self.plan.command.argv
+
+    def to_payload(self) -> dict:
+        return {
+            "run_id": self.fence.run_id,
+            "task_id": self.fence.task_id,
+            "claim_event_id": self.fence.claim_event_id,
+            "prepared_at": self.prepared_at,
+            "executed": self.executed,
+            "plan": self.plan.to_payload(),
+        }
+
+
+def prepare_resume_request(
+    conn: sqlite3.Connection,
+    *,
+    decision: "RouteDecision",
+    instruction: str,
+    now: int,
+    notes: Iterable[str] = (),
+    timeout_seconds: int = RESUME_DEFAULT_TIMEOUT_SECONDS,
+) -> ResumeRequest:
+    """Prepare an explicit-session resume request. **Invokes nothing.**
+
+    Reads the mapping from :func:`load_session_binding` only. Fails closed on an
+    unknown, stale, retired, or mismatched mapping, on an A3 revocation, and on
+    a duplicate claim.
+    """
+    if not isinstance(decision, RouteDecision):
+        raise InvocationPlanError(
+            f"decision must be a RouteDecision, got {type(decision).__name__}"
+        )
+    if decision.route != ROUTE_CONTINUE:
+        raise ExecutionNotPermitted(
+            f"only a {ROUTE_CONTINUE!r} decision may be prepared, got "
+            f"{decision.route!r}"
+        )
+    task_id = _require_identifier(decision.task_id, "decision.task_id")
+
+    try:
+        # 1. Persisted mapping only — never the caller's word for it.
+        binding = load_session_binding(
+            conn, run_id=decision.run_id, task_id=task_id,
+        )
+        # 2. Fresh, non-retired, dispatcher-owned, at *preparation* time.
+        validate_binding_freshness(binding, now=now)
+        # 3. The kill switch outranks a valid mapping.
+        if a3_revocation_latched(conn, task_id):
+            raise ExecutionNotPermitted(
+                f"A3 revocation is latched for {task_id}; refusing to prepare"
+            )
+        # 4. Pure construction: capsule -> plan -> rendered argv.
+        capsule = build_resume_capsule(
+            decision=decision, instruction=instruction, notes=notes,
+        )
+        plan = plan_session_resume(
+            decision=decision, binding=binding, capsule=capsule,
+            timeout_seconds=timeout_seconds,
+        )
+    except (ExecutorError, InvocationPlanError) as exc:
+        _refuse(conn, task_id=task_id, run_id=decision.run_id, reason=str(exc))
+        raise
+
+    # 5. Durable atomic claim. Commits before the request object exists.
+    try:
+        fence = claim_execution_fence(conn, plan=plan)
+    except ExecutorError as exc:
+        _refuse(conn, task_id=task_id, run_id=decision.run_id, reason=str(exc))
+        raise
+
+    return ResumeRequest(
+        fence=fence, plan=plan, binding=binding, prepared_at=int(now),
+        executed=False,
+    )
+
+
+@dataclass(frozen=True)
+class TerminalInterpretation:
+    """The typed reading of an adapter's terminal result."""
+
+    route: str
+    status: str
+    summary: str
+    terminal_write: bool
+    notification: NotificationProjection
+
+
+class UnsealedResultError(ExecutorError):
+    """A result arrived without proof that a trusted adapter produced it."""
+
+
+@dataclass(frozen=True)
+class AdapterReceipt:
+    """Sealed evidence that a *registered* adapter produced this result.
+
+    The seal is the ``adapter`` reference itself, not a flag on the payload: a
+    receipt is only honoured when the interpreting policy still holds that exact
+    object (``is``). This is the M8 lesson applied to the result path — a
+    payload claiming ``{"simulated": true}`` proves nothing, and neither does a
+    receipt whose adapter merely resembles a fake.
+
+    Cannot be constructed meaningfully by a caller: :func:`seal_adapter_result`
+    is the only mint, and it refuses any adapter the policy does not vouch for.
+    """
+
+    adapter: Any
+    request: ResumeRequest
+    result: Any
+    sealed_at: int
+
+
+def seal_adapter_result(
+    conn: sqlite3.Connection,
+    *,
+    adapter: Any,
+    request: ResumeRequest,
+    result: Any,
+    policy: ExecutorPolicy,
+    now: Optional[int] = None,
+) -> AdapterReceipt:
+    """Mint a receipt. Only a policy-registered adapter may seal a result.
+
+    Reuses :meth:`ExecutorPolicy.permit`, so a real adapter still needs both
+    ``allow_real_execution`` and a positive A3 gate — and there is no real
+    adapter in this tree. Real invocation stays disabled; the extension point
+    is preserved rather than removed.
+    """
+    if not isinstance(request, ResumeRequest):
+        raise ExecutionResultInvalid(
+            f"request must be a ResumeRequest, got {type(request).__name__}"
+        )
+    policy.permit(conn, adapter, request.fence.task_id)
+    return AdapterReceipt(
+        adapter=adapter, request=request, result=result,
+        sealed_at=int(time.time()) if now is None else int(now),
+    )
+
+
+def interpret_terminal_result(
+    conn: sqlite3.Connection,
+    *,
+    receipt: AdapterReceipt,
+    policy: ExecutorPolicy,
+    now: Optional[int] = None,
+) -> TerminalInterpretation:
+    """Route a sealed terminal result through canonical Hermes APIs only.
+
+    Requires an :class:`AdapterReceipt`, never a bare mapping. A plain dict, an
+    unsealed request, or a receipt naming an adapter this policy does not hold
+    is refused **before** any status write, so there is no callable path from
+    fabricated data to a mutated board.
+
+    Status writes go through :func:`complete_task` / :func:`block_task` with
+    ``expected_run_id`` — never raw SQL.
+    """
+    if not isinstance(receipt, AdapterReceipt):
+        raise UnsealedResultError(
+            f"terminal interpretation requires an AdapterReceipt, got "
+            f"{type(receipt).__name__}; a bare result cannot mutate the board"
+        )
+    request = receipt.request
+    if not isinstance(request, ResumeRequest):
+        raise UnsealedResultError(
+            f"receipt.request must be a ResumeRequest, got {type(request).__name__}"
+        )
+    fence = request.fence
+    # Re-verify at interpretation time. A receipt is not a bearer token: the
+    # policy doing the writing must itself vouch for the adapter, so a receipt
+    # cannot be replayed under a policy that never trusted it.
+    if not policy.is_registered_fake(receipt.adapter):
+        try:
+            policy.permit(conn, receipt.adapter, fence.task_id)
+        except ExecutorError as exc:
+            _refuse(conn, task_id=fence.task_id, run_id=fence.run_id, reason=str(exc))
+            raise
+    try:
+        status, summary = _validate_execution_result(receipt.result, fence)
+    except ExecutorError as exc:
+        _refuse(conn, task_id=fence.task_id, run_id=fence.run_id, reason=str(exc))
+        raise
+    route = EXECUTION_STATUS_TO_ROUTE[status]
+
+    # Terminal-time kill recheck — UNIVERSAL, and the only one on this path.
+    #
+    # A3 can latch *after* the request was prepared and after the receipt was
+    # sealed. The registered-fake branch above deliberately skips
+    # `policy.permit`, so a fake-sealed receipt reached the canonical terminal
+    # write with no revocation check at all: prepare-time and real-adapter
+    # checks are both blind to a latch that lands in between. This is checked
+    # regardless of adapter type, and inside the same transaction as the fence
+    # observation, so the window before the terminal write is as small as the
+    # canonical APIs allow (`complete_task` opens its own transaction and
+    # cannot be nested here).
+    #
+    # Ordering: the latch is evaluated BEFORE `_fence_intact` and before the
+    # completion event, so a revoked task records no completion, performs no
+    # terminal write, and produces no notification. The fence itself is left
+    # exactly as it was — the only mutation is the append-only refusal below.
+    with write_txn(conn):
+        a3_latched = a3_revocation_latched(conn, fence.task_id)
+        moved = None
+        if not a3_latched:
+            moved = _fence_intact(conn, fence)
+            if moved is None:
+                # NON-terminal on purpose. The terminal transition below can
+                # still be refused by the in-transaction A3 guard; writing
+                # EXEC_EVENT_COMPLETED here would leave "completed, then
+                # refused" in the log — a lifecycle that never happened.
+                _record_exec_event(
+                    conn, task_id=fence.task_id, run_id=fence.run_id,
+                    kind=EXEC_EVENT_VALIDATED,
+                    payload={"status": status, "route": route, "summary": summary},
+                )
+    if a3_latched:
+        reason = (
+            f"A3 revocation is latched for {fence.task_id}; refusing terminal "
+            "interpretation"
+        )
+        _refuse(conn, task_id=fence.task_id, run_id=fence.run_id, reason=reason)
+        raise ExecutionNotPermitted(reason)
+    if moved is not None:
+        with write_txn(conn):
+            _record_exec_event(
+                conn, task_id=fence.task_id, run_id=fence.run_id,
+                kind=EXEC_EVENT_DISCARDED, payload={"reason": moved},
+            )
+        raise ExecutionFenceLost(
+            f"fence moved during execution ({moved}); result discarded"
+        )
+
+    # The check above cannot be the last word: it commits, and the canonical
+    # writers open their OWN transaction (write_txn is not re-entrant), so A3
+    # could latch in that gap. `a3_guard=True` re-evaluates the latch *inside*
+    # the same transaction as the expected_run_id CAS — the only placement that
+    # is genuinely terminal-time. On a latch the writer raises and its
+    # transaction rolls back, so no partial mutation survives.
+    terminal_write = False
+    try:
+        if route == ROUTE_CLOSE:
+            terminal_write = complete_task(
+                conn, fence.task_id, summary=summary,
+                expected_run_id=fence.current_run_id, a3_guard=True,
+            )
+        elif route == ROUTE_BLOCK:
+            terminal_write = block_task(
+                conn, fence.task_id, reason=summary, kind="needs_input",
+                expected_run_id=fence.current_run_id, a3_guard=True,
+            )
+    except ExecutionNotPermitted as exc:
+        _refuse(conn, task_id=fence.task_id, run_id=fence.run_id, reason=str(exc))
+        raise
+    # REVIEW and CONTINUE deliberately write no task status.
+
+    # Terminal event recorded ONLY now — after the canonical guarded transition
+    # actually succeeded (or was legitimately a no-op for REVIEW/CONTINUE). The
+    # log therefore never claims a completion that the A3 guard refused.
+    with write_txn(conn):
+        _record_exec_event(
+            conn, task_id=fence.task_id, run_id=fence.run_id,
+            kind=EXEC_EVENT_COMPLETED,
+            payload={"status": status, "route": route, "summary": summary,
+                     "terminal_write": terminal_write},
+        )
+
+    decision = request.plan.decision
+    notification = project_notification(
+        RouteDecision(
+            route=route,
+            reason=f"adapter_{status}",
+            task_id=decision.task_id,
+            run_id=decision.run_id,
+            outcome=decision.outcome,
+            session_id=decision.session_id,
+            provider=decision.provider,
+            spawn=False,
+            seat=decision.seat,
+        )
+    )
+    return TerminalInterpretation(
+        route=route, status=status, summary=summary,
+        terminal_write=terminal_write, notification=notification,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provider adapter boundary — provider-neutral contract, Claude Code first.
+#
+# DISABLED BY DEFAULT AND UNARMED. `ClaudeCodeAdapter.execute` refuses
+# deterministically on every path in this tree; there is no transport behind it.
+# Nothing in this section imports or references subprocess, shells, sockets,
+# HTTP, environment/credential reads, hooks, schedulers, cron, services, or a
+# provider CLI. (The *module* imports subprocess for unrelated legacy dispatch
+# code that long predates this slice — the adapter path itself is scanned for
+# those tokens by test, which is the honest scope of the guarantee.)
+# ---------------------------------------------------------------------------
+
+class AdapterExecutionDisabled(ExecutorError):
+    """The adapter refused to execute. Always, in this tree."""
+
+
+class ProviderOutputInvalid(ExecutorError):
+    """Provider output was structurally malformed. Fails closed."""
+
+
+class ProviderAdapter(Protocol):
+    """Narrow provider-neutral contract.
+
+    Deliberately smaller than :class:`ExecutorTransport`: an adapter may only
+    *describe* an invocation and *interpret* an outcome. It is handed an
+    already-validated plan (which carries the persisted session mapping and a
+    typed CONTINUE decision) and can obtain nothing else on its own — no
+    discovery, no environment, no session enumeration.
+    """
+
+    name: str
+    provider: str
+
+    def build_command(
+        self, plan: "InvocationPlan"
+    ) -> "ResumeCommandSpec":  # pragma: no cover - protocol
+        ...
+
+    def execute(
+        self, plan: "InvocationPlan", *, timeout_seconds: int
+    ) -> dict:  # pragma: no cover - protocol
+        ...
+
+
+#: Structurally-valid but semantically inconclusive provider outcomes. These are
+#: normalised to ``needs_review``, which routes to ROUTE_REVIEW and writes **no**
+#: task status. Chosen over ``blocked`` deliberately: a block is itself a
+#: terminal board write, and an ambiguous or unavailable provider outcome must
+#: not mutate the board in either direction.
+AMBIGUOUS_PROVIDER_SUBTYPES = frozenset({
+    "error_max_turns",
+    "error_during_execution",
+    "error",
+    "cancelled",
+    "timeout",
+    "unavailable",
+})
+
+#: Subtypes that map to a definite terminal reading.
+CLAUDE_SUBTYPE_TO_STATUS = {
+    "success": "completed",
+    "blocked": "blocked",
+    "needs_review": "needs_review",
+    "incomplete": "incomplete",
+}
+
+
+def parse_claude_stream_output(
+    events: Any, *, expected_run_id: int, expected_session_id: str,
+) -> dict:
+    """Parse Claude Code ``stream-json`` events into a typed terminal result.
+
+    **Pure.** Takes already-captured structured events — never a stream, a file
+    handle, a process, or text to be scraped. Fails closed on anything
+    structurally malformed; normalises anything merely *inconclusive* to
+    ``needs_review`` so it routes to review without a terminal write.
+
+    Returns the canonical ``{"status", "summary", "run_id"}`` mapping the sealed
+    interpretation path already validates, so no new result vocabulary is
+    introduced downstream.
+    """
+    if isinstance(events, (str, bytes, Mapping)) or not isinstance(events, Iterable):
+        raise ProviderOutputInvalid(
+            f"provider output must be a sequence of event mappings, got "
+            f"{type(events).__name__}"
+        )
+    items = list(events)
+    if not items:
+        raise ProviderOutputInvalid("provider output carried no events")
+
+    if not isinstance(expected_run_id, int) or isinstance(expected_run_id, bool):
+        raise ProviderOutputInvalid("expected_run_id must be a positive integer")
+    if expected_run_id <= 0:
+        raise ProviderOutputInvalid("expected_run_id must be positive")
+    expected_session = _require_identifier(
+        expected_session_id, "expected_session_id"
+    )
+
+    init_events = []
+    results = []
+    for index, event in enumerate(items):
+        if not isinstance(event, Mapping):
+            raise ProviderOutputInvalid(
+                f"event {index} is {type(event).__name__}, not a mapping"
+            )
+        kind = event.get("type")
+        if not isinstance(kind, str) or not kind.strip():
+            raise ProviderOutputInvalid(f"event {index} has no usable 'type'")
+        kind = kind.strip()
+        if kind not in {"system", "assistant", "result", "rate_limit_event"}:
+            raise ProviderOutputInvalid(
+                f"event {index} has unsupported Claude stream type {kind!r}"
+            )
+        if kind == "rate_limit_event":
+            # Claude Code emits this normal lifecycle event between assistant
+            # output and the terminal result.  It is informational, never a
+            # completion signal, but it still has to be bound to the persisted
+            # session so a foreign stream cannot be mixed into this receipt.
+            rate_session = _require_identifier(
+                event.get("session_id"), "rate_limit_event.session_id"
+            )
+            if rate_session != expected_session:
+                raise ProviderOutputInvalid(
+                    "rate_limit_event session_id does not match persisted binding"
+                )
+            if not isinstance(event.get("rate_limit_info"), Mapping):
+                raise ProviderOutputInvalid(
+                    "rate_limit_event must carry a mapping rate_limit_info"
+                )
+        if kind == "system":
+            subtype = event.get("subtype")
+            if subtype == "init":
+                init_events.append(event)
+            elif subtype in {"hook_started", "hook_response"}:
+                # Claude's normal --include-hook-events stream may carry
+                # SessionStart/Stop lifecycle records before or after init.
+                # They are non-terminal and never drive routing, but must be
+                # bound to the persisted session so a foreign hook stream
+                # cannot be mixed into this receipt.
+                hook_session = _require_identifier(
+                    event.get("session_id"), "hook system.session_id"
+                )
+                if hook_session != expected_session:
+                    raise ProviderOutputInvalid(
+                        "hook system session_id does not match persisted binding"
+                    )
+            else:
+                raise ProviderOutputInvalid(
+                    "system event must be init or a supported Claude hook lifecycle event; "
+                    f"got {subtype!r}"
+                )
+        if kind == "result":
+            results.append(event)
+
+    if len(init_events) != 1:
+        raise ProviderOutputInvalid(
+            f"provider output carried {len(init_events)} init events; expected one"
+        )
+    init_session = _require_identifier(init_events[0].get("session_id"), "init.session_id")
+    if init_session != expected_session:
+        raise ProviderOutputInvalid("init session_id does not match persisted binding")
+
+    if not results:
+        raise ProviderOutputInvalid("provider output carried no terminal result event")
+    if len(results) > 1:
+        # Two terminal readings is not something to pick a winner from.
+        raise ProviderOutputInvalid(
+            f"provider output carried {len(results)} terminal result events"
+        )
+
+    result = results[0]
+    result_session = _require_identifier(result.get("session_id"), "result.session_id")
+    if result_session != expected_session:
+        raise ProviderOutputInvalid("result session_id does not match persisted binding")
+    subtype = result.get("subtype")
+    if not isinstance(subtype, str) or not subtype.strip():
+        raise ProviderOutputInvalid("terminal result event has no usable 'subtype'")
+    subtype = subtype.strip()
+
+    is_error = result.get("is_error", False)
+    if not isinstance(is_error, bool):
+        raise ProviderOutputInvalid("terminal result 'is_error' must be a boolean")
+
+    text = result.get("result", "")
+    if text is None:
+        text = ""
+    if not isinstance(text, str):
+        raise ProviderOutputInvalid(
+            f"terminal result 'result' must be a string, got {type(text).__name__}"
+        )
+
+    if is_error or subtype in AMBIGUOUS_PROVIDER_SUBTYPES:
+        status = "needs_review"
+        summary = f"[{subtype}] {text}".strip() if text else f"[{subtype}]"
+    elif subtype in CLAUDE_SUBTYPE_TO_STATUS:
+        status = CLAUDE_SUBTYPE_TO_STATUS[subtype]
+        summary = text
+    else:
+        # Unknown-but-well-formed: inconclusive, never assumed successful.
+        status = "needs_review"
+        summary = f"[unknown subtype {subtype!r}] {text}".strip()
+
+    if not summary.strip():
+        summary = f"[{subtype}] provider returned no summary text"
+    summary = _require_bounded_text(
+        summary, "provider.summary", EXECUTION_MAX_SUMMARY_CHARS,
+    )
+    return {"status": status, "summary": summary, "run_id": expected_run_id}
+
+
+class ClaudeCodeAdapter:
+    """First concrete adapter. **Cannot invoke anything in this tree.**
+
+    ``enabled`` defaults False. Even constructed with ``enabled=True`` the
+    adapter still refuses: there is no transport linked behind it. Both refusals
+    are deterministic and typed, so a caller can never fall through to a shell,
+    a spawn, or a network call — the extension point exists, the capability
+    does not.
+    """
+
+    name = "claude-code-adapter"
+    provider = PROVIDER_CLAUDE_CODE
+
+    def __init__(self, *, enabled: bool = False) -> None:
+        self.enabled = bool(enabled)
+        self.build_calls = 0
+        self.execute_calls = 0
+
+    def build_command(self, plan: "InvocationPlan") -> "ResumeCommandSpec":
+        """Render the explicit resume command. **Pure; runs nothing.**
+
+        The session id is taken from the plan's persisted binding only. There is
+        no discovery, no `--continue`, no inference, and no fallback spawn: an
+        unusable mapping raises rather than degrading to a new session.
+        """
+        self.build_calls += 1
+        if not isinstance(plan, InvocationPlan):
+            raise InvocationPlanError(
+                f"plan must be an InvocationPlan, got {type(plan).__name__}"
+            )
+
+        # InvocationPlan is a frozen dataclass, not an unforgeable capability.
+        # A caller can construct one directly, so this adapter boundary must
+        # rebuild its canonical form before it renders even an inert command.
+        # Otherwise a BLOCK decision paired with an inferred/retired mapping
+        # could manufacture an apparently-authoritative --resume argv for a
+        # session that never came from the dispatcher path.
+        canonical = plan_session_resume(
+            decision=plan.decision,
+            binding=plan.binding,
+            capsule=plan.capsule,
+            timeout_seconds=plan.command.timeout_seconds,
+        )
+        if canonical != plan:
+            raise InvocationPlanError(
+                "InvocationPlan is not canonical; refusing a forged or "
+                "internally inconsistent resume plan"
+            )
+        if canonical.binding.retired:
+            raise InvocationPlanError("cannot render a command for a retired mapping")
+        if canonical.binding.owner != DISPATCHER_BINDING_OWNER:
+            raise InvocationPlanError(
+                "only a dispatcher-owned mapping may render a resume command"
+            )
+        if canonical.binding.issued_at <= 0 or canonical.binding.expires_at <= canonical.binding.issued_at:
+            raise InvocationPlanError("binding has no plausible eligible time window")
+        if canonical.binding.provider != self.provider:
+            raise InvocationPlanError(
+                f"adapter handles {self.provider!r}, not "
+                f"{canonical.binding.provider!r}"
+            )
+        command = render_resume_command(
+            provider=canonical.binding.provider,
+            session_id=canonical.binding.session_id,
+            timeout_seconds=canonical.command.timeout_seconds,
+        )
+        return replace(command, input_jsonl=render_claude_stream_input(canonical.capsule))
+
+    def execute(self, plan: "InvocationPlan", *, timeout_seconds: int) -> dict:
+        """Always refuses. There is no execution path in this slice."""
+        self.execute_calls += 1
+        if not self.enabled:
+            raise AdapterExecutionDisabled(
+                f"{self.name} is disabled (enabled=False); refusing to execute"
+            )
+        raise AdapterExecutionDisabled(
+            f"{self.name} has no transport linked in this tree; refusing to "
+            "execute even though enabled=True"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Retention + garbage collection
 # ---------------------------------------------------------------------------
 
@@ -10272,13 +14358,24 @@ def gc_events(
     """Delete task_events rows older than ``older_than_seconds`` for tasks
     in a terminal state (``done`` or ``archived``). Returns the number of
     rows deleted. Running / ready / blocked tasks keep their full event
-    history."""
+    history.
+
+    **A3 revocation latches are never pruned.** The latch kinds
+    (:data:`A3_EVENT_REVOKED` / :data:`A3_EVENT_REVOCATION_CLEARED`) are the
+    durable veto behind :func:`a3_gate_granted`. Without this exclusion a latch
+    on a task that later reached ``done``/``archived`` would be deleted once it
+    aged past the cutoff, and any surviving ``A3_GATE=GRANTED`` comment would
+    silently re-open the gate — reintroducing the reversible-revocation defect
+    the latch exists to close. Excluding two kinds deletes strictly fewer rows,
+    so ordinary history pruning is unchanged.
+    """
     cutoff = int(time.time()) - int(older_than_seconds)
     with write_txn(conn):
         cur = conn.execute(
             "DELETE FROM task_events WHERE created_at < ? AND task_id IN "
-            "(SELECT id FROM tasks WHERE status IN ('done', 'archived'))",
-            (cutoff,),
+            "(SELECT id FROM tasks WHERE status IN ('done', 'archived')) "
+            "AND kind NOT IN (?, ?)",
+            (cutoff, A3_EVENT_REVOKED, A3_EVENT_REVOCATION_CLEARED),
         )
     return int(cur.rowcount or 0)
 

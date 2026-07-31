@@ -1,0 +1,68 @@
+{
+  "binding_retired": true,
+  "bootstrap": {
+    "event_types": [
+      "assistant",
+      "rate_limit_event",
+      "result",
+      "system"
+    ],
+    "session_sha256": "dee45c19953b9d3aad559cab6a03cb5f1752d257f4d4b7edb5af9823513e50aa"
+  },
+  "bootstrap_run": 44,
+  "canonical_board_sha256": "9763e914fe6d4203d4a7a2ec54b569a56808d2f45ac6464e00ce4a791c2cc1ba",
+  "capsule_sha256": "39358158d92a4c8c7db8ddd2fb38f76f2b7d3df2124a34488ebb25bf3094e7bc",
+  "finished_at": 1785474079,
+  "global_activation_lease_sha256": "58b74a56518911ff20ba3da2e1d507bbf3ba4fa2d69a314ede28581c2648ef19",
+  "provider_calls": {
+    "bootstrap": 1,
+    "max_total": 2,
+    "resume": 1,
+    "total": 2
+  },
+  "restricted_mode": {
+    "denied_tools": "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task",
+    "max_turns": 1,
+    "permission_mode": "plan",
+    "safe_mode": true,
+    "strict_mcp_config": true
+  },
+  "restricted_surface_sha256": "565a78b4ef85a4f1a05245c308f80e8ba778acb33671924ee89447823d40794a",
+  "resume_argv": [
+    "claude",
+    "--resume",
+    "c8785bc3-7a9b-48e7-80b0-8e51d2bcd5b4",
+    "--print",
+    "--verbose",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--include-hook-events",
+    "--permission-mode",
+    "plan",
+    "--disallowedTools",
+    "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Task",
+    "--safe-mode",
+    "--strict-mcp-config",
+    "--max-turns",
+    "1"
+  ],
+  "schema": "hermes.controlled-claude-worker-activation-receipt.v1",
+  "scope": "one fixed Hermes no-op task; no scheduler, fallback, deployment, trading, credentials, or external messaging",
+  "source_sha256": {
+    "claude_executor.py": "37c59e752dafe0cfca34fe09d10f40291ad7aed4abb0035713899f7a167184ac",
+    "harness": "9724dc8010a903a30b3fac57e8a8f5344cdadb617f7755ddf5d15ef299fe9fc3",
+    "kanban_db.py": "9a688e5f3b407d051a6a0c1d0314710f3d870748791f2c0ca42d7e832b16e9af"
+  },
+  "started_at": 1785474063,
+  "status": "PASS",
+  "task_id": "t_4f843ed0",
+  "task_profile_sha256": "651f1a1180529e039c9b423386f9ae43983fda59cc227d108eb890124dc75764",
+  "terminal": {
+    "status": "completed",
+    "terminal_write": true
+  },
+  "workspace_removed": true,
+  "workspace_sha256": "19da4b6c9d4d0db81f110d67cf396349af1e6ea45b93d1d0fe1844a156f5561f"
+}

@@ -1,0 +1,58 @@
+{
+  "a3_granted": true,
+  "binding_retired": true,
+  "executor": {
+    "status": "completed",
+    "terminal_write": true
+  },
+  "finished_at": 1785473993,
+  "initial_run": 1,
+  "initial_stream": {
+    "event_types": [
+      "assistant",
+      "rate_limit_event",
+      "result",
+      "system"
+    ],
+    "marker_verified": true,
+    "session_sha256": "1dbf20f5ad86afa848fc2edb695fdad87f1ffdfc794bc92176a86e42b875a716",
+    "system_subtypes": [
+      "init"
+    ]
+  },
+  "result": "PASS",
+  "resume_stream": {
+    "event_types": [
+      "assistant",
+      "rate_limit_event",
+      "result",
+      "system"
+    ],
+    "marker_verified": true,
+    "session_sha256": "1dbf20f5ad86afa848fc2edb695fdad87f1ffdfc794bc92176a86e42b875a716",
+    "system_subtypes": [
+      "init"
+    ],
+    "terminal_subtype": "success"
+  },
+  "route": "continue",
+  "schema": "hermes.real-claude-executor-canary.v1",
+  "scope": "temporary board and workspace only; no live Hermes board",
+  "shadow": {
+    "consumer": "hermes-shadow-broker-v1",
+    "cursor_advanced": true,
+    "new_cursor": 14,
+    "old_cursor": 0,
+    "preprovisioned_cursor": 0
+  },
+  "source_sha256": {
+    "broker_shadow.py": "822eccf434a708d710b9ef3570e62ce01dda2ff76474a2944b323c8b71836d5c",
+    "claude_executor.py": "37c59e752dafe0cfca34fe09d10f40291ad7aed4abb0035713899f7a167184ac",
+    "harness": "d5863cd92737ce03aa6b0ceecff8d8047060255a17bea683fc2bc3b925681ebc",
+    "kanban_db.py": "9a688e5f3b407d051a6a0c1d0314710f3d870748791f2c0ca42d7e832b16e9af"
+  },
+  "started_at": 1785473977,
+  "task_sha256": "68b60d934707cc4a7e4e03262ef0884e889ef6110a852610e18b4e15f6a8bdc8",
+  "temporary_root_removed": true,
+  "temporary_root_sha256": "129764ac21cb72bf66a1bf3399ec975a6bff30d3629214739918b217c16a8510"
+}
