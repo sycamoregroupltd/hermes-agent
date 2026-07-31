@@ -161,6 +161,15 @@ def load_session_binding(path, *, expected_task_id=None, board_db=None,
         raise DispatchError("session binding CMUX seat mismatch — refuse")
     if rec.get("reservation_fingerprint") != reservation["reservation_fingerprint"]:
         raise DispatchError("session binding reservation fingerprint mismatch — refuse")
+    mint = receipt["mint_control_context"]
+    if rec.get("mint_control") != {
+        "workspace_id": mint["workspace_id"],
+        "surface_id": mint["surface_id"],
+        "resolved_workspace_id": mint["resolved_workspace_id"],
+        "resolved_surface_id": mint["resolved_surface_id"],
+        "anchor_fingerprint": receipt["mint_control_anchor_fingerprint"],
+    }:
+        raise DispatchError("session binding mint-control anchor mismatch — refuse")
     mac = rec.get("mac_receipt")
     if not isinstance(mac, dict) or mac.get("receipt_fingerprint") != receipt["receipt_fingerprint"]:
         raise DispatchError("session binding receipt fingerprint mismatch — refuse")

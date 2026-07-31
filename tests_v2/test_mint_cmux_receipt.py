@@ -17,13 +17,16 @@ import hashlib
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MINT = os.path.join(ROOT, "bin_verify", "mint_cmux_receipt.py")
 GATE = os.path.join(ROOT, "bin_verify", "dispatch_gate_v2.py")
+ISSUER = os.path.join(ROOT, "bin_verify", "issue_cmux_claude_session_binding.py")
 
 FAILURES = []
 
@@ -43,6 +46,7 @@ def load_module(path, name):
 
 mint_mod = load_module(MINT, "mint_mod")
 gate_mod = load_module(GATE, "gate_mod")
+issuer_mod = load_module(ISSUER, "issuer_mod")
 
 RESERVED_WS = "11111111-AAAA-BBBB-CCCC-000000000001"
 RESERVED_SURFACE = "22222222-AAAA-BBBB-CCCC-000000000002"
@@ -60,17 +64,20 @@ FOREIGN_SURFACE_REF = "surface:7"
 
 
 def make_reservation(td, ws=RESERVED_WS, surface=RESERVED_SURFACE, version="0.64.20",
-                     tamper=False, name="seat-reservation.json"):
+                     mint_ws=RESERVED_WS, mint_surface=CALLER_SURFACE,
+                     tamper=False, name="seat-reservation.json", schema=2):
     res = {
         "record_kind": "cmux-manual-seat-reservation",
-        "schema_version": 2,
+        "schema_version": schema,
         "seat": {"cmux_workspace_id": ws, "cmux_surface_id": surface,
                  "cmux_window_id": "66666666-AAAA-BBBB-CCCC-000000000006",
                  "cmux_daemon_version": version, "provider": "claude-code",
                  "kind": "cmux-interactive-claude-max",
                  "provider_session_uuid": "77777777-aaaa-bbbb-cccc-000000000007"},
-        "mint_control": {"cmux_workspace_id": ws, "cmux_surface_id": surface},
+        "mint_control": {"cmux_workspace_id": mint_ws, "cmux_surface_id": mint_surface},
     }
+    res["provider_anchor_fingerprint"] = mint_mod.dual_anchor.anchor_fingerprint(res["seat"])
+    res["mint_control_anchor_fingerprint"] = mint_mod.dual_anchor.anchor_fingerprint(res["mint_control"])
     res["reservation_fingerprint"] = mint_mod.reservation_fingerprint(res)
     if tamper:
         res["seat"]["cmux_workspace_id"] = "TAMPERED"
@@ -86,6 +93,7 @@ def make_remote_root(td):
     wt = os.path.join(remote, "worktree")
     os.makedirs(os.path.join(wt, "bin_verify"))
     open(os.path.join(wt, "bin_verify", "dispatch_gate_v2.py"), "w").write("# marker\n")
+    open(os.path.join(wt, "bin_verify", "mint_cmux_receipt.py"), "w").write("# marker\n")
     open(os.path.join(wt, "ACTIVATION-PACKET-CLAUDE-WORKER.json"), "w").write("{}\n")
     res_dir = os.path.join(remote, "reservation-store")
     os.makedirs(res_dir)
@@ -239,7 +247,7 @@ class Env:
         else:
             env.pop("MINT_TEST_FAIL_BEFORE_PUBLISH", None)
         argv = [sys.executable, MINT, "--json", "--canary-task", task,
-                "--caller-surface", RESERVED_SURFACE,
+                "--caller-surface", CALLER_SURFACE,
                 "--worktree", self.wt,
                 "--reservation-path", self.res_path,
                 "--dgx-host", "spark-4be3",
@@ -288,9 +296,11 @@ def main():
         check("receipt binds RESERVED seat ids (not caller, not focused)",
               rec.get("cmux_workspace_id") == RESERVED_WS
               and rec.get("cmux_surface_id") == RESERVED_SURFACE)
-        check("receipt records proven caller context = EXACT reserved surface",
-              rec.get("caller_context", {}).get("surface_id") == RESERVED_SURFACE
-              and rec.get("caller_context", {}).get("proof") == "nonce-read-screen")
+        check("receipt schema3 records provider and proven mint-control anchors",
+              rec.get("schema_version") == 3
+              and rec.get("mint_control_context", {}).get("surface_id") == CALLER_SURFACE
+              and rec.get("mint_control_context", {}).get("resolved_surface_id") == CALLER_SURFACE
+              and rec.get("mint_control_context", {}).get("proof") == "nonce-read-screen")
         ok, detail = gate_mod.validate_cmux_receipt(e.receipt_path(), e.res_path, "t_beefcafe")
         check("minted receipt passes the UNMODIFIED DGX G3b validator", ok, detail)
         check("nonce was actually round-tripped through the tty file",
@@ -305,6 +315,21 @@ def main():
         check("no tmp litter in canonical reservation dir",
               [f for f in os.listdir(os.path.dirname(e.receipt_path()))]
               == ["cmux-reservation-receipt.json"])
+        board = os.path.join(e.dir, "issuer-board.db")
+        con = sqlite3.connect(board)
+        con.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT)")
+        con.execute("CREATE TABLE task_runs (id INTEGER PRIMARY KEY, task_id TEXT)")
+        con.execute("INSERT INTO tasks VALUES ('t_beefcafe', 'blocked')")
+        con.commit(); con.close()
+        reservation = json.load(open(e.res_path))
+        binding = issuer_mod.issue_binding(
+            worktree=Path(e.wt), board_db=Path(board), reservation_path=Path(e.res_path),
+            receipt_path=Path(e.receipt_path()), task_id="t_beefcafe",
+            session_id=reservation["seat"]["provider_session_uuid"],
+            declared_by="actual-mint-output-e2e", ttl_seconds=120)
+        check("actual mint output is accepted by the real issuer end-to-end",
+              binding.is_file() and json.load(open(binding))["mac_receipt"]["receipt_fingerprint"]
+              == rec["receipt_fingerprint"])
 
         # stale + mismatched receipts against the unmodified gate validator
         future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=9999)
@@ -315,7 +340,7 @@ def main():
                                      name="other-reservation.json")
         ok, detail = gate_mod.validate_cmux_receipt(e.receipt_path(), other_res, "t_beefcafe")
         check("minted receipt vs different reservation refuses (mismatch)",
-              not ok and "workspace" in detail)
+              not ok and "fingerprint" in detail)
         ok, detail = gate_mod.validate_cmux_receipt(e.receipt_path(), e.res_path, "t_00000009")
         check("minted receipt bound to wrong task refuses", not ok and "bound" in detail)
         e.close()
@@ -486,6 +511,22 @@ def main():
               and "fingerprint" in (rep.get("refused_at") or {}).get("detail", ""))
         e.close()
 
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path), schema=1)
+        rc, rep = e.run()
+        check("legacy single-anchor reservation schema refuses before tree/tty proof",
+              rc == 2 and refused_at(rep) == "C7-reservation" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        data = json.load(open(e.res_path)); data.pop("mint_control_anchor_fingerprint")
+        data["reservation_fingerprint"] = mint_mod.reservation_fingerprint(data)
+        open(e.res_path, "w").write(mint_mod.canonical_dumps(data))
+        rc, rep = e.run()
+        check("reservation missing separately fingerprinted mint anchor refuses",
+              rc == 2 and refused_at(rep) == "C7-reservation" and not e.published())
+        e.close()
+
         # -- reserved seat must be live, exact-ID -----------------------------
         e = Env(td, f"e{next(n)}")
         e.cfg["tree"]["windows"][0]["workspaces"] = [
@@ -522,9 +563,10 @@ def main():
         check("stable-ref receipt binds the reservation's refs VERBATIM",
               rec.get("cmux_workspace_id") == RESERVED_WS_REF
               and rec.get("cmux_surface_id") == RESERVED_SURFACE_REF)
-        check("stable-ref receipt caller context proves the RESOLVED tree id",
-              rec.get("caller_context", {}).get("surface_id") == RESERVED_SURFACE
-              and rec.get("caller_context", {}).get("proof") == "nonce-read-screen")
+        check("stable-ref receipt mint context proves its separate resolved tree id",
+              rec.get("mint_control_context", {}).get("surface_id") == CALLER_SURFACE
+              and rec.get("mint_control_context", {}).get("resolved_surface_id") == CALLER_SURFACE
+              and rec.get("mint_control_context", {}).get("proof") == "nonce-read-screen")
         ok, detail = gate_mod.validate_cmux_receipt(e.receipt_path(), e.res_path, "t_beefcafe")
         check("stable-ref receipt passes the UNMODIFIED DGX G3b validator", ok, detail)
         e.close()
@@ -532,14 +574,14 @@ def main():
         e = Env(td, f"e{next(n)}")
         make_reservation(os.path.dirname(e.res_path),
                          ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
-        rc, rep = e.run("--caller-surface", RESERVED_SURFACE_REF)
+        rc, rep = e.run("--caller-surface", CALLER_SURFACE_REF)
         # The read-screen echo is checked against the resolved tree ID, so
         # this passing proves the nonce proof ran on the resolved UUID, not
         # the ref string.
         check("stable-ref caller claim resolves and proves nonce on resolved tree id",
               rc == 0 and rep.get("verdict") == "MINTED-AND-PUBLISHED"
               and (rep.get("evidence", {}).get("C9-caller", {}).get("caller_surface")
-                   == RESERVED_SURFACE),
+                   == CALLER_SURFACE),
               json.dumps(rep.get("refused_at", {})))
         e.close()
 
@@ -588,6 +630,30 @@ def main():
 
         e = Env(td, f"e{next(n)}")
         make_reservation(os.path.dirname(e.res_path),
+                         mint_ws=RESERVED_WS_REF, mint_surface=CALLER_SURFACE_REF)
+        e.cfg["tree"]["windows"][0]["workspaces"].append(
+            {"id": "88888888-AAAA-BBBB-CCCC-000000000008", "ref": RESERVED_WS_REF,
+             "panes": [{"surfaces": [{"id": "88888888-AAAA-BBBB-CCCC-000000000018",
+                                      "ref": "surface:88", "tty": "ttys088"}]}]})
+        e.flush_cfg(); rc, rep = e.run()
+        check("ambiguous mint-control workspace ref refuses (C8)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
+                         mint_ws=RESERVED_WS_REF, mint_surface=CALLER_SURFACE_REF)
+        e.cfg["tree"]["windows"][0]["workspaces"].append(
+            {"id": "88888888-AAAA-BBBB-CCCC-000000000008", "ref": "workspace:88",
+             "panes": [{"surfaces": [{"id": "88888888-AAAA-BBBB-CCCC-000000000018",
+                                      "ref": CALLER_SURFACE_REF, "tty": "ttys088"}]}]})
+        e.flush_cfg(); rc, rep = e.run()
+        check("ambiguous mint-control surface ref refuses (C8)",
+              rc == 2 and refused_at(rep) == "C8-tree" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        make_reservation(os.path.dirname(e.res_path),
                          ws=RESERVED_WS_REF, surface=FOREIGN_SURFACE_REF)
         rc, rep = e.run()
         check("surface ref resolving OUTSIDE the reserved workspace refuses (C8 containment)",
@@ -599,7 +665,7 @@ def main():
                          ws=RESERVED_WS_REF, surface=RESERVED_WS_REF)
         rc, rep = e.run()
         check("wrong-kind ref in surface field refuses (C8, never cross-kind resolved)",
-              rc == 2 and refused_at(rep) == "C8-tree" and not e.published())
+              rc == 2 and refused_at(rep) == "C7-reservation" and not e.published())
         e.close()
 
         e = Env(td, f"e{next(n)}")
@@ -613,15 +679,15 @@ def main():
         e = Env(td, f"e{next(n)}")
         make_reservation(os.path.dirname(e.res_path),
                          ws=RESERVED_WS_REF, surface=RESERVED_SURFACE_REF)
-        rc, rep = e.run("--caller-surface", CALLER_SURFACE_REF)
-        check("caller claim by same-workspace OTHER-surface ref refuses (C9 exact identity)",
+        rc, rep = e.run("--caller-surface", RESERVED_SURFACE_REF)
+        check("caller claim by provider-surface ref refuses (C9 exact mint identity)",
               rc == 2 and refused_at(rep) == "C9-caller" and not e.published()
-              and "EXACT reserved surface" in (rep.get("refused_at") or {}).get("detail", ""))
+              and "EXACT Mac control surface" in (rep.get("refused_at") or {}).get("detail", ""))
         e.close()
 
         e = Env(td, f"e{next(n)}")
-        rc, rep = e.run("--caller-surface", RESERVED_SURFACE_REF)
-        check("raw-UUID reservation also accepts a stable-ref caller claim for the SAME surface",
+        rc, rep = e.run("--caller-surface", CALLER_SURFACE_REF)
+        check("raw-UUID mint anchor accepts a stable-ref caller claim for the SAME control surface",
               rc == 0 and rep.get("verdict") == "MINTED-AND-PUBLISHED",
               json.dumps(rep.get("refused_at", {})))
         e.close()
@@ -649,16 +715,16 @@ def main():
         rc, rep = e.run("--caller-surface", FOREIGN_SURFACE)
         check("caller surface outside reserved workspace refuses (C9)",
               rc == 2 and refused_at(rep) == "C9-caller"
-              and "reserved" in (rep.get("refused_at") or {}).get("detail", ""))
+              and "mint_control" in (rep.get("refused_at") or {}).get("detail", ""))
         e.close()
 
         # t_f0321a11 finding 1: a DIFFERENT surface in the SAME reserved
         # workspace must also refuse — only the exact reserved surface mints.
         e = Env(td, f"e{next(n)}")
-        rc, rep = e.run("--caller-surface", CALLER_SURFACE)
-        check("same-workspace OTHER-surface caller refuses (C9, exact reserved surface required)",
+        rc, rep = e.run("--caller-surface", RESERVED_SURFACE)
+        check("provider surface cannot impersonate mint-control surface (C9)",
               rc == 2 and refused_at(rep) == "C9-caller"
-              and "EXACT reserved surface" in (rep.get("refused_at") or {}).get("detail", "")
+              and "EXACT Mac control surface" in (rep.get("refused_at") or {}).get("detail", "")
               and not e.published())
         e.close()
 
@@ -667,6 +733,14 @@ def main():
         e.flush_cfg()
         rc, rep = e.run()
         check("nonce not visible on claimed surface refuses (caller unproven)",
+              rc == 2 and refused_at(rep) == "C9-caller" and not e.published())
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
+        wrong_tty = os.path.join(e.dir, "wrong-tty.txt")
+        open(wrong_tty, "w").write("")
+        rc, rep = e.run("--caller-tty", wrong_tty)
+        check("wrong controlling tty cannot prove the mint-control surface",
               rc == 2 and refused_at(rep) == "C9-caller" and not e.published())
         e.close()
 

@@ -2,8 +2,8 @@
 """mint_cmux_receipt — MAC CONTROL-TERMINAL receipt mint for the v2 G3b gate.
 
 Repaired per jarvis-os/t_21fbb6f6 (review verdict on t_f2df1159). This tool
-runs ONLY on the Mac that owns the CMUX control socket, inside a terminal
-surface of the reserved seat workspace. It never runs on DGX: every DGX-side
+runs ONLY on the Mac that owns the CMUX control socket, inside the separately
+reserved mint-control terminal. It never runs on DGX: every DGX-side
 consumer (dispatch_gate_v2.py G3b) validates the published receipt as data and
 never calls a CMUX socket.
 
@@ -40,26 +40,25 @@ Fail-closed steps (any failure refuses, rc=2, nothing published):
       The pinned DGX identity remains `spark-4be3`; it is validated before
       transport, then `ssh dgx cat <canonical seat-reservation.json>` obtains
       strict JSON whose record_kind and reservation_fingerprint are checked.
-  C8  `--json rpc system.tree`: reserved workspace AND reserved surface found
-      by exact identity (surface inside that workspace). The reservation may
-      name each seat node either by raw tree ID (UUID) or by stable CMUX ref
+  C8  `--json rpc system.tree`: both provider and mint-control workspace/surface
+      pairs found by exact identity and containment. The reservation may name
+      each node either by raw tree ID (UUID) or by stable CMUX ref
       ("workspace:<n>"/"surface:<n>", the `ref` field system.tree reports on
       every node). A stable ref is resolved to its exact tree ID by full
       enumeration of the tree — it must resolve to exactly ONE live node;
       absent or ambiguous refs refuse. Focus/active/selected fields and list
       order are never consulted.
-  C9  caller context PROVEN: --caller-surface (explicit claim, required) may
+  C9  mint-control context PROVEN: --caller-surface (explicit claim, required) may
       be a raw tree ID or a stable surface ref; it is normalized to its exact
       tree ID the same way as C8, must exist in the tree, and must resolve to
-      the SAME tree ID as the reservation's cmux_surface_id — any other
-      surface, including another pane/terminal in the SAME reserved workspace,
-      refuses (t_f0321a11 finding 1). A random nonce written to this process's
+      the SAME tree ID as reservation.mint_control.cmux_surface_id — any other
+      surface refuses. A random nonce written to this process's
       controlling tty must appear in `--json read-screen --surface <resolved
       tree ID>` output whose surface_id echoes that exact tree ID. No tty,
       wrong surface, or missing nonce refuses.
-  C10 receipt minted: short-lived, bound to --canary-task and to the RESERVED
-      workspace/surface ids (receipt_kind unchanged so DGX G3b validates it
-      byte-for-byte the same way; caller/control-socket evidence is additive)
+  C10 schema3 receipt minted: short-lived, bound to --canary-task, the provider
+      anchor at top level, and a distinct mint_control_context carrying exact
+      reservation identities plus resolved tree IDs and tty proof
   C11 mint EVIDENCE published FIRST, atomically through SSH, to the canonical
       <worktree>/evidence/mac-cmux-mint-evidence.json. The evidence names the
       pending receipt's sha256 and fingerprint. Publishing evidence before the
@@ -75,15 +74,14 @@ Fail-closed steps (any failure refuses, rc=2, nothing published):
       If this step fails, the mint exits REFUSE (rc=2) and no receipt exists;
       the already-published evidence records the failed attempt as pending.
 
-EXACT COMMAND on the Mac control terminal (a terminal surface inside the
-reserved seat workspace; fetch the script first because it lives on DGX):
+EXACT COMMAND on the separately reserved Mac control terminal (fetch the
+script first because it lives on DGX):
 
   scp frank@spark-4be3:/home/frank/.hermes-worktrees/hermes-native-broker-slice/bin_verify/mint_cmux_receipt.py /tmp/mint_cmux_receipt.py
   python3 /tmp/mint_cmux_receipt.py \
       --canary-task t_XXXXXXXX \
-      --caller-surface <UUID of the terminal surface you are typing in;
-                        this MUST be the reservation's exact cmux_surface_id —
-                        minting is only valid from the reserved seat surface>
+      --caller-surface <UUID/ref of the terminal surface you are typing in;
+                        this MUST be reservation.mint_control.cmux_surface_id>
 
 This session (jarvis-os/t_21fbb6f6 repair seat) runs on DGX spark-4be3, so a
 true Mac control terminal cannot be proven from here; the live run recorded in
@@ -111,6 +109,11 @@ import stat
 import subprocess
 import sys
 import time
+
+BIN_DIR = os.path.dirname(os.path.abspath(__file__))
+if BIN_DIR not in sys.path:
+    sys.path.insert(0, BIN_DIR)
+import cmux_dual_anchor_contract as dual_anchor
 
 CANONICAL_WORKTREE = "/home/frank/.hermes-worktrees/hermes-native-broker-slice"
 CANONICAL_RESERVATION = ("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/"
@@ -179,14 +182,11 @@ def canonical_dumps(obj):
 
 
 def reservation_fingerprint(res):
-    clone = {k: v for k, v in res.items() if k != "reservation_fingerprint"}
-    return "sha256:" + hashlib.sha256(canonical_dumps(clone).encode("utf-8")).hexdigest()
+    return dual_anchor.reservation_fingerprint(res)
 
 
 def receipt_fingerprint(rec):
-    clone = {k: v for k, v in rec.items() if k != "receipt_fingerprint"}
-    return "sha256:" + hashlib.sha256(
-        json.dumps(clone, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return dual_anchor.receipt_fingerprint(rec)
 
 
 class Refuse(Exception):
@@ -370,28 +370,27 @@ class Mint:
             res = json.loads(out)
         except ValueError:
             raise Refuse("C7-reservation", "reservation is not valid JSON — refuse")
-        if res.get("record_kind") != "cmux-manual-seat-reservation":
-            raise Refuse("C7-reservation", f"wrong record_kind {res.get('record_kind')!r}")
-        if res.get("schema_version") != 2 or not isinstance(res.get("mint_control"), dict):
-            raise Refuse("C7-reservation", "dual-anchor reservation schema_version 2 with mint_control is required")
-        if res.get("reservation_fingerprint") != reservation_fingerprint(res):
-            raise Refuse("C7-reservation", "reservation fingerprint mismatch (tampered/corrupt)")
         try:
-            seat = res["seat"]
+            seat, mint = dual_anchor.validate_reservation(res)
             self.reserved_ws = seat["cmux_workspace_id"]
             self.reserved_surface = seat["cmux_surface_id"]
-            self.mint_ws = res["mint_control"]["cmux_workspace_id"]
-            self.mint_surface = res["mint_control"]["cmux_surface_id"]
-        except (KeyError, TypeError):
-            raise Refuse("C7-reservation", "dual-anchor reservation workspace/surface ids missing")
+            self.mint_ws = mint["cmux_workspace_id"]
+            self.mint_surface = mint["cmux_surface_id"]
+        except (dual_anchor.ContractRefuse, KeyError, TypeError) as exc:
+            raise Refuse("C7-reservation", str(exc)) from exc
         self.reservation = res
         self.evidence["C7-reservation"] = {
             "argv": argv, "pinned_dgx_identity": self.args.dgx_host,
             "ssh_transport_alias": self.args.dgx_transport,
             "sha256": hashlib.sha256(out.encode()).hexdigest(),
-            "reserved_workspace": self.reserved_ws, "reserved_surface": self.reserved_surface}
+            "provider_workspace": self.reserved_ws,
+            "provider_surface": self.reserved_surface,
+            "mint_control_workspace": self.mint_ws,
+            "mint_control_surface": self.mint_surface,
+        }
         self.ok("C7-reservation", f"{self.args.dgx_host} via {self.args.dgx_transport}; "
-                f"ws={self.reserved_ws} surface={self.reserved_surface}")
+                f"provider={self.reserved_ws}/{self.reserved_surface}; "
+                f"mint-control={self.mint_ws}/{self.mint_surface}")
 
     def _resolve_tree_node(self, step, kind, wanted, live_ids, ref_ids):
         """Resolve a reservation seat value to its exact live tree ID.
@@ -452,13 +451,29 @@ class Mint:
                                     f"{self.reserved_surface_tree_id}) not live inside reserved "
                                     f"workspace {self.reserved_ws} (tree id "
                                     f"{self.reserved_ws_tree_id})")
+        self.mint_ws_tree_id = self._resolve_tree_node(
+            "C8-tree", "workspace", self.mint_ws, workspace_ids, workspace_ref_ids)
+        self.mint_surface_tree_id = self._resolve_tree_node(
+            "C8-tree", "surface", self.mint_surface, self.surface_workspace,
+            self.surface_ref_ids)
+        if self.surface_workspace.get(self.mint_surface_tree_id) != self.mint_ws_tree_id:
+            raise Refuse("C8-tree", f"mint_control surface {self.mint_surface} (tree id "
+                                    f"{self.mint_surface_tree_id}) not live inside mint_control "
+                                    f"workspace {self.mint_ws} (tree id {self.mint_ws_tree_id})")
+        if (self.reserved_ws_tree_id, self.reserved_surface_tree_id) == (
+                self.mint_ws_tree_id, self.mint_surface_tree_id):
+            raise Refuse("C8-tree", "provider and mint_control anchors resolve to the same live surface")
         self.evidence["C8-resolution"] = {
-            "reserved_workspace": self.reserved_ws,
-            "reserved_workspace_tree_id": self.reserved_ws_tree_id,
-            "reserved_surface": self.reserved_surface,
-            "reserved_surface_tree_id": self.reserved_surface_tree_id,
+            "provider_workspace": self.reserved_ws,
+            "provider_workspace_tree_id": self.reserved_ws_tree_id,
+            "provider_surface": self.reserved_surface,
+            "provider_surface_tree_id": self.reserved_surface_tree_id,
+            "mint_control_workspace": self.mint_ws,
+            "mint_control_workspace_tree_id": self.mint_ws_tree_id,
+            "mint_control_surface": self.mint_surface,
+            "mint_control_surface_tree_id": self.mint_surface_tree_id,
         }
-        self.ok("C8-tree", "reserved workspace+surface live (exact id/ref resolution, not focus)")
+        self.ok("C8-tree", "provider and mint-control anchors live, distinct, and exactly contained")
 
     def c9_caller_proven(self):
         claimed = self.args.caller_surface
@@ -467,7 +482,7 @@ class Mint:
                                       "claimed explicitly and is then verified, never inferred")
         # Normalize the explicit claim (raw tree ID or stable surface ref) to
         # its exact tree ID with the same resolver as C8, then require identity
-        # with the resolved reserved surface. The nonce proof below always runs
+        # with the resolved mint-control surface. The nonce proof below always runs
         # against the resolved tree ID.
         if is_stable_ref(claimed, "surface"):
             ids = sorted(self.surface_ref_ids.get(claimed) or ())
@@ -485,13 +500,11 @@ class Mint:
                              f"claimed caller surface {claimed} not present in system.tree")
             claimed_id = claimed
         caller_ws = self.surface_workspace.get(claimed_id)
-        if claimed_id != self.reserved_surface_tree_id:
+        if claimed_id != self.mint_surface_tree_id:
             raise Refuse("C9-caller", f"caller surface {claimed} (tree id {claimed_id}, workspace "
-                                      f"{caller_ws}) is not the reserved seat surface "
-                                      f"{self.reserved_surface} (tree id "
-                                      f"{self.reserved_surface_tree_id}) — minting is "
-                                      "only valid from the EXACT reserved surface; another "
-                                      "pane/terminal in the same reserved workspace also refuses")
+                                      f"{caller_ws}) is not the mint_control surface "
+                                      f"{self.mint_surface} (tree id {self.mint_surface_tree_id}) — "
+                                      "minting is only valid from the EXACT Mac control surface")
         tty_path = self.args.caller_tty
         if tty_path is None:
             try:
@@ -529,17 +542,22 @@ class Mint:
         now = datetime.datetime.now(datetime.timezone.utc)
         rec = {
             "receipt_kind": "mac-cmux-reservation-receipt",
-            "schema_version": 2,
+            "schema_version": 3,
             "minted_on": "mac-cmux-control-socket",
             "minted_at_utc": now.isoformat().replace("+00:00", "Z"),
             "expires_at_utc": (now + datetime.timedelta(seconds=self.args.ttl))
                 .isoformat().replace("+00:00", "Z"),
             "canary_task": self.args.canary_task,
+            "reservation_fingerprint": self.reservation["reservation_fingerprint"],
+            "provider_anchor_fingerprint": self.reservation["provider_anchor_fingerprint"],
+            "mint_control_anchor_fingerprint": self.reservation["mint_control_anchor_fingerprint"],
             "cmux_workspace_id": self.reserved_ws,
             "cmux_surface_id": self.reserved_surface,
-            "caller_context": {
-                "surface_id": self.caller_surface,
-                "workspace_id": self.reserved_ws,
+            "mint_control_context": {
+                "workspace_id": self.mint_ws,
+                "surface_id": self.mint_surface,
+                "resolved_workspace_id": self.mint_ws_tree_id,
+                "resolved_surface_id": self.caller_surface,
                 "tty": self.caller_tty,
                 "proof": "nonce-read-screen",
                 "nonce_sha256": self.evidence["C9-caller"]["nonce_sha256"],

@@ -71,6 +71,8 @@ WS = "AAAAAAAA-1111-2222-3333-000000000001"
 SURFACE = "BBBBBBBB-1111-2222-3333-000000000002"
 WINDOW = "CCCCCCCC-1111-2222-3333-000000000003"
 FOREIGN_SURFACE = "EEEEEEEE-1111-2222-3333-000000000005"
+MINT_WS = "DDDDDDDD-1111-2222-3333-000000000004"
+MINT_SURFACE = "FFFFFFFF-1111-2222-3333-000000000006"
 SESSION = "1194f145-bc7d-4fd6-9762-16b4414eb4d1"
 OTHER_SESSION = "99999999-8888-7777-6666-555555555555"
 TASK = "t_e5fd6f1b"
@@ -93,17 +95,22 @@ def iso(moment):
 # --------------------------------------------------------------------------
 def write_reservation(path, *, surface=SURFACE, session=SESSION, version=DAEMON,
                       kind="cmux-manual-seat-reservation", seat_kind="cmux-interactive-claude-max",
-                      tamper=False):
+                      mint_workspace=MINT_WS, mint_surface=MINT_SURFACE,
+                      schema=2, tamper=False):
     res = {
         "record_kind": kind,
-        "schema_version": 1,
+        "schema_version": schema,
         "identity": {"session_bus_id": "claude-cmux-t_d7e6c034"},
         "seat": {"cmux_workspace_id": WS, "cmux_surface_id": surface,
                  "cmux_window_id": WINDOW, "cmux_daemon_version": version,
                  "kind": seat_kind, "provider": "claude-code",
                  "provider_session_uuid": session},
         "task": {"board": "jarvis-os", "task_id": "t_d7e6c034", "required_status": "blocked"},
+        "mint_control": {"cmux_workspace_id": mint_workspace,
+                         "cmux_surface_id": mint_surface},
     }
+    res["provider_anchor_fingerprint"] = issuer.dual_anchor.anchor_fingerprint(res["seat"])
+    res["mint_control_anchor_fingerprint"] = issuer.dual_anchor.anchor_fingerprint(res["mint_control"])
     res["reservation_fingerprint"] = issuer.reservation_fingerprint(res)
     if tamper:
         res["seat"]["cmux_surface_id"] = FOREIGN_SURFACE
@@ -111,21 +118,30 @@ def write_reservation(path, *, surface=SURFACE, session=SESSION, version=DAEMON,
     return path
 
 
-def write_receipt(path, *, task=TASK, surface=SURFACE, caller_surface=None, version=DAEMON,
-                  minted_ago=60, ttl=600, workspace=WS):
+def write_receipt(path, *, reservation, task=TASK, surface=SURFACE, caller_surface=None,
+                  caller_workspace=None, version=DAEMON, minted_ago=60, ttl=600, workspace=WS):
     minted = now() - dt.timedelta(seconds=minted_ago)
+    reservation_record = json.loads(Path(reservation).read_text())
+    mint = reservation_record["mint_control"]
     rec = {
         "receipt_kind": "mac-cmux-reservation-receipt",
-        "schema_version": 2,
+        "schema_version": 3,
         "minted_on": "mac-cmux-control-socket",
         "minted_at_utc": iso(minted),
         "expires_at_utc": iso(minted + dt.timedelta(seconds=ttl)),
         "canary_task": task,
+        "reservation_fingerprint": reservation_record["reservation_fingerprint"],
+        "provider_anchor_fingerprint": reservation_record["provider_anchor_fingerprint"],
+        "mint_control_anchor_fingerprint": reservation_record["mint_control_anchor_fingerprint"],
         "cmux_workspace_id": workspace,
         "cmux_surface_id": surface,
-        "caller_context": {"surface_id": caller_surface or surface, "workspace_id": workspace,
-                           "tty": "/dev/ttys999", "proof": "nonce-read-screen",
-                           "nonce_sha256": hashlib.sha256(str(path).encode()).hexdigest()},
+        "mint_control_context": {
+            "surface_id": mint["cmux_surface_id"],
+            "workspace_id": mint["cmux_workspace_id"],
+            "resolved_surface_id": caller_surface or MINT_SURFACE,
+            "resolved_workspace_id": caller_workspace or MINT_WS,
+            "tty": "/dev/ttys999", "proof": "nonce-read-screen",
+            "nonce_sha256": hashlib.sha256(str(path).encode()).hexdigest()},
         "control_socket": {"socket_path": "/Users/fixture/.local/state/cmux/cmux-501.sock",
                            "bundle_identifier": "com.cmuxterm.app",
                            "cmux_daemon_version": version},
@@ -161,7 +177,8 @@ class Env:
             shutil.copy(ISSUER, self.issuer_path)
         self.reservation = write_reservation(self.root / "seat-reservation.json",
                                              **kw.pop("reservation", {}))
-        self.receipt = write_receipt(self.root / "receipt.json", **kw.pop("receipt", {}))
+        self.receipt = write_receipt(self.root / "receipt.json", reservation=self.reservation,
+                                     **kw.pop("receipt", {}))
         self.board = write_board(str(self.root / "board.db"), **kw.pop("board", {}))
         self.binding = self.root / issuer.OUTPUT_RELATIVE_PATH
 
@@ -292,7 +309,7 @@ def main():
         drifted = write_reservation(Path(td) / "drifted-reservation.json", surface=FOREIGN_SURFACE)
         closed, msg = refuses(e5.load, reservation=drifted)
         check("seat drift after issuance refuses", closed, msg[:120])
-        swapped = write_receipt(Path(td) / "swapped-receipt.json")
+        swapped = write_receipt(Path(td) / "swapped-receipt.json", reservation=e5.reservation)
         closed, msg = refuses(e5.load, receipt=swapped)
         check("re-anchoring to a different receipt refuses", closed, msg[:120])
 
@@ -425,17 +442,15 @@ def main():
             check("a second declared worktree cannot reuse the receipt", True)
 
         # ------------------------------------------------------------ A11
-        print("\n== A11. receipt caller context (defence in depth) ==")
+        print("\n== A11. receipt mint-control context (defence in depth) ==")
         e11 = Env(td, "caller", receipt={"caller_surface": FOREIGN_SURFACE})
         caller_closed, msg = refuses(e11.issue)
         if caller_closed:
-            check("a receipt minted from a foreign caller surface refuses", True)
+            check("a receipt with a foreign resolved mint-control surface refuses", True)
         else:
-            finding("receipt caller_context is not re-checked on DGX",
-                    "issuer ACCEPTS a receipt whose caller_context.surface_id is foreign",
-                    "mint C9 already refuses to mint such a receipt at the Mac control terminal, "
-                    "so this is defence in depth rather than a live hole; the DGX side treats the "
-                    "receipt as data and never re-asserts the caller equals the reserved surface.")
+            finding("receipt mint_control_context is not re-checked on DGX",
+                    "issuer ACCEPTS a receipt whose resolved mint-control surface is foreign",
+                    "schema3 requires DGX to re-assert both provider and mint-control anchors")
 
         # ------------------------------------------------------------ A12
         print("\n== A12. path containment and inertness ==")

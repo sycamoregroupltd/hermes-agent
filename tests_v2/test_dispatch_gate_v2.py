@@ -102,9 +102,31 @@ def activation_packet(td):
             "caps": {"one_run_only": True, "max_retries": 0},
         }, sort_keys=True))
     return path
-RESERVATION_JSON = ("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/"
-                    "t_d7e6c034/reservation/seat-reservation.json")
-CMUX_SESSION = json.load(open(RESERVATION_JSON))["seat"]["provider_session_uuid"]
+CMUX_SESSION = "1194f145-bc7d-4fd6-9762-16b4414eb4d1"
+CMUX_WS = "9A3E7E93-963F-45AB-9A00-79E218190B5D"
+CMUX_SURFACE = "577E1920-C0EE-4140-A649-361647B6B9A5"
+MINT_WS = "44444444-AAAA-BBBB-CCCC-000000000004"
+MINT_SURFACE = "66666666-AAAA-BBBB-CCCC-000000000006"
+
+
+def reservation_path(td):
+    """One hermetic dual-anchor reservation shared by this temp test root."""
+    path = os.path.join(td, "dual-anchor-reservation.json")
+    if os.path.exists(path):
+        return path
+    res = {
+        "record_kind": "cmux-manual-seat-reservation", "schema_version": 2,
+        "seat": {"cmux_workspace_id": CMUX_WS, "cmux_surface_id": CMUX_SURFACE,
+                 "cmux_daemon_version": "0.64.20", "provider": "claude-code",
+                 "kind": "cmux-interactive-claude-max",
+                 "provider_session_uuid": CMUX_SESSION},
+        "mint_control": {"cmux_workspace_id": MINT_WS, "cmux_surface_id": MINT_SURFACE},
+    }
+    res["provider_anchor_fingerprint"] = cmux_issuer.dual_anchor.anchor_fingerprint(res["seat"])
+    res["mint_control_anchor_fingerprint"] = cmux_issuer.dual_anchor.anchor_fingerprint(res["mint_control"])
+    res["reservation_fingerprint"] = cmux_issuer.reservation_fingerprint(res)
+    open(path, "w").write(cmux_issuer.canonical_json(res))
+    return path
 
 
 def make_stub_events(td, name="stub-events", delay=0.0, session=CMUX_SESSION,
@@ -213,22 +235,27 @@ def receipt_fp(rec):
 
 
 def make_receipt(td, name="receipt.json", tamper=False, **overrides):
-    """Fixture Mac-style receipt built from the REAL reservation record (read-only)."""
-    res = json.load(open(RESERVATION_JSON))
+    """Fixture schema3 receipt built from the hermetic dual-anchor reservation."""
+    res = json.load(open(reservation_path(td)))
     now = datetime.datetime.now(datetime.timezone.utc)
     rec = {
         "receipt_kind": "mac-cmux-reservation-receipt",
-        "schema_version": 1,
+        "schema_version": 3,
         "minted_on": "mac-cmux-control-socket",
         "minted_at_utc": now.isoformat().replace("+00:00", "Z"),
         "expires_at_utc": (now + datetime.timedelta(seconds=300)).isoformat().replace("+00:00", "Z"),
         "canary_task": "t_beefcafe",
+        "reservation_fingerprint": res["reservation_fingerprint"],
+        "provider_anchor_fingerprint": res["provider_anchor_fingerprint"],
+        "mint_control_anchor_fingerprint": res["mint_control_anchor_fingerprint"],
         "cmux_workspace_id": res["seat"]["cmux_workspace_id"],
         "cmux_surface_id": res["seat"]["cmux_surface_id"],
-        "caller_context": {"surface_id": res["seat"]["cmux_surface_id"],
-                           "workspace_id": res["seat"]["cmux_workspace_id"],
-                           "tty": "/dev/ttys012", "proof": "nonce-read-screen",
-                           "nonce_sha256": hashlib.sha256(b"gate-fixture-nonce").hexdigest()},
+        "mint_control_context": {
+            "surface_id": res["mint_control"]["cmux_surface_id"],
+            "workspace_id": res["mint_control"]["cmux_workspace_id"],
+            "resolved_surface_id": MINT_SURFACE, "resolved_workspace_id": MINT_WS,
+            "tty": "/dev/ttys012", "proof": "nonce-read-screen",
+            "nonce_sha256": hashlib.sha256(b"gate-fixture-nonce").hexdigest()},
         "control_socket": {"bundle_identifier": "com.cmuxterm.app", "cmux_daemon_version": res["seat"]["cmux_daemon_version"]},
     }
     rec.update(overrides)
@@ -248,7 +275,7 @@ def make_cmux_binding_bundle(td, board, task="t_beefcafe", name="binding"):
     open(os.path.join(wt, "bin_verify", "mint_cmux_receipt.py"), "w").write("# marker\n")
     open(os.path.join(wt, "bin_verify", "dispatch_gate_v2.py"), "w").write("# marker\n")
     binding = cmux_issuer.issue_binding(
-        worktree=Path(wt), board_db=Path(board), reservation_path=Path(RESERVATION_JSON),
+        worktree=Path(wt), board_db=Path(board), reservation_path=Path(reservation_path(td)),
         receipt_path=Path(receipt), task_id=task, session_id=CMUX_SESSION,
         declared_by="deterministic v2 fixture", ttl_seconds=120,
     )
@@ -266,6 +293,7 @@ def green_args(td, board, *, name="green"):
             "--stop-file", os.path.join(td, "STOP"),
             "--packet-verifier", stub_verifier_ok(td),
             "--reservation-tool", stub_reservation_ok(td),
+            "--reservation-json", reservation_path(td),
             "--cmux-receipt", receipt,
             "--session-binding", binding,
             "--hermes-home", hermes_home,
@@ -358,6 +386,18 @@ def main():
              make_receipt(td, "r-surf.json", cmux_surface_id="00000000-DEAD-BEEF-0000-000000000001")),
             ("wrong-task-bound receipt refused",
              make_receipt(td, "r-task.json", canary_task="t_00000002")),
+            ("legacy schema2 receipt downgrade refused",
+             make_receipt(td, "r-schema2.json", schema_version=2)),
+            ("missing provider anchor fingerprint refused",
+             make_receipt(td, "r-no-provider-anchor.json", provider_anchor_fingerprint=None)),
+            ("substituted mint-control anchor refused",
+             make_receipt(td, "r-mint-substitution.json", mint_control_context={
+                 "surface_id": "77777777-AAAA-BBBB-CCCC-000000000018",
+                 "workspace_id": MINT_WS,
+                 "resolved_surface_id": MINT_SURFACE,
+                 "resolved_workspace_id": MINT_WS,
+                 "tty": "/dev/ttys012", "proof": "nonce-read-screen",
+                 "nonce_sha256": hashlib.sha256(b"gate-fixture-nonce").hexdigest()})),
             ("tampered receipt (fingerprint) refused",
              make_receipt(td, "r-tamper.json", tamper=True)),
         ]
@@ -367,6 +407,7 @@ def main():
                                "--stop-file", os.path.join(td, "STOP"),
                                "--packet-verifier", stub_verifier_ok(td),
                                "--reservation-tool", stub_reservation_ok(td),
+                               "--reservation-json", reservation_path(td),
                                "--cmux-receipt", rpath)
             check(name, rc == 5 and gate_status(rep, "G3b") is False,
                   json.dumps([g for g in rep.get("gates", []) if g["gate"].startswith("G3b")]))
@@ -375,8 +416,21 @@ def main():
                            "--stop-file", os.path.join(td, "STOP"),
                            "--packet-verifier", stub_verifier_ok(td),
                            "--reservation-tool", stub_reservation_ok(td),
+                           "--reservation-json", reservation_path(td),
                            "--cmux-receipt", make_receipt(td, "r-valid.json"))
         check("valid fresh task-bound receipt passes G3b", gate_status(rep, "G3b") is True)
+        legacy_res = json.load(open(reservation_path(td)))
+        legacy_res["schema_version"] = 1
+        legacy_res["reservation_fingerprint"] = cmux_issuer.reservation_fingerprint(legacy_res)
+        legacy_path = os.path.join(td, "legacy-reservation.json")
+        open(legacy_path, "w").write(cmux_issuer.canonical_json(legacy_res))
+        rc, rep = run_gate("--canary-task", "t_beefcafe", "--board-db", board,
+                           "--lease-file", os.path.join(td, "lr3.json"),
+                           "--packet-verifier", stub_verifier_ok(td),
+                           "--reservation-tool", stub_reservation_ok(td),
+                           "--reservation-json", legacy_path,
+                           "--cmux-receipt", make_receipt(td, "r-legacy-res.json"))
+        check("legacy reservation downgrade refuses G3b", gate_status(rep, "G3b") is False)
         os.remove(board)
 
         # 3. All-green DRY-RUN: WOULD-DISPATCH but still rc=5, no lease, provider untouched.
@@ -420,6 +474,7 @@ def main():
                              "--stop-file", os.path.join(td, "STOP2"),
                              "--packet-verifier", stub_verifier_ok(td),
                              "--reservation-tool", stub_reservation_ok(td),
+                             "--reservation-json", reservation_path(td),
                              "--cmux-receipt", make_receipt(td, "r-stop.json"),
                              "--stub-events-dir", dry_stub)
         check("stop file present refuses --run", rc2 == 5 and gate_status(rep2, "G5a") is False
@@ -469,6 +524,7 @@ def main():
                      "--stop-file", os.path.join(td, "STOP"),
                      "--packet-verifier", stub_verifier_ok(td),
                      "--reservation-tool", stub_reservation_ok(td),
+                     "--reservation-json", reservation_path(td),
                      "--cmux-receipt", real_receipt, "--session-binding", real_binding,
                      "--hermes-home", real_home,
                      "--activation-packet", activation_packet(td),
@@ -550,6 +606,7 @@ def main():
                      "--hermes-home", race_home,
                      "--activation-packet", activation_packet(td),
                      "--reservation-tool", stub_reservation_ok(td),
+                     "--reservation-json", reservation_path(td),
                      "--cmux-receipt", race_receipt, "--session-binding", race_binding,
                      "--workspace-root", wsroot_c,
                      "--stub-events-dir", race_stub]
@@ -596,6 +653,7 @@ def main():
                            "--stop-file", os.path.join(td, "STOP"),
                            "--packet-verifier", stub_verifier_ok(td),
                            "--reservation-tool", stub_reservation_ok(td),
+                           "--reservation-json", reservation_path(td),
                            "--cmux-receipt", a3_receipt, "--session-binding", a3_binding,
                            "--workspace-root", wsroot_a3,
                            "--stub-events-dir", a3_stub)
@@ -631,6 +689,7 @@ def main():
                            "--activation-packet", activation_packet(td),
                            "--packet-verifier", stub_verifier_ok(td),
                            "--reservation-tool", stub_reservation_ok(td),
+                           "--reservation-json", reservation_path(td),
                            "--cmux-receipt", cl_receipt, "--session-binding", cl_binding,
                            "--workspace-root", wsroot_cl,
                            "--stub-events-dir", cl_stub)

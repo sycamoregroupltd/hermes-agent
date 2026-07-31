@@ -25,20 +25,22 @@ import sys
 from pathlib import Path
 from typing import Any
 
+BIN_DIR = str(Path(__file__).resolve().parent)
+if BIN_DIR not in sys.path:
+    sys.path.insert(0, BIN_DIR)
+import cmux_dual_anchor_contract as dual_anchor
+
 
 BINDING_KIND = "cmux-interactive-claude-session-binding"
 BINDING_SCHEMA_VERSION = 1
-MAX_RECEIPT_WINDOW_SECONDS = 600
+MAX_RECEIPT_WINDOW_SECONDS = dual_anchor.MAX_RECEIPT_WINDOW_SECONDS
 MIN_BINDING_TTL_SECONDS = 30
 MAX_BINDING_TTL_SECONDS = 600
 OUTPUT_RELATIVE_PATH = Path("reservation/cmux-interactive-session-binding.json")
-CALLER_PROOF_MARKER = "nonce-read-screen"
+CALLER_PROOF_MARKER = dual_anchor.CALLER_PROOF_MARKER
 TASK_RE = re.compile(r"^t_[0-9a-f]{8}$")
-UUID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
-NONCE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+UUID_RE = dual_anchor.UUID_RE
+NONCE_SHA256_RE = dual_anchor.NONCE_SHA256_RE
 # Stable CMUX ref for a surface (the `ref` field system.tree reports); a
 # reservation may pin the seat by ref instead of raw tree UUID.
 STABLE_SURFACE_REF_RE = re.compile(r"^surface:[0-9]+$")
@@ -65,13 +67,11 @@ def sha256_file(path: Path) -> str:
 
 
 def reservation_fingerprint(value: dict[str, Any]) -> str:
-    clone = {key: item for key, item in value.items() if key != "reservation_fingerprint"}
-    return "sha256:" + sha256_text(canonical_json(clone))
+    return dual_anchor.reservation_fingerprint(value)
 
 
 def receipt_fingerprint(value: dict[str, Any]) -> str:
-    clone = {key: item for key, item in value.items() if key != "receipt_fingerprint"}
-    return "sha256:" + sha256_text(compact_json(clone))
+    return dual_anchor.receipt_fingerprint(value)
 
 
 def artifact_fingerprint(value: dict[str, Any]) -> str:
@@ -127,39 +127,6 @@ def validate_output_rel(output_rel: str | Path | None, task_id: str) -> Path:
     return candidate
 
 
-def validate_caller_context(receipt: dict[str, Any], seat: dict[str, Any]) -> None:
-    """Defence in depth (t_a6365be3): re-assert the receipt's caller claim.
-
-    The Mac mint's C9 proves — by nonce read-screen — that the caller IS the
-    exact reserved surface before any receipt exists. DGX treats the receipt
-    strictly as data, so this issuer re-checks that claim structurally: a
-    caller_context that is absent, malformed, foreign to the reservation
-    seat, or re-signed around a foreign caller refuses. When the reservation
-    pins the seat by stable ref, the receipt keeps the ref verbatim at top
-    level while caller_context records the tree ID the mint resolved on the
-    Mac; DGX cannot resolve refs (it never touches a CMUX socket), so that
-    field must then be exactly a well-formed raw tree ID — never a ref."""
-    caller = receipt.get("mint_control_context")
-    if not isinstance(caller, dict):
-        raise Refuse("CMUX receipt caller_context missing or malformed")
-    if caller.get("proof") != CALLER_PROOF_MARKER:
-        raise Refuse("CMUX receipt caller_context proof marker is not nonce-read-screen")
-    nonce = caller.get("nonce_sha256")
-    if not isinstance(nonce, str) or not NONCE_SHA256_RE.fullmatch(nonce):
-        raise Refuse("CMUX receipt caller_context nonce digest is not sha256 hex form")
-    tty = caller.get("tty")
-    if not isinstance(tty, str) or not tty.strip():
-        raise Refuse("CMUX receipt caller_context tty missing or malformed")
-    if caller.get("workspace_id") != seat["cmux_workspace_id"]:
-        raise Refuse("CMUX receipt caller_context workspace does not match reservation seat")
-    surface = caller.get("surface_id")
-    if STABLE_SURFACE_REF_RE.fullmatch(seat["cmux_surface_id"]):
-        if not isinstance(surface, str) or not UUID_RE.fullmatch(surface):
-            raise Refuse("CMUX receipt caller_context surface is not a resolved raw tree id")
-    elif surface != seat["cmux_surface_id"]:
-        raise Refuse("CMUX receipt caller_context surface does not match reservation seat")
-
-
 def validate_contract(
     *,
     reservation: dict[str, Any],
@@ -169,50 +136,16 @@ def validate_contract(
     now: dt.datetime,
 ) -> tuple[dict[str, Any], dict[str, Any], dt.datetime, dt.datetime]:
     """Validate the already-published Mac provenance, never probing a provider."""
-    if reservation.get("record_kind") != "cmux-manual-seat-reservation" or reservation.get("schema_version") != 2:
-        raise Refuse("reservation must be dual-anchor schema_version 2")
-    if reservation.get("reservation_fingerprint") != reservation_fingerprint(reservation):
-        raise Refuse("reservation fingerprint mismatch")
-    seat = reservation.get("seat")
-    mint = reservation.get("mint_control")
-    if not isinstance(seat, dict) or not isinstance(mint, dict):
-        raise Refuse("reservation seat or mint_control malformed")
-    if seat.get("provider") != "claude-code" or seat.get("kind") != "cmux-interactive-claude-max":
-        raise Refuse("reservation is not the Claude interactive CMUX seat")
-    for field in ("cmux_workspace_id", "cmux_surface_id", "cmux_daemon_version"):
-        if not isinstance(seat.get(field), str) or not str(seat[field]).strip():
-            raise Refuse(f"reservation seat {field} missing")
-    for field in ("cmux_workspace_id", "cmux_surface_id"):
-        if not isinstance(mint.get(field), str) or not str(mint[field]).strip():
-            raise Refuse(f"reservation mint_control {field} missing")
+    try:
+        seat, _mint, control, issued, expires = dual_anchor.validate_receipt(
+            receipt, reservation, task_id=task_id, now=now)
+    except dual_anchor.ContractRefuse as exc:
+        raise Refuse(str(exc)) from exc
     reserved_session = require_identifier(
         str(seat.get("provider_session_uuid", "")), "reservation provider_session_uuid", UUID_RE
     )
     if session_id != reserved_session:
         raise Refuse("session id does not equal the pre-existing reserved provider session")
-
-    if receipt.get("receipt_kind") != "mac-cmux-reservation-receipt":
-        raise Refuse("CMUX receipt has wrong receipt_kind")
-    if receipt.get("receipt_fingerprint") != receipt_fingerprint(receipt):
-        raise Refuse("CMUX receipt fingerprint mismatch")
-    if receipt.get("canary_task") != task_id:
-        raise Refuse("CMUX receipt is bound to a different Hermes task")
-    if receipt.get("cmux_workspace_id") != seat["cmux_workspace_id"]:
-        raise Refuse("CMUX receipt workspace does not match provider reservation")
-    if receipt.get("cmux_surface_id") != seat["cmux_surface_id"]:
-        raise Refuse("CMUX receipt surface does not match provider reservation")
-    control = receipt.get("control_socket")
-    if not isinstance(control, dict) or control.get("cmux_daemon_version") != seat["cmux_daemon_version"]:
-        raise Refuse("CMUX receipt daemon identity does not match reservation")
-    validate_caller_context(receipt, mint)
-    issued = parse_utc(receipt.get("minted_at_utc"), "CMUX receipt minted_at_utc")
-    expires = parse_utc(receipt.get("expires_at_utc"), "CMUX receipt expires_at_utc")
-    if issued > now:
-        raise Refuse("CMUX receipt is future-dated")
-    if expires <= now:
-        raise Refuse("CMUX receipt is expired")
-    if (expires - issued).total_seconds() > MAX_RECEIPT_WINDOW_SECONDS:
-        raise Refuse("CMUX receipt validity window is too long")
     return seat, control, issued, expires
 
 
@@ -305,6 +238,13 @@ def issue_binding(
             "minted_at_utc": receipt["minted_at_utc"],
             "expires_at_utc": receipt["expires_at_utc"],
             "control_socket_bundle_id": control.get("bundle_identifier"),
+        },
+        "mint_control": {
+            "workspace_id": receipt["mint_control_context"]["workspace_id"],
+            "surface_id": receipt["mint_control_context"]["surface_id"],
+            "resolved_workspace_id": receipt["mint_control_context"]["resolved_workspace_id"],
+            "resolved_surface_id": receipt["mint_control_context"]["resolved_surface_id"],
+            "anchor_fingerprint": receipt["mint_control_anchor_fingerprint"],
         },
         "reservation_fingerprint": reservation["reservation_fingerprint"],
         # The consumer compares this to the issuer source supplied at its own

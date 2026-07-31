@@ -32,6 +32,8 @@ SESSION = "1194f145-bc7d-4fd6-9762-16b4414eb4d1"
 WORKSPACE = "9A3E7E93-963F-45AB-9A00-79E218190B5D"
 SURFACE = "577E1920-C0EE-4140-A649-361647B6B9A5"
 FOREIGN_SURFACE = "55555555-AAAA-BBBB-CCCC-000000000005"
+MINT_WORKSPACE = "44444444-AAAA-BBBB-CCCC-000000000004"
+MINT_SURFACE = "66666666-AAAA-BBBB-CCCC-000000000006"
 # Stable CMUX refs, as written verbatim into ref-pinned reservations/receipts
 # by the repaired mint; mint_control_context then carries the resolved raw tree id.
 WORKSPACE_REF = "workspace:26"
@@ -54,6 +56,7 @@ def write_json(path: Path, value: dict) -> None:
 
 
 def fixture(root: Path, *, workspace: str = WORKSPACE, surface: str = SURFACE,
+            mint_workspace: str = MINT_WORKSPACE, mint_surface: str = MINT_SURFACE,
             caller_surface: str | None = None,
             caller_workspace: str | None = None) -> tuple[Path, Path, Path, Path]:
     worktree = root / "worktree"
@@ -71,8 +74,10 @@ def fixture(root: Path, *, workspace: str = WORKSPACE, surface: str = SURFACE,
             "kind": "cmux-interactive-claude-max",
             "provider_session_uuid": SESSION,
         },
-        "mint_control": {"cmux_workspace_id": workspace, "cmux_surface_id": surface},
+        "mint_control": {"cmux_workspace_id": mint_workspace, "cmux_surface_id": mint_surface},
     }
+    reservation["provider_anchor_fingerprint"] = issuer.dual_anchor.anchor_fingerprint(reservation["seat"])
+    reservation["mint_control_anchor_fingerprint"] = issuer.dual_anchor.anchor_fingerprint(reservation["mint_control"])
     reservation["reservation_fingerprint"] = issuer.reservation_fingerprint(reservation)
     reservation_path = root / "reservation.json"
     write_json(reservation_path, reservation)
@@ -82,18 +87,21 @@ def fixture(root: Path, *, workspace: str = WORKSPACE, surface: str = SURFACE,
         "minted_at_utc": iso(NOW - dt.timedelta(seconds=60)),
         "expires_at_utc": iso(NOW + dt.timedelta(seconds=300)),
         "canary_task": TASK,
+        "reservation_fingerprint": reservation["reservation_fingerprint"],
+        "provider_anchor_fingerprint": reservation["provider_anchor_fingerprint"],
+        "mint_control_anchor_fingerprint": reservation["mint_control_anchor_fingerprint"],
         "cmux_workspace_id": workspace,
         "cmux_surface_id": surface,
         "mint_control_context": {
-            "surface_id": caller_surface if caller_surface is not None else surface,
-            "workspace_id": caller_workspace if caller_workspace is not None else workspace,
+            "surface_id": mint_surface,
+            "workspace_id": mint_workspace,
+            "resolved_surface_id": caller_surface if caller_surface is not None else mint_surface,
+            "resolved_workspace_id": caller_workspace if caller_workspace is not None else mint_workspace,
             "tty": "/dev/ttys012", "proof": "nonce-read-screen", "nonce_sha256": NONCE_SHA256,
         },
         "control_socket": {"bundle_identifier": "com.cmuxterm.app", "cmux_daemon_version": "0.64.20"},
     }
     receipt["receipt_fingerprint"] = issuer.receipt_fingerprint(receipt)
-    receipt_path = root / "receipt.json"
-    write_json(receipt_path, receipt)
     receipt_path = root / "receipt.json"
     write_json(receipt_path, receipt)
     board = root / "board.db"
@@ -142,6 +150,10 @@ def main() -> int:
               binding["task_id"] == TASK and binding["session_id"] == SESSION
               and binding["cmux_seat"]["workspace_id"] == WORKSPACE
               and binding["cmux_seat"]["surface_id"] == SURFACE)
+        check("binding carries the separately proven mint-control anchor",
+              binding["mint_control"]["workspace_id"] == MINT_WORKSPACE
+              and binding["mint_control"]["surface_id"] == MINT_SURFACE
+              and binding["mint_control"]["resolved_surface_id"] == MINT_SURFACE)
         check("artifact fingerprint verifies", binding["artifact_fingerprint"] == issuer.artifact_fingerprint(binding))
         check("binding expiry is short and never later than receipt expiry",
               30 <= (dt.datetime.fromisoformat(binding["expires_at_utc"].replace("Z", "+00:00")) - NOW).total_seconds() <= 120)
@@ -215,10 +227,21 @@ def main() -> int:
     caller_case("re-signed receipt with non-object mint_control_context refuses",
                 lambda d: d.update(mint_control_context="proven, trust me"))
     caller_case("re-signed receipt with FOREIGN caller surface refuses",
-                lambda d: d["mint_control_context"].update(surface_id=FOREIGN_SURFACE))
+                lambda d: d["mint_control_context"].update(resolved_surface_id=FOREIGN_SURFACE))
     caller_case("re-signed receipt with FOREIGN caller workspace refuses",
                 lambda d: d["mint_control_context"].update(
-                    workspace_id="44444444-AAAA-BBBB-CCCC-000000000004"))
+                    resolved_workspace_id="77777777-AAAA-BBBB-CCCC-000000000017"))
+    caller_case("re-signed receipt substituting provider workspace refuses",
+                lambda d: d.update(cmux_workspace_id="77777777-AAAA-BBBB-CCCC-000000000017"))
+    caller_case("re-signed receipt substituting mint-control anchor refuses",
+                lambda d: d["mint_control_context"].update(
+                    surface_id="77777777-AAAA-BBBB-CCCC-000000000018"))
+    caller_case("re-signed receipt substituting provider anchor fingerprint refuses",
+                lambda d: d.update(provider_anchor_fingerprint="sha256:" + "0" * 64))
+    caller_case("re-signed receipt substituting mint anchor fingerprint refuses",
+                lambda d: d.update(mint_control_anchor_fingerprint="sha256:" + "1" * 64))
+    caller_case("legacy schema2 receipt downgrade refuses",
+                lambda d: d.update(schema_version=2))
     caller_case("re-signed receipt with wrong proof marker refuses",
                 lambda d: d["mint_control_context"].update(proof="focus-inferred"))
     caller_case("re-signed receipt with missing proof marker refuses",
@@ -234,39 +257,50 @@ def main() -> int:
     caller_case("re-signed receipt with missing tty refuses",
                 lambda d: d["mint_control_context"].pop("tty"))
 
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp); worktree, board, reservation, receipt = fixture(root)
+        data = json.loads(reservation.read_text()); data["schema_version"] = 1
+        data["reservation_fingerprint"] = issuer.reservation_fingerprint(data)
+        write_json(reservation, data)
+        cases.append(("legacy schema1 reservation downgrade refuses",
+                      refuses(worktree, board, reservation, receipt)))
+
     for name, result in cases:
         check(name, result != "DID_NOT_REFUSE", result)
 
     # -- stable-ref receipt compatibility (repaired mint normalizer) ----------
-    # A ref-pinned reservation keeps workspace:26/surface:26 verbatim in the
-    # reservation, receipt top level, and mint_control_context.workspace_id, while
-    # mint_control_context.surface_id carries the raw tree id resolved on the Mac.
+    # A ref-pinned mint-control anchor remains verbatim while the context also
+    # carries the raw tree IDs resolved and proven on the Mac.
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         worktree, board, reservation, receipt = fixture(
-            root, workspace=WORKSPACE_REF, surface=SURFACE_REF, caller_surface=SURFACE)
+            root, mint_workspace=WORKSPACE_REF, mint_surface=SURFACE_REF,
+            caller_workspace=MINT_WORKSPACE, caller_surface=MINT_SURFACE)
         output = invoke(worktree, board, reservation, receipt)
         binding = json.loads(output.read_text())
-        check("stable-ref receipt with resolved caller tree id ISSUES",
-              binding["cmux_seat"]["workspace_id"] == WORKSPACE_REF
-              and binding["cmux_seat"]["surface_id"] == SURFACE_REF)
+        check("stable-ref mint-control receipt with resolved tree ids ISSUES",
+              binding["mint_control"]["workspace_id"] == WORKSPACE_REF
+              and binding["mint_control"]["surface_id"] == SURFACE_REF
+              and binding["mint_control"]["resolved_surface_id"] == MINT_SURFACE)
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         worktree, board, reservation, receipt = fixture(
-            root, workspace=WORKSPACE_REF, surface=SURFACE_REF, caller_surface=SURFACE_REF)
+            root, mint_workspace=WORKSPACE_REF, mint_surface=SURFACE_REF,
+            caller_workspace=MINT_WORKSPACE, caller_surface=SURFACE_REF)
         check("stable-ref receipt whose caller surface is the UNRESOLVED ref refuses",
               refuses(worktree, board, reservation, receipt) != "DID_NOT_REFUSE")
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         worktree, board, reservation, receipt = fixture(
-            root, workspace=WORKSPACE_REF, surface=SURFACE_REF, caller_surface="TAMPERED")
+            root, mint_workspace=WORKSPACE_REF, mint_surface=SURFACE_REF,
+            caller_workspace=MINT_WORKSPACE, caller_surface="TAMPERED")
         check("stable-ref receipt whose caller surface is not a raw tree id refuses",
               refuses(worktree, board, reservation, receipt) != "DID_NOT_REFUSE")
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         worktree, board, reservation, receipt = fixture(
-            root, workspace=WORKSPACE_REF, surface=SURFACE_REF, caller_surface=SURFACE,
-            caller_workspace="workspace:27")
+            root, mint_workspace=WORKSPACE_REF, mint_surface=SURFACE_REF,
+            caller_surface=MINT_SURFACE, caller_workspace="workspace:27")
         check("stable-ref receipt whose caller workspace is a different ref refuses",
               refuses(worktree, board, reservation, receipt) != "DID_NOT_REFUSE")
     # Static boundary check: the issuer's source must contain no provider/CMUX invocation transport.

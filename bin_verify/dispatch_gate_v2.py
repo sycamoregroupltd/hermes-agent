@@ -60,6 +60,11 @@ import sqlite3
 import subprocess
 import sys
 
+BIN_DIR = os.path.dirname(os.path.abspath(__file__))
+if BIN_DIR not in sys.path:
+    sys.path.insert(0, BIN_DIR)
+import cmux_dual_anchor_contract as dual_anchor
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BOARD_DB = "/home/frank/.hermes/kanban/boards/jarvis-os/kanban.db"
 PACKET_CARD = "t_0119603b"
@@ -85,9 +90,7 @@ RC_REFUSE = 5
 
 
 def receipt_fingerprint(rec):
-    clone = {k: v for k, v in rec.items() if k != "receipt_fingerprint"}
-    return "sha256:" + hashlib.sha256(
-        json.dumps(clone, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return dual_anchor.receipt_fingerprint(rec)
 
 
 def validate_cmux_receipt(receipt_path, reservation_json, canary_task, now_utc=None):
@@ -101,31 +104,17 @@ def validate_cmux_receipt(receipt_path, reservation_json, canary_task, now_utc=N
         rec = json.load(open(receipt_path, encoding="utf-8"))
     except ValueError:
         return False, "receipt unparseable — refuse"
-    if rec.get("receipt_kind") != "mac-cmux-reservation-receipt":
-        return False, "wrong receipt_kind — refuse"
-    if rec.get("receipt_fingerprint") != receipt_fingerprint(rec):
-        return False, "receipt fingerprint mismatch (tampered/corrupt) — refuse"
-    try:
-        minted = datetime.datetime.fromisoformat(rec["minted_at_utc"].replace("Z", "+00:00"))
-        expires = datetime.datetime.fromisoformat(rec["expires_at_utc"].replace("Z", "+00:00"))
-    except (KeyError, ValueError):
-        return False, "receipt timestamps missing/invalid — refuse"
-    if minted > now:
-        return False, "receipt minted in the future — refuse"
-    if expires <= now:
-        return False, f"receipt STALE (expired {rec['expires_at_utc']}) — re-mint on the Mac"
-    if (expires - minted).total_seconds() > RECEIPT_MAX_WINDOW_SECONDS:
-        return False, f"receipt window exceeds {RECEIPT_MAX_WINDOW_SECONDS}s — refuse"
-    if canary_task and rec.get("canary_task") != canary_task:
-        return False, f"receipt bound to {rec.get('canary_task')!r}, not {canary_task!r} — refuse"
     try:
         res = json.load(open(reservation_json, encoding="utf-8"))
     except (OSError, ValueError):
         return False, "seat reservation record unreadable — refuse"
-    if rec.get("cmux_workspace_id") != res["seat"]["cmux_workspace_id"]:
-        return False, "receipt workspace does not match seat reservation — refuse"
-    if rec.get("cmux_surface_id") != res["seat"]["cmux_surface_id"]:
-        return False, "receipt surface does not match seat reservation — refuse"
+    try:
+        dual_anchor.validate_receipt(rec, res, task_id=canary_task, now=now)
+    except dual_anchor.ContractRefuse as exc:
+        detail = str(exc)
+        if "expired" in detail:
+            detail = "receipt STALE — re-mint on the Mac"
+        return False, detail + " — refuse"
     return True, ""
 
 # Strict dispatch-comment grammar. All groups mandatory.
