@@ -10,9 +10,23 @@
     },
     "cursor": {
       "version": "installed DGX Cursor Agent binary",
-      "state": "CLI present and authenticated on DGX; current local inspection reports no MCP servers configured and exposes read-only plan/ask modes plus an explicit sandbox flag. It remains blocked from non-interactive activation because Cursor documents full tool/write access in print mode until a dedicated deny-first project configuration and restricted canary are independently verified",
-      "observed_models": ["auto", "composer-2.5", "composer-2.5-fast", "cursor-grok-4.5-low", "cursor-grok-4.5-medium", "cursor-grok-4.5-high"],
-      "local_mcp_state": "no MCP servers configured"
+      "state": "CLI present and authenticated only in the normal DGX profile. The isolated restricted provider profile is prepared and reviewed but remains non-authenticated, non-admitted, and blocked before any Cursor invocation pending separate browser login and a provider-visible hard cost/usage ceiling.",
+      "observed_models": [
+        "auto",
+        "composer-2.5",
+        "composer-2.5-fast",
+        "cursor-grok-4.5-low",
+        "cursor-grok-4.5-medium",
+        "cursor-grok-4.5-high"
+      ],
+      "local_mcp_state": "no MCP servers configured",
+      "account_preflight": {
+        "normal_profile_metadata": "Cursor CLI reports an authenticated Free subscription tier; account identity intentionally omitted.",
+        "model_listing": "Composer 2.5 and Composer 2.5 Fast are available in the normal profile's model listing.",
+        "official_pricing_disposition": "Cursor documents that Auto and Composer use a shared usage pool; model availability does not prove remaining included allowance or a zero-spend hard cap.",
+        "cost_ceiling": "UNRESOLVED — no Cursor invocation is permitted from the restricted profile until a strict per-canary monetary/usage ceiling and fail-closed exhaustion behavior are evidenced.",
+        "checked_at": "2026-07-31"
+      }
     },
     "grok": {
       "version": "0.2.117",
@@ -82,5 +96,15 @@
     "trading",
     "deployments",
     "external messaging"
-  ]
+  ],
+  "cursor_cost_gate": {
+    "status": "blocked_before_canary",
+    "reason": "The account's Free-tier metadata and available-model list are not evidence of a fixed included balance, an on-demand spending cap, or bounded output-token cost.",
+    "next_gate": "Obtain provider-visible usage/budget evidence that supports a one-call hard ceiling for a named model, then include that ceiling and exhaustion behavior in the independently reviewed disposable canary packet.",
+    "official_research": [
+      "https://cursor.com/docs/models-and-pricing",
+      "https://cursor.com/docs/account/pricing",
+      "https://cursor.com/docs/models/cursor-composer-2-5"
+    ]
+  }
 }
