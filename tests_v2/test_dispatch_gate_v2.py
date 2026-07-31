@@ -343,6 +343,8 @@ def main():
              [("jarvis-orchestrator", GOOD_DISPATCH.replace(" scope=no-op", ""))], False),
             ("missing cancellation refused",
              [("jarvis-orchestrator", GOOD_DISPATCH.replace(" cancellation=touch ACTIVATION-STOP then reclaim", ""))], False),
+            ("A2 command-header suffix refused",
+             [("jarvis-orchestrator", GOOD_DISPATCH.replace("A2-DISPATCH", "A2-DISPATCH-evil"))], False),
             ("duplicate comments ambiguous -> refused",
              [("jarvis-orchestrator", GOOD_DISPATCH), ("jarvis-orchestrator", GOOD_DISPATCH)], False),
         ]
@@ -563,6 +565,21 @@ def main():
             direct_explicit_real_refused = "fixture-only" in str(exc)
         check("public explicit real runner is refused before provider call",
               direct_explicit_real_refused)
+        try:
+            executor_mod._dispatch_gate_owned_canary(
+                board_db=os.path.join(td, "unused-private-real.db"), canary_task="t_beefcafe",
+                workspace_root=os.path.join(td, "unused-private-real-workspace"),
+                session_binding_path=os.path.join(td, "unused-private-real-binding.json"),
+                cmux_receipt_path=os.path.join(td, "unused-private-real-receipt.json"),
+                reservation_path=os.path.join(td, "unused-private-real-reservation.json"),
+                issuer_path=os.path.join(td, "unused-private-real-issuer.py"),
+                hermes_home=os.path.join(td, "unused-private-real-profile"),
+                runner=SubprocessClaudeRunner())
+            private_real_refused = False
+        except executor_mod.DispatchError as exc:
+            private_real_refused = "must be invoked directly by dispatch_gate_v2" in str(exc)
+        check("direct private gate route with real runner refuses before provider lifecycle",
+              private_real_refused)
 
 
         # G3d is a provider boundary: it must refuse an otherwise-valid

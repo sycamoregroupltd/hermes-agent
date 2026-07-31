@@ -90,6 +90,11 @@ def main():
         ok, _ = mod.validate_task_a2(packet, db)
         check("A2 duplicate semantic key refuses", not ok)
         con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (body,)); con.commit(); con.close()
+        header_suffix = body.replace("A2-DISPATCH", "A2-DISPATCH-evil")
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (header_suffix,)); con.commit(); con.close()
+        ok, _ = mod.validate_task_a2(packet, db)
+        check("A2 command header suffix refuses", not ok)
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (body,)); con.commit(); con.close()
         tampered = dict(packet); tampered["packet_fingerprint"] = "sha256:forged"
         ok, _ = mod.validate_task_a2(tampered, db)
         check("packet replacement after valid A2 is refused", not ok)

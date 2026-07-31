@@ -161,7 +161,7 @@ def validate_cmux_receipt(receipt_path, reservation_json, canary_task, now_utc=N
 
 # Strict dispatch-comment grammar. All groups mandatory.
 DISPATCH_RE = re.compile(
-    r"^APPROVAL A2-DISPATCH\b"
+    r"^APPROVAL A2-DISPATCH(?:\s|$)"
     r"(?=.*\bby=jarvis-orchestrator\b)"
     r"(?=.*\bcanary_task=(t_[0-9a-f]{8})\b)"
     r"(?=.*\bprovider=claude-code\b)"

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -248,6 +249,21 @@ def _dispatch_gate_owned_canary(*, board_db, canary_task, workspace_root,
     underlying kb error) on any failure — the caller (dispatch_gate_v2) has
     already consumed the one-shot lease, so a failure is terminal: no retry.
     """
+    # This private route is a structural gate boundary, not a convenience
+    # public API. Permit only dispatch_gate_v2 directly, plus the public
+    # fixture wrapper below when it carries a StubRunner. Python same-user
+    # code can always introspect internals, but ordinary external imports
+    # cannot call this route to supply a real provider runner.
+    caller = inspect.currentframe().f_back
+    caller_file = Path(caller.f_code.co_filename).resolve() if caller else None
+    gate_file = (Path(__file__).resolve().parent / "dispatch_gate_v2.py")
+    fixture_wrapper = (caller_file == Path(__file__).resolve()
+                       and caller.f_code.co_name == "dispatch_canary"
+                       and isinstance(runner, StubRunner)) if caller else False
+    if caller_file != gate_file and not fixture_wrapper:
+        raise DispatchError(
+            "gate-owned executor route must be invoked directly by dispatch_gate_v2; "
+            "external real-runner calls are refused")
     if runner is None:
         raise DispatchError("gate-owned executor route requires an explicit runner")
     board_db = Path(board_db)

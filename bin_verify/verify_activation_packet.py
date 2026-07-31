@@ -60,7 +60,7 @@ A2_REQUIRED_FIELDS = ("by", "canary_task", "provider", "seat", "scope", "cancell
 
 def parse_a2_dispatch_fields(body, *, require_packet_pins=True):
     """Parse exact, duplicate-free A2 key/value fields without substrings."""
-    if not isinstance(body, str) or not body.startswith("APPROVAL A2-DISPATCH"):
+    if not isinstance(body, str) or not re.match(r"^APPROVAL A2-DISPATCH(?:\s|$)", body):
         return None
     fields = {}
     for key, value in re.findall(r"(?:^|\s)([a-z_]+)=([^\s]+)", body):
