@@ -156,7 +156,7 @@ def main(argv=None):
     elif schema == 2:
         # Schema v2 is the promotable task-packet format. Source root is fixed
         # to the verifier checkout; it is not a packet-selected authority.
-        check("schema-v2 source root binds verifier checkout", p.get("source_root") in (None, ROOT),
+        check("schema-v2 source root binds verifier checkout", p.get("source_root") == ROOT,
               f"source_root={p.get('source_root')!r} verifier_root={ROOT!r}")
         reviewed = p.get("reviewed_hashes", {})
         source_hashes = reviewed.get("sources", {})

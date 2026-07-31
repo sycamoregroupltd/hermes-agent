@@ -352,6 +352,22 @@ def main(argv):
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
+    # Real runner accepts no path seam. StubRunner is structurally distinct and
+    # is the sole route that may use fixture paths in tests.
+    if args.canary_task and args.stub_events_dir is None:
+        canonical = {"packet_verifier": DEFAULT_VERIFIER, "board_db": DEFAULT_BOARD_DB,
+            "reservation_tool": DEFAULT_RESERVATION_TOOL, "reservation_json": DEFAULT_RESERVATION_JSON,
+            "cmux_receipt": DEFAULT_CMUX_RECEIPT, "session_binding": DEFAULT_SESSION_BINDING,
+            "binding_issuer": DEFAULT_BINDING_ISSUER, "workspace_root": DEFAULT_WORKSPACE_ROOT,
+            "packet_card": PACKET_CARD}
+        alternate = [k for k, v in canonical.items() if getattr(args, k) != v]
+        if alternate or args.activation_packet != os.path.join(ROOT, "ACTIVATION-PACKET-CLAUDE-WORKER.json"):
+            report = {"verdict":"REFUSE", "run_flag":args.run, "all_gates_green":False,
+                      "gates":[{"gate":"G0 real-run canonical-input boundary", "pass":False,
+                                "detail":"noncanonical override: " + ",".join(alternate)}], "rc":RC_REFUSE}
+            print(json.dumps(report, indent=2, sort_keys=True) if args.json else "REFUSE: real-run canonical-input boundary")
+            return RC_REFUSE
+
     # Preserve the historical global default only for the legacy unnamed path.
     # Named canaries never accept a caller-supplied lease. Test fixture runs
     # derive a private lease only when StubRunner is selected; that branch is
