@@ -71,6 +71,8 @@ PACKET_CARD = "t_0119603b"
 DISPATCH_AUTHOR = "jarvis-orchestrator"
 DEFAULT_LEASE = os.path.join(ROOT, "reservation", "v2-dispatch-lease.json")
 DEFAULT_WORKSPACE_ROOT = "/home/frank/.hermes/controlled-worker-activation"
+# Historical unnamed invocations use this only as a compatibility default.
+# A named production canary derives a task-local stop control below.
 DEFAULT_STOP = os.path.join(ROOT, "ACTIVATION-STOP")
 DEFAULT_VERIFIER = os.path.join(ROOT, "bin_verify", "verify_activation_packet.py")
 DEFAULT_RESERVATION_TOOL = ("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/"
@@ -112,6 +114,20 @@ def task_scoped_lease_path(canary_task, activation_packet, stub_events_dir=None)
         return os.path.join(os.path.realpath(stub_events_dir), ".test-only-v2-dispatch-lease.json")
     return os.path.join(ROOT, "reservation", "task-artifacts", canary_task,
                         "v2-dispatch-lease.json")
+
+
+def task_scoped_stop_path(canary_task):
+    """Return the sole stop control for a named production canary.
+
+    This is deliberately derived from the task identifier rather than packet
+    input or a CLI-selected path. A caller must not be able to make one
+    canary ignore another task's stop control (or select an unrelated empty
+    file). The control is checked by both dry and armed invocations.
+    """
+    if not isinstance(canary_task, str) or not re.fullmatch(r"t_[0-9a-f]{8}", canary_task):
+        raise ValueError("named canary task id is invalid")
+    return os.path.join(ROOT, "reservation", "task-artifacts", canary_task,
+                        "ACTIVATION-STOP")
 
 
 def receipt_fingerprint(rec):
@@ -327,7 +343,8 @@ def main(argv):
     ap.add_argument("--board-db", default=DEFAULT_BOARD_DB)
     ap.add_argument("--lease-file", default=None,
                     help="legacy unnamed-task seam; named tasks always derive their lease")
-    ap.add_argument("--stop-file", default=DEFAULT_STOP)
+    ap.add_argument("--stop-file", default=None,
+                    help="legacy/stub seam; named production canaries derive their stop control")
     ap.add_argument("--packet-verifier", default=DEFAULT_VERIFIER)
     ap.add_argument("--reservation-tool", default=DEFAULT_RESERVATION_TOOL)
     ap.add_argument("--reservation-json", default=None)
@@ -354,7 +371,7 @@ def main(argv):
 
     # Real runner derives the task packet itself; callers cannot select it.
     if args.canary_task and args.stub_events_dir is None:
-        supplied_task_args = {k: getattr(args, k) for k in ("reservation_json", "cmux_receipt", "session_binding", "workspace_root", "packet_card", "activation_packet") if getattr(args, k) is not None}
+        supplied_task_args = {k: getattr(args, k) for k in ("reservation_json", "cmux_receipt", "session_binding", "workspace_root", "packet_card", "activation_packet", "stop_file") if getattr(args, k) is not None}
         if supplied_task_args:
             report = {"verdict":"REFUSE", "run_flag":args.run, "all_gates_green":False,
                       "gates":[{"gate":"G0 real-run canonical-input boundary", "pass":False,
@@ -368,6 +385,7 @@ def main(argv):
         args.session_binding = os.path.join(task_artifacts, "cmux-interactive-session-binding.json")
         args.packet_card = args.canary_task
         args.workspace_root = os.path.join(ROOT, "reservation", "task-workspaces", args.canary_task)
+        args.stop_file = task_scoped_stop_path(args.canary_task)
         canonical = {"packet_verifier": DEFAULT_VERIFIER, "board_db": DEFAULT_BOARD_DB,
             "reservation_tool": DEFAULT_RESERVATION_TOOL, "reservation_json": args.reservation_json,
             "cmux_receipt": args.cmux_receipt, "session_binding": args.session_binding,
@@ -390,6 +408,7 @@ def main(argv):
         args.workspace_root = args.workspace_root or DEFAULT_WORKSPACE_ROOT
         args.packet_card = args.packet_card or PACKET_CARD
         args.activation_packet = args.activation_packet or os.path.join(ROOT, "ACTIVATION-PACKET-CLAUDE-WORKER.json")
+        args.stop_file = args.stop_file or DEFAULT_STOP
 
     # Preserve the historical global default only for the legacy unnamed path.
     # Named canaries never accept a caller-supplied lease. Test fixture runs
@@ -442,6 +461,14 @@ def main(argv):
         # raw provider subprocess path; a lifecycle failure is terminal.
         import v2_canary_executor as v2ce
         runner = v2ce.StubRunner(args.stub_events_dir) if args.stub_events_dir else None
+        # This opaque capability is minted only after every gate has passed
+        # and this dispatcher has won the O_EXCL one-shot lease. The executor
+        # refuses runner=None without it; direct callers therefore cannot
+        # instantiate a real SubprocessClaudeRunner by bypassing this gate.
+        execution_capability = (None if runner is not None else
+                                v2ce._mint_dispatch_gate_capability(
+                                    canary_task=dispatch_task,
+                                    lease_file=args.lease_file))
         rec_path = os.path.join(ROOT, "evidence", "v2-dispatch-record.json")
         try:
             record = v2ce.dispatch_canary(
@@ -453,6 +480,7 @@ def main(argv):
                 issuer_path=args.binding_issuer,
                 hermes_home=args.hermes_home,
                 runner=runner,
+                execution_capability=execution_capability,
             )
             record["lease_file"] = args.lease_file
             verdict, rc = "DISPATCHED-ONCE", RC_OK

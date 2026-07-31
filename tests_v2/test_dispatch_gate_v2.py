@@ -11,6 +11,7 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -496,6 +497,57 @@ def main():
         check("named production run refuses arbitrary lease-file override before gates",
               raw.returncode == 5 and gate_status(raw_report, "G0 task-scoped lease authority") is False
               and not os.path.exists(arbitrary), raw.stdout[:300])
+
+        # Named production canaries derive one trusted task-local stop
+        # control. It must veto both inspection and --run; a caller-selected
+        # alternate stop file is refused before any lease or provider path.
+        stop_task = "t_cafef00d"
+        canonical_stop = gate_task_scope.task_scoped_stop_path(stop_task)
+        stop_parent = os.path.dirname(canonical_stop)
+        os.makedirs(stop_parent, exist_ok=True)
+        stop_packet = os.path.join(stop_parent, f"ACTIVATION-PACKET-{stop_task}.json")
+        open(stop_packet, "w").write(json.dumps({"task_id": stop_task}))
+        open(canonical_stop, "w").write("halt\\n")
+        try:
+            for armed in (False, True):
+                argv = ["--canary-task", stop_task, "--json"]
+                if armed:
+                    argv.insert(0, "--run")
+                rc, rep = run_gate(*argv)
+                check(f"canonical named stop blocks {'--run' if armed else 'dry-run'}",
+                      rc == 5 and gate_status(rep, "G5a") is False,
+                      json.dumps(rep.get("gates", []))[:300])
+            alternate_stop = os.path.join(td, "alternate-STOP")
+            rc, rep = run_gate("--run", "--canary-task", stop_task, "--stop-file", alternate_stop,
+                               "--json")
+            check("named production alternate stop override refuses before lease/provider",
+                  rc == 5 and gate_status(rep, "G0 real-run canonical-input boundary") is False
+                  and not os.path.exists(os.path.join(stop_parent, "v2-dispatch-lease.json")),
+                  json.dumps(rep.get("gates", []))[:300])
+        finally:
+            shutil.rmtree(stop_parent, ignore_errors=True)
+
+        # The direct executor API may still accept an explicit StubRunner for
+        # deterministic fixtures, but runner=None cannot construct the real
+        # SubprocessClaudeRunner without the opaque post-gate capability.
+        executor_spec = importlib.util.spec_from_file_location(
+            "v2_executor_direct_capability", os.path.join(ROOT, "bin_verify", "v2_canary_executor.py"))
+        executor_mod = importlib.util.module_from_spec(executor_spec)
+        executor_spec.loader.exec_module(executor_mod)
+        try:
+            executor_mod.dispatch_canary(
+                board_db=os.path.join(td, "unused.db"), canary_task="t_beefcafe",
+                workspace_root=os.path.join(td, "unused-workspace"),
+                session_binding_path=os.path.join(td, "unused-binding.json"),
+                cmux_receipt_path=os.path.join(td, "unused-receipt.json"),
+                reservation_path=os.path.join(td, "unused-reservation.json"),
+                issuer_path=os.path.join(td, "unused-issuer.py"),
+                hermes_home=os.path.join(td, "unused-profile"), runner=None)
+            direct_real_refused = False
+        except executor_mod.DispatchError as exc:
+            direct_real_refused = "dispatch-gate capability" in str(exc)
+        check("direct runner=None executor invocation refuses without opaque gate capability",
+              direct_real_refused)
 
 
         # G3d is a provider boundary: it must refuse an otherwise-valid

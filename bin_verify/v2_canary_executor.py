@@ -82,6 +82,44 @@ class DispatchError(RuntimeError):
     """Deterministic canonical-lifecycle failure (fail-closed, no retry)."""
 
 
+# Deliberately opaque, process-local proof that dispatch_gate_v2 both passed
+# every gate and atomically consumed its one-shot lease. It is not a boolean,
+# serialisable record, or caller-supplied token. Python cannot provide a
+# cryptographic module boundary, but the private seal means normal direct API
+# callers cannot manufacture a valid capability from data alone.
+_DISPATCH_GATE_CAPABILITY_SEAL = object()
+
+
+class _DispatchGateCapability:
+    __slots__ = ("_seal", "canary_task", "lease_file")
+
+    def __init__(self, seal, *, canary_task, lease_file):
+        if seal is not _DISPATCH_GATE_CAPABILITY_SEAL:
+            raise DispatchError("dispatch capability may only be minted by the governed gate")
+        self._seal = seal
+        self.canary_task = canary_task
+        self.lease_file = str(Path(lease_file).resolve())
+
+
+def _mint_dispatch_gate_capability(*, canary_task, lease_file):
+    """Private gate-side capability mint, called only after G1-G6 and O_EXCL."""
+    if not isinstance(canary_task, str) or not canary_task:
+        raise DispatchError("gate capability requires a canary task")
+    if not lease_file or not os.path.isfile(lease_file):
+        raise DispatchError("gate capability requires the consumed one-shot lease")
+    return _DispatchGateCapability(_DISPATCH_GATE_CAPABILITY_SEAL,
+                                   canary_task=canary_task, lease_file=lease_file)
+
+
+def _require_dispatch_gate_capability(capability, *, canary_task):
+    if not isinstance(capability, _DispatchGateCapability):
+        raise DispatchError("direct real executor invocation refused: missing opaque dispatch-gate capability")
+    if capability._seal is not _DISPATCH_GATE_CAPABILITY_SEAL or capability.canary_task != canary_task:
+        raise DispatchError("direct real executor invocation refused: invalid dispatch-gate capability")
+    if not os.path.isfile(capability.lease_file):
+        raise DispatchError("direct real executor invocation refused: consumed gate lease missing")
+
+
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -244,6 +282,7 @@ class StubRunner:
 
 def dispatch_canary(*, board_db, canary_task, workspace_root,
                     session_binding_path, cmux_receipt_path, reservation_path, issuer_path, hermes_home, runner=None,
+                    execution_capability=None,
                     instruction=V2_INSTRUCTION,
                     claimer_prefix="v2-governed-canary") -> dict:
     """Execute the one governed no-op canary through the canonical lifecycle.
@@ -252,6 +291,11 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
     underlying kb error) on any failure — the caller (dispatch_gate_v2) has
     already consumed the one-shot lease, so a failure is terminal: no retry.
     """
+    # Explicit test runners remain valid deterministic seams. The only path
+    # that could start Claude is runner=None, and it requires the opaque
+    # capability minted by dispatch_gate_v2 after all gates and O_EXCL pass.
+    if runner is None:
+        _require_dispatch_gate_capability(execution_capability, canary_task=canary_task)
     board_db = Path(board_db)
     workspace_root = Path(workspace_root).resolve()
     hermes_home = Path(hermes_home).resolve() if hermes_home else None
