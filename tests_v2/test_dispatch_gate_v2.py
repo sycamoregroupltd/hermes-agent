@@ -37,6 +37,9 @@ def sha(path):
 
 
 def run_gate(*extra):
+    extra = list(extra)
+    if "--lease-file" in extra and "--test-only-allow-lease-file" not in extra:
+        extra.append("--test-only-allow-lease-file")
     p = subprocess.run([sys.executable, GATE, "--json", *extra], capture_output=True, text=True)
     rep = json.loads(p.stdout) if p.stdout.strip() else {}
     return p.returncode, rep
@@ -477,6 +480,13 @@ def main():
         except ValueError:
             mismatch_refused = True
         check("task-scoped lease rejects packet task mismatch", mismatch_refused)
+        arbitrary = os.path.join(td, "arbitrary-production-lease.json")
+        raw = subprocess.run([sys.executable, GATE, "--json", "--run", "--canary-task", "t_beefcafe",
+                              "--lease-file", arbitrary], capture_output=True, text=True)
+        raw_report = json.loads(raw.stdout)
+        check("named production run refuses arbitrary lease-file override before gates",
+              raw.returncode == 5 and gate_status(raw_report, "G0 task-scoped lease authority") is False
+              and not os.path.exists(arbitrary), raw.stdout[:300])
 
 
         # G3d is a provider boundary: it must refuse an otherwise-valid

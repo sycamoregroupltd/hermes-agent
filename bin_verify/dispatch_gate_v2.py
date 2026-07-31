@@ -321,7 +321,9 @@ def main(argv):
     ap.add_argument("--canary-task", default=None)
     ap.add_argument("--board-db", default=DEFAULT_BOARD_DB)
     ap.add_argument("--lease-file", default=None,
-                    help="test seam only; named canaries derive a task-scoped lease by default")
+                    help="legacy unnamed-task seam; named tasks derive their lease")
+    ap.add_argument("--test-only-allow-lease-file", action="store_true",
+                    help="TEST ONLY: permit an explicit named-task lease path")
     ap.add_argument("--stop-file", default=DEFAULT_STOP)
     ap.add_argument("--packet-verifier", default=DEFAULT_VERIFIER)
     ap.add_argument("--reservation-tool", default=DEFAULT_RESERVATION_TOOL)
@@ -348,8 +350,18 @@ def main(argv):
     args = ap.parse_args(argv)
 
     # Preserve the historical global default only for the legacy unnamed path.
-    # A named canary is bound to the task id declared in its activation packet
-    # and receives a distinct O_EXCL lease namespace.
+    # A named production canary always derives an isolated O_EXCL namespace.
+    # An explicit lease override is accepted only by the conspicuous test seam.
+    if args.canary_task and args.lease_file is not None and not args.test_only_allow_lease_file:
+        report = {"verdict": "REFUSE", "run_flag": args.run, "all_gates_green": False,
+                  "gates": [{"gate": "G0 task-scoped lease authority", "pass": False,
+                             "detail": "named canary may not override its derived lease path"}], "rc": RC_REFUSE}
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print("FAIL: G0 task-scoped lease authority — named canary may not override its derived lease path")
+            print("\nVERDICT: REFUSE")
+        return RC_REFUSE
     if args.lease_file is None:
         try:
             args.lease_file = (task_scoped_lease_path(args.canary_task, args.activation_packet)
