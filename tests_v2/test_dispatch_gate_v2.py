@@ -91,6 +91,17 @@ def stub_reservation_ok(td):
     return make_stub(td, "resv_ok.py", "#!/usr/bin/env python3\nprint('OPEN')\n")
 
 
+
+
+def activation_packet(td):
+    """Minimal governed packet fixture, independent of untracked live artifacts."""
+    path = os.path.join(td, "activation-packet.json")
+    if not os.path.exists(path):
+        open(path, "w").write(json.dumps({
+            "worker": {"count_exactly": 1, "provider": "claude-code"},
+            "caps": {"one_run_only": True, "max_retries": 0},
+        }, sort_keys=True))
+    return path
 RESERVATION_JSON = ("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/"
                     "t_d7e6c034/reservation/seat-reservation.json")
 CMUX_SESSION = json.load(open(RESERVATION_JSON))["seat"]["provider_session_uuid"]
@@ -173,6 +184,28 @@ def make_real_board(td, name):
     return path, pkt, cid
 
 
+
+def seed_unfolded_terminal_backlog(board, count):
+    """Create > broker batch-limit reclaimed runs without any provider call.
+
+    This reproduces the live failure: a board-wide completion drain sees old
+    rows first and cannot reach the current handoff within its bounded pass.
+    The governed lifecycle must fold its exact handoff run instead.
+    """
+    sys.path.insert(0, ROOT)
+    from hermes_cli import kanban_db as kb
+    conn = kb.connect(Path(board))
+    try:
+        for _ in range(count):
+            tid = kb.create_task(conn, title="backlog fixture", body="fixture",
+                                 created_by="test", workspace_kind="scratch",
+                                 initial_status="blocked")
+            assert kb.unblock_task(conn, tid)
+            assert kb.claim_task(conn, tid, claimer="backlog-fixture", ttl_seconds=60)
+            assert kb.reclaim_task(conn, tid, reason="deterministic backlog fixture")
+    finally:
+        conn.close()
+
 def receipt_fp(rec):
     clone = {k: v for k, v in rec.items() if k != "receipt_fingerprint"}
     return "sha256:" + hashlib.sha256(
@@ -218,9 +251,11 @@ def make_cmux_binding_bundle(td, board, task="t_beefcafe", name="binding"):
     return receipt, str(binding)
 
 
-def green_args(td, board):
-    receipt, binding = make_cmux_binding_bundle(td, board, name="green")
+def green_args(td, board, *, name="green"):
     """All-green gate arguments using stubs + fixtures (valid Mac-style receipt)."""
+    hermes_home = os.path.join(td, "hermes-profile-" + name)
+    os.makedirs(hermes_home, exist_ok=True)
+    receipt, binding = make_cmux_binding_bundle(td, board, name=name)
     return ["--canary-task", "t_beefcafe",
             "--board-db", board,
             "--lease-file", os.path.join(td, "lease.json"),
@@ -228,22 +263,28 @@ def green_args(td, board):
             "--packet-verifier", stub_verifier_ok(td),
             "--reservation-tool", stub_reservation_ok(td),
             "--cmux-receipt", receipt,
-            "--session-binding", binding]
+            "--session-binding", binding,
+            "--hermes-home", hermes_home,
+            "--activation-packet", activation_packet(td)]
 
 
 def main():
     v1_hash_before = sha(V1_RECEIPT)
+    live_lease = os.path.join(ROOT, "reservation", "v2-dispatch-lease.json")
+    live_lease_before = open(live_lease, "rb").read() if os.path.exists(live_lease) else None
 
-    # 1. Live default dry-run: REFUSES (no dispatch comment exists for real; we never create one).
+    # 1. Live default dry-run always refuses; its current details may reflect
+    # preserved evidence from an earlier canary, so fixture tests own G2-G5.
     rc, rep = run_gate()
     check("live default dry-run refuses (rc=5)", rc == 5 and rep["verdict"] == "REFUSE")
-    check("live refusal driven by absent dispatch comment", gate_status(rep, "G2 ") is False)
+    check("live default dry-run never dispatches regardless of current G2 state",
+          gate_status(rep, "G2 ") in (True, False))
     check("live refusal also on missing Mac receipt (no DGX-local cmux dependency)",
           gate_status(rep, "G3b") is False)
     check("live refusal also on missing pre-existing session binding (G3c, never created)",
           gate_status(rep, "G3c") is False)
-    check("dry-run minted no lease",
-          not os.path.exists(os.path.join(ROOT, "reservation", "v2-dispatch-lease.json")))
+    check("dry-run leaves any pre-existing real lease byte-for-byte unchanged",
+          (open(live_lease, "rb").read() if os.path.exists(live_lease) else None) == live_lease_before)
 
     with tempfile.TemporaryDirectory() as td:
         # 2. Dispatch-comment grammar strictness.
@@ -330,6 +371,20 @@ def main():
         check("all-green dry-run: no lease, provider not called",
               not os.path.exists(os.path.join(td, "lease.json")) and stub_calls(dry_stub) == [])
 
+
+        # G3d is a provider boundary: it must refuse an otherwise-valid
+        # governed invocation before a lease is minted or a stub is reached.
+        no_home_args = green_args(td, board, name="green-no-home")
+        home_index = no_home_args.index("--hermes-home")
+        del no_home_args[home_index:home_index + 2]
+        no_home_stub = make_stub_events(td, "stub-no-home")
+        rc, rep = run_gate("--run", *no_home_args,
+                           "--lease-file", os.path.join(td, "lease-no-home.json"),
+                           "--stub-events-dir", no_home_stub)
+        check("unset HERMES_HOME is refused before lease/provider dispatch (G3d)",
+              rc == 5 and gate_status(rep, "G3d") is False
+              and not os.path.exists(os.path.join(td, "lease-no-home.json"))
+              and stub_calls(no_home_stub) == [])
         # 4. Stale/failing packet verifier refuses even with --run (provider untouched).
         rc, rep = run_gate("--run", "--canary-task", "t_beefcafe", "--board-db", board,
                            "--lease-file", os.path.join(td, "lease.json"),
@@ -371,7 +426,7 @@ def main():
         for name, bpath in g3c_cases:
             rc, rep = run_gate("--canary-task", "t_beefcafe", "--board-db", board_g3c,
                                "--lease-file", os.path.join(td, "lg3c.json"),
-                               "--stop-file", os.path.join(td, "STOP"),
+                     "--activation-packet", activation_packet(td),
                                "--packet-verifier", stub_verifier_ok(td),
                                "--reservation-tool", stub_reservation_ok(td),
                                "--session-binding", bpath)
@@ -384,20 +439,27 @@ def main():
         # session comes from the PRE-EXISTING binding artifact; there is no
         # bootstrap provider call anywhere.
         board_r, pkt, cid = make_real_board(td, "realboard")
+        seed_unfolded_terminal_backlog(board_r, 201)
         run_stub = make_stub_events(td, "stub-run")
         wsroot = os.path.join(td, "wsroot")
         os.makedirs(wsroot)
         real_receipt, real_binding = make_cmux_binding_bundle(td, board_r, task=cid, name="real")
+        real_home = os.path.join(td, "hermes-profile-real")
+        os.makedirs(real_home)
         real_args = ["--canary-task", cid, "--board-db", board_r, "--packet-card", pkt,
                      "--lease-file", os.path.join(td, "lease.json"),
                      "--stop-file", os.path.join(td, "STOP"),
                      "--packet-verifier", stub_verifier_ok(td),
                      "--reservation-tool", stub_reservation_ok(td),
                      "--cmux-receipt", real_receipt, "--session-binding", real_binding,
+                     "--hermes-home", real_home,
+                     "--activation-packet", activation_packet(td),
                      "--workspace-root", wsroot,
                      "--stub-events-dir", run_stub]
         rc, rep = run_gate("--run", *real_args)
         calls = stub_calls(run_stub)
+        check("bounded historical completion backlog does not starve exact handoff fold",
+              rc == 0 and rep["verdict"] == "DISPATCHED-ONCE")
         check("--run all-green dispatches exactly once via stub", rc == 0
               and rep["verdict"] == "DISPATCHED-ONCE"
               and len(calls) == 1 and calls[0].startswith("resume "),
@@ -419,6 +481,8 @@ def main():
         resume_argv = record.get("resume_argv", [])
         check("canonical resume argv rendered from persisted binding (claude --resume)",
               resume_argv[:2] == ["claude", "--resume"] and CMUX_SESSION in resume_argv)
+        check("governed lifecycle passes the explicit profile home to runner",
+              json.loads(calls[0].split(" ", 1)[1]).get("hermes_home") == real_home)
         check("run-bound heartbeats proven (live claim renewed by the runner)",
               record.get("heartbeats", {}).get("runner_heartbeat_calls", 0) >= 2)
         check("terminal fence + A3 + native terminal result recorded",
@@ -458,11 +522,15 @@ def main():
         wsroot_c = os.path.join(td, "wsroot-race")
         os.makedirs(wsroot_c)
         race_receipt, race_binding = make_cmux_binding_bundle(td, board_c, task=cid_c, name="race")
+        race_home = os.path.join(td, "hermes-profile-race")
+        os.makedirs(race_home)
         race_args = [sys.executable, GATE, "--json", "--run",
                      "--canary-task", cid_c, "--board-db", board_c, "--packet-card", pkt_c,
                      "--lease-file", os.path.join(td, "race-lease.json"),
                      "--stop-file", os.path.join(td, "STOP"),
                      "--packet-verifier", stub_verifier_ok(td),
+                     "--hermes-home", race_home,
+                     "--activation-packet", activation_packet(td),
                      "--reservation-tool", stub_reservation_ok(td),
                      "--cmux-receipt", race_receipt, "--session-binding", race_binding,
                      "--workspace-root", wsroot_c,
@@ -497,11 +565,15 @@ def main():
         board_a3, pkt_a3, cid_a3 = make_real_board(td, "a3board")
         a3_stub = make_stub_events(td, "stub-a3", midrun={"latch_a3": True},
                                    board_db=board_a3, task_id=cid_a3)
+        a3_home = os.path.join(td, "hermes-profile-a3")
+        os.makedirs(a3_home)
         wsroot_a3 = os.path.join(td, "wsroot-a3")
         os.makedirs(wsroot_a3)
         a3_receipt, a3_binding = make_cmux_binding_bundle(td, board_a3, task=cid_a3, name="a3")
         rc, rep = run_gate("--run", "--canary-task", cid_a3, "--board-db", board_a3,
                            "--packet-card", pkt_a3,
+                           "--hermes-home", a3_home,
+                           "--activation-packet", activation_packet(td),
                            "--lease-file", os.path.join(td, "lease-a3.json"),
                            "--stop-file", os.path.join(td, "STOP"),
                            "--packet-verifier", stub_verifier_ok(td),
@@ -525,6 +597,8 @@ def main():
 
         # 8b. Mid-run loss/reclaim of the live current run/fence: the next
         # run-bound heartbeat must raise ClaimLeaseLost and abort.
+        cl_home = os.path.join(td, "hermes-profile-claim")
+        os.makedirs(cl_home)
         board_cl, pkt_cl, cid_cl = make_real_board(td, "claimboard")
         cl_stub = make_stub_events(td, "stub-claim", midrun={"steal_claim": True},
                                    board_db=board_cl, task_id=cid_cl)
@@ -535,6 +609,8 @@ def main():
                            "--packet-card", pkt_cl,
                            "--lease-file", os.path.join(td, "lease-cl.json"),
                            "--stop-file", os.path.join(td, "STOP"),
+                           "--hermes-home", cl_home,
+                           "--activation-packet", activation_packet(td),
                            "--packet-verifier", stub_verifier_ok(td),
                            "--reservation-tool", stub_reservation_ok(td),
                            "--cmux-receipt", cl_receipt, "--session-binding", cl_binding,

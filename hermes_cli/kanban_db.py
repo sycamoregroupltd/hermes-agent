@@ -11455,6 +11455,69 @@ def record_worker_completion_events(
     return recorded
 
 
+
+def record_worker_completion_event(conn: sqlite3.Connection, *, run_id: int) -> bool:
+    """Fold exactly one specified terminal run, without draining board backlog.
+
+    A governed handoff must fold *its own* reclaimed antecedent before it can
+    decide whether to continue the pre-existing session. Calling the bounded
+    board-wide consumer for that purpose is incorrect: a large historical
+    backlog can fill its limit before the current handoff run is reached.
+
+    The same partial unique index and ``INSERT OR IGNORE`` provide exactly-once
+    semantics. A concurrent normal consumer is accepted only when it recorded
+    the identical typed payload for this exact run; otherwise this refuses.
+    """
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        raise BrokerEventValidationError("run_id must be a positive integer")
+    if not completion_dedup_index_present(conn):
+        raise BrokerUnsafeError(
+            f"{COMPLETION_DEDUP_INDEX} is absent: exactly-once completion "
+            "folding cannot be enforced on this board"
+        )
+    row = conn.execute(
+        """
+        SELECT id AS run_id, task_id, profile, status, outcome, started_at,
+               ended_at, error, worker_session_id, worker_session_source
+          FROM task_runs WHERE id = ? AND ended_at IS NOT NULL
+                            AND outcome IS NOT NULL
+        """,
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    payload = validate_broker_event_payload(
+        BROKER_EVENT_WORKER_COMPLETION,
+        {
+            "run_id": int(row["run_id"]), "task_id": str(row["task_id"]),
+            "outcome": (row["outcome"] or "").strip(),
+            "run_status": str(row["status"] or ""), "profile": row["profile"],
+            "started_at": int(row["started_at"]) if row["started_at"] is not None else None,
+            "ended_at": int(row["ended_at"]) if row["ended_at"] is not None else None,
+            "error": row["error"], "worker_session_id": row["worker_session_id"],
+            "worker_session_source": row["worker_session_source"],
+        },
+    )
+    encoded = json.dumps(payload, ensure_ascii=False)
+    with write_txn(conn):
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO task_events "
+            "(task_id, run_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+            (payload["task_id"], payload["run_id"], BROKER_EVENT_WORKER_COMPLETION,
+             encoded, int(time.time())),
+        )
+        if cur.rowcount:
+            return True
+        existing = conn.execute(
+            "SELECT payload FROM task_events WHERE run_id = ? AND kind = ?",
+            (run_id, BROKER_EVENT_WORKER_COMPLETION),
+        ).fetchone()
+    if existing is None:
+        return False
+    try:
+        return json.loads(existing["payload"]) == payload
+    except (TypeError, ValueError):
+        return False
 # --- pure route decision ---------------------------------------------------
 
 

@@ -224,6 +224,13 @@ def evaluate_gates(args):
         gate_result(gates, "G3c pre-existing interactive session binding valid (never created here)",
                     False, str(e)[:300])
 
+    # G3d: governed provider child must carry an explicit, existing profile
+    # home; an unset value would silently fall back to the global default.
+    gate_result(gates, "G3d explicit HERMES_HOME profile directory",
+                isinstance(args.hermes_home, str) and os.path.isabs(args.hermes_home)
+                and os.path.isdir(args.hermes_home),
+                "missing/non-absolute/nonexistent HERMES_HOME — default-profile fallback forbidden")
+
     # G4: non-reusable lease — existence refuses.
     gate_result(gates, "G4 no existing v2 lease (one-shot, non-reusable)",
                 not os.path.exists(args.lease_file),
@@ -250,8 +257,7 @@ def evaluate_gates(args):
 
     # G6: packet structural caps re-read.
     try:
-        pkt = json.load(open(os.path.join(ROOT, "ACTIVATION-PACKET-CLAUDE-WORKER.json"),
-                             encoding="utf-8"))
+        pkt = json.load(open(args.activation_packet, encoding="utf-8"))
         gate_result(gates, "G6 packet caps: one claude-code worker, one run, no retry",
                     pkt["worker"]["count_exactly"] == 1
                     and pkt["worker"]["provider"] == "claude-code"
@@ -303,11 +309,15 @@ def main(argv):
                          "executor harness; production leaves this unset")
     ap.add_argument("--packet-card", default=PACKET_CARD,
                     help="packet card holding the A2 dispatch comment (test seam)")
+    ap.add_argument("--activation-packet", default=os.path.join(ROOT, "ACTIVATION-PACKET-CLAUDE-WORKER.json"),
+                    help="activation packet whose structural caps are re-read (test seam)")
     ap.add_argument("--session-binding", default=DEFAULT_SESSION_BINDING,
                     help="PRE-EXISTING persisted interactive session-binding artifact "
                          "(G3c); the v2 path never creates a session")
     ap.add_argument("--binding-issuer", default=DEFAULT_BINDING_ISSUER,
                     help="reviewed CMUX binding issuer whose exact source hash is pinned by the artifact")
+    ap.add_argument("--hermes-home", default=None,
+                    help="required existing absolute Hermes profile directory passed explicitly to Claude child")
     ap.add_argument("--cmux-receipt", default=DEFAULT_CMUX_RECEIPT,
                     help="Mac-minted task-bound CMUX reservation receipt (validated on DGX)")
     ap.add_argument("--json", action="store_true")
@@ -343,6 +353,7 @@ def main(argv):
                 cmux_receipt_path=args.cmux_receipt,
                 reservation_path=args.reservation_json,
                 issuer_path=args.binding_issuer,
+                hermes_home=args.hermes_home,
                 runner=runner,
             )
             record["lease_file"] = args.lease_file

@@ -201,7 +201,7 @@ class Env:
         self.ssh_log = os.path.join(self.dir, "ssh-calls.log")
         self.cmux_bin = self._script("cmux-stub", CMUX_STUB)
         self.ssh_bin = self._script("ssh-stub", SSH_STUB.format(
-            log=self.ssh_log, root=self.remote, host="dgx-test-host"))
+            log=self.ssh_log, root=self.remote, host="dgx"))
         self.flush_cfg()
 
     def _script(self, name, body):
@@ -228,7 +228,8 @@ class Env:
                 "--caller-surface", RESERVED_SURFACE,
                 "--worktree", self.wt,
                 "--reservation-path", self.res_path,
-                "--dgx-host", "dgx-test-host",
+                "--dgx-host", "spark-4be3",
+                "--dgx-transport", "dgx",
                 "--ssh-cmd", self.ssh_bin,
                 "--cmux-bin", self.cmux_bin,
                 "--caller-tty", self.tty_file,
@@ -242,6 +243,9 @@ class Env:
 
     def receipt_path(self):
         return os.path.join(self.wt, "reservation", "cmux-reservation-receipt.json")
+
+    def receipt_path_for(self, rel):
+        return os.path.join(self.wt, rel)
 
     def published(self):
         return os.path.exists(self.receipt_path())
@@ -302,12 +306,48 @@ def main():
         check("minted receipt bound to wrong task refuses", not ok and "bound" in detail)
         e.close()
 
+        # Task-scoped outputs are additive; the legacy default above remains
+        # source-compatible and is tested separately.
+        e = Env(td, f"e{next(n)}")
+        scoped_receipt = "reservation/task-artifacts/t_beefcafe/cmux-reservation-receipt.json"
+        scoped_evidence = "reservation/task-artifacts/t_beefcafe/mac-cmux-mint-evidence.json"
+        rc, rep = e.run("--receipt-rel", scoped_receipt, "--evidence-rel", scoped_evidence)
+        check("task-scoped receipt/evidence outputs mint under exact task directory",
+              rc == 0 and os.path.exists(e.receipt_path_for(scoped_receipt))
+              and os.path.exists(e.receipt_path_for(scoped_evidence)) and not e.published())
+        e.close()
+
+        for rel in ("/tmp/receipt.json", "../reservation/task-artifacts/t_beefcafe/x.json",
+                    "reservation/task-artifacts/t_deadbeef/x.json",
+                    "reservation/task-artifacts/t_beefcafe/../t_beefcafe/x.json",
+                    "reservation/task-artifacts/t_beefcafe//x.json"):
+            e = Env(td, f"e{next(n)}")
+            rc, rep = e.run("--receipt-rel", rel)
+            check(f"unsafe receipt override {rel!r} refuses before publication",
+                  rc == 2 and rep.get("verdict") == "NO-JSON" and not e.published())
+            e.close()
+
+        e = Env(td, f"e{next(n)}")
+        scoped_receipt = "reservation/task-artifacts/t_beefcafe/cmux-reservation-receipt.json"
+        scoped_evidence = "reservation/task-artifacts/t_beefcafe/mac-cmux-mint-evidence.json"
+        rc, rep = e.run("--receipt-rel", scoped_receipt, "--evidence-rel", scoped_evidence,
+                        fail_publish="mac-cmux-mint-evidence")
+        check("task-scoped evidence failure publishes neither evidence nor receipt",
+              rc == 2 and refused_at(rep) == "C11-publish-evidence"
+              and not os.path.exists(e.receipt_path_for(scoped_receipt))
+              and not os.path.exists(e.receipt_path_for(scoped_evidence)))
+        e.close()
+
         # -- probe-only -------------------------------------------------------
         e = Env(td, f"e{next(n)}")
         rc, rep = e.run("--probe-only")
         check("probe-only: all checks green, rc=0, NOTHING published",
               rc == 0 and rep.get("verdict") == "PROBE-ONLY-ALL-CHECKS-GREEN"
               and not e.published())
+        c7 = next((step for step in rep.get("steps", []) if step.get("step") == "C7-reservation"), {})
+        check("pinned spark-4be3 identity retrieves through fixed dgx transport alias",
+              c7.get("ok") is True and "spark-4be3 via dgx" in c7.get("detail", "")
+              and "'dgx'" in open(e.ssh_log).read())
         e.close()
 
         # -- platform fail-closed (the live DGX case) -------------------------
@@ -324,6 +364,26 @@ def main():
         check("cmux CLI missing refuses (C3), nothing published",
               rc == 2 and refused_at(rep) == "C3-ping" and not e.published())
         e.close()
+
+        e = Env(td, f"e{next(n)}")
+        e.cfg["raw_overrides"] = {"ping": "PONG\n"}
+        e.flush_cfg()
+        rc, rep = e.run("--probe-only")
+        check("installed exact plain PONG ping passes C3 probe-only without publication",
+              rc == 0 and rep.get("verdict") == "PROBE-ONLY-ALL-CHECKS-GREEN"
+              and not e.published()
+              and any(step.get("step") == "C3-ping" and step.get("detail") == "plain-PONG"
+                      for step in rep.get("steps", [])))
+        e.close()
+
+        for raw in ("pong\n", "PONG!\n", '"PONG"\n', "PONG\nextra\n"):
+            e = Env(td, f"e{next(n)}")
+            e.cfg["raw_overrides"] = {"ping": raw}
+            e.flush_cfg()
+            rc, rep = e.run()
+            check(f"non-contract ping {raw!r} refuses at C3 without publication",
+                  rc == 2 and refused_at(rep) == "C3-ping" and not e.published())
+            e.close()
 
         for key, step, name in [
             ("ping", "C3-ping", "malformed ping output refuses"),
@@ -386,6 +446,13 @@ def main():
         e.close()
 
         e = Env(td, f"e{next(n)}")
+        rc, rep = e.run("--dgx-transport", "wrong-alias")
+        check("wrong DGX transport alias refuses (C7), no fallback/shadow fetch",
+              rc == 2 and refused_at(rep) == "C7-reservation" and not e.published()
+              and not os.path.exists(e.ssh_log))
+        e.close()
+
+        e = Env(td, f"e{next(n)}")
         rc, rep = e.run("--reservation-path", e.res_path + ".nope")
         check("wrong reservation path refuses (C7)", rc == 2 and refused_at(rep) == "C7-reservation")
         e.close()
@@ -429,7 +496,7 @@ def main():
         e = Env(td, f"e{next(n)}")
         argv = [sys.executable, MINT, "--json", "--canary-task", "t_beefcafe",
                 "--worktree", e.wt, "--reservation-path", e.res_path,
-                "--dgx-host", "dgx-test-host", "--ssh-cmd", e.ssh_bin,
+                "--dgx-host", "spark-4be3", "--dgx-transport", "dgx", "--ssh-cmd", e.ssh_bin,
                 "--cmux-bin", e.cmux_bin, "--caller-tty", e.tty_file]
         p = subprocess.run(argv, capture_output=True, text=True,
                            env=dict(os.environ, CMUX_STUB_CONFIG=e.cfg_path,

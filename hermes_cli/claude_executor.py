@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 import os
 import select
 import signal
@@ -43,6 +44,7 @@ class ClaudeProcessRunner(Protocol):
         timeout_seconds: int,
         heartbeat: Callable[[], None],
         heartbeat_interval_seconds: float,
+        env: dict[str, str] | None = None,
         on_process_started: Callable[[int], None] | None = None,
     ) -> list[dict]:
         ...
@@ -64,6 +66,7 @@ class SubprocessClaudeRunner:
         cwd: Path,
         timeout_seconds: int,
         heartbeat: Callable[[], None],
+        env: dict[str, str] | None = None,
         heartbeat_interval_seconds: float,
         on_process_started: Callable[[int], None] | None = None,
     ) -> list[dict]:
@@ -78,10 +81,17 @@ class SubprocessClaudeRunner:
         # temporary file cannot back-pressure a long-running provider the way
         # an unread PIPE can; only a bounded tail is exposed on failure.
         with tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stderr_file:
+            child_env = dict(os.environ)
+            if env is not None:
+                child_env.update(env)
+            if not child_env.get("HERMES_HOME", "").strip():
+                raise ClaudeExecutorProtocolError(
+                    "Claude child requires an explicit HERMES_HOME; refusing default-profile fallback"
+                )
             process = subprocess.Popen(
                 tuple(argv), cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=stderr_file, text=True, encoding="utf-8", errors="replace",
-                start_new_session=True,
+                env=child_env, start_new_session=True,
             )
             try:
                 if on_process_started is not None:
@@ -186,6 +196,8 @@ class ClaudeResumeExecutor:
         heartbeat_interval_seconds: float = 30.0,
         claim_ttl_seconds: int = 300,
         workspace_root: Path | None = None,
+        hermes_home: Path | str | None = None,
+        require_explicit_hermes_home: bool = False,
     ) -> None:
         if isinstance(claim_ttl_seconds, bool) or not isinstance(claim_ttl_seconds, int) or claim_ttl_seconds <= 0:
             raise ValueError("claim_ttl_seconds must be a positive integer")
@@ -200,6 +212,11 @@ class ClaudeResumeExecutor:
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
         self.claim_ttl_seconds = claim_ttl_seconds
         self.workspace_root = Path(workspace_root).resolve() if workspace_root is not None else None
+        self.hermes_home = Path(hermes_home).resolve() if hermes_home is not None else None
+        self.require_explicit_hermes_home = bool(require_explicit_hermes_home)
+        if self.require_explicit_hermes_home and (
+                self.hermes_home is None or not self.hermes_home.is_absolute() or not self.hermes_home.is_dir()):
+            raise ValueError("armed Claude executor requires an existing absolute HERMES_HOME")
 
     def execute(
         self,
@@ -271,6 +288,11 @@ class ClaudeResumeExecutor:
         # Ownership is confirmed before launch, periodically while waiting,
         # and once more before a provider result can reach terminal handling.
         renew()
+        child_env = None
+        if self.require_explicit_hermes_home:
+            # The governed path never inherits an unset home or silently
+            # resolves whatever profile happens to be globally active.
+            child_env = {"HERMES_HOME": str(self.hermes_home)}
         try:
             events = self.runner.run(
                 argv=command.argv,
@@ -279,6 +301,7 @@ class ClaudeResumeExecutor:
                 timeout_seconds=command.timeout_seconds,
                 heartbeat=renew,
                 heartbeat_interval_seconds=self.heartbeat_interval_seconds,
+                env=child_env,
                 on_process_started=register_process,
             )
             renew()

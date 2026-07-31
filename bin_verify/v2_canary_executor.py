@@ -219,7 +219,7 @@ class StubRunner:
             adversary.close()
 
     def run(self, *, argv, input_jsonl, cwd, timeout_seconds, heartbeat,
-            heartbeat_interval_seconds, on_process_started=None):
+            heartbeat_interval_seconds, env=None, on_process_started=None):
         cfg = json.loads((self.stub_dir / "resume.json").read_text())
         heartbeat()
         if on_process_started is not None:
@@ -229,12 +229,12 @@ class StubRunner:
         self._adversary(cfg)
         heartbeat()  # post-adversary: A3 latch / lost claim must abort HERE
         with open(self.stub_dir / "calls.log", "a") as fh:
-            fh.write("resume " + json.dumps({"argv": list(argv)}) + "\n")
+            fh.write("resume " + json.dumps({"argv": list(argv), "hermes_home": None if env is None else env.get("HERMES_HOME")}) + "\n")
         return list(cfg["events"])
 
 
 def dispatch_canary(*, board_db, canary_task, workspace_root,
-                    session_binding_path, cmux_receipt_path, reservation_path, issuer_path, runner=None,
+                    session_binding_path, cmux_receipt_path, reservation_path, issuer_path, hermes_home, runner=None,
                     instruction=V2_INSTRUCTION,
                     claimer_prefix="v2-governed-canary") -> dict:
     """Execute the one governed no-op canary through the canonical lifecycle.
@@ -245,6 +245,9 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
     """
     board_db = Path(board_db)
     workspace_root = Path(workspace_root).resolve()
+    hermes_home = Path(hermes_home).resolve() if hermes_home else None
+    if hermes_home is None or not hermes_home.is_absolute() or not hermes_home.is_dir():
+        raise DispatchError("governed canary requires an existing absolute HERMES_HOME; default-profile fallback is forbidden")
     heartbeat_events: list[int] = []
     record: dict = {
         "record_kind": "v2-dispatch-record",
@@ -253,6 +256,8 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
                              "no bootstrap or other provider subprocess exists in this path",
         "canary_task": canary_task,
         "stubbed": runner is not None,
+        "hermes_home": str(hermes_home),
+        "profile_propagation": "explicit HERMES_HOME passed only to Claude child",
     }
     binding_artifact = None
     # Fail-closed session gate FIRST: no session is ever created here.
@@ -304,8 +309,8 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
             issued_at=now, expires_at=now + 600, now=now,
         )
         binding_recorded = True
-        if handoff_run not in kb.record_worker_completion_events(conn):
-            raise DispatchError("handoff completion was not folded")
+        if not kb.record_worker_completion_event(conn, run_id=handoff_run):
+            raise DispatchError("handoff completion was not folded for its exact run")
         completion = conn.execute(
             "SELECT payload FROM task_events WHERE run_id=? AND kind=?",
             (handoff_run, kb.BROKER_EVENT_WORKER_COMPLETION),
@@ -368,6 +373,8 @@ def dispatch_canary(*, board_db, canary_task, workspace_root,
             armed=True, runner=_GovernedHeartbeatRunner(),
             heartbeat_interval_seconds=20, claim_ttl_seconds=180,
             workspace_root=workspace_root,
+            hermes_home=hermes_home,
+            require_explicit_hermes_home=True,
         )
         outcome = executor.execute(
             conn, request=request, claimer=f"{claimer_prefix}:resume",

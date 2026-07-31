@@ -9,7 +9,8 @@ never calls a CMUX socket.
 
 Verified installed CMUX 0.64.20 command contract (canary-proven 2026-07-31,
 recorded in evidence/cmux-0.64.20-contract-canary.json):
-  cmux ping                                   -> {"pong": true}
+  cmux ping                                   -> plain text "PONG" (installed CLI) or
+                                                {"pong": true} (legacy JSON form)
   cmux capabilities                           -> {protocol:"cmux-socket", socket_path, methods[...], ...}
   cmux version                                -> plain text "0.64.20"
   cmux rpc system.identify                    -> {bundle_identifier:"com.cmuxterm.app",
@@ -27,16 +28,18 @@ never by "first listed surface".
 Fail-closed steps (any failure refuses, rc=2, nothing published):
   C1  --ttl within 30..600 s
   C2  platform is macOS (Darwin). On DGX/Linux this refuses immediately.
-  C3  cmux CLI resolvable and `ping` returns exactly {"pong": true}
+  C3  cmux CLI resolvable and `ping` returns either exact plain "PONG" or
+      exactly {"pong": true}; every other value refuses
   C4  `capabilities`: protocol "cmux-socket", required methods present, and the
       reported control socket_path EXISTS LOCALLY as a socket — impossible over
       the DGX relay, so this proves we sit on the socket-owning Mac
   C5  `version` equals the reservation's pinned cmux_daemon_version
   C6  `rpc system.identify`: bundle_identifier com.cmuxterm.app, app bundle and
       CLI paths exist locally, socket_path consistent with capabilities
-  C7  canonical DGX reservation read THROUGH SSH
-      (ssh <dgx-host> cat <canonical seat-reservation.json>): strict JSON,
-      record_kind, reservation_fingerprint recomputed and matching
+  C7  canonical DGX reservation read THROUGH the fixed local `dgx` SSH alias.
+      The pinned DGX identity remains `spark-4be3`; it is validated before
+      transport, then `ssh dgx cat <canonical seat-reservation.json>` obtains
+      strict JSON whose record_kind and reservation_fingerprint are checked.
   C8  `--json rpc system.tree`: reserved workspace AND reserved surface found
       by exact ID (surface inside that workspace)
   C9  caller context PROVEN: --caller-surface (explicit claim, required) must
@@ -103,7 +106,12 @@ import time
 CANONICAL_WORKTREE = "/home/frank/.hermes-worktrees/hermes-native-broker-slice"
 CANONICAL_RESERVATION = ("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/"
                          "t_d7e6c034/reservation/seat-reservation.json")
+# `spark-4be3` identifies the canonical DGX; the Mac's SSH configuration
+# exposes that host through the deliberately fixed local transport alias `dgx`.
+# Do not use the identity as an SSH hostname: the Mac resolver need not know
+# internal DGX hostnames.  There is intentionally no fallback/discovery path.
 CANONICAL_DGX_HOST = "spark-4be3"
+CANONICAL_DGX_TRANSPORT = "dgx"
 RECEIPT_REL = "reservation/cmux-reservation-receipt.json"
 EVIDENCE_REL = "evidence/mac-cmux-mint-evidence.json"
 WORKTREE_MARKERS = ("bin_verify/dispatch_gate_v2.py", "ACTIVATION-PACKET-CLAUDE-WORKER.json")
@@ -178,6 +186,31 @@ class Refuse(Exception):
         self.step, self.detail = step, detail
 
 
+def validate_task_artifact_rel(rel, canary_task, *, default):
+    """Return a strict task-scoped relative output path.
+
+    Legacy destinations remain byte-for-byte compatible by passing their
+    existing default unchanged. A non-default destination is deliberately
+    narrower than generic worktree-relative publication: every textual path
+    segment must be below ``reservation/task-artifacts/<task>/``. Rejecting
+    ``.``, ``..`` and platform-dependent separators avoids accepting a path
+    which merely *normalizes* under the requested task after traversal.
+    """
+    if rel == default:
+        return rel
+    if not isinstance(rel, str) or not rel:
+        raise ValueError("override output path must be a non-empty string")
+    if os.path.isabs(rel) or "\\" in rel:
+        raise ValueError("override output path must be a relative POSIX path")
+    parts = rel.split("/")
+    expected = ("reservation", "task-artifacts", canary_task)
+    if (len(parts) <= len(expected) or tuple(parts[:3]) != expected
+            or any(part in ("", ".", "..") for part in parts)):
+        raise ValueError("override output path must be under "
+                         "reservation/task-artifacts/<canary-task>/")
+    return rel
+
+
 class Mint:
     def __init__(self, args):
         self.args = args
@@ -229,10 +262,32 @@ class Mint:
         if shutil.which(self.args.cmux_bin) is None and not os.path.exists(self.args.cmux_bin):
             raise Refuse("C3-ping", f"cmux CLI not found at {self.args.cmux_bin!r} — not a CMUX "
                                     "control terminal")
-        pong = self.cmux_json("C3-ping", "ping")
-        if pong != {"pong": True}:
-            raise Refuse("C3-ping", f"unexpected ping response {pong!r}")
-        self.ok("C3-ping", "pong")
+        argv = [self.args.cmux_bin, "ping"]
+        out, _err = self.run_cmd(argv)
+        if out is None:
+            raise Refuse("C3-ping", "cmux ping command failed")
+
+        # CMUX 0.64.20 emits plain `PONG`; earlier canaries emitted the JSON
+        # object below.  Accept only these two exact contracts.  In particular,
+        # do not loosen this into a case-insensitive substring/string check.
+        plain = out.strip()
+        if plain == "PONG":
+            form = "plain-PONG"
+        else:
+            try:
+                pong = json.loads(out)
+            except (TypeError, ValueError):
+                raise Refuse("C3-ping", f"unexpected ping response {plain!r}")
+            if pong != {"pong": True}:
+                raise Refuse("C3-ping", f"unexpected ping response {pong!r}")
+            form = "json-pong"
+
+        self.evidence["C3-ping"] = {
+            "argv": argv,
+            "form": form,
+            "stdout_sha256": hashlib.sha256(out.encode()).hexdigest(),
+        }
+        self.ok("C3-ping", form)
 
     def c4_capabilities(self):
         caps = self.cmux_json("C4-capabilities", "capabilities")
@@ -281,11 +336,18 @@ class Mint:
         self.ok("C6-identify", EXPECTED_BUNDLE_ID)
 
     def c7_reservation_via_ssh(self):
-        argv = [*self.args.ssh_cmd.split(), self.args.dgx_host, "cat", self.args.reservation_path]
+        if self.args.dgx_host != CANONICAL_DGX_HOST:
+            raise Refuse("C7-reservation", f"pinned DGX identity {self.args.dgx_host!r} != "
+                                           f"{CANONICAL_DGX_HOST!r}")
+        if self.args.dgx_transport != CANONICAL_DGX_TRANSPORT:
+            raise Refuse("C7-reservation", f"DGX transport alias {self.args.dgx_transport!r} != "
+                                           f"fixed {CANONICAL_DGX_TRANSPORT!r}")
+        argv = [*self.args.ssh_cmd.split(), self.args.dgx_transport, "cat", self.args.reservation_path]
         out, err = self.run_cmd(argv, timeout=30)
         if out is None:
             raise Refuse("C7-reservation", f"cannot read canonical reservation over ssh from "
-                                           f"{self.args.dgx_host}:{self.args.reservation_path} — "
+                                           f"{self.args.dgx_host} via {self.args.dgx_transport}:"
+                                           f"{self.args.reservation_path} — "
                                            f"wrong host or path? {err}")
         try:
             res = json.loads(out)
@@ -303,9 +365,12 @@ class Mint:
             raise Refuse("C7-reservation", "reservation missing seat workspace/surface ids")
         self.reservation = res
         self.evidence["C7-reservation"] = {
-            "argv": argv, "sha256": hashlib.sha256(out.encode()).hexdigest(),
+            "argv": argv, "pinned_dgx_identity": self.args.dgx_host,
+            "ssh_transport_alias": self.args.dgx_transport,
+            "sha256": hashlib.sha256(out.encode()).hexdigest(),
             "reserved_workspace": self.reserved_ws, "reserved_surface": self.reserved_surface}
-        self.ok("C7-reservation", f"ws={self.reserved_ws} surface={self.reserved_surface}")
+        self.ok("C7-reservation", f"{self.args.dgx_host} via {self.args.dgx_transport}; "
+                f"ws={self.reserved_ws} surface={self.reserved_surface}")
 
     def c8_reserved_seat_live(self):
         tree = self.cmux_json("C8-tree", "--json", "rpc", "system.tree", timeout=30)
@@ -400,7 +465,7 @@ class Mint:
         # `ssh <host> python3 - <worktree> <rel> <payload-b64>`: stdin carries
         # the publish program, the payload travels base64-encoded in argv.
         import base64
-        argv = [*self.args.ssh_cmd.split(), self.args.dgx_host, "python3", "-",
+        argv = [*self.args.ssh_cmd.split(), self.args.dgx_transport, "python3", "-",
                 self.args.worktree, rel, base64.b64encode(payload_bytes).decode()]
         try:
             p = subprocess.run(argv, input=REMOTE_PUBLISH_SNIPPET, capture_output=True,
@@ -416,7 +481,8 @@ class Mint:
         if remote_sha != local_sha:
             raise Refuse(step, f"published sha {remote_sha} != local {local_sha} — round-trip "
                                "verification failed")
-        self.ok(step, f"{self.args.dgx_host}:{os.path.join(self.args.worktree, rel)} sha256:{local_sha}")
+        self.ok(step, f"{self.args.dgx_host} via {self.args.dgx_transport}:"
+                      f"{os.path.join(self.args.worktree, rel)} sha256:{local_sha}")
 
     def c11_publish_evidence(self):
         """Evidence goes FIRST: a receipt may only exist with evidence already
@@ -428,10 +494,10 @@ class Mint:
         pre["receipt_fingerprint"] = self.receipt["receipt_fingerprint"]
         pre["receipt_publish_pending"] = True
         payload = (json.dumps(pre, indent=2, sort_keys=True) + "\n").encode()
-        self._publish(EVIDENCE_REL, payload, "C11-publish-evidence")
+        self._publish(self.args.evidence_rel, payload, "C11-publish-evidence")
 
     def c12_publish_receipt(self):
-        self._publish(RECEIPT_REL, self.receipt_payload, "C12-publish-receipt")
+        self._publish(self.args.receipt_rel, self.receipt_payload, "C12-publish-receipt")
 
     def report(self, verdict, refusal=None):
         rep = {"tool": "mint_cmux_receipt", "verdict": verdict,
@@ -457,8 +523,13 @@ def main(argv):
                     help="UUID of the terminal surface this command is typed in (verified by nonce)")
     ap.add_argument("--ttl", type=int, default=300)
     ap.add_argument("--worktree", default=CANONICAL_WORKTREE)
+    ap.add_argument("--receipt-rel", default=RECEIPT_REL)
+    ap.add_argument("--evidence-rel", default=EVIDENCE_REL)
     ap.add_argument("--reservation-path", default=CANONICAL_RESERVATION)
-    ap.add_argument("--dgx-host", default=CANONICAL_DGX_HOST)
+    ap.add_argument("--dgx-host", default=CANONICAL_DGX_HOST,
+                    help="pinned canonical DGX identity; must remain spark-4be3")
+    ap.add_argument("--dgx-transport", default=CANONICAL_DGX_TRANSPORT,
+                    help="fixed Mac SSH alias for the canonical DGX; must remain dgx")
     ap.add_argument("--ssh-cmd", default="ssh")
     ap.add_argument("--cmux-bin", default="cmux")
     ap.add_argument("--caller-tty", default=None)
@@ -468,6 +539,13 @@ def main(argv):
                     help="also write the step report to this LOCAL path (works even on refusal)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
+    try:
+        args.receipt_rel = validate_task_artifact_rel(
+            args.receipt_rel, args.canary_task, default=RECEIPT_REL)
+        args.evidence_rel = validate_task_artifact_rel(
+            args.evidence_rel, args.canary_task, default=EVIDENCE_REL)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     m = Mint(args)
     refusal = None

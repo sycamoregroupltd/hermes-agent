@@ -102,6 +102,26 @@ def require_identifier(value: str, label: str, pattern: re.Pattern[str]) -> str:
     return value
 
 
+def validate_output_rel(output_rel: str | Path | None, task_id: str) -> Path:
+    """Return the only permitted task-local binding destination.
+
+    The historical default remains the legacy global reservation location.
+    An override is intentionally one exact file name below the named task's
+    reservation artifact directory. This prevents a new issuance from
+    replacing a prior task's binding or escaping via a normalized traversal.
+    """
+    if output_rel is None:
+        return OUTPUT_RELATIVE_PATH
+    raw = str(output_rel)
+    if raw == str(OUTPUT_RELATIVE_PATH):
+        return OUTPUT_RELATIVE_PATH
+    expected = Path("reservation") / "task-artifacts" / task_id / "cmux-interactive-session-binding.json"
+    candidate = Path(raw)
+    if candidate.is_absolute() or "\\" in raw or candidate != expected:
+        raise Refuse("binding output override must be exactly " + str(expected))
+    return candidate
+
+
 def validate_contract(
     *,
     reservation: dict[str, Any],
@@ -184,10 +204,12 @@ def issue_binding(
     session_id: str,
     declared_by: str,
     ttl_seconds: int,
+    output_rel: str | Path | None = None,
     now: dt.datetime | None = None,
 ) -> Path:
     """Validate and atomically issue one binding. No CMUX/provider call occurs."""
     task_id = require_identifier(task_id, "task id", TASK_RE)
+    output_rel = validate_output_rel(output_rel, task_id)
     session_id = require_identifier(session_id, "session id", UUID_RE)
     if not isinstance(declared_by, str) or not declared_by.strip() or len(declared_by) > 200:
         raise Refuse("declared_by missing or malformed")
@@ -214,10 +236,11 @@ def issue_binding(
     expires = min(receipt_expires, now + dt.timedelta(seconds=ttl_seconds))
     if (expires - now).total_seconds() < MIN_BINDING_TTL_SECONDS:
         raise Refuse("CMUX receipt expires too soon for a minimum binding window")
-    output = (worktree / OUTPUT_RELATIVE_PATH).resolve()
+    output = (worktree / output_rel).resolve()
     root = worktree.resolve()
-    if output.parent != (root / "reservation"):
-        raise Refuse("binding output escapes canonical reservation directory")
+    expected_parent = (root / output_rel.parent).resolve()
+    if output.parent != expected_parent or not str(output).startswith(str(root) + os.sep):
+        raise Refuse("binding output escapes permitted worktree-relative destination")
     binding: dict[str, Any] = {
         "binding_kind": BINDING_KIND,
         "schema_version": BINDING_SCHEMA_VERSION,
@@ -281,6 +304,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--declared-by", required=True)
     parser.add_argument("--ttl", type=int, default=300)
+    parser.add_argument("--output-rel", default=None,
+                        help="legacy default unchanged; override only to reservation/task-artifacts/<task-id>/cmux-interactive-session-binding.json")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -289,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
             reservation_path=args.reservation, receipt_path=args.cmux_receipt,
             task_id=args.task_id, session_id=args.session_id,
             declared_by=args.declared_by, ttl_seconds=args.ttl,
+            output_rel=args.output_rel,
         )
         report = {"verdict": "ISSUED", "artifact": str(output)}
         rc = 0

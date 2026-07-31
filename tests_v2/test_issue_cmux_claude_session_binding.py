@@ -99,6 +99,7 @@ def invoke(worktree: Path, board: Path, reservation: Path, receipt: Path, **over
         "session_id": SESSION,
         "declared_by": "no-provider test operator",
         "ttl_seconds": 120,
+        "output_rel": None,
         "now": NOW,
     }
     values.update(overrides)
@@ -129,6 +130,23 @@ def main() -> int:
               30 <= (dt.datetime.fromisoformat(binding["expires_at_utc"].replace("Z", "+00:00")) - NOW).total_seconds() <= 120)
         check("replay refuses O_EXCL replacement",
               "already exists" in refuses(worktree, board, reservation, receipt))
+
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp); worktree, board, reservation, receipt = fixture(root)
+        scoped = Path("reservation") / "task-artifacts" / TASK / "cmux-interactive-session-binding.json"
+        output = invoke(worktree, board, reservation, receipt, output_rel=scoped)
+        check("task-scoped override issues to exact named task artifact path", output == worktree / scoped)
+        check("task-scoped override remains one-shot O_EXCL",
+              "already exists" in refuses(worktree, board, reservation, receipt, output_rel=scoped))
+
+    for unsafe in ("/tmp/binding.json", "../reservation/task-artifacts/t_beefcafe/cmux-interactive-session-binding.json",
+                   "reservation/task-artifacts/t_deadbeef/cmux-interactive-session-binding.json",
+                   "reservation/task-artifacts/t_beefcafe/../t_beefcafe/cmux-interactive-session-binding.json",
+                   "reservation/task-artifacts/t_beefcafe/other.json"):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); worktree, board, reservation, receipt = fixture(root)
+            check(f"unsafe binding override {unsafe!r} refuses",
+                  refuses(worktree, board, reservation, receipt, output_rel=unsafe) != "DID_NOT_REFUSE")
 
     # Fresh fixtures per negative case avoid the expected one-shot artifact.
     cases = []
