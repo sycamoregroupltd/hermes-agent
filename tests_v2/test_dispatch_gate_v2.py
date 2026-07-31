@@ -646,6 +646,7 @@ def main():
         race_args = [sys.executable, GATE, "--json", "--run",
                      "--canary-task", cid_c, "--board-db", board_c, "--packet-card", pkt_c,
                      "--lease-file", os.path.join(td, "race-lease.json"),
+                     "--test-only-allow-lease-file",
                      "--stop-file", os.path.join(td, "STOP"),
                      "--packet-verifier", stub_verifier_ok(td),
                      "--hermes-home", race_home,
