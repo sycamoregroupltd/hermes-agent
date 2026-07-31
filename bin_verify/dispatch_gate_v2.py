@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""dispatch_gate_v2 — governed Claude worker v2 canary dispatch gate.
+
+v2 is SEPARATELY one-shot and cannot invoke Claude unless EVERY gate passes:
+
+  G1  the current A2 activation-packet verifier exits 0 with all checks green
+  G2  a separate exact A2 DISPATCH comment exists on the packet card
+      (strict grammar: APPROVAL A2-DISPATCH by the orchestrator naming the v2
+      canary task id, provider claude-code, the interactive subscription seat,
+      the no-op scope, and a cancellation reference) — exactly one such
+      comment, exact author, all fields present
+  G3  fresh CMUX conditions: seat reservation writer gate (t_d7e6c034) exits 0
+      NOW, and a MAC-MINTED task-bound CMUX reservation receipt validates on
+      DGX (workspace/surface/task/expiry/fingerprint). The CMUX control
+      socket/CLI lives on the Mac; this gate executes on DGX and therefore
+      NEVER calls a DGX-local ~/.cmux — freshness travels as a short-lived
+      receipt minted at the control socket (bin_verify/mint_cmux_receipt.py,
+      run on the Mac control terminal), validated here fail-closed
+  G4  no existing v2 lease — the lease file is minted only by a successful
+      --run and is NON-REUSABLE: its mere existence refuses any further run
+  G5  stop switch absent; v2 canary card exists, blocked, unassigned, 0 runs
+  G6  packet structural caps re-read (one claude-code worker, one run,
+      max_retries 0)
+
+Default invocation is a DRY-RUN that always REFUSES to dispatch (rc=5) and
+reports each gate. Even with every gate green, dispatch requires the explicit
+--run flag. --run re-evaluates all gates, atomically mints+consumes the
+one-shot lease (losing the O_EXCL race to a concurrent dispatcher is a
+DETERMINISTIC refusal, never an uncaught EEXIST — t_4d09e0d9), and only then
+dispatches EXACTLY ONCE through the canonical ClaudeResumeExecutor/task-run
+lifecycle (bin_verify/v2_canary_executor.py). There is NO provider subprocess
+of any kind outside the armed executor's ClaudeProcessRunner boundary — in
+particular no session-creating bootstrap: the session to resume must ALREADY
+exist as a persisted interactive session-binding artifact, gated fail-closed
+here (G3c) and re-validated at dispatch time (never created). The lifecycle:
+session handoff run, operator-declared provenance, persisted dispatcher-owned
+binding, completion fold + CONTINUE route, resume via the armed executor with
+run-bound heartbeat renewal, POST-LAUNCH A3 revocation latch re-checked at
+every heartbeat, terminal fence, sealed native terminal result, binding
+retirement (also on the failure path). Any absent, stale, or mismatched gate
+refuses — fail closed, no retry, no fallback.
+
+v1 (t_4f843ed0 receipt lineage, evidence/controlled-claude-worker-activation-
+receipt.json) is historical evidence only and is never touched or rerun.
+
+Test seams (no-provider tests only): --board-db, --lease-file, --stop-file,
+--packet-verifier, --reservation-tool, --cmux-receipt, --packet-card,
+--workspace-root, --stub-events-dir. Production defaults point at the real
+artifacts, and the no-provider suite always injects canned-event stubs at the
+two provider boundaries.
+"""
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_BOARD_DB = "/home/frank/.hermes/kanban/boards/jarvis-os/kanban.db"
+PACKET_CARD = "t_0119603b"
+DISPATCH_AUTHOR = "jarvis-orchestrator"
+DEFAULT_LEASE = os.path.join(ROOT, "reservation", "v2-dispatch-lease.json")
+DEFAULT_WORKSPACE_ROOT = "/home/frank/.hermes/controlled-worker-activation"
+DEFAULT_STOP = os.path.join(ROOT, "ACTIVATION-STOP")
+DEFAULT_VERIFIER = os.path.join(ROOT, "bin_verify", "verify_activation_packet.py")
+DEFAULT_RESERVATION_TOOL = ("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/"
+                            "t_d7e6c034/bin/seat_reservation.py")
+DEFAULT_RESERVATION_JSON = ("/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/"
+                            "t_d7e6c034/reservation/seat-reservation.json")
+DEFAULT_CMUX_RECEIPT = os.path.join(ROOT, "reservation", "cmux-reservation-receipt.json")
+DEFAULT_SESSION_BINDING = os.path.join(ROOT, "reservation", "cmux-interactive-session-binding.json")
+DEFAULT_BINDING_ISSUER = os.path.join(ROOT, "bin_verify", "issue_cmux_claude_session_binding.py")
+
+# Maximum allowed receipt validity window: freshness must be minted-at-source,
+# short-lived, and non-extendable. A receipt with a longer window is refused.
+RECEIPT_MAX_WINDOW_SECONDS = 600
+
+RC_OK = 0
+RC_REFUSE = 5
+
+
+def receipt_fingerprint(rec):
+    clone = {k: v for k, v in rec.items() if k != "receipt_fingerprint"}
+    return "sha256:" + hashlib.sha256(
+        json.dumps(clone, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def validate_cmux_receipt(receipt_path, reservation_json, canary_task, now_utc=None):
+    """Validate the Mac-minted, task-bound CMUX reservation receipt on DGX.
+
+    Fail-closed: returns (ok, detail). NEVER touches any cmux socket."""
+    now = now_utc or datetime.datetime.now(datetime.timezone.utc)
+    if not os.path.isfile(receipt_path):
+        return False, "receipt missing — mint on the Mac control terminal (mint_cmux_receipt.py)"
+    try:
+        rec = json.load(open(receipt_path, encoding="utf-8"))
+    except ValueError:
+        return False, "receipt unparseable — refuse"
+    if rec.get("receipt_kind") != "mac-cmux-reservation-receipt":
+        return False, "wrong receipt_kind — refuse"
+    if rec.get("receipt_fingerprint") != receipt_fingerprint(rec):
+        return False, "receipt fingerprint mismatch (tampered/corrupt) — refuse"
+    try:
+        minted = datetime.datetime.fromisoformat(rec["minted_at_utc"].replace("Z", "+00:00"))
+        expires = datetime.datetime.fromisoformat(rec["expires_at_utc"].replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return False, "receipt timestamps missing/invalid — refuse"
+    if minted > now:
+        return False, "receipt minted in the future — refuse"
+    if expires <= now:
+        return False, f"receipt STALE (expired {rec['expires_at_utc']}) — re-mint on the Mac"
+    if (expires - minted).total_seconds() > RECEIPT_MAX_WINDOW_SECONDS:
+        return False, f"receipt window exceeds {RECEIPT_MAX_WINDOW_SECONDS}s — refuse"
+    if canary_task and rec.get("canary_task") != canary_task:
+        return False, f"receipt bound to {rec.get('canary_task')!r}, not {canary_task!r} — refuse"
+    try:
+        res = json.load(open(reservation_json, encoding="utf-8"))
+    except (OSError, ValueError):
+        return False, "seat reservation record unreadable — refuse"
+    if rec.get("cmux_workspace_id") != res["seat"]["cmux_workspace_id"]:
+        return False, "receipt workspace does not match seat reservation — refuse"
+    if rec.get("cmux_surface_id") != res["seat"]["cmux_surface_id"]:
+        return False, "receipt surface does not match seat reservation — refuse"
+    return True, ""
+
+# Strict dispatch-comment grammar. All groups mandatory.
+DISPATCH_RE = re.compile(
+    r"^APPROVAL A2-DISPATCH\b"
+    r"(?=.*\bby=jarvis-orchestrator\b)"
+    r"(?=.*\bcanary_task=(t_[0-9a-f]{8})\b)"
+    r"(?=.*\bprovider=claude-code\b)"
+    r"(?=.*\bseat=interactive-subscription\b)"
+    r"(?=.*\bscope=no-op\b)"
+    r"(?=.*\bcancellation=)",
+    re.DOTALL)
+
+
+def gate_result(gates, name, ok, detail=""):
+    gates.append({"gate": name, "pass": bool(ok), "detail": detail if not ok else ""})
+    return ok
+
+
+def evaluate_gates(args):
+    gates = []
+
+    # G1: packet verifier fully green.
+    try:
+        p = subprocess.run([sys.executable, args.packet_verifier, "--json"],
+                           capture_output=True, text=True, timeout=120)
+        v = json.loads(p.stdout) if p.stdout.strip() else {}
+        g1 = (p.returncode == 0 and v.get("verdict") == "ACTIVATION-PREREQUISITES-MET"
+              and v.get("passed") == v.get("total") and v.get("total", 0) >= 21)
+        gate_result(gates, "G1 packet verifier fully green", g1,
+                    f"rc={p.returncode} verdict={v.get('verdict')} {v.get('passed')}/{v.get('total')}")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        gate_result(gates, "G1 packet verifier fully green", False, repr(e))
+
+    # G2: exact A2 dispatch comment (strict grammar, exactly one, exact author).
+    dispatch_task = None
+    try:
+        con = sqlite3.connect(f"file:{args.board_db}?mode=ro", uri=True)
+        rows = con.execute(
+            "select id, author, body from task_comments where task_id=? "
+            "and body like 'APPROVAL A2-DISPATCH%' order by id", (args.packet_card,)).fetchall()
+        matches = []
+        for cid, author, body in rows:
+            m = DISPATCH_RE.match(body)
+            if m and author == DISPATCH_AUTHOR:
+                matches.append((cid, m.group(1), hashlib.sha256(body.encode()).hexdigest()))
+        if len(matches) == 1:
+            cid, dispatch_task, body_sha = matches[0]
+            g2 = True
+            detail = ""
+        elif not matches:
+            g2, detail = False, "no exact A2 dispatch comment present — dispatch not approved"
+        else:
+            g2, detail = False, f"{len(matches)} matching dispatch comments — ambiguous, refuse"
+        gate_result(gates, "G2 exact A2 dispatch comment (grammar+author, exactly one)", g2, detail)
+        if g2 and args.canary_task and dispatch_task != args.canary_task:
+            gate_result(gates, "G2b dispatch comment names the requested canary task", False,
+                        f"comment names {dispatch_task}, requested {args.canary_task}")
+        elif g2:
+            gate_result(gates, "G2b dispatch comment names the requested canary task",
+                        args.canary_task is None or dispatch_task == args.canary_task)
+    except sqlite3.Error as e:
+        gate_result(gates, "G2 exact A2 dispatch comment (grammar+author, exactly one)", False, repr(e))
+        con = None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    # G3: fresh reservation gate + live CMUX workspace match (resolved NOW).
+    try:
+        p = subprocess.run([sys.executable, args.reservation_tool, "validate"],
+                           capture_output=True, text=True, timeout=60)
+        gate_result(gates, "G3a seat reservation writer gate open (fresh)", p.returncode == 0,
+                    f"rc={p.returncode}")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        gate_result(gates, "G3a seat reservation writer gate open (fresh)", False, repr(e))
+    ok, detail = validate_cmux_receipt(args.cmux_receipt, args.reservation_json,
+                                       args.canary_task)
+    gate_result(gates, "G3b Mac-minted CMUX reservation receipt valid (fresh/bound/untampered)",
+                ok, detail)
+
+    # G3c: the session to resume must ALREADY exist as a persisted interactive
+    # session-binding artifact. The v2 path never creates a session — absence
+    # or any defect fails closed here and again at dispatch time.
+    try:
+        import v2_canary_executor as v2ce
+        v2ce.load_session_binding(args.session_binding, expected_task_id=args.canary_task,
+                                  board_db=args.board_db, cmux_receipt_path=args.cmux_receipt,
+                                  reservation_path=args.reservation_json,
+                                  issuer_path=args.binding_issuer)
+        gate_result(gates, "G3c pre-existing interactive session binding valid (never created here)",
+                    True)
+    except Exception as e:
+        gate_result(gates, "G3c pre-existing interactive session binding valid (never created here)",
+                    False, str(e)[:300])
+
+    # G4: non-reusable lease — existence refuses.
+    gate_result(gates, "G4 no existing v2 lease (one-shot, non-reusable)",
+                not os.path.exists(args.lease_file),
+                f"lease exists at {args.lease_file} — v2 already consumed; no reuse, no retry")
+
+    # G5: stop switch + canary card state.
+    gate_result(gates, "G5a stop switch absent", not os.path.exists(args.stop_file),
+                "stop file present — dispatch forbidden")
+    if args.canary_task:
+        try:
+            con = sqlite3.connect(f"file:{args.board_db}?mode=ro", uri=True)
+            row = con.execute("select status, assignee from tasks where id=?",
+                              (args.canary_task,)).fetchone()
+            runs = con.execute("select count(*) from task_runs where task_id=?",
+                               (args.canary_task,)).fetchone()[0]
+            con.close()
+            gate_result(gates, "G5b canary card blocked/unassigned/0-runs",
+                        row == ("blocked", None) and runs == 0, f"row={row} runs={runs}")
+        except sqlite3.Error as e:
+            gate_result(gates, "G5b canary card blocked/unassigned/0-runs", False, repr(e))
+    else:
+        gate_result(gates, "G5b canary card blocked/unassigned/0-runs", False,
+                    "no --canary-task provided — nothing to dispatch, refuse")
+
+    # G6: packet structural caps re-read.
+    try:
+        pkt = json.load(open(os.path.join(ROOT, "ACTIVATION-PACKET-CLAUDE-WORKER.json"),
+                             encoding="utf-8"))
+        gate_result(gates, "G6 packet caps: one claude-code worker, one run, no retry",
+                    pkt["worker"]["count_exactly"] == 1
+                    and pkt["worker"]["provider"] == "claude-code"
+                    and pkt["caps"]["one_run_only"] is True
+                    and pkt["caps"]["max_retries"] == 0)
+    except (OSError, ValueError, KeyError) as e:
+        gate_result(gates, "G6 packet caps: one claude-code worker, one run, no retry", False, repr(e))
+
+    return gates, dispatch_task
+
+
+def mint_lease(lease_file, canary_task):
+    """Atomically mint the one-shot lease. Returns False on contention (EEXIST)
+    instead of raising: a concurrent runner losing the O_EXCL race must get a
+    deterministic REFUSE, never an uncaught traceback (t_4d09e0d9)."""
+    lease = {
+        "lease_kind": "v2-dispatch-lease", "one_shot": True, "reusable": False,
+        "canary_task": canary_task,
+        "minted_at_utc": datetime.datetime.now(datetime.timezone.utc)
+            .isoformat().replace("+00:00", "Z"),
+        "consumed": True,
+        "note": "existence of this file refuses all future v2 runs (G4); no retry",
+    }
+    os.makedirs(os.path.dirname(lease_file), exist_ok=True)
+    try:
+        fd = os.open(lease_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(lease, fh, indent=2, sort_keys=True)
+    return True
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="dispatch_gate_v2")
+    ap.add_argument("--run", action="store_true",
+                    help="EXPLICIT dispatch. Without it this is a dry-run that always refuses.")
+    ap.add_argument("--canary-task", default=None)
+    ap.add_argument("--board-db", default=DEFAULT_BOARD_DB)
+    ap.add_argument("--lease-file", default=DEFAULT_LEASE)
+    ap.add_argument("--stop-file", default=DEFAULT_STOP)
+    ap.add_argument("--packet-verifier", default=DEFAULT_VERIFIER)
+    ap.add_argument("--reservation-tool", default=DEFAULT_RESERVATION_TOOL)
+    ap.add_argument("--reservation-json", default=DEFAULT_RESERVATION_JSON)
+    ap.add_argument("--workspace-root", default=DEFAULT_WORKSPACE_ROOT,
+                    help="declared root under which the canary task workspace is created")
+    ap.add_argument("--stub-events-dir", default=None,
+                    help="TEST ONLY: canned bootstrap/resume streams for the canonical "
+                         "executor harness; production leaves this unset")
+    ap.add_argument("--packet-card", default=PACKET_CARD,
+                    help="packet card holding the A2 dispatch comment (test seam)")
+    ap.add_argument("--session-binding", default=DEFAULT_SESSION_BINDING,
+                    help="PRE-EXISTING persisted interactive session-binding artifact "
+                         "(G3c); the v2 path never creates a session")
+    ap.add_argument("--binding-issuer", default=DEFAULT_BINDING_ISSUER,
+                    help="reviewed CMUX binding issuer whose exact source hash is pinned by the artifact")
+    ap.add_argument("--cmux-receipt", default=DEFAULT_CMUX_RECEIPT,
+                    help="Mac-minted task-bound CMUX reservation receipt (validated on DGX)")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args(argv)
+
+    gates, dispatch_task = evaluate_gates(args)
+    all_green = all(g["pass"] for g in gates)
+
+    if not args.run:
+        verdict = "WOULD-DISPATCH (dry-run: --run required)" if all_green else "REFUSE"
+        rc = RC_REFUSE  # a dry-run NEVER authorizes and never mints a lease
+    elif not all_green:
+        verdict, rc = "REFUSE", RC_REFUSE
+    elif not mint_lease(args.lease_file, dispatch_task):
+        # A concurrent runner won the O_EXCL race between gate evaluation and
+        # minting: deterministic refusal, no provider touched, no retry.
+        gate_result(gates, "G4r one-shot lease race lost (concurrent dispatcher)", False,
+                    f"lease appeared at {args.lease_file} after gate evaluation — "
+                    "another dispatcher won the one-shot lease; refuse, no retry")
+        verdict, rc = "REFUSE (lease contention)", RC_REFUSE
+    else:
+        # Lease consumed: dispatch EXACTLY ONCE through the canonical
+        # ClaudeResumeExecutor/task-run lifecycle (t_4d09e0d9). There is no
+        # raw provider subprocess path; a lifecycle failure is terminal.
+        import v2_canary_executor as v2ce
+        runner = v2ce.StubRunner(args.stub_events_dir) if args.stub_events_dir else None
+        rec_path = os.path.join(ROOT, "evidence", "v2-dispatch-record.json")
+        try:
+            record = v2ce.dispatch_canary(
+                board_db=args.board_db, canary_task=dispatch_task,
+                workspace_root=args.workspace_root,
+                session_binding_path=args.session_binding,
+                cmux_receipt_path=args.cmux_receipt,
+                reservation_path=args.reservation_json,
+                issuer_path=args.binding_issuer,
+                runner=runner,
+            )
+            record["lease_file"] = args.lease_file
+            verdict, rc = "DISPATCHED-ONCE", RC_OK
+        except Exception as exc:
+            record = dict(getattr(exc, "v2_record", {}) or {})
+            record.update({
+                "record_kind": "v2-dispatch-record", "canary_task": dispatch_task,
+                "executor": "ClaudeResumeExecutor", "status": "DISPATCH-ERRORED",
+                "error_type": type(exc).__name__, "error": str(exc)[:500],
+                "lease_file": args.lease_file,
+            })
+            verdict, rc = "DISPATCH-ERRORED (no retry)", RC_REFUSE
+        with open(rec_path, "w", encoding="utf-8") as fh:
+            json.dump(record, fh, indent=2, sort_keys=True)
+
+    report = {"verdict": verdict, "run_flag": args.run, "all_gates_green": all_green,
+              "gates": gates, "rc": rc}
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        for g in gates:
+            print(("PASS" if g["pass"] else "FAIL") + f": {g['gate']}"
+                  + (f" — {g['detail']}" if g["detail"] else ""))
+        print(f"\nVERDICT: {verdict}")
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
