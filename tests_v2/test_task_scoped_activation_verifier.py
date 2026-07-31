@@ -60,8 +60,27 @@ def main():
         packet["packet_fingerprint"] = fp(packet)
         open(packet_path, "w").write(json.dumps(packet, sort_keys=True))
         rc, out = run(packet_path, task)
-        check("canonical schema-v2 packet verifies trusted source/evidence pins",
-              rc == 0 and out["verdict"] == "ACTIVATION-PREREQUISITES-MET", failures(out))
+        check("canonical schema-v2 packet without external A2/complete manifest fails closed",
+              rc == 4 and "mandatory executor/gate source" in failures(out), failures(out))
+
+        import importlib.util, sqlite3
+        spec = importlib.util.spec_from_file_location("verifier_mod", VERIFIER)
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        db = os.path.join(task_dir, "a2.db")
+        con = sqlite3.connect(db); con.execute("create table task_comments (id integer primary key, task_id text, author text, body text)")
+        packet["ownership"] = {"observed_head": head}; packet["packet_fingerprint"] = fp(packet)
+        body = (f"APPROVAL A2-DISPATCH canary_task={task} provider=claude-code seat=interactive-subscription scope=no-op cancellation=stop "
+                f"packet_fingerprint={packet['packet_fingerprint']} observed_head={head}")
+        con.execute("insert into task_comments values (1,?,?,?)", (task, "jarvis-orchestrator", body)); con.commit(); con.close()
+        packet["approval_anchor"] = {"comment_id": 1}
+        packet["packet_fingerprint"] = fp(packet)
+        # packet fingerprint changes, so update external approval body with final pin.
+        con = sqlite3.connect(db); con.execute("update task_comments set body=? where id=1", (body.replace(body.split("packet_fingerprint=")[1].split()[0], packet["packet_fingerprint"]),)); con.commit(); con.close()
+        ok, detail = mod.validate_task_a2(packet, db)
+        check("external A2 validates exact task/author/semantic fingerprint/head", ok, detail)
+        tampered = dict(packet); tampered["packet_fingerprint"] = "sha256:forged"
+        ok, _ = mod.validate_task_a2(tampered, db)
+        check("packet replacement after valid A2 is refused", not ok)
 
         forged = dict(packet); forged["source_root"] = "/tmp/forged-root"; forged["packet_fingerprint"] = fp(forged)
         forged_path = "/tmp/forged-activation-packet.json"

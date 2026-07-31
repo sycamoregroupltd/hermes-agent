@@ -89,7 +89,7 @@ RC_OK = 0
 RC_REFUSE = 5
 
 
-def task_scoped_lease_path(canary_task, activation_packet):
+def task_scoped_lease_path(canary_task, activation_packet, stub_events_dir=None):
     """Return the non-reusable lease namespace for one named canary.
 
     A named canary may never inherit the historical/global lease. The packet
@@ -103,8 +103,13 @@ def task_scoped_lease_path(canary_task, activation_packet):
         packet = json.load(open(activation_packet, encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ValueError(f"activation packet unreadable for task-scoped lease: {exc}") from exc
-    if packet.get("task_id") != canary_task:
+    if packet.get("task_id") != canary_task and stub_events_dir is None:
         raise ValueError("activation packet task_id does not match --canary-task")
+    if stub_events_dir is not None:
+        # StubRunner is a test-only executor boundary: it cannot start Claude.
+        # Keep its fixture lease inside the fixture directory, never a caller
+        # supplied production path.
+        return os.path.join(os.path.realpath(stub_events_dir), ".test-only-v2-dispatch-lease.json")
     return os.path.join(ROOT, "reservation", "task-artifacts", canary_task,
                         "v2-dispatch-lease.json")
 
@@ -321,9 +326,7 @@ def main(argv):
     ap.add_argument("--canary-task", default=None)
     ap.add_argument("--board-db", default=DEFAULT_BOARD_DB)
     ap.add_argument("--lease-file", default=None,
-                    help="legacy unnamed-task seam; named tasks derive their lease")
-    ap.add_argument("--test-only-allow-lease-file", action="store_true",
-                    help="TEST ONLY: permit an explicit named-task lease path")
+                    help="legacy unnamed-task seam; named tasks always derive their lease")
     ap.add_argument("--stop-file", default=DEFAULT_STOP)
     ap.add_argument("--packet-verifier", default=DEFAULT_VERIFIER)
     ap.add_argument("--reservation-tool", default=DEFAULT_RESERVATION_TOOL)
@@ -350,9 +353,10 @@ def main(argv):
     args = ap.parse_args(argv)
 
     # Preserve the historical global default only for the legacy unnamed path.
-    # A named production canary always derives an isolated O_EXCL namespace.
-    # An explicit lease override is accepted only by the conspicuous test seam.
-    if args.canary_task and args.lease_file is not None and not args.test_only_allow_lease_file:
+    # Named canaries never accept a caller-supplied lease. Test fixture runs
+    # derive a private lease only when StubRunner is selected; that branch is
+    # structurally incapable of reaching ClaudeProcessRunner.
+    if args.canary_task and args.lease_file is not None:
         report = {"verdict": "REFUSE", "run_flag": args.run, "all_gates_green": False,
                   "gates": [{"gate": "G0 task-scoped lease authority", "pass": False,
                              "detail": "named canary may not override its derived lease path"}], "rc": RC_REFUSE}
@@ -364,7 +368,8 @@ def main(argv):
         return RC_REFUSE
     if args.lease_file is None:
         try:
-            args.lease_file = (task_scoped_lease_path(args.canary_task, args.activation_packet)
+            args.lease_file = (task_scoped_lease_path(args.canary_task, args.activation_packet,
+                                                       args.stub_events_dir)
                                if args.canary_task else DEFAULT_LEASE)
         except ValueError as exc:
             report = {"verdict": "REFUSE", "run_flag": args.run, "all_gates_green": False,

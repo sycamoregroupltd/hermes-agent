@@ -38,8 +38,17 @@ def sha(path):
 
 def run_gate(*extra):
     extra = list(extra)
-    if "--lease-file" in extra and "--test-only-allow-lease-file" not in extra:
-        extra.append("--test-only-allow-lease-file")
+    if "--canary-task" in extra and "--lease-file" in extra:
+        li = extra.index("--lease-file")
+        lease = extra[li + 1]
+        while "--lease-file" in extra:
+            li = extra.index("--lease-file")
+            del extra[li:li + 2]
+        if "--stub-events-dir" not in extra:
+            extra.extend(["--stub-events-dir", lease + ".fixture"])
+        if "--activation-packet" not in extra:
+            board = extra[extra.index("--board-db") + 1] if "--board-db" in extra else lease
+            extra.extend(["--activation-packet", activation_packet(os.path.dirname(board))])
     p = subprocess.run([sys.executable, GATE, "--json", *extra], capture_output=True, text=True)
     rep = json.loads(p.stdout) if p.stdout.strip() else {}
     return p.returncode, rep
@@ -500,7 +509,7 @@ def main():
                            "--stub-events-dir", no_home_stub)
         check("unset HERMES_HOME is refused before lease/provider dispatch (G3d)",
               rc == 5 and gate_status(rep, "G3d") is False
-              and not os.path.exists(os.path.join(td, "lease-no-home.json"))
+              and not os.path.exists(os.path.join(no_home_stub, ".test-only-v2-dispatch-lease.json"))
               and stub_calls(no_home_stub) == [])
         # 4. Stale/failing packet verifier refuses even with --run (provider untouched).
         rc, rep = run_gate("--run", "--canary-task", "t_beefcafe", "--board-db", board,
@@ -596,7 +605,7 @@ def main():
               and record.get("session_binding_gate", {}).get("session_sha256")
               == hashlib.sha256(CMUX_SESSION.encode()).hexdigest())
         check("one-shot lease minted and marked non-reusable",
-              json.load(open(os.path.join(td, "lease.json")))["reusable"] is False)
+              json.load(open(os.path.join(run_stub, ".test-only-v2-dispatch-lease.json")))["reusable"] is False)
         resume_argv = record.get("resume_argv", [])
         check("canonical resume argv rendered from persisted binding (claude --resume)",
               resume_argv[:2] == ["claude", "--resume"] and CMUX_SESSION in resume_argv)
@@ -645,8 +654,7 @@ def main():
         os.makedirs(race_home)
         race_args = [sys.executable, GATE, "--json", "--run",
                      "--canary-task", cid_c, "--board-db", board_c, "--packet-card", pkt_c,
-                     "--lease-file", os.path.join(td, "race-lease.json"),
-                     "--test-only-allow-lease-file",
+                     "--stub-events-dir", race_stub,
                      "--stop-file", os.path.join(td, "STOP"),
                      "--packet-verifier", stub_verifier_ok(td),
                      "--hermes-home", race_home,

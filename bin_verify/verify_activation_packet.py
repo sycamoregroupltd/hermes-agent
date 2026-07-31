@@ -44,6 +44,31 @@ def packet_fingerprint(p):
 CANONICAL_ARTIFACT_ROOT = os.path.realpath(os.path.join(ROOT, "reservation", "task-artifacts"))
 CANONICAL_BOARD_ROOT = "/home/frank/.hermes/kanban/boards/jarvis-os/workspaces"
 
+CANONICAL_BOARD_DB = "/home/frank/.hermes/kanban/boards/jarvis-os/kanban.db"
+MANDATORY_SOURCE_FILES = (
+    "bin_verify/verify_activation_packet.py", "bin_verify/dispatch_gate_v2.py",
+    "bin_verify/v2_canary_executor.py", "bin_verify/mint_cmux_receipt.py",
+    "bin_verify/issue_cmux_claude_session_binding.py", "bin_verify/cmux_dual_anchor_contract.py",
+)
+A2_AUTHOR = "jarvis-orchestrator"
+
+
+def validate_task_a2(packet, board_db=CANONICAL_BOARD_DB):
+    """Validate external board A2 binding; packet cannot self-authorize."""
+    ap = packet.get("approval_anchor", {})
+    try:
+        cid = int(ap["comment_id"]); task = packet["task_id"]; head = packet["ownership"]["observed_head"]
+        con = sqlite3.connect(f"file:{board_db}?mode=ro", uri=True)
+        row = con.execute("select task_id,author,body from task_comments where id=?", (cid,)).fetchone(); con.close()
+        if not row or row[0] != task or row[1] != A2_AUTHOR: return False, "A2 comment absent/task/author mismatch"
+        body = row[2]
+        required = ("APPROVAL A2-DISPATCH", f"canary_task={task}", "provider=claude-code",
+                    "seat=interactive-subscription", "scope=no-op", "cancellation=",
+                    f"packet_fingerprint={packet.get('packet_fingerprint')}", f"observed_head={head}")
+        if not all(x in body for x in required): return False, "A2 semantic/fingerprint/head contract mismatch"
+        return True, ""
+    except (KeyError, ValueError, sqlite3.Error) as exc: return False, str(exc)
+
 
 def canonical_packet_path(task_id):
     if not isinstance(task_id, str) or not __import__("re").fullmatch(r"t_[0-9a-f]{8}", task_id):
@@ -138,6 +163,8 @@ def main(argv=None):
         evidence_hashes = reviewed.get("evidence", {})
         check("schema-v2 has nonempty reviewed source hashes", isinstance(source_hashes, dict) and bool(source_hashes))
         check("schema-v2 has nonempty reviewed evidence hashes", isinstance(evidence_hashes, dict) and bool(evidence_hashes))
+        check("schema-v2 includes every mandatory executor/gate source", set(MANDATORY_SOURCE_FILES).issubset(source_hashes),
+              "missing=" + repr(sorted(set(MANDATORY_SOURCE_FILES) - set(source_hashes))))
         for category in ("sources", "review_docs", "evidence"):
             for rel, want in reviewed.get(category, {}).items():
                 try:
@@ -167,6 +194,8 @@ def main(argv=None):
         check("schema-v2 exactly one Claude worker/no-retry caps", worker.get("count_exactly") == 1
               and worker.get("provider") == "claude-code" and caps.get("one_run_only") is True
               and caps.get("max_retries") == 0)
+        a2_ok, a2_detail = validate_task_a2(p)
+        check("schema-v2 external exact A2 binds packet fingerprint and head", a2_ok, a2_detail)
     else:
         check("packet schema is supported", False, f"schema_version={schema!r}")
 
