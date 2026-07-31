@@ -32,11 +32,16 @@ MAX_RECEIPT_WINDOW_SECONDS = 600
 MIN_BINDING_TTL_SECONDS = 30
 MAX_BINDING_TTL_SECONDS = 600
 OUTPUT_RELATIVE_PATH = Path("reservation/cmux-interactive-session-binding.json")
+CALLER_PROOF_MARKER = "nonce-read-screen"
 TASK_RE = re.compile(r"^t_[0-9a-f]{8}$")
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+NONCE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+# Stable CMUX ref for a surface (the `ref` field system.tree reports); a
+# reservation may pin the seat by ref instead of raw tree UUID.
+STABLE_SURFACE_REF_RE = re.compile(r"^surface:[0-9]+$")
 
 
 class Refuse(RuntimeError):
@@ -122,6 +127,39 @@ def validate_output_rel(output_rel: str | Path | None, task_id: str) -> Path:
     return candidate
 
 
+def validate_caller_context(receipt: dict[str, Any], seat: dict[str, Any]) -> None:
+    """Defence in depth (t_a6365be3): re-assert the receipt's caller claim.
+
+    The Mac mint's C9 proves — by nonce read-screen — that the caller IS the
+    exact reserved surface before any receipt exists. DGX treats the receipt
+    strictly as data, so this issuer re-checks that claim structurally: a
+    caller_context that is absent, malformed, foreign to the reservation
+    seat, or re-signed around a foreign caller refuses. When the reservation
+    pins the seat by stable ref, the receipt keeps the ref verbatim at top
+    level while caller_context records the tree ID the mint resolved on the
+    Mac; DGX cannot resolve refs (it never touches a CMUX socket), so that
+    field must then be exactly a well-formed raw tree ID — never a ref."""
+    caller = receipt.get("caller_context")
+    if not isinstance(caller, dict):
+        raise Refuse("CMUX receipt caller_context missing or malformed")
+    if caller.get("proof") != CALLER_PROOF_MARKER:
+        raise Refuse("CMUX receipt caller_context proof marker is not nonce-read-screen")
+    nonce = caller.get("nonce_sha256")
+    if not isinstance(nonce, str) or not NONCE_SHA256_RE.fullmatch(nonce):
+        raise Refuse("CMUX receipt caller_context nonce digest is not sha256 hex form")
+    tty = caller.get("tty")
+    if not isinstance(tty, str) or not tty.strip():
+        raise Refuse("CMUX receipt caller_context tty missing or malformed")
+    if caller.get("workspace_id") != seat["cmux_workspace_id"]:
+        raise Refuse("CMUX receipt caller_context workspace does not match reservation seat")
+    surface = caller.get("surface_id")
+    if STABLE_SURFACE_REF_RE.fullmatch(seat["cmux_surface_id"]):
+        if not isinstance(surface, str) or not UUID_RE.fullmatch(surface):
+            raise Refuse("CMUX receipt caller_context surface is not a resolved raw tree id")
+    elif surface != seat["cmux_surface_id"]:
+        raise Refuse("CMUX receipt caller_context surface does not match reservation seat")
+
+
 def validate_contract(
     *,
     reservation: dict[str, Any],
@@ -162,6 +200,7 @@ def validate_contract(
     control = receipt.get("control_socket")
     if not isinstance(control, dict) or control.get("cmux_daemon_version") != seat["cmux_daemon_version"]:
         raise Refuse("CMUX receipt daemon identity does not match reservation")
+    validate_caller_context(receipt, seat)
     issued = parse_utc(receipt.get("minted_at_utc"), "CMUX receipt minted_at_utc")
     expires = parse_utc(receipt.get("expires_at_utc"), "CMUX receipt expires_at_utc")
     if issued > now:

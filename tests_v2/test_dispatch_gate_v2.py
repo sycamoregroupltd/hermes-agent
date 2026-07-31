@@ -225,6 +225,10 @@ def make_receipt(td, name="receipt.json", tamper=False, **overrides):
         "canary_task": "t_beefcafe",
         "cmux_workspace_id": res["seat"]["cmux_workspace_id"],
         "cmux_surface_id": res["seat"]["cmux_surface_id"],
+        "caller_context": {"surface_id": res["seat"]["cmux_surface_id"],
+                           "workspace_id": res["seat"]["cmux_workspace_id"],
+                           "tty": "/dev/ttys012", "proof": "nonce-read-screen",
+                           "nonce_sha256": hashlib.sha256(b"gate-fixture-nonce").hexdigest()},
         "control_socket": {"bundle_identifier": "com.cmuxterm.app", "cmux_daemon_version": res["seat"]["cmux_daemon_version"]},
     }
     rec.update(overrides)
