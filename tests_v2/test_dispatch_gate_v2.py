@@ -77,13 +77,15 @@ def make_stub(td, name, script):
 
 def stub_verifier_ok(td):
     return make_stub(td, "verifier_ok.py",
-                     "#!/usr/bin/env python3\nimport json\n"
+                     "#!/usr/bin/env python3\nimport argparse,json\n"
+                     "p=argparse.ArgumentParser();p.add_argument('--activation-packet');p.add_argument('--task-id');p.add_argument('--json',action='store_true');p.parse_args()\n"
                      "print(json.dumps({'verdict':'ACTIVATION-PREREQUISITES-MET','passed':21,'total':21}))\n")
 
 
 def stub_verifier_fail(td):
     return make_stub(td, "verifier_fail.py",
-                     "#!/usr/bin/env python3\nimport json,sys\n"
+                     "#!/usr/bin/env python3\nimport argparse,json,sys\n"
+                     "p=argparse.ArgumentParser();p.add_argument('--activation-packet');p.add_argument('--task-id');p.add_argument('--json',action='store_true');p.parse_args()\n"
                      "print(json.dumps({'verdict':'FAIL-CLOSED','passed':19,'total':21}))\nsys.exit(4)\n")
 
 
@@ -98,6 +100,7 @@ def activation_packet(td):
     path = os.path.join(td, "activation-packet.json")
     if not os.path.exists(path):
         open(path, "w").write(json.dumps({
+            "task_id": "t_beefcafe",
             "worker": {"count_exactly": 1, "provider": "claude-code"},
             "caps": {"one_run_only": True, "max_retries": 0},
         }, sort_keys=True))
@@ -442,6 +445,38 @@ def main():
         check("all-green dry-run still refuses (rc=5)", rc == 5)
         check("all-green dry-run: no lease, provider not called",
               not os.path.exists(os.path.join(td, "lease.json")) and stub_calls(dry_stub) == [])
+
+        # A named task with no lease override receives its own source-root
+        # namespace. A historical global lease must not poison that namespace.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("gate_task_scope", GATE)
+        gate_task_scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate_task_scope)
+        scoped_packet = activation_packet(td)
+        scoped_lease = gate_task_scope.task_scoped_lease_path("t_beefcafe", scoped_packet)
+        historical_lease = os.path.join(ROOT, "reservation", "v2-dispatch-lease.json")
+        historical_before = open(historical_lease, "rb").read() if os.path.exists(historical_lease) else None
+        os.makedirs(os.path.join(td, "profile-scoped"), exist_ok=True)
+        rc, rep = run_gate("--canary-task", "t_beefcafe", "--board-db", board,
+                           "--activation-packet", scoped_packet,
+                           "--packet-verifier", stub_verifier_ok(td),
+                           "--reservation-tool", stub_reservation_ok(td),
+                           "--reservation-json", reservation_path(td),
+                           "--cmux-receipt", make_receipt(td, "r-scoped.json"),
+                           "--session-binding", make_cmux_binding_bundle(td, board, name="scoped")[1],
+                           "--hermes-home", os.path.join(td, "profile-scoped"))
+        check("named task derives isolated lease path, not global historical lease",
+              rc == 5 and not os.path.exists(scoped_lease)
+              and (open(historical_lease, "rb").read() if os.path.exists(historical_lease) else None) == historical_before)
+        bad_packet = os.path.join(td, "bad-task-packet.json")
+        bad = json.load(open(scoped_packet)); bad["task_id"] = "t_deadbeef"
+        open(bad_packet, "w").write(json.dumps(bad))
+        try:
+            gate_task_scope.task_scoped_lease_path("t_beefcafe", bad_packet)
+            mismatch_refused = False
+        except ValueError:
+            mismatch_refused = True
+        check("task-scoped lease rejects packet task mismatch", mismatch_refused)
 
 
         # G3d is a provider boundary: it must refuse an otherwise-valid

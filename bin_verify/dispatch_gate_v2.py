@@ -89,6 +89,26 @@ RC_OK = 0
 RC_REFUSE = 5
 
 
+def task_scoped_lease_path(canary_task, activation_packet):
+    """Return the non-reusable lease namespace for one named canary.
+
+    A named canary may never inherit the historical/global lease. The packet
+    binds the requested task to its declared task id; the namespace itself
+    remains inside this reviewed source tree rather than a packet-controlled
+    arbitrary output path.
+    """
+    if not isinstance(canary_task, str) or not re.fullmatch(r"t_[0-9a-f]{8}", canary_task):
+        raise ValueError("named canary task id is invalid")
+    try:
+        packet = json.load(open(activation_packet, encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"activation packet unreadable for task-scoped lease: {exc}") from exc
+    if packet.get("task_id") != canary_task:
+        raise ValueError("activation packet task_id does not match --canary-task")
+    return os.path.join(ROOT, "reservation", "task-artifacts", canary_task,
+                        "v2-dispatch-lease.json")
+
+
 def receipt_fingerprint(rec):
     return dual_anchor.receipt_fingerprint(rec)
 
@@ -139,7 +159,11 @@ def evaluate_gates(args):
 
     # G1: packet verifier fully green.
     try:
-        p = subprocess.run([sys.executable, args.packet_verifier, "--json"],
+        verifier_argv = [sys.executable, args.packet_verifier, "--json"]
+        if args.canary_task:
+            verifier_argv.extend(["--activation-packet", args.activation_packet,
+                                  "--task-id", args.canary_task])
+        p = subprocess.run(verifier_argv,
                            capture_output=True, text=True, timeout=120)
         v = json.loads(p.stdout) if p.stdout.strip() else {}
         g1 = (p.returncode == 0 and v.get("verdict") == "ACTIVATION-PREREQUISITES-MET"
@@ -296,7 +320,8 @@ def main(argv):
                     help="EXPLICIT dispatch. Without it this is a dry-run that always refuses.")
     ap.add_argument("--canary-task", default=None)
     ap.add_argument("--board-db", default=DEFAULT_BOARD_DB)
-    ap.add_argument("--lease-file", default=DEFAULT_LEASE)
+    ap.add_argument("--lease-file", default=None,
+                    help="test seam only; named canaries derive a task-scoped lease by default")
     ap.add_argument("--stop-file", default=DEFAULT_STOP)
     ap.add_argument("--packet-verifier", default=DEFAULT_VERIFIER)
     ap.add_argument("--reservation-tool", default=DEFAULT_RESERVATION_TOOL)
@@ -321,6 +346,24 @@ def main(argv):
                     help="Mac-minted task-bound CMUX reservation receipt (validated on DGX)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
+
+    # Preserve the historical global default only for the legacy unnamed path.
+    # A named canary is bound to the task id declared in its activation packet
+    # and receives a distinct O_EXCL lease namespace.
+    if args.lease_file is None:
+        try:
+            args.lease_file = (task_scoped_lease_path(args.canary_task, args.activation_packet)
+                               if args.canary_task else DEFAULT_LEASE)
+        except ValueError as exc:
+            report = {"verdict": "REFUSE", "run_flag": args.run, "all_gates_green": False,
+                      "gates": [{"gate": "G0 task-scoped packet/lease binding", "pass": False,
+                                 "detail": str(exc)}], "rc": RC_REFUSE}
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                print("FAIL: G0 task-scoped packet/lease binding — " + str(exc))
+                print("\nVERDICT: REFUSE")
+            return RC_REFUSE
 
     gates, dispatch_task = evaluate_gates(args)
     all_green = all(g["pass"] for g in gates)
