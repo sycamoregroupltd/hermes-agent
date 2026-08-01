@@ -145,7 +145,8 @@ class TestCLIJudgeGate:
     """
 
     def _run(self, monkeypatch, *, goal_mode=True, judge_available=True,
-             verdict="done", reason="", complete_ok=True, summary="done"):
+             verdict="done", reason="", complete_ok=True, summary="done",
+             transport_failed=False, raise_exc=None):
         import argparse
         import types
         from unittest.mock import MagicMock
@@ -157,6 +158,8 @@ class TestCLIJudgeGate:
             body="acceptance: criteria",
         )
         fake_conn = MagicMock()
+        # Capture audit events written via kb._append_event during the run.
+        events: list = []
         complete_calls: list = []
 
         def fake_connect_closing():
@@ -170,9 +173,14 @@ class TestCLIJudgeGate:
             complete_calls.append(tid)
             return complete_ok
 
+        # _append_event(conn, task_id, kind, payload=None, *, run_id=None)
+        def fake_append_event(conn, task_id, kind, payload=None, *, run_id=None):
+            events.append((task_id, kind, payload))
+
         monkeypatch.setattr("hermes_cli.kanban.kb.get_task", lambda conn, tid: fake_task)
         monkeypatch.setattr("hermes_cli.kanban.kb.complete_task", fake_complete_task)
         monkeypatch.setattr("hermes_cli.kanban.kb.connect_closing", fake_connect_closing)
+        monkeypatch.setattr("hermes_cli.kanban.kb._append_event", fake_append_event)
         monkeypatch.setattr("hermes_cli.kanban._worker_run_id_for", lambda _: None)
 
         _aux_client = (object(), "judge-model") if judge_available else (None, None)
@@ -182,16 +190,22 @@ class TestCLIJudgeGate:
         )
         # Match the real judge_goal contract:
         # (verdict, reason, parse_failed, wait_directive, transport_failed)
-        monkeypatch.setattr(
-            "hermes_cli.goals.judge_goal",
-            lambda **kw: (verdict, reason, False, None, False),
-        )
+        if raise_exc is not None:
+            def _raise(**kw):
+                raise raise_exc
+            monkeypatch.setattr("hermes_cli.goals.judge_goal", _raise)
+        else:
+            monkeypatch.setattr(
+                "hermes_cli.goals.judge_goal",
+                lambda **kw: (verdict, reason, False, None, transport_failed),
+            )
 
         args = argparse.Namespace(task_ids=["t1"], summary=summary, result=None, metadata=None)
-        return _cmd_complete(args), complete_calls
+        rc = _cmd_complete(args)
+        return rc, complete_calls, events
 
     def test_judge_rejects_premature_completion(self, monkeypatch):
-        rc, complete_calls = self._run(
+        rc, complete_calls, _ = self._run(
             monkeypatch, verdict="continue", reason="criteria not met"
         )
         assert rc != 0, "judge rejection must produce non-zero exit code"
@@ -199,9 +213,55 @@ class TestCLIJudgeGate:
             "complete_task must NOT be invoked when the judge rejects"
         )
 
+    def test_judge_transport_failure_fails_open(self, monkeypatch):
+        """A judge transport/API failure must NOT wedge completion.
+
+        Regression guard for the 19 JUDGE_OUTAGE cards: when judge_goal
+        returns transport_failed=True (or raises GeminiAPIError) the CLI must
+        allow completion and record a goal_judge_unavailable audit event.
+        """
+        rc, complete_calls, events = self._run(
+            monkeypatch, transport_failed=True
+        )
+        assert rc == 0, "transport failure must fail OPEN (allow completion)"
+        assert complete_calls == ["t1"], "completion must proceed on transport failure"
+        kinds = [k for (_t, k, _p) in events]
+        assert "goal_judge_unavailable" in kinds, (
+            "a goal_judge_unavailable audit event must be recorded for re-verify"
+        )
+
+    def test_judge_exception_fails_open(self, monkeypatch):
+        """An exception from judge_goal (e.g. GeminiAPIError) must fail open."""
+        class _GeminiAPIError(Exception):
+            pass
+        rc, complete_calls, events = self._run(
+            monkeypatch, raise_exc=_GeminiAPIError("503 upstream")
+        )
+        assert rc == 0, "judge exception must fail OPEN (allow completion)"
+        assert complete_calls == ["t1"], "completion must proceed on judge exception"
+        kinds = [k for (_t, k, _p) in events]
+        assert "goal_judge_unavailable" in kinds
+
+    def test_genuine_content_rejection_still_blocks(self, monkeypatch):
+        """A real judge 'continue' verdict (work not done) still blocks.
+
+        This confirms the fail-open only applies to INFRASTRUCTURE faults,
+        not substantive quality rejections (GOAL_JUDGE_PROVIDER_ERROR_QUARANTINE
+        on actual bad content stays intact).
+        """
+        rc, complete_calls, events = self._run(
+            monkeypatch, verdict="continue", reason="acceptance criteria unmet"
+        )
+        assert rc != 0, "genuine rejection must still block completion"
+        assert complete_calls == [], "rejection must not invoke complete_task"
+        kinds = [k for (_t, k, _p) in events]
+        assert "goal_judge_unavailable" not in kinds, (
+            "no unavailable event when the judge reached a real verdict"
+        )
+
 
     def test_non_goal_mode_task_skips_gate(self, monkeypatch):
         """Plain (non-goal_mode) tasks are never sent to the judge."""
-        rc, complete_calls = self._run(monkeypatch, goal_mode=False)
+        rc, complete_calls, _ = self._run(monkeypatch, goal_mode=False)
         assert rc == 0
         assert complete_calls == ["t1"]

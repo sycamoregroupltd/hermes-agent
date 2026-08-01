@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import logging
 import os
 import shlex
 import sys
@@ -2140,6 +2141,7 @@ def _worker_run_id_for(task_id: str) -> Optional[int]:
 
 def _cmd_complete(args: argparse.Namespace) -> int:
     """Mark one or more tasks done. Supports a single id or a list."""
+    _logging = logging
     ids = list(args.task_ids or [])
     if not ids:
         print("at least one task_id is required", file=sys.stderr)
@@ -2187,24 +2189,62 @@ def _cmd_complete(args: argparse.Namespace) -> int:
                     from hermes_cli.goals import judge_goal
                     verdict = "done"
                     reason = ""
+                    transport_failed = False
+                    judge_error = None
                     try:
                         # judge_goal returns (verdict, reason, parse_failed,
                         # wait_directive, transport_failed) — see
                         # hermes_cli/goals.py. Unpacking fewer raises
                         # ValueError into the fail-open handler below,
                         # silently disabling the gate.
-                        verdict, reason, _, _, _ = judge_goal(
+                        verdict, reason, _, _, transport_failed = judge_goal(
                             goal=f"{task.title}\n\n{task.body or ''}".strip(),
                             last_response=(summary or args.result or "").strip(),
                         )
                     except Exception as judge_exc:
-                        import logging as _logging
                         _logging.getLogger(__name__).warning(
                             "goal judge check failed, allowing completion: %s",
                             judge_exc,
                             exc_info=True,
                         )
-                    if verdict != "done":
+                        # A transport/API error (e.g. GeminiAPIError) is an
+                        # INFRASTRUCTURE fault, not a work-quality signal.
+                        # Fail OPEN: let the completion proceed, but record a
+                        # `goal_judge_unavailable` audit event so the operator
+                        # queue can later re-verify the task. This is the
+                        # contract documented at hermes_cli/goals.py:judge_goal
+                        # — transport failures must never wedge a worker whose
+                        # real work is already done.
+                        judge_error = judge_exc
+                    if transport_failed or judge_error is not None:
+                        # Judge could not reach a verdict due to infra/provider
+                        # outage. Allow completion (fail-open) and surface the
+                        # partial state to the operator for re-verify rather
+                        # than leaving the card in a blocked twilight.
+                        try:
+                            _name = type(judge_error).__name__ if judge_error else "transport_failed"
+                            kb._append_event(
+                                conn, tid, "goal_judge_unavailable",
+                                {
+                                    "verdict_posted": (summary or "").strip()[:200] or None,
+                                    "reason": (
+                                        f"goal judge unreachable ({_name}); "
+                                        f"completion allowed (fail-open), re-verify required"
+                                    ),
+                                    "transport_failed": bool(transport_failed),
+                                },
+                                run_id=_worker_run_id_for(tid),
+                            )
+                        except Exception as _evt_exc:
+                            # Never let audit bookkeeping block the completion.
+                            _logging.getLogger(__name__).warning(
+                                "could not record goal_judge_unavailable event: %s",
+                                _evt_exc,
+                            )
+                        # Proceed to kb.complete_task below — completion is
+                        # allowed (fail-open) and the unavailable judge is
+                        # recorded for operator re-verify.
+                    elif verdict != "done":
                         print(
                             f"kanban: goal completion of {tid} rejected by judge: {reason}. "
                             f"Provide evidence matching the task's acceptance criteria.",
