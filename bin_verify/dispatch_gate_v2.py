@@ -53,8 +53,6 @@ two provider boundaries.
 import argparse
 import datetime
 import hashlib
-import hmac
-import secrets
 import json
 import os
 import re
@@ -69,6 +67,7 @@ if BIN_DIR not in sys.path:
     sys.path.insert(0, BIN_DIR)
 import cmux_dual_anchor_contract as dual_anchor
 import verify_activation_packet as activation_verifier
+import v2_grant_authority as grant_authority
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BOARD_DB = "/home/frank/.hermes/kanban/boards/jarvis-os/kanban.db"
@@ -373,6 +372,8 @@ def main(argv):
     ap.add_argument("--cmux-receipt", default=None,
                     help="Mac-minted task-bound CMUX reservation receipt (validated on DGX)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--grant-authority-socket", default=os.environ.get("HERMES_GRANT_AUTHORITY_SOCKET"), help="production verifier-owned grant authority socket")
+    ap.add_argument("--grant-issuer-secret-file", default=os.environ.get("HERMES_GRANT_ISSUER_SECRET_FILE"), help="production gate-only issuer token file")
     args = ap.parse_args(argv)
 
     # Real runner derives the task packet itself; callers cannot select it.
@@ -479,7 +480,11 @@ def main(argv):
                     hermes_home=args.hermes_home,
                     runner=v2ce.StubRunner(args.stub_events_dir))
             else:
-                key = secrets.token_bytes(32)
+                if not args.grant_authority_socket or not args.grant_issuer_secret_file:
+                    raise RuntimeError("real dispatch requires verifier-owned grant authority socket and gate-only issuer token")
+                issuer_secret = Path(args.grant_issuer_secret_file).read_text(encoding="utf-8").strip()
+                if len(issuer_secret) < 32:
+                    raise RuntimeError("gate issuer token is missing or too short")
                 envelope = {
                     "task_id": dispatch_task,
                     "board_db": str(Path(args.board_db).resolve()),
@@ -494,14 +499,12 @@ def main(argv):
                     "lease_sha256": hashlib.sha256(Path(args.lease_file).read_bytes()).hexdigest(),
                     "source_head": subprocess.check_output(["git", "-C", ROOT, "rev-parse", "HEAD"], text=True).strip(),
                     "expires_at": int(time.time()) + 30,
-                    "nonce": secrets.token_hex(32),
                 }
-                canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8")
-                envelope["hmac_key"] = key.hex()
-                envelope["hmac_sha256"] = hmac.new(key, canonical, hashlib.sha256).hexdigest()
+                grant_id = grant_authority.request(args.grant_authority_socket,
+                    {"op": "issue", "issuer_token": issuer_secret, "grant": envelope})["grant_id"]
                 read_fd, write_fd = os.pipe()
                 try:
-                    os.write(write_fd, json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+                    os.write(write_fd, json.dumps({"grant_id": grant_id}, sort_keys=True).encode("utf-8"))
                 finally:
                     os.close(write_fd)
                 child = os.path.join(BIN_DIR, "v2_real_executor_child.py")
@@ -510,7 +513,7 @@ def main(argv):
                            "--workspace-root", args.workspace_root, "--session-binding", args.session_binding,
                            "--cmux-receipt", args.cmux_receipt, "--reservation-json", args.reservation_json,
                            "--binding-issuer", args.binding_issuer, "--hermes-home", args.hermes_home,
-                           "--lease-file", args.lease_file]
+                           "--lease-file", args.lease_file, "--grant-authority-socket", args.grant_authority_socket]
                 try:
                     child_run = subprocess.run(command, pass_fds=(read_fd,), text=True,
                                                capture_output=True, timeout=180)

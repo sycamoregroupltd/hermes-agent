@@ -59,8 +59,6 @@ from __future__ import annotations
 import datetime
 import hashlib
 import argparse
-import hmac
-import secrets
 import json
 import os
 import shutil
@@ -77,6 +75,7 @@ if str(BIN_VERIFY_ROOT) not in sys.path:
 
 from hermes_cli import kanban_db as kb  # noqa: E402
 import issue_cmux_claude_session_binding as cmux_binding  # noqa: E402
+import v2_grant_authority as grant_authority  # noqa: E402
 
 V2_MARKER = "V2_GOVERNED_CANARY_OK"
 V2_INSTRUCTION = (
@@ -256,6 +255,10 @@ def _run_child_lifecycle(*, board_db, canary_task, workspace_root,
                     session_binding_path, cmux_receipt_path, reservation_path, issuer_path, hermes_home, runner,
                     instruction=V2_INSTRUCTION,
                     claimer_prefix="v2-governed-canary") -> dict:
+    # main() sets this only after verifier-owned grant consumption. An import
+    # alone cannot enter the lifecycle or accept a real runner.
+    if os.environ.get("HERMES_V2_CHILD_AUTH_CONSUMED") != "1":
+        raise DispatchError("real child lifecycle is executable-only after authority consumption")
     """Execute the one governed no-op canary through the canonical lifecycle.
 
     Returns the dispatch record dict on success; raises DispatchError (or the
@@ -451,44 +454,30 @@ def _run_child_lifecycle(*, board_db, canary_task, workspace_root,
 
 
 
-def _canonical_json(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+def _read_authority(fd, expected, authority_socket):
+    """Consume a verifier-owned opaque grant before provider import.
 
-
-def _read_authority(fd, expected):
-    """Consume exactly one private-FD authority envelope before provider import."""
+    The FD transports only a random grant id. The dedicated authority holds
+    issuance state and atomically consumes it after canonical-field checking;
+    no signing key crosses the child boundary.
+    """
     try:
-        raw = os.read(fd, 8193)
+        raw = os.read(fd, 513)
     finally:
         os.close(fd)
-    if not raw or len(raw) > 8192:
-        raise DispatchError("child authority envelope missing or oversized")
+    if not raw or len(raw) > 512:
+        raise DispatchError("child authority grant missing or oversized")
     try:
-        env = json.loads(raw)
-        key = bytes.fromhex(env.pop("hmac_key"))
-        supplied = env.pop("hmac_sha256")
-    except (ValueError, KeyError, TypeError):
-        raise DispatchError("child authority envelope malformed")
-    if len(key) != 32 or not isinstance(supplied, str):
-        raise DispatchError("child authority envelope has invalid HMAC material")
-    if not hmac.compare_digest(supplied, hmac.new(key, _canonical_json(env), hashlib.sha256).hexdigest()):
-        raise DispatchError("child authority envelope HMAC mismatch")
-    if not isinstance(env.get("nonce"), str) or len(env["nonce"]) < 32:
-        raise DispatchError("child authority nonce missing")
-    if not isinstance(env.get("expires_at"), int) or env["expires_at"] <= int(time.time()):
-        raise DispatchError("child authority expired")
-    for field, value in expected.items():
-        if env.get(field) != value:
-            raise DispatchError(f"child authority {field} mismatch")
-    lease = Path(expected["lease_file"]).resolve()
-    if Path(env.get("lease_realpath", "")).resolve() != lease or not lease.is_file():
-        raise DispatchError("child authority canonical lease mismatch")
-    if env.get("lease_sha256") != hashlib.sha256(lease.read_bytes()).hexdigest():
-        raise DispatchError("child authority lease hash mismatch")
-    source_head = os.popen(f"git -C {REPO_ROOT} rev-parse HEAD").read().strip()
-    if env.get("source_head") != source_head:
-        raise DispatchError("child authority source head mismatch")
-
+        grant_id = json.loads(raw).get("grant_id")
+    except (ValueError, AttributeError):
+        raise DispatchError("child authority grant malformed")
+    if not authority_socket:
+        raise DispatchError("child authority socket is required")
+    try:
+        grant_authority.request(authority_socket, {"op": "consume", "grant_id": grant_id,
+                                                    "expected": expected})
+    except grant_authority.GrantError as exc:
+        raise DispatchError("child authority refused: " + str(exc)) from exc
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="gate-owned real Claude executor child")
@@ -502,9 +491,11 @@ def main(argv=None):
     parser.add_argument("--binding-issuer", required=True)
     parser.add_argument("--hermes-home", required=True)
     parser.add_argument("--lease-file", required=True)
+    parser.add_argument("--grant-authority-socket", default=os.environ.get("HERMES_GRANT_AUTHORITY_SOCKET"))
     args = parser.parse_args(argv)
     expected = {"task_id": args.canary_task, "board_db": str(Path(args.board_db).resolve()), "workspace_root": str(Path(args.workspace_root).resolve()), "session_binding": str(Path(args.session_binding).resolve()), "cmux_receipt": str(Path(args.cmux_receipt).resolve()), "reservation_json": str(Path(args.reservation_json).resolve()), "binding_issuer": str(Path(args.binding_issuer).resolve()), "hermes_home": str(Path(args.hermes_home).resolve()), "lease_file": str(Path(args.lease_file).resolve())}
-    _read_authority(args.auth_fd, expected)
+    _read_authority(args.auth_fd, expected, args.grant_authority_socket)
+    os.environ["HERMES_V2_CHILD_AUTH_CONSUMED"] = "1"
     global ClaudeResumeExecutor
     from hermes_cli.claude_executor import ClaudeResumeExecutor, SubprocessClaudeRunner
     return _run_child_lifecycle(board_db=args.board_db, canary_task=args.canary_task, workspace_root=args.workspace_root, session_binding_path=args.session_binding, cmux_receipt_path=args.cmux_receipt, reservation_path=args.reservation_json, issuer_path=args.binding_issuer, hermes_home=args.hermes_home, runner=SubprocessClaudeRunner())

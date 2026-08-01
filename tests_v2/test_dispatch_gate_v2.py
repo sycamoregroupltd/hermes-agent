@@ -588,7 +588,7 @@ def main():
                               "--lease-file", os.path.join(td, "unused-lease.json")],
                              text=True, capture_output=True)
         check("real child refuses missing private authority before Claude construction",
-              raw.returncode != 0 and "authority envelope" in (raw.stdout + raw.stderr))
+              raw.returncode != 0 and "authority" in (raw.stdout + raw.stderr))
         child_spec = importlib.util.spec_from_file_location("v2_real_child_wire", child)
         child_mod = importlib.util.module_from_spec(child_spec)
         child_spec.loader.exec_module(child_mod)
@@ -602,22 +602,18 @@ def main():
                     "binding_issuer": os.path.realpath(os.path.join(td, "wire-issuer.py")),
                     "hermes_home": os.path.realpath(os.path.join(td, "wire-home")),
                     "lease_file": os.path.realpath(lease)}
-        envelope = dict(expected, lease_realpath=os.path.realpath(lease), lease_sha256=sha(lease),
-                        source_head=subprocess.check_output(["git", "-C", ROOT, "rev-parse", "HEAD"], text=True).strip(),
-                        expires_at=int(time.time()) + 30, nonce=secrets.token_hex(32))
-        key = secrets.token_bytes(32)
-        canonical = child_mod._canonical_json(envelope)
-        envelope.update(hmac_key=key.hex(), hmac_sha256=hmac.new(key, canonical, hashlib.sha256).hexdigest())
-        rfd, wfd = os.pipe(); os.write(wfd, json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()); os.close(wfd)
-        child_mod._read_authority(rfd, expected)
-        check("private-FD HMAC/nonce authority accepts exact fresh task-bound envelope", True)
-        envelope["hmac_sha256"] = "0" * 64
-        rfd, wfd = os.pipe(); os.write(wfd, json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()); os.close(wfd)
+        rfd, wfd = os.pipe(); os.write(wfd, json.dumps({"grant_id": secrets.token_hex(32)}).encode()); os.close(wfd)
         try:
-            child_mod._read_authority(rfd, expected); tampered_authority_refused = False
+            child_mod._read_authority(rfd, expected, ""); forged_refused = False
         except child_mod.DispatchError:
-            tampered_authority_refused = True
-        check("private-FD HMAC tampering refuses before child lifecycle", tampered_authority_refused)
+            forged_refused = True
+        check("self-forged FD grant is refused without verifier-owned authority", forged_refused)
+        try:
+            child_mod._run_child_lifecycle(board_db=expected["board_db"], canary_task="t_beefcafe", workspace_root=expected["workspace_root"], session_binding_path=expected["session_binding"], cmux_receipt_path=expected["cmux_receipt"], reservation_path=expected["reservation_json"], issuer_path=expected["binding_issuer"], hermes_home=expected["hermes_home"], runner=object())
+            direct_child_refused = False
+        except child_mod.DispatchError as exc:
+            direct_child_refused = "executable-only" in str(exc)
+        check("direct imported child lifecycle refuses before provider construction", direct_child_refused)
 
 
 
