@@ -506,7 +506,17 @@ def test_rollback_only_touches_skill_fields(backup_env):
 
 def test_rollback_skips_jobs_the_user_deleted(backup_env):
     """If the user deleted a cron job after the snapshot, rollback must
-    NOT resurrect it — the user's delete is a later, explicit choice."""
+    NOT resurrect it — the user's delete is a later, explicit choice.
+
+    The delete is performed through ``cron.jobs.remove_job()``, the API
+    behind ``hermes cron remove``. A bare ``save_jobs(list_without_the_job)``
+    does NOT delete: since the lost-update defense (t_b793ddfc) a write
+    that omits an on-disk job without declaring ``removed_ids`` is treated
+    as a stale snapshot and the omitted job is merged back in. Simulating
+    the user's delete that way would leave the job on disk and make this
+    test assert nothing about rollback (see the pre-condition below, which
+    exists to keep that failure mode loud).
+    """
     cb = backup_env["cb"]
     home = backup_env["home"]
     _write_skill(backup_env["skills"], "alpha")
@@ -519,7 +529,12 @@ def test_rollback_skips_jobs_the_user_deleted(backup_env):
 
     # User deletes one job after the snapshot
     cj = _reload_cron_jobs(home)
-    cj.save_jobs([j for j in cj.load_jobs() if j["id"] != "delete-me"])
+    assert cj.remove_job("delete-me") is True
+    # Pre-condition: the delete really landed. Without this, a delete that
+    # silently no-ops would make the post-rollback assertion below pass for
+    # the wrong reason on the resurrect side and fail for the wrong reason
+    # on the skip side.
+    assert {j["id"] for j in cj.load_jobs()} == {"keep-me"}
 
     ok, _, _ = cb.rollback(backup_id=snap.name)
     assert ok
@@ -528,6 +543,74 @@ def test_rollback_skips_jobs_the_user_deleted(backup_env):
     live_ids = {j["id"] for j in live_after}
     assert "keep-me" in live_ids
     assert "delete-me" not in live_ids  # not resurrected
+    # The surviving job's skill links are still reconciled — refusing to
+    # resurrect must not degrade into refusing to restore.
+    assert [j for j in live_after if j["id"] == "keep-me"][0]["skills"] == ["alpha"]
+
+
+def test_rollback_restores_skill_links_while_skipping_a_deleted_job(backup_env):
+    """Adversarial pairing of the two halves of the rollback contract.
+
+    A single rollback must, in the same pass: (a) refuse to resurrect a job
+    the user deleted after the snapshot, AND (b) actually restore the skill
+    links of a job that survived and was since rewritten. The previous
+    coverage asserted only (a), so a rollback that skipped *everything*
+    would have passed.
+    """
+    cb = backup_env["cb"]
+    home = backup_env["home"]
+    _write_skill(backup_env["skills"], "alpha")
+
+    _write_cron_jobs(home, [
+        {"id": "keep-me", "name": "keep", "schedule": "every 1h", "skills": ["alpha"]},
+        {"id": "delete-me", "name": "gone", "schedule": "every 1h", "skills": ["alpha"]},
+    ])
+    snap = cb.snapshot_skills(reason="pre-curator-run")
+
+    cj = _reload_cron_jobs(home)
+    assert cj.remove_job("delete-me") is True
+    # Curator rewrote the survivor's skill links after the snapshot.
+    jobs = cj.load_jobs()
+    jobs[0]["skills"] = ["umbrella"]
+    cj.save_jobs(jobs)
+    assert cj.load_jobs()[0]["skills"] == ["umbrella"]
+
+    ok, msg, _ = cb.rollback(backup_id=snap.name)
+    assert ok
+
+    after = cj.load_jobs()
+    assert {j["id"] for j in after} == {"keep-me"}       # (a) not resurrected
+    assert after[0]["skills"] == ["alpha"]               # (b) genuinely restored
+    # The summary must own up to both outcomes rather than reporting a no-op.
+    assert "1 job(s) had skill links restored" in msg
+    assert "1 backed-up job(s) no longer exist (skipped)" in msg
+
+
+def test_bare_save_jobs_does_not_delete_an_on_disk_job(backup_env):
+    """Pin the contract that made the old delete-simulation stale.
+
+    ``save_jobs(jobs_without_x)`` with no ``removed_ids`` is a merge, not a
+    replace (lost-update defense, t_b793ddfc): x stays on disk. Deletion is
+    ``remove_job()`` / an explicit ``removed_ids``. This is asserted here so
+    that a future change to that merge rule fails on its own terms instead
+    of resurfacing as a confusing curator-rollback failure.
+    """
+    home = backup_env["home"]
+    _write_cron_jobs(home, [
+        {"id": "keep-me", "name": "keep", "schedule": "every 1h"},
+        {"id": "drop-me", "name": "gone", "schedule": "every 1h"},
+    ])
+    cj = _reload_cron_jobs(home)
+
+    cj.save_jobs([j for j in cj.load_jobs() if j["id"] != "drop-me"])
+    assert {j["id"] for j in cj.load_jobs()} == {"keep-me", "drop-me"}
+
+    cj.save_jobs(
+        [j for j in cj.load_jobs() if j["id"] != "drop-me"],
+        loaded_ids={"keep-me", "drop-me"},
+        removed_ids={"drop-me"},
+    )
+    assert {j["id"] for j in cj.load_jobs()} == {"keep-me"}
 
 
 def test_rollback_leaves_new_jobs_untouched(backup_env):
