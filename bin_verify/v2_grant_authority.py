@@ -43,6 +43,10 @@ def _peer_credentials(conn):
   return struct.unpack("3i",conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
  except (AttributeError, OSError) as exc: raise GrantError("Unix peer credential verification failed") from exc
 
+def _peer_uid(conn):
+ """Compatibility helper for source-only fixtures; authority uses full creds."""
+ return _peer_credentials(conn)[0]
+
 def _load_install_config(path):
  try: cfg=json.loads(Path(path).read_text())
  except (OSError,ValueError) as exc: raise GrantError("grant install configuration unreadable") from exc
