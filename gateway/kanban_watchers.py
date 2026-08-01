@@ -1437,7 +1437,15 @@ class GatewayKanbanWatchersMixin:
                     await asyncio.to_thread(_auto_decompose_tick, _ad_per_tick)
                 results = await asyncio.to_thread(_tick_once)
                 any_spawned = False
+                policy_blocked: list = []
                 for slug, res in (results or []):
+                    # Operator provider policy refusals (t_e6c9ccaf) are a
+                    # deliberate hard stop, not a broken profile. Collect them
+                    # so the "stuck dispatcher" warning below points at the
+                    # policy instead of sending the operator to check PATH and
+                    # credentials for a card that is working as configured.
+                    for entry in (getattr(res, "skipped_provider_blocked", None) or []):
+                        policy_blocked.append((slug, entry))
                     if res is not None and getattr(res, "spawned", None):
                         any_spawned = True
                         # Quiet by default — only log when something actually
@@ -1462,13 +1470,30 @@ class GatewayKanbanWatchersMixin:
                 if bad_ticks >= HEALTH_WINDOW:
                     now = int(time.time())
                     if now - last_warn_at >= 300:
-                        logger.warning(
-                            "kanban dispatcher stuck: ready queue non-empty for "
-                            "%d consecutive ticks but 0 workers spawned. Check "
-                            "profile health (venv, PATH, credentials) and "
-                            "`hermes kanban list --status ready`.",
-                            bad_ticks,
-                        )
+                        if policy_blocked:
+                            logger.warning(
+                                "kanban dispatcher stuck: ready queue non-empty "
+                                "for %d consecutive ticks but 0 workers spawned. "
+                                "%d card(s) were refused by the operator provider "
+                                "policy (kanban.blocked_providers / "
+                                "HERMES_KANBAN_BLOCKED_PROVIDERS): %s. Any "
+                                "remaining cards: check profile health (venv, "
+                                "PATH, credentials).",
+                                bad_ticks,
+                                len(policy_blocked),
+                                ", ".join(
+                                    f"{slug}:{entry[0]}={entry[2]}"
+                                    for slug, entry in policy_blocked[:10]
+                                ),
+                            )
+                        else:
+                            logger.warning(
+                                "kanban dispatcher stuck: ready queue non-empty for "
+                                "%d consecutive ticks but 0 workers spawned. Check "
+                                "profile health (venv, PATH, credentials) and "
+                                "`hermes kanban list --status ready`.",
+                                bad_ticks,
+                            )
                         last_warn_at = now
             except asyncio.CancelledError:
                 logger.debug("kanban dispatcher: cancelled")

@@ -7186,6 +7186,20 @@ class DispatchResult:
     reached the ready queue (manual DB edit, missed event, code-path bug)
     is caught here: an audit event is logged and no spawn is attempted.
     This is the defense-in-depth guard for the dispatch tick."""
+    skipped_provider_blocked: list[tuple[str, str, str]] = field(default_factory=list)
+    """Tasks refused by the operator provider policy (t_e6c9ccaf), as
+    ``(task_id, effective_provider_or_empty, reason)`` triples.
+
+    Reasons come from :mod:`hermes_cli.kanban_provider_policy`:
+    ``provider_blocked`` (the effective provider is on the operator's
+    blocked list) or ``provider_unresolved`` (fail-closed — the provider
+    could not be pinned and the worker would pick one from credentials).
+
+    NOT a failure: no claim is taken, no run is opened, and
+    ``consecutive_failures`` is untouched, so a policy denial can never
+    trip the circuit breaker or burn a retry. The card stays exactly where
+    it was and dispatches normally on the next tick after the policy is
+    lifted. Empty on every install that has not configured a policy."""
 
 
 # Bounded registry of recently-reaped worker child exits, populated by the
@@ -8543,6 +8557,215 @@ def has_spawnable_review(conn: sqlite3.Connection) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Operator provider policy (t_e6c9ccaf)
+# ---------------------------------------------------------------------------
+#
+# A blocked provider must never reach a worker process. The gate runs twice
+# on purpose:
+#
+#   * in the dispatch loops, BEFORE ``claim_task`` — so a denial costs no
+#     claim, no run, and no failure count, and the card is untouched;
+#   * in ``_default_spawn``, immediately before ``subprocess.Popen`` — the
+#     backstop that makes "no process is created" true even for a caller
+#     that reaches the spawn helper directly or a policy that flips between
+#     the loop check and the spawn.
+#
+# Both read the policy fresh (env override, then ``kanban.blocked_providers``),
+# so enabling or lifting it takes effect on the next tick with no restart.
+# With no policy configured, both are a single empty-set check.
+
+PROVIDER_POLICY_EVENT = "provider_policy_denied"
+
+
+class ProviderPolicyBlocked(RuntimeError):
+    """Raised instead of spawning when operator policy blocks the provider.
+
+    Carries the :class:`~hermes_cli.kanban_provider_policy.PolicyDecision`
+    so the dispatch loop can persist the same deterministic record it would
+    have written from its own pre-claim check.
+    """
+
+    def __init__(self, decision, task_id: Optional[str] = None):
+        self.decision = decision
+        self.task_id = task_id
+        target = f" for {task_id}" if task_id else ""
+        detail = getattr(decision, "detail", decision)
+        super().__init__(
+            f"kanban provider policy denied spawn{target}: {detail}"
+        )
+
+
+def _evaluate_provider_policy(
+    assignee: Optional[str],
+    model_override: Optional[str],
+    provider_override: Optional[str],
+):
+    """Return a ``PolicyDecision``, or ``None`` when no policy is configured.
+
+    ``None`` is the fast path for the default install: callers skip the
+    guard entirely and dispatch behaviour is unchanged. Any failure to
+    import or evaluate the policy module also returns ``None`` — the guard
+    is opt-in, so an environment that cannot load it must not start
+    refusing work that it dispatched fine yesterday.
+    """
+    try:
+        from hermes_cli import kanban_provider_policy as kpp
+    except Exception as exc:  # pragma: no cover - exotic env
+        _log.debug("kanban provider policy: module unavailable (%s)", exc)
+        return None
+    try:
+        blocked = kpp.load_blocked_providers()
+        if not blocked:
+            return None
+        return kpp.evaluate_task(
+            assignee=assignee,
+            model_override=model_override,
+            provider_override=provider_override,
+            blocked=blocked,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        _log.warning(
+            "kanban provider policy: evaluation failed for assignee=%r (%s); "
+            "guard inactive for this task",
+            assignee, exc,
+        )
+        return None
+
+
+def _task_override_row(conn: sqlite3.Connection, task_id: str) -> tuple:
+    """Return ``(model_override, provider_override)`` for a task id.
+
+    Read on demand rather than widened into the dispatch ``SELECT`` so the
+    hot path is untouched when no policy is configured, and so the query
+    still works on a DB whose ``provider_override`` migration has not run.
+    """
+    try:
+        row = conn.execute(
+            "SELECT model_override, provider_override FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None, None
+    if row is None:
+        return None, None
+    keys = row.keys()
+    return (
+        row["model_override"] if "model_override" in keys else None,
+        row["provider_override"] if "provider_override" in keys else None,
+    )
+
+
+def _record_provider_policy_denial(
+    conn: sqlite3.Connection,
+    task_id: str,
+    decision,
+    *,
+    run_id: Optional[int] = None,
+) -> bool:
+    """Persist the denial on the card, at most once per unchanged decision.
+
+    Returns True when a row was written. The dispatcher re-examines a denied
+    card every tick; without de-duplication a permanent policy would append
+    an event per card per tick forever. Writing only when the task's most
+    recent event is not this exact denial keeps the record deterministic and
+    still re-states it after any intervening activity (reassignment, model
+    override, unblock, a spawn that later gets denied again).
+    """
+    payload = decision.as_event_payload()
+    try:
+        last = conn.execute(
+            "SELECT kind, payload FROM task_events WHERE task_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        last = None
+    if last is not None and last["kind"] == PROVIDER_POLICY_EVENT:
+        try:
+            if json.loads(last["payload"] or "{}") == payload:
+                return False
+        except (TypeError, ValueError):
+            pass
+    with write_txn(conn):
+        _append_event(
+            conn, task_id, PROVIDER_POLICY_EVENT, payload, run_id=run_id,
+        )
+    return True
+
+
+def _provider_policy_denied(
+    conn: sqlite3.Connection,
+    result: "DispatchResult",
+    task_id: str,
+    assignee: Optional[str],
+    *,
+    dry_run: bool,
+) -> bool:
+    """Pre-claim gate: refuse a spawn the operator policy forbids.
+
+    Returns True when the caller must skip this task. Records the denial in
+    ``result.skipped_provider_blocked`` and (outside ``dry_run``) on the
+    card. Never claims, never counts a failure, never changes status.
+    """
+    model_override, provider_override = _task_override_row(conn, task_id)
+    decision = _evaluate_provider_policy(
+        assignee, model_override, provider_override,
+    )
+    if decision is None or decision.allowed:
+        return False
+    result.skipped_provider_blocked.append(
+        (task_id, decision.provider or "", decision.reason)
+    )
+    _log.warning(
+        "kanban dispatch: refusing to spawn %s (assignee=%r) — %s",
+        task_id, assignee, decision.detail,
+    )
+    if not dry_run:
+        _record_provider_policy_denial(conn, task_id, decision)
+    return True
+
+
+def _handle_spawn_provider_policy_block(
+    conn: sqlite3.Connection,
+    result: "DispatchResult",
+    exc: "ProviderPolicyBlocked",
+    task: "Task",
+) -> None:
+    """Absorb a backstop denial raised by the spawn helper.
+
+    Only reachable when the policy changed between the pre-claim check and
+    the spawn, or when a custom ``spawn_fn`` delegates to
+    :func:`_default_spawn`. The claim is already held, so release it the way
+    an operator reclaim does — back to ``ready`` with the run closed — and
+    record the denial WITHOUT calling ``_record_spawn_failure``: a policy
+    refusal is not a worker failure and must not consume a retry.
+    """
+    result.skipped_provider_blocked.append(
+        (task.id, exc.decision.provider or "", exc.decision.reason)
+    )
+    _log.warning(
+        "kanban dispatch: spawn-time provider policy block for %s — %s",
+        task.id, exc.decision.detail,
+    )
+    try:
+        _record_provider_policy_denial(
+            conn, task.id, exc.decision, run_id=task.current_run_id,
+        )
+    except Exception:
+        _log.debug(
+            "kanban provider policy: could not record denial for %s",
+            task.id, exc_info=True,
+        )
+    try:
+        reclaim_task(conn, task.id, reason="provider_policy_denied")
+    except Exception:
+        _log.debug(
+            "kanban provider policy: could not release claim for %s",
+            task.id, exc_info=True,
+        )
+
+
 def dispatch_once(
     conn: sqlite3.Connection,
     *,
@@ -8847,6 +9070,15 @@ def _dispatch_once_locked(
             # of human-pulled work.
             result.skipped_nonspawnable.append(row["id"])
             continue
+        # Operator provider policy (t_e6c9ccaf): refuse before the claim so a
+        # blocked provider costs no claim, no run, and no failure count. Runs
+        # after profile_exists (a non-profile lane is a routing problem, not a
+        # policy one) and before every remaining step that could lead to a
+        # spawn.
+        if _provider_policy_denied(
+            conn, result, row["id"], row_assignee, dry_run=dry_run,
+        ):
+            continue
         # Per-profile concurrency cap (#21582): even if there's global
         # headroom, refuse to spawn for an assignee that's already at
         # its in-flight cap. Prevents one profile's local model / API
@@ -8946,6 +9178,11 @@ def _dispatch_once_locked(
                 _per_profile_running[claimed.assignee] = (
                     _per_profile_running.get(claimed.assignee, 0) + 1
                 )
+        except ProviderPolicyBlocked as exc:
+            # Spawn-time backstop fired (policy flipped mid-tick, or a custom
+            # spawn_fn delegated to _default_spawn). Not a worker failure —
+            # release the claim without counting one.
+            _handle_spawn_provider_policy_block(conn, result, exc, claimed)
         except Exception as exc:
             auto = _record_spawn_failure(
                 conn, claimed.id, str(exc),
@@ -9001,6 +9238,13 @@ def _dispatch_once_locked(
                     )
             result.skipped_reviewer_incapable.append(row["id"])
             continue
+        # Operator provider policy (t_e6c9ccaf) — same pre-claim gate as the
+        # ready lane. Review agents run inference too, so the review column
+        # cannot be a hole in the hard stop.
+        if _provider_policy_denied(
+            conn, result, row["id"], row["assignee"], dry_run=dry_run,
+        ):
+            continue
         if dry_run:
             result.spawned.append((row["id"], row["assignee"], ""))
             continue
@@ -9047,6 +9291,8 @@ def _dispatch_once_locked(
                 _set_worker_pid(conn, claimed.id, int(pid))
             result.spawned.append((claimed.id, claimed.assignee or "", str(workspace)))
             spawned += 1
+        except ProviderPolicyBlocked as exc:
+            _handle_spawn_provider_policy_block(conn, result, exc, claimed)
         except Exception as exc:
             auto = _record_spawn_failure(
                 conn, claimed.id, str(exc),
@@ -9483,6 +9729,22 @@ def _default_spawn(
         # turn, prints text, exits rc=0, and the dispatcher records a
         # protocol violation (incident 2026-06-09 t_d9cbe312).
         cmd.append("-Q")
+    # ---- operator provider policy: last gate before the process exists ----
+    # ``cmd`` and ``env`` are fully built and frozen at this point, and the
+    # only provider-bearing inputs in them are the task's model/provider
+    # overrides plus the assignee profile the policy re-reads. Nothing below
+    # this line can change the effective provider, so this is the true
+    # immediately-before-spawn check: raising here means no worker process,
+    # no inference connection, and no tokens. It also runs before the log
+    # file is opened, so a refusal leaks no descriptor. The dispatch loops
+    # catch ``ProviderPolicyBlocked`` and release the claim without counting
+    # a failure; a direct caller sees the raise. (t_e6c9ccaf)
+    _policy_decision = _evaluate_provider_policy(
+        task.assignee, task.model_override, task.provider_override,
+    )
+    if _policy_decision is not None and not _policy_decision.allowed:
+        raise ProviderPolicyBlocked(_policy_decision, task.id)
+
     # Redirect output to a per-task log under <board-root>/logs/.
     # Anchored at the board root (not the shared kanban root), so
     # `hermes kanban log` on a specific board reads its own file and

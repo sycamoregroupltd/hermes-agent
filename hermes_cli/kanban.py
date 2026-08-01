@@ -2515,6 +2515,10 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
                 for (tid, who, current) in res.skipped_per_profile_capped
             ],
             "auto_assigned_default": res.auto_assigned_default,
+            "skipped_provider_blocked": [
+                {"task_id": tid, "provider": provider, "reason": reason}
+                for (tid, provider, reason) in res.skipped_provider_blocked
+            ],
         }, indent=2))
         return 0
     print(f"Reclaimed:    {res.reclaimed}")
@@ -2552,6 +2556,12 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             f"Skipped (non-spawnable assignee — terminal lane, OK): "
             f"{', '.join(res.skipped_nonspawnable)}"
         )
+    if res.skipped_provider_blocked:
+        for tid, provider, reason in res.skipped_provider_blocked:
+            print(
+                f"Refused (provider policy: {reason}"
+                f"{', provider=' + provider if provider else ''}): {tid}"
+            )
     return 0
 
 

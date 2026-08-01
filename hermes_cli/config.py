@@ -3064,6 +3064,30 @@ DEFAULT_CONFIG = {
         # worker process (if still running host-locally) is terminated
         # before the reclaim.  0 disables stale detection entirely.
         "dispatch_stale_timeout_seconds": 14400,
+        # Operator hard stop on inference providers (t_e6c9ccaf). Provider
+        # names (aliases and casing normalize the same way `--provider`
+        # does) that the dispatcher must never spawn a worker for. Empty —
+        # the default — means no policy: dispatch behaves exactly as it did
+        # before this setting existed.
+        #
+        # When non-empty, a ready/review card whose effective provider is on
+        # the list is refused BEFORE the claim: no worker process, no
+        # inference connection, no tokens, no retry consumed. The refusal is
+        # recorded on the card as a `provider_policy_denied` event and the
+        # card keeps its status, so lifting the policy re-dispatches it on
+        # the next tick.
+        #
+        # The gate fails closed: if the effective provider cannot be pinned
+        # (no `model.provider` in the assignee profile, or `auto`, which the
+        # worker would resolve from stored credentials) the spawn is refused
+        # too, because that resolution could still land on a blocked
+        # provider. A profile that plainly names an unrelated provider is
+        # never affected.
+        #
+        # `HERMES_KANBAN_BLOCKED_PROVIDERS` overrides this (present-but-empty
+        # disables the policy for that process). See
+        # docs/kanban/provider-policy.md.
+        "blocked_providers": [],
     },
 
     # execute_code settings — controls the tool used for programmatic tool calls.
