@@ -44,13 +44,20 @@ def _peer_credentials(conn):
  except (AttributeError, OSError) as exc: raise GrantError("Unix peer credential verification failed") from exc
 
 def _peer_uid(conn):
- """Compatibility helper for source-only fixtures; authority uses full creds."""
- return _peer_credentials(conn)[0]
+ """Compatibility helper returning the Unix peer *UID* (index 1 of the
+ (pid, uid, gid) SO_PEERCRED triple), never the PID.  The serving path reads
+ the full credential tuple positionally and never aliases pid as uid; this
+ helper exists only for fixtures/tests that need the uid alone.  A non-(pid,
+ uid, gid) tuple would be a catastrophic swap and is rejected, not silently
+ indexed."""
+ creds=_peer_credentials(conn)
+ if not isinstance(creds,tuple) or len(creds)!=3: raise GrantError("Unix peer credential shape invalid")
+ return creds[1]
 
 def _load_install_config(path):
  try: cfg=json.loads(Path(path).read_text())
  except (OSError,ValueError) as exc: raise GrantError("grant install configuration unreadable") from exc
- required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","authority_path","executor_child_path","executor_launcher","executor_unit_template","python_path","source_root","source_head","provider_import_closure","runtime_sha256","authority_sha256","executor_child_sha256","launcher_sha256","unit_sha256","effective_unit_name","executor_mutable_root"}
+ required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","authority_path","executor_child_path","executor_launcher","executor_unit_template","python_path","source_root","source_head","provider_import_closure","runtime_sha256","authority_sha256","executor_child_sha256","launcher_sha256","unit_sha256","effective_unit_name","executor_mutable_root","authority_unit_template","authority_issuer_digest_sha256","authority_token_sha256","authority_unit_sha256","authority_readwrite_paths","effective_authority_unit_name"}
  if set(cfg)!=required: raise GrantError("grant install configuration fields are not exact")
  nums={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid"}
  if not all(isinstance(cfg[k],int) for k in nums): raise GrantError("grant install numeric identities invalid")
@@ -59,6 +66,7 @@ def _load_install_config(path):
  if not __import__("re").fullmatch(r"[0-9a-f]{64}",cfg["source_head"]): raise GrantError("source head must be canonical 64-hex")
  if not isinstance(cfg["provider_import_closure"],dict) or not cfg["provider_import_closure"]: raise GrantError("provider import closure missing")
  if cfg["effective_unit_name"] != "hermes-real-executor@.service": raise GrantError("effective unit name is not canonical")
+ if cfg["effective_authority_unit_name"] != "hermes-grant-authority.service": raise GrantError("effective authority unit name is not canonical")
  return cfg
 
 def _sha256(path):
@@ -67,11 +75,38 @@ def _sha256(path):
   for block in iter(lambda:f.read(65536),b""): h.update(block)
  return h.hexdigest()
 
-def _root_regular_digest(path, mode, digest, label):
- path=Path(path)
- try: st=path.stat()
+def _lstat_mode(path):
+ return stat.S_IMODE(os.lstat(path).st_mode)
+
+def _strict_file_artifact(path, mode, label):
+ """Reject symlinks; require a root-owned regular file at exactly `mode`;
+ then enforce that every ancestor up to the trusted root is a real
+ (non-symlink) root-owned directory and not group/world writable.  Validation
+ is lstat-based so a symlinked artifact or a symlinked ancestor cannot satisfy
+ the boundary.  This is the pre-import/ pre-privileged-action gate for every
+ install artifact (config, runtime, authority, child, launcher, unit)."""
+ p=Path(path)
+ if not p.is_absolute(): raise GrantError(f"{label} path is not absolute")
+ try: st=os.lstat(p)
  except OSError as exc: raise GrantError(f"{label} missing") from exc
- if st.st_uid!=0 or not stat.S_ISREG(st.st_mode) or _mode(path)!=mode: raise GrantError(f"{label} owner/mode mismatch")
+ if stat.S_ISLNK(st.st_mode): raise GrantError(f"{label} is a symlink")
+ if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or _lstat_mode(p)!=mode: raise GrantError(f"{label} owner/mode mismatch or not a regular root-owned file")
+ _safe_root_chain(p.parent, label+" ancestor")
+
+def _verified_artifact(path, mode, digest, label):
+ """Strict file gate plus exact SHA-256 pin.  Catastrophic only if the digest
+ mismatches; symlink or writable-ancestor bypass is impossible."""
+ _strict_file_artifact(path, mode, label)
+ if not isinstance(digest,str) or len(digest)!=64 or not secrets.compare_digest(_sha256(path),digest): raise GrantError(f"{label} digest mismatch")
+
+def _root_regular_digest(path, mode, digest, label):
+ """Back-compat neighbor validator: lstat-based, symlink-refusing, used for
+ import-closure members whose ancestors are already vetted by _safe_root_chain."""
+ path=Path(path)
+ try: st=os.lstat(path)
+ except OSError as exc: raise GrantError(f"{label} missing") from exc
+ if stat.S_ISLNK(st.st_mode): raise GrantError(f"{label} is a symlink")
+ if st.st_uid!=0 or not stat.S_ISREG(st.st_mode) or _lstat_mode(path)!=mode: raise GrantError(f"{label} owner/mode mismatch")
  if not isinstance(digest,str) or len(digest)!=64 or not secrets.compare_digest(_sha256(path),digest): raise GrantError(f"{label} digest mismatch")
 
 def _verify_unit(cfg):
@@ -99,16 +134,60 @@ def _verify_unit(cfg):
  required={"User":executor,"Group":group,"SupplementaryGroups":socket_group,"NoNewPrivileges":"yes","PrivateTmp":"yes","ProtectSystem":"strict","ReadWritePaths":cfg["executor_mutable_root"]}
  if any(values.get(k)!=v for k,v in required.items()) or set(values)!={*required,"ExecStart"}: raise GrantError("executor unit identity or hardening contract mismatch")
 
+def _verify_authority_unit(cfg):
+ """The grant authority service is held to the SAME closed grammar and digest
+ pinning as the executor.  Its committed unit template is a root-owned 0644
+ non-writable file (lstat-checked, symlink-refused); its ExecStart is the exact
+ fixed serve invocation; ReadWritePaths must equal the pinned set; no other
+ directive is permitted.  This closes the install boundary so the authority
+ cannot be silently re-installed with a weakened unit."""
+ unit=Path(cfg["authority_unit_template"])
+ try: lines=unit.read_text(encoding="utf-8").splitlines()
+ except OSError as exc: raise GrantError("authority unit template missing") from exc
+ _verified_artifact(cfg["authority_unit_template"],0o644,cfg["authority_unit_sha256"],"grant authority unit template")
+ section=None; values={}; allowed={"User","Group","SupplementaryGroups","ExecStart","NoNewPrivileges","PrivateTmp","ProtectSystem","ReadWritePaths"}
+ for raw in lines:
+  line=raw.strip()
+  if not line or line.startswith(("#",";")): continue
+  if line.startswith("[") and line.endswith("]"): section=line[1:-1]; continue
+  if section!="Service" or "=" not in line: raise GrantError("authority unit has non-Service or malformed directive")
+  key,value=line.split("=",1)
+  if key not in allowed or key in values: raise GrantError("authority unit has unsafe or duplicate directive")
+  values[key]=value
+ authority=pwd.getpwuid(cfg["authority_uid"]).pw_name
+ agroup=__import__("grp").getgrgid(cfg["authority_gid"]).gr_name
+ socket_group=__import__("grp").getgrgid(cfg["socket_gid"]).gr_name
+ expected=[cfg["python_path"],cfg["authority_path"],"serve","--socket",cfg["socket_path"],"--state-dir",cfg["state_dir"],"--issuer-secret-file",cfg["authority_issuer_digest_file"],"--install-config",cfg["_config_path"]]
+ try: argv=shlex.split(values.get("ExecStart",""),posix=True)
+ except ValueError as exc: raise GrantError("authority ExecStart is malformed") from exc
+ if argv!=expected: raise GrantError("authority ExecStart is not the exact fixed serve invocation")
+ if not isinstance(cfg["authority_readwrite_paths"],list) or not cfg["authority_readwrite_paths"]: raise GrantError("authority ReadWritePaths missing")
+ if values.get("ReadWritePaths","")!=_canon_rw(cfg["authority_readwrite_paths"]): raise GrantError("authority ReadWritePaths is not the exact pinned set")
+ required={"User":authority,"Group":agroup,"SupplementaryGroups":socket_group,"NoNewPrivileges":"yes","PrivateTmp":"yes","ProtectSystem":"strict","ReadWritePaths":_canon_rw(cfg["authority_readwrite_paths"])}
+ if any(values.get(k)!=v for k,v in required.items()) or set(values)!={*required,"ExecStart"}: raise GrantError("authority unit identity or hardening contract mismatch")
+
+def _canon_rw(paths):
+ """Canonical single-value ReadWritePaths representation (systemd accepts a
+ space-separated list on one directive).  Stored as a list in config and
+ rendered exactly as the unit must declare it."""
+ return " ".join(paths)
+
 def _verify_effective_systemd_unit(cfg):
  """Refuse manager indirection: resolved FragmentPath must be our template,
  no drop-ins may exist, and manager must say a daemon reload is not pending."""
+ _verify_effective_unit(cfg["effective_unit_name"], cfg["executor_unit_template"], "executor")
+
+def _verify_effective_unit(unit, template_path, label):
+ """Refuse manager indirection for either service unit: resolved FragmentPath
+ must be our template, no drop-ins may exist, and the manager must say a daemon
+ reload is not pending.  Applies identically to the executor and authority."""
  import subprocess
- unit=cfg["effective_unit_name"]; template=str(Path(cfg["executor_unit_template"]).resolve())
+ template=str(Path(template_path).resolve())
  try:
   shown=subprocess.run(["/usr/bin/systemctl","show",unit,"--property=FragmentPath,DropInPaths,NeedDaemonReload","--value"],capture_output=True,text=True,check=True).stdout.splitlines()
- except (OSError,subprocess.SubprocessError) as exc: raise GrantError("effective systemd unit cannot be resolved") from exc
+ except (OSError,subprocess.SubprocessError) as exc: raise GrantError(f"effective {label} systemd unit cannot be resolved") from exc
  if len(shown)!=3 or shown[0].strip()!=template or shown[1].strip() or shown[2].strip().lower() not in ("no","false","0"):
-  raise GrantError("effective systemd unit differs, has drop-ins, or daemon reload is pending")
+  raise GrantError(f"effective {label} systemd unit differs, has drop-ins, or daemon reload is pending")
 
 def _owned_mode(path,uid,mode,label):
  try: st=Path(path).stat()
@@ -137,27 +216,33 @@ def _verify_import_closure(cfg):
 
 def verify_install(config_path):
  """Non-mutating provision verifier. Provisioning users, files, socket and
- systemd units is explicitly external; any missing OS boundary fails closed."""
- cfg=_load_install_config(config_path); state=Path(cfg["state_dir"]); sock=Path(cfg["socket_path"])
+ systemd units is explicitly external; any missing OS boundary fails closed.
+ All artifact gates are lstat-based and reject symlinks and writable ancestors."""
+ cp=Path(config_path).resolve()
+ cfg=_load_install_config(cp); state=Path(cfg["state_dir"]); sock=Path(cfg["socket_path"])
+ _strict_file_artifact(cp,0o644,"executor install config")
  _owned_mode(state,cfg["authority_uid"],0o700,"authority state directory")
  if state.stat().st_gid!=cfg["authority_gid"]: raise GrantError("authority state group mismatch")
  _owned_mode(cfg["gate_issuer_token_file"],cfg["gate_uid"],0o600,"gate issuer token")
- _owned_mode(cfg["authority_issuer_digest_file"],cfg["authority_uid"],0o600,"authority issuer digest")
- cp=Path(config_path); st=cp.stat()
- if st.st_uid!=0 or not stat.S_ISREG(st.st_mode) or _mode(cp)!=0o644: raise GrantError("executor install config must be root-owned non-secret mode 0644")
- _root_regular_digest(cfg["runtime_path"],0o755,cfg["runtime_sha256"],"private executor runtime")
- _root_regular_digest(cfg["authority_path"],0o755,cfg["authority_sha256"],"grant authority source")
- _root_regular_digest(cfg["executor_child_path"],0o755,cfg["executor_child_sha256"],"executor child source")
- launcher=Path(cfg["executor_launcher"]); _root_regular_digest(launcher,0o4750,cfg["launcher_sha256"],"executor launcher")
- _root_regular_digest(cfg["executor_unit_template"],0o644,cfg["unit_sha256"],"executor unit template")
+ _strict_file_artifact(cfg["authority_issuer_digest_file"],0o600,"authority issuer digest")
+ _verified_artifact(cfg["authority_issuer_digest_file"],0o600,cfg["authority_issuer_digest_sha256"],"authority issuer digest")
+ _verified_artifact(cfg["gate_issuer_token_file"],0o600,cfg["authority_token_sha256"],"gate issuer token")
+ _verified_artifact(cfg["authority_path"],0o755,cfg["authority_sha256"],"grant authority source")
+ _verified_artifact(cfg["executor_child_path"],0o755,cfg["executor_child_sha256"],"executor child source")
+ launcher=Path(cfg["executor_launcher"]); _verified_artifact(launcher,0o4750,cfg["launcher_sha256"],"executor launcher")
+ _verified_artifact(cfg["executor_unit_template"],0o644,cfg["unit_sha256"],"executor unit template")
  _verify_import_closure(cfg)
- cfg["_config_path"]=str(Path(config_path).resolve()); _verify_unit(cfg)
+ cfg["_config_path"]=str(cp); _verify_unit(cfg)
+ _verify_authority_unit(cfg)
  _verify_effective_systemd_unit(cfg)
+ _verify_effective_unit(cfg["effective_authority_unit_name"], cfg["authority_unit_template"], "authority")
  parent=sock.parent
- if not parent.is_dir() or _mode(parent)&0o022: raise GrantError("authority socket parent unsafe")
- try: st=sock.stat()
+ if not parent.is_dir() or _lstat_mode(parent)&0o022: raise GrantError("authority socket parent unsafe")
+ if parent != parent.resolve() or any(os.path.islink(str(p)) for p in (parent, *parent.parents)): raise GrantError("authority socket parent is a symlink")
+ try: st=os.lstat(sock)
  except OSError as exc: raise GrantError("authority socket missing") from exc
- if not stat.S_ISSOCK(st.st_mode) or st.st_uid!=cfg["authority_uid"] or st.st_gid!=cfg["socket_gid"] or _mode(sock)!=0o660: raise GrantError("authority socket owner/group/mode mismatch")
+ if stat.S_ISLNK(st.st_mode): raise GrantError("authority socket is a symlink")
+ if not stat.S_ISSOCK(st.st_mode) or st.st_uid!=cfg["authority_uid"] or st.st_gid!=cfg["socket_gid"] or _lstat_mode(sock)!=0o660: raise GrantError("authority socket owner/group/mode mismatch")
  for uid,gid,label in ((cfg["authority_uid"],cfg["socket_gid"],"authority"),(cfg["gate_uid"],cfg["socket_gid"],"gate"),(cfg["executor_uid"],cfg["socket_gid"],"executor")):
   try: groups=os.getgrouplist(pwd.getpwuid(uid).pw_name,pwd.getpwuid(uid).pw_gid)
   except KeyError as exc: raise GrantError(f"{label} account missing") from exc

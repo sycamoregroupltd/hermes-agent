@@ -37,6 +37,20 @@ def main():
         try: ga._peer_uid(object()); peer_refused=False
         except ga.GrantError: peer_refused=True
         check("missing Unix peer credential support is refused",peer_refused)
+        # _peer_uid must return the UID (index 1), never the PID (index 0).
+        if hasattr(socket, "SO_PEERCRED"):
+            left,right=socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                uid=ga._peer_uid(left)
+                # On a non-privileged host the process pid and the euid may
+                # coincide (root).  The regression is that _peer_uid must index
+                # the credential tuple at position 1 (uid), NOT position 0
+                # (pid); assert the helper is wired to the right field by
+                # checking it equals the full-credential uid, never the pid.
+                _,peer_uid,peer_gid=ga._peer_credentials(left)
+                check("_peer_uid returns the credential uid, not the pid",uid==peer_uid)
+            finally:
+                left.close(); right.close()
         # Real AF_UNIX credentials are (pid, uid, gid).  This catches the
         # catastrophic pid/uid variable swap in the serving path.
         if hasattr(socket, "SO_PEERCRED"):

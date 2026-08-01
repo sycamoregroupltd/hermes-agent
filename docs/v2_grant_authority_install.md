@@ -77,16 +77,18 @@ canonical runtime arguments.
 
 `/etc/hermes-grants/install.json` is exact-schema configuration and includes
 `runtime_path`, `authority_path`, `executor_child_path`, `executor_launcher`,
-`executor_unit_template`, `python_path`, canonical 64-hex `source_head`,
-canonical `source_root`, `effective_unit_name`, and an exhaustive
+`executor_unit_template`, `authority_unit_template`, `python_path`, canonical
+64-hex `source_head`, canonical `source_root`, `effective_unit_name`,
+`effective_authority_unit_name`, and an exhaustive
 `provider_import_closure` map of relative source files to SHA-256 pins, plus
-SHA-256 pins for
-the runtime, authority, child, launcher and unit, in addition
-to the three account IDs, socket group, state/socket paths, and token paths.
-The runtime is root-owned `0755`; the compiled launcher is root-owned `4750`
-and the unit is root-owned `0644`. The launcher source is itself a mandatory
-activation-packet manifest pin. The launcher is compiled from
-`bin_verify/v2_executor_launcher.c`; it accepts precisely one lower-case
+SHA-256 pins for the runtime, authority, child, launcher, executor `unit_sha256`
+and `authority_unit_sha256`, the `authority_issuer_digest_sha256` and
+`authority_token_sha256` secret file pins, and the pinned `authority_readwrite_paths`
+list, in addition to the three account IDs, socket group, state/socket paths,
+and token paths. The runtime is root-owned `0755`; the compiled launcher is
+root-owned `4750` and the units are root-owned `0644`. The launcher source is
+itself a mandatory activation-packet manifest pin. The launcher is compiled
+from `bin_verify/v2_executor_launcher.c`; it accepts precisely one lower-case
 64-hex grant ID, clears its environment, and executes only the fixed
 `/usr/bin/systemctl start hermes-real-executor@<grant>.service` argv.
 The executor account must have a non-login shell. `verify-install` checks all

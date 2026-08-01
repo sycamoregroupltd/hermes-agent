@@ -1,0 +1,9 @@
+[Service]
+User=hermes-grant-authority
+Group=hermes-grant-authority
+SupplementaryGroups=hermes-grant-socket
+ExecStart=/usr/bin/python3 /opt/hermes/bin_verify/v2_grant_authority.py serve --socket /run/hermes-grants/authority.sock --state-dir /var/lib/hermes-grants --issuer-secret-file /etc/hermes-grants/authority-token-digest --install-config /etc/hermes-grants/install.json
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/run/hermes-grants /var/lib/hermes-grants

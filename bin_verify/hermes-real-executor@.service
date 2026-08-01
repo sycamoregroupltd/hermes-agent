@@ -1,0 +1,9 @@
+[Service]
+User=hermes-executor
+Group=hermes-executor
+SupplementaryGroups=hermes-grant-socket
+ExecStart=/usr/bin/python3 /opt/hermes/bin_verify/v2_real_executor_child.py --grant-id %i --grant-authority-socket /run/hermes-grants/authority.sock --install-config /etc/hermes-grants/install.json
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hermes-executor/workspaces
