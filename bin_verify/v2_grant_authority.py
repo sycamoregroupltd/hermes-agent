@@ -163,6 +163,23 @@ def verify_install(config_path):
 def _path(d,gid):
  if not isinstance(gid,str) or len(gid)!=64 or any(c not in "0123456789abcdef" for c in gid): raise GrantError("grant id invalid")
  return d/("grant-"+gid+".json")
+def _receipt_fingerprint(receipt):
+ clone={k:v for k,v in receipt.items() if k!="receipt_fingerprint"}
+ return "sha256:"+hashlib.sha256(_canon(clone).encode()).hexdigest()
+def _outcome_path(d,gid): return d/("grant-"+gid+".outcome.json")
+def _consume_receipt(gid,g):
+ # This is minted by the authority before the grant becomes visible.  It is
+ # copied verbatim into the consumed record and is the identity every later
+ # terminal outcome must carry; callers cannot select a receipt namespace.
+ receipt={"receipt_kind":"v2-executor-grant-consume-receipt","schema_version":1,
+  "grant_id":gid,"task_id":g["task_id"],"board_db":g["board_db"],
+  "workspace_root":g["workspace_root"],"session_binding":g["session_binding"],
+  "cmux_receipt":g["cmux_receipt"],"reservation_json":g["reservation_json"],
+  "binding_issuer":g["binding_issuer"],"hermes_home":g["hermes_home"],
+  "lease_realpath":g["lease_realpath"],"lease_sha256":g["lease_sha256"],
+  "source_head":g["source_head"]}
+ receipt["receipt_fingerprint"]=_receipt_fingerprint(receipt)
+ return receipt
 def _issue(req,d,token_digest,cfg=None):
  token=req.get("issuer_token")
  if not isinstance(token,str) or not secrets.compare_digest(hashlib.sha256(token.encode()).hexdigest(),token_digest): raise GrantError("issuer authentication refused")
@@ -178,6 +195,7 @@ def _issue(req,d,token_digest,cfg=None):
   try:
    fd=os.open(p,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
    g["launch_armed"] = False
+   g["consume_receipt"]=_consume_receipt(gid,g)
    with os.fdopen(fd,"w") as f: json.dump(g,f,sort_keys=True)
    return gid
   except FileExistsError: pass
@@ -199,13 +217,55 @@ def _consume(req,d):
  gid=req.get("grant_id"); expected=req.get("expected")
  if not isinstance(expected,dict): raise GrantError("grant consume expected fields missing")
  p=_path(d,gid); used=p.with_suffix(".consumed")
+ # Validate the non-secret immutable request before consuming.  An invalid
+ # request must not burn a one-shot grant (while the subsequent rename still
+ # supplies the authoritative race boundary for a valid request).
+ try: preview=json.load(open(p))
+ except (OSError,ValueError) as exc: raise GrantError("grant absent or malformed") from exc
+ header={"receipt_kind":"v2-executor-grant-consume-receipt","schema_version":1,"grant_id":gid}
+ receipt_preview=preview.get("consume_receipt")
+ if not isinstance(receipt_preview,dict) or receipt_preview.get("receipt_fingerprint")!=_receipt_fingerprint(receipt_preview): raise GrantError("grant consume receipt missing or corrupt")
+ if expected != header: raise GrantError("grant consume receipt binding mismatch")
  try: os.replace(p,used)
  except FileNotFoundError as e: raise GrantError("grant absent or already consumed") from e
  g=json.load(open(used))
  if g.get("launch_armed") is not True: raise GrantError("grant was not armed by gate launcher")
- if any(g.get(k)!=v for k,v in expected.items()): raise GrantError("grant binding mismatch")
+ receipt=g.get("consume_receipt")
+ if not isinstance(receipt,dict) or receipt.get("receipt_fingerprint")!=_receipt_fingerprint(receipt): raise GrantError("grant consume receipt missing or corrupt")
+ # The executor can know only the deterministic receipt header before the
+ # authority reveals the opaque fingerprint.  Refuse wildcards, extras, and
+ # any non-exact header; the returned receipt remains the authority's full
+ # binding used by terminal persistence/readback.
+ if expected != header: raise GrantError("grant consume receipt binding mismatch")
  if g.get("expires_at",0)<=int(time.time()): raise GrantError("grant expired")
  return g
+def _record_outcome(req,d):
+ gid=req.get("grant_id"); outcome=req.get("outcome")
+ if not isinstance(outcome,dict): raise GrantError("terminal outcome missing")
+ try: g=json.load(open(_path(d,gid).with_suffix(".consumed")))
+ except (OSError,ValueError) as exc: raise GrantError("consumed grant absent") from exc
+ receipt=g.get("consume_receipt")
+ if not isinstance(receipt,dict) or outcome.get("consume_receipt_fingerprint")!=receipt.get("receipt_fingerprint"): raise GrantError("terminal outcome receipt mismatch")
+ required={"outcome_kind","schema_version","grant_id","consume_receipt_fingerprint","status","task_id","source_head","terminal"}
+ if set(outcome)!=required or outcome.get("outcome_kind")!="v2-executor-terminal-outcome" or outcome.get("schema_version")!=1 or outcome.get("grant_id")!=gid or outcome.get("task_id")!=receipt.get("task_id") or outcome.get("source_head")!=receipt.get("source_head") or outcome.get("status") not in ("completed","errored") or not isinstance(outcome.get("terminal"),dict): raise GrantError("terminal outcome fields invalid")
+ if outcome["status"]=="completed" and outcome["terminal"]!={"guarded_lifecycle_done":True,"terminal_write":True,"marker":True}: raise GrantError("successful terminal outcome is not guarded-lifecycle complete")
+ if outcome["status"]=="errored" and outcome["terminal"]!={"guarded_lifecycle_done":False,"terminal_write":False,"marker":False}: raise GrantError("errored terminal outcome shape invalid")
+ target=_outcome_path(d,gid)
+ try:
+  fd=os.open(target,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+ except FileExistsError as exc: raise GrantError("terminal outcome already recorded") from exc
+ with os.fdopen(fd,"w") as fh: json.dump(outcome,fh,sort_keys=True); fh.flush(); os.fsync(fh.fileno())
+ return outcome
+def _read_outcome(req,d):
+ gid=req.get("grant_id"); fingerprint=req.get("consume_receipt_fingerprint")
+ try: g=json.load(open(_path(d,gid).with_suffix(".consumed")))
+ except (OSError,ValueError) as exc: raise GrantError("consumed grant absent") from exc
+ receipt=g.get("consume_receipt")
+ if not isinstance(receipt,dict) or fingerprint!=receipt.get("receipt_fingerprint"): raise GrantError("outcome read receipt mismatch")
+ try: outcome=json.load(open(_outcome_path(d,gid)))
+ except FileNotFoundError: return {"pending":True,"consume_receipt":receipt}
+ except (OSError,ValueError) as exc: raise GrantError("terminal outcome unreadable") from exc
+ return {"pending":False,"consume_receipt":receipt,"outcome":outcome}
 def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
  cfg=_load_install_config(install_config) if install_config else None
  if cfg:
@@ -238,13 +298,20 @@ def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
      peer=_peer_uid(conn) if cfg else None
      if req.get("op")=="issue":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant issue peer identity refused")
-      out={"ok":True,"grant_id":_issue(req,d,token_digest,cfg)}
+      gid=_issue(req,d,token_digest,cfg)
+      out={"ok":True,"grant_id":gid,"consume_receipt":json.load(open(_path(d,gid))).get("consume_receipt")}
      elif req.get("op")=="arm":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant arm peer identity refused")
       out={"ok":True,"armed":_arm(req,d)}
      elif req.get("op")=="consume":
       if cfg and peer!=cfg["executor_uid"]: raise GrantError("grant consume peer identity refused")
       out={"ok":True,"grant":_consume(req,d)}
+     elif req.get("op")=="record_outcome":
+      if cfg and peer!=cfg["executor_uid"]: raise GrantError("terminal outcome peer identity refused")
+      out={"ok":True,"outcome":_record_outcome(req,d)}
+     elif req.get("op")=="read_outcome":
+      if cfg and peer!=cfg["gate_uid"]: raise GrantError("terminal outcome read peer identity refused")
+      out={"ok":True,**_read_outcome(req,d)}
      else: raise GrantError("unknown grant operation")
     except Exception as e: out={"ok":False,"error":str(e)[:300]}
     _send(conn,out)

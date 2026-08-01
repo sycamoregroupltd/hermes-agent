@@ -91,6 +91,8 @@ class DispatchError(RuntimeError):
 # be constructed; cross-principal security still comes from OS account
 # isolation and authority SO_PEERCRED checks.
 _RUNTIME_GRANT_CONSUMED = None
+_RUNTIME_CONSUME_RECEIPT = None
+_RUNTIME_AUTHORITY_SOCKET = None
 
 
 def _sha256_file(path):
@@ -140,7 +142,11 @@ def _load_and_verify_preimport_config(path):
 
 
 def _consume_authority(socket_path, grant_id):
-    payload = json.dumps({"op": "consume", "grant_id": grant_id, "expected": {}}, sort_keys=True).encode()
+    # The authority minted this exact receipt before publishing the grant.  A
+    # consumer cannot provide an empty/wildcard expected-binding request.
+    payload = json.dumps({"op": "consume", "grant_id": grant_id,
+                          "expected": {"receipt_kind": "v2-executor-grant-consume-receipt",
+                                       "schema_version": 1, "grant_id": grant_id}}, sort_keys=True).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.connect(socket_path); sock.sendall(payload); raw = sock.recv(8193)
     if not raw or len(raw) > 8192:
@@ -150,6 +156,40 @@ def _consume_authority(socket_path, grant_id):
     if not out.get("ok"):
         raise DispatchError("runtime authority refused: " + str(out.get("error", "refused")))
     return out
+
+
+def _publish_terminal_outcome(*, status, record=None):
+    """Executor-only, exactly-once terminal persistence after consume.
+
+    It deliberately carries no provider result text.  The authority accepts a
+    success only when this runtime's guarded lifecycle has reached its native
+    done/terminal/marker checks; every exception becomes the sole errored
+    terminal outcome.  O_EXCL in the authority makes replay/overwrite fail.
+    """
+    if _RUNTIME_CONSUME_RECEIPT is None or _RUNTIME_AUTHORITY_SOCKET is None:
+        return
+    terminal = {"guarded_lifecycle_done": False, "terminal_write": False, "marker": False}
+    if status == "completed":
+        candidate = (record or {}).get("terminal", {})
+        terminal = {"guarded_lifecycle_done": (record or {}).get("status") == "DISPATCHED-ONCE",
+                    "terminal_write": candidate.get("terminal_write") is True,
+                    "marker": candidate.get("summary_has_marker") is True}
+        if terminal != {"guarded_lifecycle_done": True, "terminal_write": True, "marker": True}:
+            status, terminal = "errored", {"guarded_lifecycle_done": False, "terminal_write": False, "marker": False}
+    outcome = {"outcome_kind": "v2-executor-terminal-outcome", "schema_version": 1,
+               "grant_id": _RUNTIME_CONSUME_RECEIPT["grant_id"],
+               "consume_receipt_fingerprint": _RUNTIME_CONSUME_RECEIPT["receipt_fingerprint"],
+               "status": status, "task_id": _RUNTIME_CONSUME_RECEIPT["task_id"],
+               "source_head": _RUNTIME_CONSUME_RECEIPT["source_head"], "terminal": terminal}
+    payload = json.dumps({"op": "record_outcome", "grant_id": outcome["grant_id"], "outcome": outcome}, sort_keys=True).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(_RUNTIME_AUTHORITY_SOCKET); sock.sendall(payload); raw = sock.recv(8193)
+    if not raw or len(raw) > 8192:
+        raise DispatchError("terminal outcome authority response missing or oversized")
+    try: reply = json.loads(raw.decode())
+    except ValueError as exc: raise DispatchError("terminal outcome authority response malformed") from exc
+    if not reply.get("ok"):
+        raise DispatchError("terminal outcome authority refused: " + str(reply.get("error", "refused")))
 
 
 def digest(value: str) -> str:
@@ -559,8 +599,18 @@ def main(argv=None):
     required=("board_db","task_id","workspace_root","session_binding","cmux_receipt","reservation_json","binding_issuer","hermes_home","lease_file")
     if not isinstance(grant,dict) or any(not isinstance(grant.get(k),str) or not grant[k] for k in required):
         raise DispatchError("authority grant payload incomplete")
-    global ClaudeResumeExecutor, _RUNTIME_GRANT_CONSUMED
+    receipt = grant.get("consume_receipt") if isinstance(grant, dict) else None
+    if not isinstance(receipt, dict) or receipt.get("grant_id") != args.grant_id or not receipt.get("receipt_fingerprint"):
+        raise DispatchError("authority consume receipt missing or malformed")
+    # Consume requested only the immutable header because the runtime cannot
+    # know the authority's opaque receipt before receipt publication.  Verify
+    # all bindings locally before importing provider code.
+    if receipt.get("task_id") != grant.get("task_id") or receipt.get("source_head") != grant.get("source_head"):
+        raise DispatchError("authority consume receipt binding mismatch")
+    global ClaudeResumeExecutor, _RUNTIME_GRANT_CONSUMED, _RUNTIME_CONSUME_RECEIPT, _RUNTIME_AUTHORITY_SOCKET
     _RUNTIME_GRANT_CONSUMED = grant
+    _RUNTIME_CONSUME_RECEIPT = receipt
+    _RUNTIME_AUTHORITY_SOCKET = args.grant_authority_socket
     # First project imports: closure validated and authority consumed above.
     if str(REPO_ROOT) not in sys.path: sys.path.insert(0, str(REPO_ROOT))
     from hermes_cli import kanban_db as imported_kb
@@ -568,12 +618,16 @@ def main(argv=None):
     import issue_cmux_claude_session_binding as imported_cmux_binding
     global kb, cmux_binding
     kb, cmux_binding = imported_kb, imported_cmux_binding
-    return _run_child_lifecycle(board_db=grant["board_db"], canary_task=grant["task_id"], workspace_root=grant["workspace_root"], session_binding_path=grant["session_binding"], cmux_receipt_path=grant["cmux_receipt"], reservation_path=grant["reservation_json"], issuer_path=grant["binding_issuer"], hermes_home=grant["hermes_home"], runner=SubprocessClaudeRunner())
+    record = _run_child_lifecycle(board_db=grant["board_db"], canary_task=grant["task_id"], workspace_root=grant["workspace_root"], session_binding_path=grant["session_binding"], cmux_receipt_path=grant["cmux_receipt"], reservation_path=grant["reservation_json"], issuer_path=grant["binding_issuer"], hermes_home=grant["hermes_home"], runner=SubprocessClaudeRunner())
+    _publish_terminal_outcome(status="completed", record=record)
+    return record
 
 
 if __name__ == "__main__":
     try:
         print(json.dumps(main(), sort_keys=True))
     except Exception as exc:
+        try: _publish_terminal_outcome(status="errored")
+        except Exception as outcome_exc: print(json.dumps({"status":"DISPATCH-ERRORED","outcome_error":str(outcome_exc)[:500]}))
         print(json.dumps({"status": "DISPATCH-ERRORED", "error_type": type(exc).__name__, "error": str(exc)[:500]}))
         raise

@@ -93,6 +93,37 @@ RECEIPT_MAX_WINDOW_SECONDS = 600
 
 RC_OK = 0
 RC_REFUSE = 5
+OUTCOME_POLL_SECONDS = 15
+
+
+def observe_executor_outcome(authority_socket, grant_id, consume_receipt, *, timeout_seconds=OUTCOME_POLL_SECONDS):
+    """Bounded gate-side readback; launcher acceptance is never completion.
+
+    The authority is the sole writer/reader of the consume/outcome pair.  The
+    gate accepts only the exact receipt it was issued and a single authenticated
+    terminal success tied to that receipt, task and reviewed source head.
+    """
+    if not isinstance(consume_receipt, dict) or not isinstance(consume_receipt.get("receipt_fingerprint"), str):
+        raise RuntimeError("authority did not return a canonical consume receipt")
+    deadline = time.monotonic() + max(0, min(int(timeout_seconds), OUTCOME_POLL_SECONDS))
+    while True:
+        reply = grant_authority.request(authority_socket, {"op": "read_outcome", "grant_id": grant_id,
+            "consume_receipt_fingerprint": consume_receipt["receipt_fingerprint"]})
+        if reply.get("consume_receipt") != consume_receipt:
+            raise RuntimeError("authority outcome readback receipt mismatch")
+        if not reply.get("pending"):
+            outcome = reply.get("outcome")
+            required = {"outcome_kind":"v2-executor-terminal-outcome", "schema_version":1,
+                        "grant_id":grant_id, "consume_receipt_fingerprint":consume_receipt["receipt_fingerprint"],
+                        "status":"completed", "task_id":consume_receipt["task_id"],
+                        "source_head":consume_receipt["source_head"],
+                        "terminal":{"guarded_lifecycle_done":True,"terminal_write":True,"marker":True}}
+            if outcome != required:
+                raise RuntimeError("executor terminal outcome missing, mismatched, or non-success")
+            return outcome
+        if time.monotonic() >= deadline:
+            raise RuntimeError("timed out waiting for matching executor terminal outcome")
+        time.sleep(0.05)
 
 
 def task_scoped_lease_path(canary_task, activation_packet, stub_events_dir=None):
@@ -375,6 +406,8 @@ def main(argv):
     ap.add_argument("--grant-authority-socket", default=os.environ.get("HERMES_GRANT_AUTHORITY_SOCKET"), help="production verifier-owned grant authority socket")
     ap.add_argument("--grant-issuer-secret-file", default=os.environ.get("HERMES_GRANT_ISSUER_SECRET_FILE"), help="production gate-only issuer token file")
     ap.add_argument("--grant-install-config", default=os.environ.get("HERMES_GRANT_INSTALL_CONFIG"), help="production authority install configuration")
+    ap.add_argument("--outcome-timeout-seconds", type=int, default=OUTCOME_POLL_SECONDS,
+                    help="bounded real-run outcome observation; values are capped fail-closed")
     args = ap.parse_args(argv)
 
     # Real runner derives the task packet itself; callers cannot select it.
@@ -504,8 +537,9 @@ def main(argv):
                     "source_head": subprocess.check_output(["git", "-C", ROOT, "rev-parse", "HEAD"], text=True).strip(),
                     "expires_at": int(time.time()) + 30,
                 }
-                grant_id = grant_authority.request(args.grant_authority_socket,
-                    {"op": "issue", "issuer_token": issuer_secret, "grant": envelope})["grant_id"]
+                issued = grant_authority.request(args.grant_authority_socket,
+                    {"op": "issue", "issuer_token": issuer_secret, "grant": envelope})
+                grant_id = issued["grant_id"]
                 # Arming is separate from issuing. Only the configured root-owned
                 # narrow launcher can start `hermes-real-executor@<grant>` as the
                 # non-login executor UID; the gate never execs the child itself.
@@ -513,9 +547,21 @@ def main(argv):
                 launch=subprocess.run([install["launcher"],grant_id],text=True,capture_output=True,timeout=30)
                 if launch.returncode:
                     raise RuntimeError("executor launcher refused: "+launch.stderr[-300:])
+                # A successful launcher only means systemd accepted the unit.
+                # It is not a terminal executor result and MUST NOT produce
+                # RC_OK until the authority returns the grant-bound outcome.
+                consumed = grant_authority.request(args.grant_authority_socket,
+                    {"op":"read_outcome","grant_id":grant_id,
+                     "consume_receipt_fingerprint": issued["consume_receipt"]["receipt_fingerprint"]})
+                receipt = consumed.get("consume_receipt")
+                if receipt != issued.get("consume_receipt"):
+                    raise RuntimeError("launcher did not yield matching authority consume receipt")
+                outcome = observe_executor_outcome(args.grant_authority_socket, grant_id, receipt,
+                    timeout_seconds=args.outcome_timeout_seconds)
                 record={"record_kind":"v2-dispatch-record","canary_task":dispatch_task,
-                        "executor":"ClaudeResumeExecutor","status":"EXECUTOR-LAUNCHED",
-                        "grant_id":grant_id,"launcher":install["launcher"]}
+                        "executor":"ClaudeResumeExecutor","status":"DISPATCHED-ONCE",
+                        "grant_id":grant_id,"launcher":install["launcher"],
+                        "consume_receipt_fingerprint":receipt["receipt_fingerprint"],"terminal_outcome":outcome}
             record["lease_file"] = args.lease_file
             verdict, rc = "DISPATCHED-ONCE", RC_OK
         except Exception as exc:
