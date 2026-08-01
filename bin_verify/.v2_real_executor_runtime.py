@@ -496,6 +496,11 @@ def main(argv=None):
     # consume an armed authority grant while running as the executor account.
     cfg = grant_authority._load_install_config(args.install_config)
     grant_authority.verify_install(args.install_config)
+    # Installed artifacts are individually digest-pinned. The provider import
+    # also requires the configured reviewed checkout head.
+    head = __import__("subprocess").run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True)
+    if head.returncode or head.stdout.strip() != cfg["source_head"]:
+        raise DispatchError("runtime source head does not match verified install pin")
     if os.geteuid() != cfg["executor_uid"]:
         raise DispatchError("private runtime must run as configured executor UID")
     try:

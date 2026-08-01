@@ -21,7 +21,7 @@ def _private_runtime(cfg):
     runtime=Path(cfg["runtime_path"]).resolve(); st=runtime.stat()
     if os.geteuid()!=cfg["executor_uid"]:
         raise DispatchError("real executor child must run as configured executor UID")
-    if st.st_uid!=cfg["executor_uid"] or stat.S_IMODE(st.st_mode)!=0o700:
+    if st.st_uid!=0 or stat.S_IMODE(st.st_mode)!=0o755:
         raise DispatchError("private real runtime owner/mode mismatch")
     return runtime
 

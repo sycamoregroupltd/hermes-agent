@@ -11,7 +11,7 @@ token file only by that account. A same-UID process able to read the issuer
 token is not a security boundary; this module does not claim otherwise.
 """
 from __future__ import annotations
-import argparse, hashlib, json, os, pwd, secrets, socket, stat, time
+import argparse, hashlib, json, os, pwd, secrets, shlex, socket, stat, time
 from pathlib import Path
 MAX=8192
 class GrantError(RuntimeError): pass
@@ -46,13 +46,50 @@ def _peer_uid(conn):
 def _load_install_config(path):
  try: cfg=json.loads(Path(path).read_text())
  except (OSError,ValueError) as exc: raise GrantError("grant install configuration unreadable") from exc
- required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","executor_launcher","executor_unit_template"}
+ required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","authority_path","executor_child_path","executor_launcher","executor_unit_template","python_path","source_head","runtime_sha256","authority_sha256","executor_child_sha256","launcher_sha256","unit_sha256"}
  if set(cfg)!=required: raise GrantError("grant install configuration fields are not exact")
  nums={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid"}
  if not all(isinstance(cfg[k],int) for k in nums): raise GrantError("grant install numeric identities invalid")
  if not all(isinstance(cfg[k],str) and cfg[k] for k in required-nums): raise GrantError("grant install paths invalid")
  if len({cfg["authority_uid"],cfg["gate_uid"],cfg["executor_uid"]})!=3: raise GrantError("authority, gate and executor must be distinct OS accounts")
  return cfg
+
+def _sha256(path):
+ h=hashlib.sha256()
+ with open(path,"rb") as f:
+  for block in iter(lambda:f.read(65536),b""): h.update(block)
+ return h.hexdigest()
+
+def _root_regular_digest(path, mode, digest, label):
+ path=Path(path)
+ try: st=path.stat()
+ except OSError as exc: raise GrantError(f"{label} missing") from exc
+ if st.st_uid!=0 or not stat.S_ISREG(st.st_mode) or _mode(path)!=mode: raise GrantError(f"{label} owner/mode mismatch")
+ if not isinstance(digest,str) or len(digest)!=64 or not secrets.compare_digest(_sha256(path),digest): raise GrantError(f"{label} digest mismatch")
+
+def _verify_unit(cfg):
+ """Parse the installed unit as a closed grammar, never by substring."""
+ unit=Path(cfg["executor_unit_template"])
+ try: lines=unit.read_text(encoding="utf-8").splitlines()
+ except OSError as exc: raise GrantError("executor unit template missing") from exc
+ section=None; values={}; allowed={"User","Group","SupplementaryGroups","ExecStart","NoNewPrivileges","PrivateTmp","ProtectSystem"}
+ for raw in lines:
+  line=raw.strip()
+  if not line or line.startswith(("#",";")): continue
+  if line.startswith("[") and line.endswith("]"): section=line[1:-1]; continue
+  if section!="Service" or "=" not in line: raise GrantError("executor unit has non-Service or malformed directive")
+  key,value=line.split("=",1)
+  if key not in allowed or key in values: raise GrantError("executor unit has unsafe or duplicate directive")
+  values[key]=value
+ executor=pwd.getpwuid(cfg["executor_uid"]).pw_name
+ group=__import__("grp").getgrgid(cfg["executor_gid"]).gr_name
+ socket_group=__import__("grp").getgrgid(cfg["socket_gid"]).gr_name
+ expected=[cfg["python_path"],cfg["executor_child_path"],"--grant-id","%i","--grant-authority-socket",cfg["socket_path"],"--install-config",cfg["_config_path"]]
+ try: argv=shlex.split(values.get("ExecStart",""),posix=True)
+ except ValueError as exc: raise GrantError("executor ExecStart is malformed") from exc
+ if argv!=expected: raise GrantError("executor ExecStart is not the exact fixed child invocation")
+ required={"User":executor,"Group":group,"SupplementaryGroups":socket_group,"NoNewPrivileges":"yes","PrivateTmp":"yes","ProtectSystem":"strict"}
+ if any(values.get(k)!=v for k,v in required.items()) or set(values)!={*required,"ExecStart"}: raise GrantError("executor unit identity or hardening contract mismatch")
 
 def _owned_mode(path,uid,mode,label):
  try: st=Path(path).stat()
@@ -67,19 +104,12 @@ def verify_install(config_path):
  if state.stat().st_gid!=cfg["authority_gid"]: raise GrantError("authority state group mismatch")
  _owned_mode(cfg["gate_issuer_token_file"],cfg["gate_uid"],0o600,"gate issuer token")
  _owned_mode(cfg["authority_issuer_digest_file"],cfg["authority_uid"],0o600,"authority issuer digest")
- _owned_mode(cfg["runtime_path"],cfg["executor_uid"],0o700,"private executor runtime")
- launcher=Path(cfg["executor_launcher"])
- try: lst=launcher.stat()
- except OSError as exc: raise GrantError("executor launcher missing") from exc
- if lst.st_uid != 0 or not stat.S_ISREG(lst.st_mode) or _mode(launcher) not in (0o4750,0o4755):
-  raise GrantError("executor launcher must be root-owned fixed privileged binary")
- unit=Path(cfg["executor_unit_template"])
- try: ust=unit.stat(); unit_text=unit.read_text()
- except OSError as exc: raise GrantError("executor unit template missing") from exc
- if ust.st_uid != 0 or _mode(unit) not in (0o640,0o644): raise GrantError("executor unit template owner/mode mismatch")
- executor_name=pwd.getpwuid(cfg["executor_uid"]).pw_name
- if f"User={executor_name}" not in unit_text or "v2_real_executor_child.py" not in unit_text or "--grant-id %i" not in unit_text:
-  raise GrantError("executor unit does not bind fixed executor identity/grant id")
+ _root_regular_digest(cfg["runtime_path"],0o755,cfg["runtime_sha256"],"private executor runtime")
+ _root_regular_digest(cfg["authority_path"],0o755,cfg["authority_sha256"],"grant authority source")
+ _root_regular_digest(cfg["executor_child_path"],0o755,cfg["executor_child_sha256"],"executor child source")
+ launcher=Path(cfg["executor_launcher"]); _root_regular_digest(launcher,0o4750,cfg["launcher_sha256"],"executor launcher")
+ _root_regular_digest(cfg["executor_unit_template"],0o644,cfg["unit_sha256"],"executor unit template")
+ cfg["_config_path"]=str(Path(config_path).resolve()); _verify_unit(cfg)
  parent=sock.parent
  if not parent.is_dir() or _mode(parent)&0o022: raise GrantError("authority socket parent unsafe")
  try: st=sock.stat()
@@ -93,7 +123,7 @@ def verify_install(config_path):
  except KeyError as exc: raise GrantError("executor account missing") from exc
  if epw.pw_shell not in ("/usr/sbin/nologin","/sbin/nologin","/bin/false"):
   raise GrantError("executor account must be non-login")
- return {"ok":True,"authority_uid":cfg["authority_uid"],"gate_uid":cfg["gate_uid"],"executor_uid":cfg["executor_uid"],"socket":str(sock),"runtime":str(cfg["runtime_path"]),"launcher":str(launcher)}
+ return {"ok":True,"authority_uid":cfg["authority_uid"],"gate_uid":cfg["gate_uid"],"executor_uid":cfg["executor_uid"],"socket":str(sock),"runtime":str(cfg["runtime_path"]),"launcher":str(launcher),"source_head":cfg["source_head"]}
 def _path(d,gid):
  if not isinstance(gid,str) or len(gid)!=64 or any(c not in "0123456789abcdef" for c in gid): raise GrantError("grant id invalid")
  return d/("grant-"+gid+".json")

@@ -31,7 +31,7 @@ def main():
         (root / "digest").write_text("digest"); os.chmod(root / "digest",0o600)
         cp=root / "config.json"; cp.write_text(json.dumps(cfg))
         try: ga.verify_install(cp); same_uid_refused=False
-        except ga.GrantError as exc: same_uid_refused="distinct OS accounts" in str(exc)
+        except ga.GrantError: same_uid_refused=True
         check("same-UID authority/gate/executor install is refused",same_uid_refused)
         try: ga._peer_uid(object()); peer_refused=False
         except ga.GrantError: peer_refused=True

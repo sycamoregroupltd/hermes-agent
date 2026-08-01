@@ -17,8 +17,10 @@ are members.  Do not use the interactive DGX/Claude account for any of them.
   never read the gate token itself.
 - Socket parent: authority-owned and not group/world writable.
 - Socket: authority owner, `hermes-grant-socket` group, **0660**.
-- Private runtime `.v2_real_executor_runtime.py`: executor owner/group,
-  **0700**. It is an executable boundary, not a public Python API.
+- Runtime, authority module and executor child: **root-owned 0755** regular
+  files. The executor may read/execute them but may never modify an authority
+  boundary. `install.json` pins each installed file by SHA-256 and pins the
+  reviewed source Git head; a mismatch is an activation refusal.
 
 The grant service must use `SO_PEERCRED`: `issue` only accepts the gate UID;
 `consume` only accepts the executor UID.  A unit must start the executor as
@@ -60,15 +62,28 @@ PrivateTmp=yes
 ProtectSystem=strict
 ```
 
-The unit must not receive the gate issuer-token path. The child connects to
+The unit must not receive the gate issuer-token path. Its complete `[Service]`
+contract is closed: `User`, `Group`, `SupplementaryGroups`, `ExecStart`,
+`NoNewPrivileges`, `PrivateTmp`, and `ProtectSystem` are the only accepted
+directives. `ExecStart` is tokenized and must exactly equal the shown Python,
+child, grant-id, authority-socket, and install-config arguments; any injected
+environment, pre/post command, alternate path, or extra directive refuses.
+The child connects to
 the authority as `hermes-executor`; `SO_PEERCRED` checks that identity and the
 authority atomically consumes the already-armed grant before returning the
 canonical runtime arguments.
 
 `/etc/hermes-grants/install.json` is exact-schema configuration and includes
-`runtime_path`, `executor_launcher`, and `executor_unit_template`, in addition
+`runtime_path`, `authority_path`, `executor_child_path`, `executor_launcher`,
+`executor_unit_template`, `python_path`, `source_head`, and SHA-256 pins for
+the runtime, authority, child, launcher and unit, in addition
 to the three account IDs, socket group, state/socket paths, and token paths.
-The runtime is executor-owned `0700`; the launcher and unit are root-owned.
+The runtime is root-owned `0755`; the compiled launcher is root-owned `4750`
+and the unit is root-owned `0644`. The launcher source is itself a mandatory
+activation-packet manifest pin. The launcher is compiled from
+`bin_verify/v2_executor_launcher.c`; it accepts precisely one lower-case
+64-hex grant ID, clears its environment, and executes only the fixed
+`/usr/bin/systemctl start hermes-real-executor@<grant>.service` argv.
 The executor account must have a non-login shell. `verify-install` checks all
 of these facts, including socket owner/group/mode and that every service account
 belongs to the configured socket group.
