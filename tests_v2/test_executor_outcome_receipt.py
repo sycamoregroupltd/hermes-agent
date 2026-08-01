@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """No-provider adversarial protocol checks for executor outcome receipts."""
-import importlib.util, json, tempfile, time
+import importlib.util, json, tempfile, time, sqlite3
 from pathlib import Path
 
 
@@ -31,20 +31,33 @@ def main():
   check("consume atomically moves grant and returns same canonical receipt",consumed["consume_receipt"]==rec and not ga._path(root,gid).exists())
   pending=ga._read_outcome({"grant_id":gid,"consume_receipt_fingerprint":rec["receipt_fingerprint"]},root)
   check("consumed without terminal outcome remains pending",pending.get("pending") is True)
-  good={"outcome_kind":"v2-executor-terminal-outcome","schema_version":1,"grant_id":gid,"consume_receipt_fingerprint":rec["receipt_fingerprint"],"status":"completed","task_id":"t_beefcafe","source_head":"a"*64,"terminal":{"guarded_lifecycle_done":True,"terminal_write":True,"marker":True}}
+  good={"outcome_kind":"v2-executor-terminal-outcome","schema_version":1,"grant_id":gid,"consume_receipt_fingerprint":rec["receipt_fingerprint"],"status":"completed","task_id":"t_beefcafe","source_head":"a"*64,"current_run_id":1,"terminal_fence_digest":"sha256:"+"b"*64,"terminal":{"guarded_lifecycle_done":True,"terminal_write":True,"marker":True}}
   bad=dict(good); bad["consume_receipt_fingerprint"]="sha256:forged"
   check("wrong receipt outcome is refused",refused(lambda:ga._record_outcome({"grant_id":gid,"outcome":bad},root)))
   ga._record_outcome({"grant_id":gid,"outcome":good},root)
   check("only matching guarded terminal success is readable",ga._read_outcome({"grant_id":gid,"consume_receipt_fingerprint":rec["receipt_fingerprint"]},root).get("outcome")==good)
   check("terminal outcome cannot replay or overwrite",refused(lambda:ga._record_outcome({"grant_id":gid,"outcome":good},root)))
   check("read refuses forged receipt fingerprint",refused(lambda:ga._read_outcome({"grant_id":gid,"consume_receipt_fingerprint":"sha256:forged"},root)))
+  gid_late=grant(root); late_rec=json.load(open(ga._path(root,gid_late)))["consume_receipt"]; ga._consume({"grant_id":gid_late,"expected":{"receipt_kind":"v2-executor-grant-consume-receipt","schema_version":1,"grant_id":gid_late}},root)
+  late=json.load(open(ga._path(root,gid_late).with_suffix(".consumed"))); late["expires_at"]=int(time.time())-1; json.dump(late,open(ga._path(root,gid_late).with_suffix(".consumed"),"w"))
+  late_good=dict(good); late_good.update({"grant_id":gid_late,"consume_receipt_fingerprint":late_rec["receipt_fingerprint"]})
+  check("authority refuses delayed terminal outcome after shared deadline",refused(lambda:ga._record_outcome({"grant_id":gid_late,"outcome":late_good},root)))
   gate_spec=importlib.util.spec_from_file_location("gate",ROOT/"bin_verify"/"dispatch_gate_v2.py"); gate=importlib.util.module_from_spec(gate_spec); gate_spec.loader.exec_module(gate)
-  check("outcome deadline covers required heartbeats and remains bounded", gate.OUTCOME_POLL_SECONDS == gate.HEARTBEAT_INTERVAL_SECONDS * gate.REQUIRED_RUN_BOUND_HEARTBEATS + gate.OUTCOME_TERMINAL_ALLOWANCE_SECONDS and gate.OUTCOME_POLL_SECONDS == 55)
+  check("outcome deadline equals authority-enforced command deadline", gate.OUTCOME_POLL_SECONDS == 120)
 
   try:
    gate.observe_executor_outcome("unused", gid, rec, timeout_seconds=15); short_refused=False
   except RuntimeError: short_refused=True
   check("short outcome deadline is refused before any wait", short_refused)
+  db=root/"terminal.db"; con=sqlite3.connect(db)
+  con.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, current_run_id INTEGER, status TEXT)")
+  con.execute("INSERT INTO tasks VALUES (?,?,?)",("t_beefcafe",1,"done")); con.commit(); con.close()
+  reconciled=dict(good); reconciled["terminal_fence_digest"]=gate.terminal_fence_digest("t_beefcafe",1,"a"*64)
+  gate.reconcile_terminal_outcome(db,reconciled,rec)
+  split=dict(reconciled); split["current_run_id"]=2
+  try: gate.reconcile_terminal_outcome(db,split,rec); split_refused=False
+  except RuntimeError: split_refused=True
+  check("gate refuses terminal receipt split from durable current run",split_refused)
   gid2=grant(root); rec2=json.load(open(ga._path(root,gid2)))["consume_receipt"]
   original_attest=ga._executor_instance_attested; ga._executor_instance_attested=lambda pid,gid,cfg: None
   try:

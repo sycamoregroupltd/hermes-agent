@@ -6,6 +6,7 @@ import os
 import stat
 import sys
 import tempfile
+import socket
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,16 @@ def main():
         try: ga._peer_uid(object()); peer_refused=False
         except ga.GrantError: peer_refused=True
         check("missing Unix peer credential support is refused",peer_refused)
+        # Real AF_UNIX credentials are (pid, uid, gid).  This catches the
+        # catastrophic pid/uid variable swap in the serving path.
+        if hasattr(socket, "SO_PEERCRED"):
+            left,right=socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                pid, peer_uid, peer_gid=ga._peer_credentials(left)
+                check("real Unix peer credentials retain pid uid gid order",pid==os.getpid() and peer_uid==os.geteuid() and peer_gid==os.getegid())
+                check("peer credential PID is never used as UID",pid!=peer_uid or os.getpid()==os.geteuid())
+            finally:
+                left.close(); right.close()
         distinct=dict(cfg); distinct.update({"gate_uid":uid+100000,"executor_uid":uid+200000})
         dp=root / "distinct.json"; dp.write_text(json.dumps(distinct))
         original=ga._owned_mode

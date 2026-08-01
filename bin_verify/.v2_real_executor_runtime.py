@@ -107,8 +107,8 @@ def _sha256_file(path):
 def _load_and_verify_preimport_config(path):
     """Stdlib-only verification of the immutable post-consume import closure."""
     cp = Path(path).resolve(); st = cp.stat()
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or stat.S_IMODE(st.st_mode) != 0o600:
-        raise DispatchError("install config must be root-owned regular mode 0600")
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or stat.S_IMODE(st.st_mode) != 0o644:
+        raise DispatchError("install config must be root-owned non-secret regular mode 0644")
     cfg = json.loads(cp.read_text(encoding="utf-8"))
     if Path(cfg.get("runtime_path", "")).resolve() != Path(__file__).resolve():
         raise DispatchError("install config runtime path is not this private runtime")
@@ -177,11 +177,14 @@ def _publish_terminal_outcome(*, status, record=None):
                     "marker": candidate.get("summary_has_marker") is True}
         if terminal != {"guarded_lifecycle_done": True, "terminal_write": True, "marker": True}:
             status, terminal = "errored", {"guarded_lifecycle_done": False, "terminal_write": False, "marker": False}
+    fence=(record or {}).get("fence",{}); current_run_id=fence.get("current_run_id")
+    if not isinstance(current_run_id,int) or current_run_id<=0: status,terminal,current_run_id="errored",{"guarded_lifecycle_done":False,"terminal_write":False,"marker":False},1
+    fence_digest="sha256:"+hashlib.sha256(_canon_terminal_fence(_RUNTIME_CONSUME_RECEIPT["task_id"],current_run_id,_RUNTIME_CONSUME_RECEIPT["source_head"]).encode()).hexdigest()
     outcome = {"outcome_kind": "v2-executor-terminal-outcome", "schema_version": 1,
                "grant_id": _RUNTIME_CONSUME_RECEIPT["grant_id"],
                "consume_receipt_fingerprint": _RUNTIME_CONSUME_RECEIPT["receipt_fingerprint"],
                "status": status, "task_id": _RUNTIME_CONSUME_RECEIPT["task_id"],
-               "source_head": _RUNTIME_CONSUME_RECEIPT["source_head"], "terminal": terminal}
+               "source_head": _RUNTIME_CONSUME_RECEIPT["source_head"], "current_run_id":current_run_id,"terminal_fence_digest":fence_digest,"terminal": terminal}
     payload = json.dumps({"op": "record_outcome", "grant_id": outcome["grant_id"], "outcome_capability": _RUNTIME_OUTCOME_CAPABILITY, "outcome": outcome}, sort_keys=True).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.connect(_RUNTIME_AUTHORITY_SOCKET); sock.sendall(payload); raw = sock.recv(8193)
@@ -195,6 +198,9 @@ def _publish_terminal_outcome(*, status, record=None):
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+def _canon_terminal_fence(task_id, current_run_id, source_head):
+    return json.dumps({"task_id":task_id,"current_run_id":current_run_id,"source_head":source_head},sort_keys=True,separators=(",",":"))
 
 
 def artifact_fingerprint(rec: dict) -> str:

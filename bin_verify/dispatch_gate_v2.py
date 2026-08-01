@@ -93,12 +93,24 @@ RECEIPT_MAX_WINDOW_SECONDS = 600
 
 RC_OK = 0
 RC_REFUSE = 5
-# Bounded deadline: two 20s run-bound heartbeats plus terminal allowance.
+# One hard deadline is shared by executor, authority, and gate readback.
 HEARTBEAT_INTERVAL_SECONDS = 20
 REQUIRED_RUN_BOUND_HEARTBEATS = 2
-OUTCOME_TERMINAL_ALLOWANCE_SECONDS = 15
-OUTCOME_POLL_SECONDS = (HEARTBEAT_INTERVAL_SECONDS * REQUIRED_RUN_BOUND_HEARTBEATS
-                        + OUTCOME_TERMINAL_ALLOWANCE_SECONDS)
+OUTCOME_POLL_SECONDS = 120
+
+def terminal_fence_digest(task_id, current_run_id, source_head):
+    body=json.dumps({"task_id":task_id,"current_run_id":current_run_id,"source_head":source_head},sort_keys=True,separators=(",",":"))
+    return "sha256:"+hashlib.sha256(body.encode()).hexdigest()
+
+def reconcile_terminal_outcome(board_db, outcome, receipt):
+    """Refuse success whenever the authority receipt and durable task split."""
+    conn=sqlite3.connect(board_db); conn.row_factory=sqlite3.Row
+    try: row=conn.execute("SELECT current_run_id,status FROM tasks WHERE id=?",(receipt["task_id"],)).fetchone()
+    finally: conn.close()
+    if row is None or row["status"]!="done" or row["current_run_id"]!=outcome["current_run_id"]:
+        raise RuntimeError("terminal outcome disagrees with durable task current_run_id/status")
+    if outcome["terminal_fence_digest"]!=terminal_fence_digest(receipt["task_id"],row["current_run_id"],receipt["source_head"]):
+        raise RuntimeError("terminal outcome fence digest disagrees with durable current run")
 
 
 def observe_executor_outcome(authority_socket, grant_id, consume_receipt, *, timeout_seconds=OUTCOME_POLL_SECONDS):
@@ -124,7 +136,8 @@ def observe_executor_outcome(authority_socket, grant_id, consume_receipt, *, tim
             required = {"outcome_kind":"v2-executor-terminal-outcome", "schema_version":1,
                         "grant_id":grant_id, "consume_receipt_fingerprint":consume_receipt["receipt_fingerprint"],
                         "status":"completed", "task_id":consume_receipt["task_id"],
-                        "source_head":consume_receipt["source_head"],
+                        "source_head":consume_receipt["source_head"], "current_run_id":outcome.get("current_run_id"),
+                        "terminal_fence_digest":outcome.get("terminal_fence_digest"),
                         "terminal":{"guarded_lifecycle_done":True,"terminal_write":True,"marker":True}}
             if outcome != required:
                 raise RuntimeError("executor terminal outcome missing, mismatched, or non-success")
@@ -543,7 +556,7 @@ def main(argv):
                     "lease_realpath": str(Path(args.lease_file).resolve()),
                     "lease_sha256": hashlib.sha256(Path(args.lease_file).read_bytes()).hexdigest(),
                     "source_head": subprocess.check_output(["git", "-C", ROOT, "rev-parse", "HEAD"], text=True).strip(),
-                    "expires_at": int(time.time()) + 30,
+                    "expires_at": int(time.time()) + OUTCOME_POLL_SECONDS,
                 }
                 issued = grant_authority.request(args.grant_authority_socket,
                     {"op": "issue", "issuer_token": issuer_secret, "grant": envelope})
@@ -566,6 +579,7 @@ def main(argv):
                     raise RuntimeError("launcher did not yield matching authority consume receipt")
                 outcome = observe_executor_outcome(args.grant_authority_socket, grant_id, receipt,
                     timeout_seconds=args.outcome_timeout_seconds)
+                reconcile_terminal_outcome(args.board_db, outcome, receipt)
                 record={"record_kind":"v2-dispatch-record","canary_task":dispatch_task,
                         "executor":"ClaudeResumeExecutor","status":"DISPATCHED-ONCE",
                         "grant_id":grant_id,"launcher":install["launcher"],

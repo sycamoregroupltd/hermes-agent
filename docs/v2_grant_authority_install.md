@@ -39,6 +39,7 @@ ExecStart=/usr/bin/python3 /opt/hermes/bin_verify/v2_grant_authority.py serve --
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
+ReadWritePaths=/var/lib/hermes-executor/workspaces
 ReadWritePaths=/run/hermes-grants /var/lib/hermes-grants
 ```
 
@@ -64,7 +65,8 @@ ProtectSystem=strict
 
 The unit must not receive the gate issuer-token path. Its complete `[Service]`
 contract is closed: `User`, `Group`, `SupplementaryGroups`, `ExecStart`,
-`NoNewPrivileges`, `PrivateTmp`, and `ProtectSystem` are the only accepted
+`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem`, and one exact
+`ReadWritePaths=/var/lib/hermes-executor/workspaces` are the only accepted
 directives. `ExecStart` is tokenized and must exactly equal the shown Python,
 child, grant-id, authority-socket, and install-config arguments; any injected
 environment, pre/post command, alternate path, or extra directive refuses.
@@ -96,6 +98,12 @@ the install evidence. `verify-install` resolves the effective
 `hermes-real-executor@.service` through systemd, requires its FragmentPath to
 be the pinned template, rejects all drop-ins/overrides, and refuses while
 systemd reports a pending daemon reload. The install config itself must be a
-root-owned regular `0600` file below a root-owned, non-writable path chain;
+root-owned regular `0644` non-secret file below a root-owned, non-writable path chain;
 the source root and every closure member must be root-owned and non-writable.
-the canary evidence. A failed check is a hard activation refusal.
+the canary evidence. The executor-visible install config contains only
+immutable paths, identities and digest pins, never a secret; it is root-owned
+regular **0644** so the non-login executor can read it. The gate token and
+authority digest remain separate owner-only **0600** files. Under
+`ProtectSystem=strict`, the dedicated workspace root above is the sole
+writable path; broad, relative, repeated, or injected write paths are refused.
+A failed check is a hard activation refusal.

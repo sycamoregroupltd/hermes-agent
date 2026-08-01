@@ -50,7 +50,7 @@ def _peer_uid(conn):
 def _load_install_config(path):
  try: cfg=json.loads(Path(path).read_text())
  except (OSError,ValueError) as exc: raise GrantError("grant install configuration unreadable") from exc
- required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","authority_path","executor_child_path","executor_launcher","executor_unit_template","python_path","source_root","source_head","provider_import_closure","runtime_sha256","authority_sha256","executor_child_sha256","launcher_sha256","unit_sha256","effective_unit_name"}
+ required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","authority_path","executor_child_path","executor_launcher","executor_unit_template","python_path","source_root","source_head","provider_import_closure","runtime_sha256","authority_sha256","executor_child_sha256","launcher_sha256","unit_sha256","effective_unit_name","executor_mutable_root"}
  if set(cfg)!=required: raise GrantError("grant install configuration fields are not exact")
  nums={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid"}
  if not all(isinstance(cfg[k],int) for k in nums): raise GrantError("grant install numeric identities invalid")
@@ -79,7 +79,7 @@ def _verify_unit(cfg):
  unit=Path(cfg["executor_unit_template"])
  try: lines=unit.read_text(encoding="utf-8").splitlines()
  except OSError as exc: raise GrantError("executor unit template missing") from exc
- section=None; values={}; allowed={"User","Group","SupplementaryGroups","ExecStart","NoNewPrivileges","PrivateTmp","ProtectSystem"}
+ section=None; values={}; allowed={"User","Group","SupplementaryGroups","ExecStart","NoNewPrivileges","PrivateTmp","ProtectSystem","ReadWritePaths"}
  for raw in lines:
   line=raw.strip()
   if not line or line.startswith(("#",";")): continue
@@ -95,7 +95,8 @@ def _verify_unit(cfg):
  try: argv=shlex.split(values.get("ExecStart",""),posix=True)
  except ValueError as exc: raise GrantError("executor ExecStart is malformed") from exc
  if argv!=expected: raise GrantError("executor ExecStart is not the exact fixed child invocation")
- required={"User":executor,"Group":group,"SupplementaryGroups":socket_group,"NoNewPrivileges":"yes","PrivateTmp":"yes","ProtectSystem":"strict"}
+ if not Path(cfg["executor_mutable_root"]).is_absolute() or cfg["executor_mutable_root"] in ("/","/home","/var","/tmp","/run"): raise GrantError("executor mutable root is broad or unsafe")
+ required={"User":executor,"Group":group,"SupplementaryGroups":socket_group,"NoNewPrivileges":"yes","PrivateTmp":"yes","ProtectSystem":"strict","ReadWritePaths":cfg["executor_mutable_root"]}
  if any(values.get(k)!=v for k,v in required.items()) or set(values)!={*required,"ExecStart"}: raise GrantError("executor unit identity or hardening contract mismatch")
 
 def _verify_effective_systemd_unit(cfg):
@@ -142,6 +143,8 @@ def verify_install(config_path):
  if state.stat().st_gid!=cfg["authority_gid"]: raise GrantError("authority state group mismatch")
  _owned_mode(cfg["gate_issuer_token_file"],cfg["gate_uid"],0o600,"gate issuer token")
  _owned_mode(cfg["authority_issuer_digest_file"],cfg["authority_uid"],0o600,"authority issuer digest")
+ cp=Path(config_path); st=cp.stat()
+ if st.st_uid!=0 or not stat.S_ISREG(st.st_mode) or _mode(cp)!=0o644: raise GrantError("executor install config must be root-owned non-secret mode 0644")
  _root_regular_digest(cfg["runtime_path"],0o755,cfg["runtime_sha256"],"private executor runtime")
  _root_regular_digest(cfg["authority_path"],0o755,cfg["authority_sha256"],"grant authority source")
  _root_regular_digest(cfg["executor_child_path"],0o755,cfg["executor_child_sha256"],"executor child source")
@@ -197,7 +200,7 @@ def _issue(req,d,token_digest,cfg=None):
  g=req.get("grant"); need={"task_id","board_db","workspace_root","session_binding","cmux_receipt","reservation_json","binding_issuer","hermes_home","lease_file","lease_realpath","lease_sha256","source_head","expires_at"}
  if not isinstance(g,dict) or set(g)!=need: raise GrantError("grant fields are not exact")
  if cfg is not None and g["source_head"] != cfg["source_head"]: raise GrantError("grant source head does not match verified install pin")
- if not isinstance(g["expires_at"],int) or not int(time.time())<g["expires_at"]<=int(time.time())+60: raise GrantError("grant expiry invalid")
+ if not isinstance(g["expires_at"],int) or not int(time.time())<g["expires_at"]<=int(time.time())+120: raise GrantError("grant expiry invalid")
  lease=Path(g["lease_file"]).resolve()
  if str(lease)!=g["lease_realpath"] or not lease.is_file(): raise GrantError("canonical consumed lease missing")
  if hashlib.sha256(lease.read_bytes()).hexdigest()!=g["lease_sha256"]: raise GrantError("lease hash mismatch")
@@ -263,14 +266,15 @@ def _record_outcome(req,d,*,peer_pid=None,cfg=None):
  try: g=json.load(open(_path(d,gid).with_suffix(".consumed")))
  except (OSError,ValueError) as exc: raise GrantError("consumed grant absent") from exc
  receipt=g.get("consume_receipt")
+ if g.get("expires_at",0)<=int(time.time()): raise GrantError("terminal outcome arrived after authority deadline")
  if cfg is not None:
   if peer_pid!=g.get("executor_pid"): raise GrantError("terminal outcome peer is not consumed executor instance")
   _executor_instance_attested(peer_pid,gid,cfg)
   cap=req.get("outcome_capability")
   if not isinstance(cap,str) or not secrets.compare_digest(cap,g.get("outcome_capability","")): raise GrantError("terminal outcome capability refused")
  if not isinstance(receipt,dict) or outcome.get("consume_receipt_fingerprint")!=receipt.get("receipt_fingerprint"): raise GrantError("terminal outcome receipt mismatch")
- required={"outcome_kind","schema_version","grant_id","consume_receipt_fingerprint","status","task_id","source_head","terminal"}
- if set(outcome)!=required or outcome.get("outcome_kind")!="v2-executor-terminal-outcome" or outcome.get("schema_version")!=1 or outcome.get("grant_id")!=gid or outcome.get("task_id")!=receipt.get("task_id") or outcome.get("source_head")!=receipt.get("source_head") or outcome.get("status") not in ("completed","errored") or not isinstance(outcome.get("terminal"),dict): raise GrantError("terminal outcome fields invalid")
+ required={"outcome_kind","schema_version","grant_id","consume_receipt_fingerprint","status","task_id","source_head","current_run_id","terminal_fence_digest","terminal"}
+ if set(outcome)!=required or outcome.get("outcome_kind")!="v2-executor-terminal-outcome" or outcome.get("schema_version")!=1 or outcome.get("grant_id")!=gid or outcome.get("task_id")!=receipt.get("task_id") or outcome.get("source_head")!=receipt.get("source_head") or outcome.get("status") not in ("completed","errored") or not isinstance(outcome.get("current_run_id"),int) or outcome["current_run_id"]<=0 or not isinstance(outcome.get("terminal_fence_digest"),str) or not __import__("re").fullmatch(r"sha256:[0-9a-f]{64}",outcome["terminal_fence_digest"]) or not isinstance(outcome.get("terminal"),dict): raise GrantError("terminal outcome fields invalid")
  if outcome["status"]=="completed" and outcome["terminal"]!={"guarded_lifecycle_done":True,"terminal_write":True,"marker":True}: raise GrantError("successful terminal outcome is not guarded-lifecycle complete")
  if outcome["status"]=="errored" and outcome["terminal"]!={"guarded_lifecycle_done":False,"terminal_write":False,"marker":False}: raise GrantError("errored terminal outcome shape invalid")
  target=_outcome_path(d,gid)
@@ -318,7 +322,7 @@ def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
    with conn:
     try:
      req=_recv(conn)
-     peer,pid,_peer_gid=_peer_credentials(conn) if cfg else (None,None,None)
+     pid,peer,_peer_gid=_peer_credentials(conn) if cfg else (None,None,None)
      if req.get("op")=="issue":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant issue peer identity refused")
       gid=_issue(req,d,token_digest,cfg)
