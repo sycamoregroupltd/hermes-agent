@@ -291,6 +291,21 @@ def decompose_task(
         )
 
     cfg = _load_config()
+    # The decomposer is itself an inference path.  Gate it at this single
+    # choke point before importing/calling the auxiliary client and before any
+    # child graph can be created.  Gateway auto-decompose, the CLI command,
+    # and the dashboard endpoint all funnel through this function.
+    policy_denial = kb.provider_policy_denied_for_auxiliary(
+        task_id,
+        "kanban_decomposer",
+        config=cfg,
+    )
+    if policy_denial is not None:
+        return DecomposeOutcome(
+            task_id,
+            False,
+            f"provider policy denied auxiliary call: {policy_denial.reason}",
+        )
     orchestrator = _resolve_orchestrator_profile(cfg)
     default_assignee = _resolve_default_assignee(cfg)
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}

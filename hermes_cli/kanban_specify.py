@@ -161,6 +161,21 @@ def specify_task(
             task_id, False, f"task is not in triage (status={task.status!r})"
         )
 
+    # ``triage_specifier`` shares the same auxiliary provider/fallback router
+    # as the decomposer and can therefore reach a blocked provider too.  Keep
+    # the check before the auxiliary import/call and before the triage task is
+    # promoted or otherwise mutated.
+    policy_denial = kb.provider_policy_denied_for_auxiliary(
+        task_id,
+        "triage_specifier",
+    )
+    if policy_denial is not None:
+        return SpecifyOutcome(
+            task_id,
+            False,
+            f"provider policy denied auxiliary call: {policy_denial.reason}",
+        )
+
     try:
         from agent.auxiliary_client import call_llm
     except Exception as exc:  # pragma: no cover — import smoke test

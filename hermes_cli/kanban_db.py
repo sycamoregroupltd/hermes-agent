@@ -74,8 +74,8 @@ import contextlib
 import hashlib
 import json
 import os
-import re
 import random
+import re
 import secrets
 import shutil
 import sqlite3
@@ -8576,6 +8576,281 @@ def has_spawnable_review(conn: sqlite3.Connection) -> bool:
 # With no policy configured, both are a single empty-set check.
 
 PROVIDER_POLICY_EVENT = "provider_policy_denied"
+_PROVIDER_POLICY_ENV = "HERMES_KANBAN_BLOCKED_PROVIDERS"
+_PROVIDER_POLICY_CONFIG_KEY = "blocked_providers"
+_PROVIDER_POLICY_KEY_RE = re.compile(
+    r"(?m)^[ \t]*(?!#)(?:"
+    r"[\"']?blocked_providers[\"']?[ \t]*:"
+    r"|[\"']?kanban[\"']?[ \t]*:[ \t]*\{[^#\n]*?"
+    r"[\"']?blocked_providers[\"']?[ \t]*:"
+    r")"
+)
+
+
+@dataclass(frozen=True)
+class _ProviderPolicyDeclaration:
+    """Policy presence detected without importing the policy module.
+
+    This probe is intentionally owned by ``kanban_db``.  If the policy module
+    itself stops importing, the dispatcher still knows that a hard stop was
+    declared and can refuse work instead of silently failing open.
+    """
+
+    configured: bool
+    providers: tuple[str, ...] = ()
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class _ProviderPolicyFailClosedDecision:
+    """Minimal decision used when the declared policy cannot be evaluated."""
+
+    allowed: bool
+    reason: str
+    provider: Optional[str]
+    source: str
+    policy: tuple[str, ...]
+    detail: str
+
+    @property
+    def active(self) -> bool:
+        return True
+
+    def as_event_payload(self) -> dict:
+        return {
+            "reason": self.reason,
+            "provider": self.provider,
+            "source": self.source,
+            "policy": list(self.policy),
+            "detail": self.detail,
+        }
+
+
+def _policy_tokens(raw: Any) -> tuple[str, ...]:
+    """Best-effort provider names for declaration evidence only.
+
+    Canonical normalization remains the policy module's responsibility.  The
+    independent probe needs only enough information to say "a non-empty hard
+    stop was declared" if that module cannot load.
+    """
+    parts: Iterable[Any]
+    if isinstance(raw, str):
+        parts = raw.replace(",", " ").split()
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        parts = raw
+    else:
+        return ()
+    names: set[str] = set()
+    for part in parts:
+        if not isinstance(part, str):
+            return ()
+        names.update(
+            token.strip().lower()
+            for token in part.replace(",", " ").split()
+            if token.strip()
+        )
+    return tuple(sorted(names))
+
+
+def _provider_policy_config_path() -> Path:
+    try:
+        from hermes_constants import get_hermes_home
+
+        return get_hermes_home() / "config.yaml"
+    except Exception:
+        home = os.environ.get("HERMES_HOME")
+        if home:
+            return Path(home).expanduser() / "config.yaml"
+        return Path.home() / ".hermes" / "config.yaml"
+
+
+def _probe_provider_policy_declaration(
+    *,
+    env: Optional[Mapping[str, str]] = None,
+    config_path: Optional[Path] = None,
+) -> _ProviderPolicyDeclaration:
+    """Detect a hard-stop declaration without importing policy code.
+
+    Environment presence has the documented highest precedence.  A truly
+    empty value is the explicit off switch; any other value is a declaration,
+    including a malformed non-empty value.  For config, the parsed mapping is
+    authoritative when valid and a raw-key probe remains available when YAML
+    parsing fails.  Therefore a file containing the declaration but failing
+    to parse remains configured and must fail closed.
+    """
+    environ = os.environ if env is None else env
+    if _PROVIDER_POLICY_ENV in environ:
+        raw_env = environ.get(_PROVIDER_POLICY_ENV)
+        if isinstance(raw_env, str) and not raw_env.strip():
+            return _ProviderPolicyDeclaration(
+                configured=False,
+                detail="explicit empty environment override",
+            )
+        return _ProviderPolicyDeclaration(
+            configured=True,
+            providers=_policy_tokens(raw_env),
+            detail="non-empty environment declaration",
+        )
+
+    path = config_path or _provider_policy_config_path()
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _ProviderPolicyDeclaration(False, detail="config file absent")
+    except Exception as exc:
+        # An unreadable existing config cannot prove that the previously
+        # active hard stop disappeared.  Refuse until it is inspectable.
+        return _ProviderPolicyDeclaration(
+            True,
+            detail=f"config file unreadable: {type(exc).__name__}",
+        )
+
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(raw_text)
+    except Exception as exc:
+        if not _PROVIDER_POLICY_KEY_RE.search(raw_text):
+            return _ProviderPolicyDeclaration(
+                False,
+                detail="unparseable config has no policy declaration",
+            )
+        return _ProviderPolicyDeclaration(
+            True,
+            detail=f"declared policy config is unparseable: {type(exc).__name__}",
+        )
+    raw_key_present = bool(_PROVIDER_POLICY_KEY_RE.search(raw_text))
+    if not isinstance(parsed, dict):
+        return _ProviderPolicyDeclaration(
+            raw_key_present,
+            detail=(
+                "declared policy config root is not a mapping"
+                if raw_key_present
+                else "non-mapping config has no policy declaration"
+            ),
+        )
+    kanban_cfg = parsed.get("kanban")
+    if not isinstance(kanban_cfg, dict):
+        return _ProviderPolicyDeclaration(
+            raw_key_present,
+            detail=(
+                "declared policy kanban section is not a mapping"
+                if raw_key_present
+                else "kanban section has no policy declaration"
+            ),
+        )
+    if _PROVIDER_POLICY_CONFIG_KEY not in kanban_cfg:
+        # The raw key belongs to some other YAML section, not this policy.
+        return _ProviderPolicyDeclaration(False, detail="kanban policy key absent")
+    raw_value = kanban_cfg.get(_PROVIDER_POLICY_CONFIG_KEY)
+    if raw_value is None:
+        return _ProviderPolicyDeclaration(False, detail="null config off switch")
+    if isinstance(raw_value, str) and not raw_value.strip():
+        return _ProviderPolicyDeclaration(False, detail="empty config off switch")
+    if isinstance(raw_value, (list, tuple, set, frozenset)) and not raw_value:
+        return _ProviderPolicyDeclaration(False, detail="empty config off switch")
+    return _ProviderPolicyDeclaration(
+        True,
+        providers=_policy_tokens(raw_value),
+        detail="non-empty config declaration",
+    )
+
+
+def _policy_fail_closed_decision(
+    declaration: _ProviderPolicyDeclaration,
+    detail: str,
+) -> _ProviderPolicyFailClosedDecision:
+    policy = declaration.providers or ("<declared-policy-unresolved>",)
+    return _ProviderPolicyFailClosedDecision(
+        allowed=False,
+        reason="policy_evaluation_error",
+        provider=None,
+        source="policy_declaration",
+        policy=policy,
+        detail=(
+            "blocked-provider hard stop is declared but could not be "
+            f"evaluated safely: {detail}; declaration={declaration.detail}"
+        ),
+    )
+
+
+def _load_provider_policy_module():
+    """Import indirection kept tiny so import-failure behavior is testable."""
+    from hermes_cli import kanban_provider_policy
+
+    return kanban_provider_policy
+
+
+def _load_declared_provider_policy():
+    """Return ``(module, blocked, error_decision)`` for the active policy."""
+    declaration = _probe_provider_policy_declaration()
+    if not declaration.configured:
+        return None, None, None
+    try:
+        kpp = _load_provider_policy_module()
+    except Exception as exc:
+        _log.warning(
+            "kanban provider policy: declared hard stop module unavailable (%s)",
+            type(exc).__name__,
+        )
+        return None, None, _policy_fail_closed_decision(
+            declaration, f"policy module import failed ({type(exc).__name__})",
+        )
+    try:
+        blocked = kpp.load_blocked_providers()
+    except Exception as exc:
+        _log.warning(
+            "kanban provider policy: declared hard stop parse failed (%s)",
+            type(exc).__name__,
+        )
+        return None, None, _policy_fail_closed_decision(
+            declaration, f"policy parsing failed ({type(exc).__name__})",
+        )
+    if not isinstance(blocked, (set, frozenset)) or any(
+        not isinstance(provider, str) for provider in blocked
+    ):
+        return None, None, _policy_fail_closed_decision(
+            declaration,
+            "policy parser returned an invalid provider set",
+        )
+    if not blocked:
+        return None, None, _policy_fail_closed_decision(
+            declaration,
+            "declaration resolved to an empty provider set",
+        )
+    return kpp, blocked, None
+
+
+def _validate_provider_policy_decision(decision, *, blocked: frozenset) -> None:
+    """Reject a malformed evaluator result before it can fail open.
+
+    The policy module is deliberately treated as fallible once a hard stop is
+    declared.  Merely returning an object with ``allowed=True`` is not enough:
+    the decision must carry a concrete, non-blocked provider, the exact active
+    policy, and a serializable event payload.  This catches partial imports,
+    incompatible module versions, and accidental stub/mock returns.
+    """
+    if not isinstance(getattr(decision, "allowed", None), bool):
+        raise TypeError("policy decision.allowed is not a bool")
+    event_payload = getattr(decision, "as_event_payload", None)
+    if not callable(event_payload):
+        raise TypeError("policy decision has no event payload encoder")
+    for field in ("reason", "source", "detail"):
+        if not isinstance(getattr(decision, field, None), str):
+            raise TypeError(f"policy decision.{field} is not a string")
+    policy = getattr(decision, "policy", None)
+    if not isinstance(policy, (tuple, list)) or tuple(policy) != tuple(sorted(blocked)):
+        raise TypeError("policy decision does not carry the active provider set")
+    payload = event_payload()
+    if not isinstance(payload, dict):
+        raise TypeError("policy decision event payload is not a mapping")
+    if decision.allowed:
+        provider = getattr(decision, "provider", None)
+        if not isinstance(provider, str) or not provider.strip():
+            raise TypeError("allowed policy decision has no concrete provider")
+        normalized = provider.strip().lower()
+        if normalized in {"auto", "moa"} or normalized in blocked:
+            raise TypeError("allowed policy decision names an unsafe provider")
 
 
 class ProviderPolicyBlocked(RuntimeError):
@@ -8601,36 +8876,117 @@ def _evaluate_provider_policy(
     model_override: Optional[str],
     provider_override: Optional[str],
 ):
-    """Return a ``PolicyDecision``, or ``None`` when no policy is configured.
+    """Return a decision, or ``None`` only when policy is definitely absent.
 
-    ``None`` is the fast path for the default install: callers skip the
-    guard entirely and dispatch behaviour is unchanged. Any failure to
-    import or evaluate the policy module also returns ``None`` — the guard
-    is opt-in, so an environment that cannot load it must not start
-    refusing work that it dispatched fine yesterday.
+    Declaration detection is independent from the policy module.  Once the
+    hard stop is declared, module import, config parsing, malformed values,
+    and evaluation errors all return an explicit denying decision.
     """
-    try:
-        from hermes_cli import kanban_provider_policy as kpp
-    except Exception as exc:  # pragma: no cover - exotic env
-        _log.debug("kanban provider policy: module unavailable (%s)", exc)
+    kpp, blocked, error_decision = _load_declared_provider_policy()
+    if error_decision is not None:
+        return error_decision
+    if kpp is None:
         return None
     try:
-        blocked = kpp.load_blocked_providers()
-        if not blocked:
-            return None
-        return kpp.evaluate_task(
+        decision = kpp.evaluate_task(
             assignee=assignee,
             model_override=model_override,
             provider_override=provider_override,
             blocked=blocked,
         )
-    except Exception as exc:  # pragma: no cover - defensive
+        _validate_provider_policy_decision(decision, blocked=blocked)
+        return decision
+    except Exception as exc:
+        declaration = _probe_provider_policy_declaration()
         _log.warning(
             "kanban provider policy: evaluation failed for assignee=%r (%s); "
-            "guard inactive for this task",
-            assignee, exc,
+            "failing closed",
+            assignee, type(exc).__name__,
         )
+        return _policy_fail_closed_decision(
+            declaration,
+            f"task provider evaluation failed ({type(exc).__name__})",
+        )
+
+
+def _evaluate_auxiliary_provider_policy(
+    auxiliary_task: str,
+    *,
+    config: Optional[dict] = None,
+):
+    """Evaluate one Kanban auxiliary LLM route before ``call_llm``."""
+    kpp, blocked, error_decision = _load_declared_provider_policy()
+    if error_decision is not None:
+        return error_decision
+    if kpp is None:
         return None
+    if config is None:
+        try:
+            from hermes_cli.config import load_config
+
+            config = load_config()
+        except Exception as exc:
+            declaration = _probe_provider_policy_declaration()
+            return _policy_fail_closed_decision(
+                declaration,
+                f"auxiliary config load failed ({type(exc).__name__})",
+            )
+    try:
+        decision = kpp.evaluate_auxiliary_task(
+            task=auxiliary_task,
+            config=config,
+            blocked=blocked,
+        )
+        _validate_provider_policy_decision(decision, blocked=blocked)
+        return decision
+    except Exception as exc:
+        declaration = _probe_provider_policy_declaration()
+        _log.warning(
+            "kanban provider policy: auxiliary evaluation failed for %s (%s); "
+            "failing closed",
+            auxiliary_task,
+            type(exc).__name__,
+        )
+        return _policy_fail_closed_decision(
+            declaration,
+            f"auxiliary provider evaluation failed ({type(exc).__name__})",
+        )
+
+
+def provider_policy_denied_for_auxiliary(
+    task_id: str,
+    auxiliary_task: str,
+    *,
+    config: Optional[dict] = None,
+):
+    """Return a denying decision before a Kanban auxiliary model call.
+
+    A refusal records one de-duplicated event but does not claim the task,
+    create children, open a run, increment failures, or enter the auxiliary
+    client's retry/fallback machinery.
+    """
+    decision = _evaluate_auxiliary_provider_policy(
+        auxiliary_task,
+        config=config,
+    )
+    if decision is None or decision.allowed:
+        return None
+    _log.warning(
+        "kanban provider policy: refusing auxiliary %s for %s — %s",
+        auxiliary_task,
+        task_id,
+        decision.detail,
+    )
+    try:
+        with connect_closing() as conn:
+            _record_provider_policy_denial(conn, task_id, decision)
+    except Exception:
+        _log.debug(
+            "kanban provider policy: could not record auxiliary denial for %s",
+            task_id,
+            exc_info=True,
+        )
+    return decision
 
 
 def _task_override_row(conn: sqlite3.Connection, task_id: str) -> tuple:

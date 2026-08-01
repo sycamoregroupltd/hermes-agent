@@ -16,6 +16,9 @@ import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -88,6 +91,20 @@ def _events(kb, conn, task_id, kind=None):
         e for e in kb.list_events(conn, task_id)
         if kind is None or e.kind == kind
     ]
+
+
+def _write_root_config(config):
+    import yaml
+
+    path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return path
+
+
+def _aux_response(content: str):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -361,14 +378,230 @@ def test_empty_env_value_disables_policy_over_config(kb_env, monkeypatch):
 
 
 @pytest.mark.parametrize("bad", [5, {"nous": True}, [1, 2], 3.5])
-def test_malformed_policy_is_inert_not_global_block(kb_env, monkeypatch, bad):
-    """A malformed policy must not become "block every provider"."""
-    kb = kb_env
+def test_malformed_policy_loader_raises(kb_env, monkeypatch, bad):
+    """A malformed declared policy cannot masquerade as an empty policy."""
     from hermes_cli import kanban_provider_policy as kpp
 
-    assert kpp.load_blocked_providers(
-        config={"kanban": {"blocked_providers": bad}}, env={},
-    ) == frozenset()
+    with pytest.raises(kpp.ProviderPolicyConfigurationError):
+        kpp.load_blocked_providers(
+            config={"kanban": {"blocked_providers": bad}}, env={},
+        )
+
+
+@pytest.mark.parametrize(
+    "raw_config",
+    [
+        "kanban:\n  blocked_providers: [nous\n",
+        'kanban: {"blocked_providers": ["nous"]\n',
+    ],
+)
+def test_malformed_declared_policy_fails_closed_before_spawn(
+    kb_env, monkeypatch, raw_config,
+):
+    """Malformed policy YAML is still a declaration and denies safely."""
+    kb = kb_env
+    config_path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
+    config_path.write_text(raw_config, encoding="utf-8")
+    spawn = _SpawnRecorder()
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="t", assignee="openaiprofile")
+    with kb.connect_closing() as conn:
+        result = kb.dispatch_once(conn, spawn_fn=spawn, failure_limit=1)
+
+    assert spawn.calls == []
+    assert result.skipped_provider_blocked == [
+        (tid, "", "policy_evaluation_error")
+    ]
+    with kb.connect_closing() as conn:
+        task = kb.get_task(conn, tid)
+        assert task.status == "ready"
+        assert task.current_run_id is None
+        assert task.consecutive_failures == 0
+
+
+def test_declared_policy_module_import_failure_fails_closed(kb_env, monkeypatch):
+    """Declaration probing survives failure of the policy module itself."""
+    kb = kb_env
+    _block(monkeypatch)
+    monkeypatch.setattr(
+        kb,
+        "_load_provider_policy_module",
+        MagicMock(side_effect=ImportError("synthetic import failure")),
+    )
+    spawn = _SpawnRecorder()
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="t", assignee="openaiprofile")
+    with kb.connect_closing() as conn:
+        result = kb.dispatch_once(conn, spawn_fn=spawn)
+
+    assert spawn.calls == []
+    assert result.skipped_provider_blocked == [
+        (tid, "", "policy_evaluation_error")
+    ]
+
+
+def test_config_declaration_probe_survives_policy_module_failure(
+    kb_env, monkeypatch,
+):
+    """The independent probe recognizes a quoted inline YAML declaration."""
+    kb = kb_env
+    config_path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
+    config_path.write_text(
+        'kanban: {"blocked_providers": ["nous"]}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        kb,
+        "_load_provider_policy_module",
+        MagicMock(side_effect=ImportError("synthetic import failure")),
+    )
+    spawn = _SpawnRecorder()
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="t", assignee="openaiprofile")
+    with kb.connect_closing() as conn:
+        result = kb.dispatch_once(conn, spawn_fn=spawn)
+
+    assert spawn.calls == []
+    assert result.skipped_provider_blocked == [
+        (tid, "", "policy_evaluation_error")
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw_config",
+    [
+        "model: [unclosed\n",
+        "# blocked_providers: [nous]\nmodel: [unclosed\n",
+    ],
+)
+def test_unparseable_config_without_policy_key_remains_inactive(
+    kb_env, monkeypatch, raw_config,
+):
+    """An unrelated YAML error is not itself a blocked-provider declaration."""
+    kb = kb_env
+    config_path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
+    config_path.write_text(raw_config, encoding="utf-8")
+    spawn = _SpawnRecorder()
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="t", assignee="openaiprofile")
+    with kb.connect_closing() as conn:
+        result = kb.dispatch_once(conn, spawn_fn=spawn)
+
+    assert result.skipped_provider_blocked == []
+    assert [call[0] for call in spawn.calls] == [tid]
+
+
+def test_declared_policy_evaluation_failure_fails_closed(kb_env, monkeypatch):
+    kb = kb_env
+    _block(monkeypatch)
+    from hermes_cli import kanban_provider_policy as kpp
+
+    monkeypatch.setattr(
+        kpp,
+        "evaluate_task",
+        MagicMock(side_effect=RuntimeError("synthetic evaluator failure")),
+    )
+    spawn = _SpawnRecorder()
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="t", assignee="openaiprofile")
+    for _ in range(3):
+        with kb.connect_closing() as conn:
+            result = kb.dispatch_once(conn, spawn_fn=spawn, failure_limit=1)
+            assert result.auto_blocked == []
+
+    assert spawn.calls == []
+    assert result.skipped_provider_blocked == [
+        (tid, "", "policy_evaluation_error")
+    ]
+    with kb.connect_closing() as conn:
+        task = kb.get_task(conn, tid)
+        runs = conn.execute(
+            "SELECT COUNT(*) FROM task_runs WHERE task_id = ?", (tid,),
+        ).fetchone()[0]
+    assert task.status == "ready"
+    assert task.current_run_id is None
+    assert task.consecutive_failures == 0
+    assert runs == 0
+
+
+@pytest.mark.parametrize(
+    "bad_decision",
+    [
+        None,
+        SimpleNamespace(allowed="yes"),
+        SimpleNamespace(allowed=True),
+        SimpleNamespace(
+            allowed=True,
+            reason="provider_allowed",
+            provider=None,
+            source="profile_config",
+            policy=("nous",),
+            detail="missing effective provider",
+            as_event_payload=lambda: {},
+        ),
+        SimpleNamespace(
+            allowed=True,
+            reason="provider_allowed",
+            provider="nous",
+            source="profile_config",
+            policy=("nous",),
+            detail="contradictory allowed result",
+            as_event_payload=lambda: {},
+        ),
+        SimpleNamespace(
+            allowed=True,
+            reason="provider_allowed",
+            provider="openai",
+            source="profile_config",
+            policy=(),
+            detail="stale policy snapshot",
+            as_event_payload=lambda: {},
+        ),
+        SimpleNamespace(
+            allowed=True,
+            reason="provider_allowed",
+            provider="openai",
+            source="profile_config",
+            policy=("nous",),
+            detail="bad event encoder",
+            as_event_payload=lambda: "not-a-mapping",
+        ),
+    ],
+)
+def test_declared_policy_invalid_evaluator_result_fails_closed(
+    kb_env, monkeypatch, bad_decision,
+):
+    kb = kb_env
+    _block(monkeypatch)
+    kpp = kb._load_provider_policy_module()
+    monkeypatch.setattr(kpp, "evaluate_task", MagicMock(return_value=bad_decision))
+    spawn = _SpawnRecorder()
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="t", assignee="openaiprofile")
+    with kb.connect_closing() as conn:
+        result = kb.dispatch_once(conn, spawn_fn=spawn)
+
+    assert spawn.calls == []
+    assert result.skipped_provider_blocked == [
+        (tid, "", "policy_evaluation_error")
+    ]
+
+
+def test_nonempty_declaration_resolving_empty_fails_closed(kb_env, monkeypatch):
+    kb = kb_env
+    _block(monkeypatch)
+    kpp = kb._load_provider_policy_module()
+    monkeypatch.setattr(kpp, "load_blocked_providers", MagicMock(return_value=frozenset()))
+    spawn = _SpawnRecorder()
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="t", assignee="openaiprofile")
+    with kb.connect_closing() as conn:
+        result = kb.dispatch_once(conn, spawn_fn=spawn)
+
+    assert spawn.calls == []
+    assert result.skipped_provider_blocked == [
+        (tid, "", "policy_evaluation_error")
+    ]
 
 
 def test_malformed_config_does_not_block_clear_non_nous_profile(kb_env, monkeypatch):
@@ -385,6 +618,238 @@ def test_malformed_config_does_not_block_clear_non_nous_profile(kb_env, monkeypa
 
     assert [c[0] for c in spawn.calls] == [tid]
     assert [s[0] for s in res.skipped_provider_blocked] != [tid]
+
+
+# ---------------------------------------------------------------------------
+# Kanban auxiliary choke points: no call, retry, fan-out, or promotion
+# ---------------------------------------------------------------------------
+
+
+def test_decomposer_auto_route_to_nous_is_refused_before_llm_and_fanout(
+    kb_env, monkeypatch,
+):
+    kb = kb_env
+    _block(monkeypatch)
+    _write_root_config({
+        "model": {"default": "deepseek/deepseek-v4-flash", "provider": "nous"},
+        "auxiliary": {
+            "kanban_decomposer": {"provider": "auto", "model": ""},
+        },
+    })
+    from agent import auxiliary_client
+    from hermes_cli import kanban_decompose as decompose
+
+    model_call = MagicMock(side_effect=AssertionError("model call escaped policy"))
+    child_fanout = MagicMock(side_effect=AssertionError("child fanout escaped policy"))
+    monkeypatch.setattr(auxiliary_client, "call_llm", model_call)
+    monkeypatch.setattr(kb, "decompose_triage_task", child_fanout)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="rough idea", triage=True)
+
+    for _ in range(3):
+        outcome = decompose.decompose_task(tid, author="test")
+        assert outcome.ok is False
+        assert outcome.reason.endswith("provider_blocked")
+
+    assert model_call.call_count == 0
+    assert child_fanout.call_count == 0
+    with kb.connect_closing() as conn:
+        task = kb.get_task(conn, tid)
+        events = _events(kb, conn, tid, "provider_policy_denied")
+        runs = conn.execute(
+            "SELECT COUNT(*) FROM task_runs WHERE task_id = ?", (tid,),
+        ).fetchone()[0]
+        assert kb.child_ids(conn, tid) == []
+    assert task.status == "triage"
+    assert task.current_run_id is None
+    assert task.consecutive_failures == 0
+    assert runs == 0
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["provider"] == "nous"
+    assert payload["source"] == "auxiliary_main_config"
+
+
+def test_decomposer_policy_import_error_is_refused_before_llm(
+    kb_env, monkeypatch,
+):
+    kb = kb_env
+    _block(monkeypatch)
+    monkeypatch.setattr(
+        kb,
+        "_load_provider_policy_module",
+        MagicMock(side_effect=ImportError("synthetic import failure")),
+    )
+    from agent import auxiliary_client
+    from hermes_cli import kanban_decompose as decompose
+
+    model_call = MagicMock(side_effect=AssertionError("model call escaped policy"))
+    monkeypatch.setattr(auxiliary_client, "call_llm", model_call)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="rough idea", triage=True)
+
+    outcome = decompose.decompose_task(tid, author="test")
+
+    assert outcome.ok is False
+    assert outcome.reason.endswith("policy_evaluation_error")
+    assert model_call.call_count == 0
+    with kb.connect_closing() as conn:
+        assert kb.get_task(conn, tid).status == "triage"
+        assert kb.child_ids(conn, tid) == []
+
+
+def test_decomposer_invalid_policy_result_is_refused_before_llm(
+    kb_env, monkeypatch,
+):
+    kb = kb_env
+    _block(monkeypatch)
+    kpp = kb._load_provider_policy_module()
+    monkeypatch.setattr(
+        kpp,
+        "evaluate_auxiliary_task",
+        MagicMock(return_value=None),
+    )
+    from agent import auxiliary_client
+    from hermes_cli import kanban_decompose as decompose
+
+    model_call = MagicMock(side_effect=AssertionError("model call escaped policy"))
+    monkeypatch.setattr(auxiliary_client, "call_llm", model_call)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="rough idea", triage=True)
+
+    outcome = decompose.decompose_task(tid, author="test")
+
+    assert outcome.ok is False
+    assert outcome.reason.endswith("policy_evaluation_error")
+    assert model_call.call_count == 0
+
+
+def test_virtual_moa_auxiliary_route_is_unresolved_before_llm(
+    kb_env, monkeypatch,
+):
+    """A MoA label is not a concrete provider; its aggregator could be Nous."""
+    kb = kb_env
+    _block(monkeypatch)
+    _write_root_config({
+        "model": {"default": "gpt-5.4", "provider": "openai"},
+        "auxiliary": {
+            "triage_specifier": {"provider": "moa", "model": "opus-gpt"},
+        },
+    })
+    from agent import auxiliary_client
+    from hermes_cli import kanban_specify as specify
+
+    model_call = MagicMock(side_effect=AssertionError("model call escaped policy"))
+    monkeypatch.setattr(auxiliary_client, "call_llm", model_call)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="rough idea", triage=True)
+
+    outcome = specify.specify_task(tid, author="test")
+
+    assert outcome.ok is False
+    assert outcome.reason.endswith("provider_unresolved")
+    assert model_call.call_count == 0
+
+
+def test_triage_specifier_nous_fallback_is_refused_before_llm_or_promotion(
+    kb_env, monkeypatch,
+):
+    kb = kb_env
+    _block(monkeypatch)
+    _write_root_config({
+        "model": {"default": "gpt-5.4", "provider": "openai"},
+        "auxiliary": {
+            "triage_specifier": {
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "fallback_chain": [
+                    {"provider": "nous", "model": "deepseek/deepseek-v4-flash"},
+                ],
+            },
+        },
+    })
+    from agent import auxiliary_client
+    from hermes_cli import kanban_specify as specify
+
+    model_call = MagicMock(side_effect=AssertionError("model call escaped policy"))
+    promotion = MagicMock(side_effect=AssertionError("promotion escaped policy"))
+    monkeypatch.setattr(auxiliary_client, "call_llm", model_call)
+    monkeypatch.setattr(kb, "specify_triage_task", promotion)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="rough idea", triage=True)
+
+    outcome = specify.specify_task(tid, author="test")
+
+    assert outcome.ok is False
+    assert outcome.reason.endswith("provider_blocked")
+    assert model_call.call_count == 0
+    assert promotion.call_count == 0
+    with kb.connect_closing() as conn:
+        task = kb.get_task(conn, tid)
+        assert kb.child_ids(conn, tid) == []
+    assert task.status == "triage"
+    assert task.current_run_id is None
+    assert task.consecutive_failures == 0
+
+
+def test_concrete_external_auxiliary_route_is_unaffected(kb_env, monkeypatch):
+    kb = kb_env
+    _block(monkeypatch)
+    _write_root_config({
+        "model": {"default": "gpt-5.4", "provider": "openai"},
+        "auxiliary": {
+            "triage_specifier": {"provider": "openai", "model": "gpt-5.4"},
+        },
+        "fallback_providers": {
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+        },
+        "fallback_model": [
+            {"provider": "anthropic", "model": "claude-haiku-4-5"},
+        ],
+    })
+    from agent import auxiliary_client
+    from hermes_cli import kanban_specify as specify
+
+    model_call = MagicMock(return_value=_aux_response(
+        json.dumps({"title": "refined", "body": "concrete body"})
+    ))
+    monkeypatch.setattr(auxiliary_client, "call_llm", model_call)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="rough idea", triage=True)
+
+    outcome = specify.specify_task(tid, author="test")
+
+    assert outcome.ok is True
+    assert model_call.call_count == 1
+    with kb.connect_closing() as conn:
+        task = kb.get_task(conn, tid)
+    assert task.status == "ready"
+    assert task.title == "refined"
+
+
+def test_policy_unset_leaves_nous_auxiliary_behavior_unchanged(kb_env, monkeypatch):
+    kb = kb_env
+    _write_root_config({
+        "model": {"default": "deepseek/deepseek-v4-flash", "provider": "nous"},
+        "auxiliary": {
+            "triage_specifier": {"provider": "auto", "model": ""},
+        },
+    })
+    from agent import auxiliary_client
+    from hermes_cli import kanban_specify as specify
+
+    model_call = MagicMock(return_value=_aux_response(
+        json.dumps({"title": "refined", "body": "concrete body"})
+    ))
+    monkeypatch.setattr(auxiliary_client, "call_llm", model_call)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="rough idea", triage=True)
+
+    outcome = specify.specify_task(tid, author="test")
+
+    assert outcome.ok is True
+    assert model_call.call_count == 1
 
 
 # ---------------------------------------------------------------------------

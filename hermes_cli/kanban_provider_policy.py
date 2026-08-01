@@ -52,10 +52,11 @@ profile that clearly declares an unrelated provider (``model.provider:
 openai``) is never denied by an unrelated config error — resolution has to
 be genuinely ambiguous for the fail-closed branch to fire.
 
-A malformed *policy* value is a different matter: it is reported (once) and
-treated as "no policy", because turning an operator typo into a fleet-wide
-block is a worse failure than the guard being inert. The malformed value is
-logged at WARNING so it is visible.
+A malformed *declared policy* is a fail-closed error.  Once an operator has
+declared this hard stop, an import, parse, or evaluation failure must never
+silently turn it off.  :mod:`hermes_cli.kanban_db` probes for the declaration
+independently before importing this module, so even a broken policy-module
+import is denied rather than treated as an unconfigured install.
 
 This module performs no I/O beyond reading config/profile YAML, never
 touches credentials, and never records a balance.
@@ -92,13 +93,23 @@ SOURCE_MODEL_OVERRIDE_PREFIX = "model_override_prefix"
 SOURCE_PROFILE_CONFIG = "profile_config"
 SOURCE_ENV_INFERENCE_PROVIDER = "env_inference_provider"
 SOURCE_UNRESOLVED = "unresolved"
+SOURCE_AUXILIARY_TASK_CONFIG = "auxiliary_task_config"
+SOURCE_AUXILIARY_TASK_FALLBACK = "auxiliary_task_fallback"
+SOURCE_AUXILIARY_MAIN_CONFIG = "auxiliary_main_config"
+SOURCE_AUXILIARY_MAIN_FALLBACK = "auxiliary_main_fallback"
+SOURCE_AUXILIARY_AUTO = "auxiliary_auto_discovery"
 
-#: Providers that are never concrete: the child would still have to choose.
-_AMBIGUOUS_PROVIDER_NAMES = frozenset({"auto"})
+#: Provider labels that are not concrete network routes. ``auto`` chooses at
+#: runtime; ``moa`` resolves a preset's aggregator, which may be blocked.
+_AMBIGUOUS_PROVIDER_NAMES = frozenset({"auto", "moa"})
 
 #: Malformed policy values already reported, so a per-tick dispatcher loop
 #: does not reprint the same warning forever.
 _warned_bad_policy: set = set()
+
+
+class ProviderPolicyConfigurationError(ValueError):
+    """A declared blocked-provider policy could not be parsed safely."""
 
 
 @dataclass(frozen=True)
@@ -197,9 +208,9 @@ def _warn_bad_policy(raw: Any, *, origin: str) -> None:
         return
     _warned_bad_policy.add(key)
     _log.warning(
-        "kanban provider policy: ignoring malformed %s value %r — expected a "
-        "list of provider names or a comma-separated string. The dispatch "
-        "guard is INACTIVE until this is fixed.",
+        "kanban provider policy: malformed %s value %r — expected a list of "
+        "provider names or a comma-separated string. The declared hard stop "
+        "fails closed until this is fixed.",
         origin, raw,
     )
 
@@ -227,9 +238,14 @@ def load_blocked_providers(
         parsed = _coerce_policy_names(
             environ.get(BLOCKED_PROVIDERS_ENV), origin=BLOCKED_PROVIDERS_ENV,
         )
-        # Malformed env → treat as no policy (see module docstring); an
-        # explicitly empty env value is the documented off-switch.
-        return parsed if parsed is not None else frozenset()
+        # An explicitly empty env value is the documented off-switch.  Any
+        # other malformed declaration is an error: the caller must fail closed
+        # rather than silently disabling a hard stop.
+        if parsed is None:
+            raise ProviderPolicyConfigurationError(
+                f"malformed {BLOCKED_PROVIDERS_ENV} declaration"
+            )
+        return parsed
 
     cfg = config
     if cfg is None:
@@ -237,8 +253,9 @@ def load_blocked_providers(
             from hermes_cli.config import load_config
             cfg = load_config()
         except Exception as exc:
-            _log.debug("kanban provider policy: config unreadable (%s)", exc)
-            return frozenset()
+            raise ProviderPolicyConfigurationError(
+                f"blocked-provider config unreadable: {type(exc).__name__}"
+            ) from exc
     kanban_cfg = cfg.get("kanban") if isinstance(cfg, dict) else None
     if not isinstance(kanban_cfg, dict):
         return frozenset()
@@ -246,7 +263,203 @@ def load_blocked_providers(
         kanban_cfg.get(BLOCKED_PROVIDERS_CONFIG_KEY),
         origin="kanban." + BLOCKED_PROVIDERS_CONFIG_KEY,
     )
-    return parsed if parsed is not None else frozenset()
+    if parsed is None:
+        raise ProviderPolicyConfigurationError(
+            "malformed kanban.blocked_providers declaration"
+        )
+    return parsed
+
+
+def _config_provider(value: Any) -> Optional[str]:
+    """Normalize one provider value from config without inventing a default."""
+    if not isinstance(value, str):
+        return None
+    return normalize_provider_name(value)
+
+
+def _fallback_providers(
+    raw: Any,
+    *,
+    source: str,
+    allow_mapping: bool = False,
+    require_model: bool = False,
+) -> list[tuple[Optional[str], str]]:
+    """Return provider candidates from a configured fallback list.
+
+    Task-local fallback chains accept a list of mappings and require a
+    ``provider``.  The top-level fallback reader accepts either one mapping or
+    a list and requires both ``provider`` and ``model``.  Entries that the real
+    router ignores are ignored here too; an entry with a non-string provider
+    remains unresolved because it cannot be compared safely.
+    """
+    if raw in (None, "", []):
+        return []
+    if allow_mapping and isinstance(raw, dict):
+        entries = [raw]
+    elif isinstance(raw, list):
+        entries = raw
+    else:
+        return []
+    candidates: list[tuple[Optional[str], str]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_provider = entry.get("provider")
+        if raw_provider in (None, ""):
+            continue
+        if require_model:
+            raw_model = entry.get("model")
+            if not isinstance(raw_model, str) or not raw_model.strip():
+                continue
+        provider = _config_provider(raw_provider)
+        candidates.append((provider, source))
+    return candidates
+
+
+def resolve_auxiliary_providers(
+    *,
+    task: str,
+    config: Optional[dict],
+) -> Tuple[Tuple[Optional[str], str], ...]:
+    """Return provider routes a Kanban auxiliary call can select.
+
+    This mirrors the provider-bearing parts of
+    ``agent.auxiliary_client._resolve_task_provider_model`` without importing
+    the auxiliary client (which would already be on the path toward provider
+    construction).  A concrete ``auxiliary.<task>.provider`` is primary;
+    ``auto``/missing inherits ``model.provider`` and may enter the built-in
+    auto-discovery chain, which includes Nous.  Explicit auxiliary providers
+    can also fall back to the main model after capacity errors, so the main
+    provider is included as a possible route.  Configured task and main
+    fallback providers are inspected as well.
+
+    ``None`` is deliberately retained for malformed/unresolved routes.  Under
+    an active blocked-provider policy, callers deny that ambiguity.
+    """
+    if not isinstance(config, dict):
+        return ((None, SOURCE_AUXILIARY_AUTO),)
+
+    auxiliary = config.get("auxiliary")
+    if auxiliary is None:
+        auxiliary = {}
+    if not isinstance(auxiliary, dict):
+        return ((None, SOURCE_AUXILIARY_AUTO),)
+    task_cfg = auxiliary.get(task, {})
+    if not isinstance(task_cfg, dict):
+        return ((None, SOURCE_AUXILIARY_TASK_CONFIG),)
+
+    model_cfg = config.get("model", {})
+    if isinstance(model_cfg, str):
+        model_cfg = {}
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+
+    task_provider = _config_provider(task_cfg.get("provider"))
+    main_provider = _config_provider(model_cfg.get("provider"))
+    candidates: list[tuple[Optional[str], str]] = []
+
+    if task_provider and task_provider != "auto":
+        candidates.append((task_provider, SOURCE_AUXILIARY_TASK_CONFIG))
+        # Explicit auxiliary routes fall back to the main model after
+        # capacity errors.  Include it so a Nous main profile cannot leak
+        # through an apparently external side-task override.
+        if main_provider:
+            candidates.append((main_provider, SOURCE_AUXILIARY_MAIN_CONFIG))
+        else:
+            candidates.append((None, SOURCE_AUXILIARY_MAIN_CONFIG))
+    else:
+        # ``auto`` means "main provider first, then discovery".  The built-in
+        # discovery chain contains Nous, so it is an explicit possible route.
+        candidates.append((main_provider, SOURCE_AUXILIARY_MAIN_CONFIG))
+        candidates.append((None, SOURCE_AUXILIARY_AUTO))
+
+    candidates.extend(
+        _fallback_providers(
+            task_cfg.get("fallback_chain"),
+            source=SOURCE_AUXILIARY_TASK_FALLBACK,
+        )
+    )
+
+    # Top-level main fallbacks use ``fallback_providers`` in current config.
+    # A legacy ``fallback_model`` without an inspectable provider is retained
+    # as unresolved rather than silently ignored.
+    candidates.extend(
+        _fallback_providers(
+            config.get("fallback_providers"),
+            source=SOURCE_AUXILIARY_MAIN_FALLBACK,
+            allow_mapping=True,
+            require_model=True,
+        )
+    )
+    candidates.extend(
+        _fallback_providers(
+            config.get("fallback_model"),
+            source=SOURCE_AUXILIARY_MAIN_FALLBACK,
+            allow_mapping=True,
+            require_model=True,
+        )
+    )
+
+    # Stable de-duplication keeps event payloads deterministic while retaining
+    # the first (highest-precedence) source for each provider identity.
+    unique: list[tuple[Optional[str], str]] = []
+    seen: set[Optional[str]] = set()
+    for candidate in candidates:
+        provider, _source = candidate
+        if provider in seen:
+            continue
+        seen.add(provider)
+        unique.append(candidate)
+    return tuple(unique)
+
+
+def evaluate_auxiliary_task(
+    *,
+    task: str,
+    config: Optional[dict],
+    blocked: frozenset,
+) -> PolicyDecision:
+    """Decide whether a Kanban auxiliary model call may begin."""
+    policy_tuple = tuple(sorted(blocked))
+    candidates = resolve_auxiliary_providers(task=task, config=config)
+
+    for provider, source in candidates:
+        if provider is not None and provider in blocked:
+            return PolicyDecision(
+                allowed=False,
+                reason=REASON_BLOCKED,
+                provider=provider,
+                source=source,
+                policy=policy_tuple,
+                detail=(
+                    f"auxiliary task {task!r} can route to blocked provider "
+                    f"{provider!r} via {source}"
+                ),
+            )
+
+    for provider, source in candidates:
+        if provider is None or provider in _AMBIGUOUS_PROVIDER_NAMES:
+            return PolicyDecision(
+                allowed=False,
+                reason=REASON_UNRESOLVED,
+                provider=provider,
+                source=source,
+                policy=policy_tuple,
+                detail=(
+                    f"auxiliary task {task!r} has an unresolved provider "
+                    f"route via {source}; it could reach a blocked provider"
+                ),
+            )
+
+    provider, source = candidates[0]
+    return PolicyDecision(
+        allowed=True,
+        reason=REASON_ALLOWED,
+        provider=provider,
+        source=source,
+        policy=policy_tuple,
+        detail=f"auxiliary task {task!r} has no blocked provider route",
+    )
 
 
 def _profile_configured_provider(assignee: Optional[str]) -> Optional[str]:

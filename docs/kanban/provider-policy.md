@@ -1,10 +1,11 @@
 # Kanban provider policy — dispatch hard stop
 
-An operator control that stops the kanban dispatcher from ever creating a
-worker process whose effective inference provider is one the operator has
-declared off-limits. It is a **hard stop before the spawn**, not a filter
-after the fact: a refused card produces no subprocess, no inference
-connection, and no tokens.
+An operator control that stops Kanban from beginning an inference path whose
+effective provider is one the operator has declared off-limits. Worker
+dispatch is stopped **before process creation**. Triage decomposition and
+specification are stopped **before the auxiliary client call** and before any
+child fan-out or task promotion. A refusal therefore produces no subprocess,
+no auxiliary request, no inference connection, and no tokens.
 
 Off by default. With no policy configured, dispatch behaves exactly as it
 did before this feature existed.
@@ -49,10 +50,18 @@ policy takes effect on the next tick — no gateway restart, no redeploy.
 2. `kanban.blocked_providers` from `config.yaml`.
 3. Empty — no policy.
 
-A malformed policy value (e.g. a number, or a list of non-strings) is
-logged once at WARNING and treated as **no policy**. Turning an operator
-typo into a fleet-wide block would be a worse failure than an inert guard;
-the warning is how you find out.
+A malformed **declared** policy value (for example a number or a list of
+non-strings) fails closed. The same is true if the policy module cannot be
+imported, config cannot be parsed, policy evaluation raises, or a non-empty
+declaration unexpectedly resolves to an empty set. The event reason is
+`policy_evaluation_error`; no worker process or Kanban auxiliary model call is
+started until the declaration is repaired or explicitly disabled.
+
+Declaration detection is deliberately independent of the policy module:
+`kanban_db` checks the environment override and the raw `config.yaml` key
+before importing policy code. This prevents a broken import from silently
+turning off an already-declared hard stop. A config file that is unreadable
+while the dispatcher cannot prove the policy absent is also refused.
 
 ## What "effective provider" means
 
@@ -97,6 +106,22 @@ This does **not** globally block unrelated providers on ordinary config
 errors: a profile that plainly declares `model.provider: openai` resolves
 cleanly and dispatches, whatever else is broken in its config.
 
+For `kanban_decomposer` and `triage_specifier`, the evaluator inspects the
+provider-bearing parts of the same routing inputs used by the auxiliary
+client:
+
+1. `auxiliary.<task>.provider` when it names a concrete provider;
+2. `model.provider` when the auxiliary slot is unset or `auto`;
+3. `auxiliary.<task>.fallback_chain`;
+4. top-level main fallback providers; and
+5. the built-in auto-discovery route, which can select Nous.
+
+An explicit auxiliary provider can fall back to the main model on capacity
+errors, so the main provider is included as a possible route even when the
+auxiliary slot is concrete. Any blocked or unresolved possible route refuses
+the call. A fully concrete external/non-blocked auxiliary route with a
+non-blocked main/fallback configuration remains unaffected.
+
 ## What a refusal does — and does not — do
 
 Refusal happens **before `claim_task`**, so:
@@ -114,6 +139,13 @@ loops absorb by releasing the claim without counting a failure. It exists
 for the narrow window where the policy changes mid-tick, and for callers
 that reach the spawn helper directly.
 
+Auxiliary refusals happen in
+`kanban_decompose.decompose_task` and `kanban_specify.specify_task` before
+`agent.auxiliary_client.call_llm` is imported or called. They therefore enter
+none of the auxiliary retry, credential-refresh, payment-fallback, or
+provider-fallback paths. They create no children and do not promote the triage
+task. The task remains in `triage`; no run or failure counter is consumed.
+
 ## Observability
 
 Each refusal is recorded on the card as a `provider_policy_denied` event:
@@ -128,9 +160,12 @@ Each refusal is recorded on the card as a `provider_policy_denied` event:
 }
 ```
 
-`reason` is one of `provider_blocked` or `provider_unresolved`. `source` is
-one of `task_override`, `model_override_prefix`, `profile_config`,
-`env_inference_provider`, `unresolved`.
+`reason` is one of `provider_blocked`, `provider_unresolved`, or
+`policy_evaluation_error`. Worker `source` values include `task_override`,
+`model_override_prefix`, `profile_config`, `env_inference_provider`, and
+`unresolved`. Auxiliary sources identify the task config, main config,
+configured fallback, or auto-discovery route. Declaration failures use
+`policy_declaration`.
 
 The event is written **at most once per unchanged decision**: the
 dispatcher re-examines a refused card every tick, and re-appending an
@@ -149,9 +184,9 @@ Also surfaced as:
 
 ## Scope
 
-The gate covers both dispatch lanes — the ready column and the review
-column — across every dispatch entry point, because all of them funnel
-through `kanban_db.dispatch_once`:
+The worker gate covers both dispatch lanes — the ready column and the review
+column — across every dispatch entry point, because all of them funnel through
+`kanban_db.dispatch_once`:
 
 | Entry point | Path |
 | --- | --- |
@@ -160,6 +195,18 @@ through `kanban_db.dispatch_once`:
 | Gateway embedded dispatcher | `gateway/kanban_watchers.py` |
 | Dashboard "Dispatch" button | `plugins/kanban/dashboard/plugin_api.py::dispatch` |
 
-It does not govern anything other than kanban worker spawn: interactive
-sessions, auxiliary model calls, and any other Hermes surface are
-unaffected. It stores no credentials and no balance.
+The auxiliary gates cover the complete Kanban triage surface because every
+entry point funnels through one of two functions:
+
+| Entry point | Choke point |
+| --- | --- |
+| Gateway automatic decomposition tick | `kanban_decompose.decompose_task` |
+| `hermes kanban decompose` | `kanban_decompose.decompose_task` |
+| Dashboard task "Decompose" action | `kanban_decompose.decompose_task` |
+| `hermes kanban specify` | `kanban_specify.specify_task` |
+| Dashboard task "Specify" action | `kanban_specify.specify_task` |
+
+The policy does not govern ordinary interactive sessions or unrelated
+auxiliary tasks. It stores no credentials and no balance. Enabling the source
+change is a separate live-configuration decision; building or testing it does
+not modify any running gateway, profile, provider, service, or board policy.
