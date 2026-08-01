@@ -46,12 +46,15 @@ def _peer_uid(conn):
 def _load_install_config(path):
  try: cfg=json.loads(Path(path).read_text())
  except (OSError,ValueError) as exc: raise GrantError("grant install configuration unreadable") from exc
- required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","authority_path","executor_child_path","executor_launcher","executor_unit_template","python_path","source_head","runtime_sha256","authority_sha256","executor_child_sha256","launcher_sha256","unit_sha256"}
+ required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","authority_path","executor_child_path","executor_launcher","executor_unit_template","python_path","source_root","source_head","provider_import_closure","runtime_sha256","authority_sha256","executor_child_sha256","launcher_sha256","unit_sha256","effective_unit_name"}
  if set(cfg)!=required: raise GrantError("grant install configuration fields are not exact")
  nums={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid"}
  if not all(isinstance(cfg[k],int) for k in nums): raise GrantError("grant install numeric identities invalid")
  if not all(isinstance(cfg[k],str) and cfg[k] for k in required-nums): raise GrantError("grant install paths invalid")
  if len({cfg["authority_uid"],cfg["gate_uid"],cfg["executor_uid"]})!=3: raise GrantError("authority, gate and executor must be distinct OS accounts")
+ if not __import__("re").fullmatch(r"[0-9a-f]{64}",cfg["source_head"]): raise GrantError("source head must be canonical 64-hex")
+ if not isinstance(cfg["provider_import_closure"],dict) or not cfg["provider_import_closure"]: raise GrantError("provider import closure missing")
+ if cfg["effective_unit_name"] != "hermes-real-executor@.service": raise GrantError("effective unit name is not canonical")
  return cfg
 
 def _sha256(path):
@@ -91,10 +94,41 @@ def _verify_unit(cfg):
  required={"User":executor,"Group":group,"SupplementaryGroups":socket_group,"NoNewPrivileges":"yes","PrivateTmp":"yes","ProtectSystem":"strict"}
  if any(values.get(k)!=v for k,v in required.items()) or set(values)!={*required,"ExecStart"}: raise GrantError("executor unit identity or hardening contract mismatch")
 
+def _verify_effective_systemd_unit(cfg):
+ """Refuse manager indirection: resolved FragmentPath must be our template,
+ no drop-ins may exist, and manager must say a daemon reload is not pending."""
+ import subprocess
+ unit=cfg["effective_unit_name"]; template=str(Path(cfg["executor_unit_template"]).resolve())
+ try:
+  shown=subprocess.run(["/usr/bin/systemctl","show",unit,"--property=FragmentPath,DropInPaths,NeedDaemonReload","--value"],capture_output=True,text=True,check=True).stdout.splitlines()
+ except (OSError,subprocess.SubprocessError) as exc: raise GrantError("effective systemd unit cannot be resolved") from exc
+ if len(shown)!=3 or shown[0].strip()!=template or shown[1].strip() or shown[2].strip().lower() not in ("no","false","0"):
+  raise GrantError("effective systemd unit differs, has drop-ins, or daemon reload is pending")
+
 def _owned_mode(path,uid,mode,label):
  try: st=Path(path).stat()
  except OSError as exc: raise GrantError(f"{label} missing") from exc
  if st.st_uid!=uid or _mode(Path(path))!=mode: raise GrantError(f"{label} owner/mode mismatch")
+
+def _safe_root_chain(path, label):
+ """Every component is a real root-owned non-writable directory; no symlink."""
+ p=Path(path)
+ if not p.is_absolute(): raise GrantError(f"{label} path is not absolute")
+ for component in reversed((p, *p.parents)):
+  try: st=os.lstat(component)
+  except OSError as exc: raise GrantError(f"{label} parent missing") from exc
+  if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid!=0 or stat.S_IMODE(st.st_mode)&0o022:
+   raise GrantError(f"{label} unsafe path component")
+
+def _verify_import_closure(cfg):
+ root=Path(cfg["source_root"])
+ _safe_root_chain(root,"source root")
+ if root.resolve()!=Path(cfg["runtime_path"]).resolve().parents[1]: raise GrantError("source root is not canonical runtime root")
+ for rel,want in cfg["provider_import_closure"].items():
+  if not isinstance(rel,str) or not isinstance(want,str) or not __import__("re").fullmatch(r"[0-9a-f]{64}",want): raise GrantError("provider import closure entry malformed")
+  target=(root/rel)
+  if target.resolve().parent != (root/rel).parent.resolve() or not str(target.resolve()).startswith(str(root.resolve())+os.sep): raise GrantError("provider import closure path escapes root")
+  _root_regular_digest(target,0o755,want,"provider import closure member")
 
 def verify_install(config_path):
  """Non-mutating provision verifier. Provisioning users, files, socket and
@@ -109,7 +143,9 @@ def verify_install(config_path):
  _root_regular_digest(cfg["executor_child_path"],0o755,cfg["executor_child_sha256"],"executor child source")
  launcher=Path(cfg["executor_launcher"]); _root_regular_digest(launcher,0o4750,cfg["launcher_sha256"],"executor launcher")
  _root_regular_digest(cfg["executor_unit_template"],0o644,cfg["unit_sha256"],"executor unit template")
+ _verify_import_closure(cfg)
  cfg["_config_path"]=str(Path(config_path).resolve()); _verify_unit(cfg)
+ _verify_effective_systemd_unit(cfg)
  parent=sock.parent
  if not parent.is_dir() or _mode(parent)&0o022: raise GrantError("authority socket parent unsafe")
  try: st=sock.stat()
@@ -127,11 +163,12 @@ def verify_install(config_path):
 def _path(d,gid):
  if not isinstance(gid,str) or len(gid)!=64 or any(c not in "0123456789abcdef" for c in gid): raise GrantError("grant id invalid")
  return d/("grant-"+gid+".json")
-def _issue(req,d,token_digest):
+def _issue(req,d,token_digest,cfg=None):
  token=req.get("issuer_token")
  if not isinstance(token,str) or not secrets.compare_digest(hashlib.sha256(token.encode()).hexdigest(),token_digest): raise GrantError("issuer authentication refused")
  g=req.get("grant"); need={"task_id","board_db","workspace_root","session_binding","cmux_receipt","reservation_json","binding_issuer","hermes_home","lease_file","lease_realpath","lease_sha256","source_head","expires_at"}
  if not isinstance(g,dict) or set(g)!=need: raise GrantError("grant fields are not exact")
+ if cfg is not None and g["source_head"] != cfg["source_head"]: raise GrantError("grant source head does not match verified install pin")
  if not isinstance(g["expires_at"],int) or not int(time.time())<g["expires_at"]<=int(time.time())+60: raise GrantError("grant expiry invalid")
  lease=Path(g["lease_file"]).resolve()
  if str(lease)!=g["lease_realpath"] or not lease.is_file(): raise GrantError("canonical consumed lease missing")
@@ -201,7 +238,7 @@ def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
      peer=_peer_uid(conn) if cfg else None
      if req.get("op")=="issue":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant issue peer identity refused")
-      out={"ok":True,"grant_id":_issue(req,d,token_digest)}
+      out={"ok":True,"grant_id":_issue(req,d,token_digest,cfg)}
      elif req.get("op")=="arm":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant arm peer identity refused")
       out={"ok":True,"armed":_arm(req,d)}

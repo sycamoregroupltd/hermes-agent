@@ -62,20 +62,13 @@ import argparse
 import json
 import os
 import shutil
+import socket
+import stat
 import sys
 import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-BIN_VERIFY_ROOT = Path(__file__).resolve().parent
-if str(BIN_VERIFY_ROOT) not in sys.path:
-    sys.path.insert(0, str(BIN_VERIFY_ROOT))
-
-from hermes_cli import kanban_db as kb  # noqa: E402
-import issue_cmux_claude_session_binding as cmux_binding  # noqa: E402
-import v2_grant_authority as grant_authority  # noqa: E402
 
 V2_MARKER = "V2_GOVERNED_CANARY_OK"
 V2_INSTRUCTION = (
@@ -83,8 +76,10 @@ V2_INSTRUCTION = (
     "canary. Do not access files, tools, network resources, MCP servers, or "
     "external systems."
 )
-SESSION_BINDING_KIND = cmux_binding.BINDING_KIND
-SESSION_BINDING_MAX_WINDOW_SECONDS = cmux_binding.MAX_BINDING_TTL_SECONDS
+# No project module is imported at file scope. The root-owned child verifies
+# this file's digest; main verifies the full provider closure before import.
+SESSION_BINDING_KIND = "cmux-interactive-session-binding-v1"
+SESSION_BINDING_MAX_WINDOW_SECONDS = 900
 
 
 class DispatchError(RuntimeError):
@@ -96,6 +91,65 @@ class DispatchError(RuntimeError):
 # be constructed; cross-principal security still comes from OS account
 # isolation and authority SO_PEERCRED checks.
 _RUNTIME_GRANT_CONSUMED = None
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _load_and_verify_preimport_config(path):
+    """Stdlib-only verification of the immutable post-consume import closure."""
+    cp = Path(path).resolve(); st = cp.stat()
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or stat.S_IMODE(st.st_mode) != 0o600:
+        raise DispatchError("install config must be root-owned regular mode 0600")
+    cfg = json.loads(cp.read_text(encoding="utf-8"))
+    if Path(cfg.get("runtime_path", "")).resolve() != Path(__file__).resolve():
+        raise DispatchError("install config runtime path is not this private runtime")
+    if cfg.get("runtime_sha256") != _sha256_file(Path(__file__)):
+        raise DispatchError("private runtime digest does not match install config")
+    root = Path(cfg.get("source_root", "")).resolve()
+    if not root.is_dir() or root != REPO_ROOT.resolve():
+        raise DispatchError("install config source root is not this canonical runtime root")
+    rst = root.stat()
+    if rst.st_uid != 0 or stat.S_IMODE(rst.st_mode) & 0o022:
+        raise DispatchError("source root is not root-owned immutable")
+    closure = cfg.get("provider_import_closure")
+    if not isinstance(closure, dict) or not closure:
+        raise DispatchError("provider import closure missing")
+    for rel, want in closure.items():
+        if not isinstance(rel, str) or not isinstance(want, str) or len(want) != 64:
+            raise DispatchError("provider import closure entry malformed")
+        target = (root / rel).resolve()
+        if not str(target).startswith(str(root) + os.sep):
+            raise DispatchError("provider import closure escapes source root")
+        tst = target.stat()
+        if not stat.S_ISREG(tst.st_mode) or tst.st_uid != 0 or stat.S_IMODE(tst.st_mode) & 0o022:
+            raise DispatchError("provider import closure member is writable or not root-owned")
+        if _sha256_file(target) != want:
+            raise DispatchError("provider import closure digest mismatch")
+    import subprocess
+    head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True)
+    status = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1"], capture_output=True, text=True)
+    if head.returncode or head.stdout.strip() != cfg.get("source_head") or status.returncode or status.stdout.strip():
+        raise DispatchError("source head/clean worktree does not match verified install pin")
+    return cfg
+
+
+def _consume_authority(socket_path, grant_id):
+    payload = json.dumps({"op": "consume", "grant_id": grant_id, "expected": {}}, sort_keys=True).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(socket_path); sock.sendall(payload); raw = sock.recv(8193)
+    if not raw or len(raw) > 8192:
+        raise DispatchError("runtime authority response missing or oversized")
+    try: out = json.loads(raw.decode())
+    except ValueError as exc: raise DispatchError("runtime authority response malformed") from exc
+    if not out.get("ok"):
+        raise DispatchError("runtime authority refused: " + str(out.get("error", "refused")))
+    return out
 
 
 def digest(value: str) -> str:
@@ -494,27 +548,26 @@ def main(argv=None):
     args = parser.parse_args(argv)
     # Direct invocation is insufficient: the private runtime itself must
     # consume an armed authority grant while running as the executor account.
-    cfg = grant_authority._load_install_config(args.install_config)
-    grant_authority.verify_install(args.install_config)
-    # Installed artifacts are individually digest-pinned. The provider import
-    # also requires the configured reviewed checkout head.
-    head = __import__("subprocess").run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True)
-    if head.returncode or head.stdout.strip() != cfg["source_head"]:
-        raise DispatchError("runtime source head does not match verified install pin")
+    cfg = _load_and_verify_preimport_config(args.install_config)
     if os.geteuid() != cfg["executor_uid"]:
         raise DispatchError("private runtime must run as configured executor UID")
     try:
-        out = grant_authority.request(args.grant_authority_socket,
-            {"op":"consume", "grant_id":args.grant_id, "expected":{}})
-    except grant_authority.GrantError as exc:
-        raise DispatchError("runtime authority refused: " + str(exc)) from exc
+        out = _consume_authority(args.grant_authority_socket, args.grant_id)
+    except OSError as exc:
+        raise DispatchError("runtime authority unavailable: " + str(exc)) from exc
     grant = out.get("grant")
     required=("board_db","task_id","workspace_root","session_binding","cmux_receipt","reservation_json","binding_issuer","hermes_home","lease_file")
     if not isinstance(grant,dict) or any(not isinstance(grant.get(k),str) or not grant[k] for k in required):
         raise DispatchError("authority grant payload incomplete")
     global ClaudeResumeExecutor, _RUNTIME_GRANT_CONSUMED
     _RUNTIME_GRANT_CONSUMED = grant
+    # First project imports: closure validated and authority consumed above.
+    if str(REPO_ROOT) not in sys.path: sys.path.insert(0, str(REPO_ROOT))
+    from hermes_cli import kanban_db as imported_kb
     from hermes_cli.claude_executor import ClaudeResumeExecutor, SubprocessClaudeRunner
+    import issue_cmux_claude_session_binding as imported_cmux_binding
+    global kb, cmux_binding
+    kb, cmux_binding = imported_kb, imported_cmux_binding
     return _run_child_lifecycle(board_db=grant["board_db"], canary_task=grant["task_id"], workspace_root=grant["workspace_root"], session_binding_path=grant["session_binding"], cmux_receipt_path=grant["cmux_receipt"], reservation_path=grant["reservation_json"], issuer_path=grant["binding_issuer"], hermes_home=grant["hermes_home"], runner=SubprocessClaudeRunner())
 
 

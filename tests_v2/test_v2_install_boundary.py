@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Adversarial source-only checks for the real executor installation boundary."""
-import importlib.util, os, tempfile
+import ast, importlib.util, os, tempfile
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -33,7 +33,25 @@ def main():
  source=(ROOT/"bin_verify"/"v2_executor_launcher.c").read_text()
  assert "argc != 2" in source and "clearenv()" in source and "systemctl" in source and "64" in source
  print("PASS: launcher source enforces grant-id-only/sanitized fixed route")
- assert "source head does not match verified install pin" in (ROOT/"bin_verify"/".v2_real_executor_runtime.py").read_text()
+ assert "source head/clean worktree does not match verified install pin" in (ROOT/"bin_verify"/".v2_real_executor_runtime.py").read_text()
  print("PASS: runtime contains pre-import source-head refusal")
+ runtime_source=(ROOT/"bin_verify"/".v2_real_executor_runtime.py").read_text()
+ tree=ast.parse(runtime_source)
+ forbidden=[]
+ for node in tree.body:
+  if isinstance(node,(ast.Import,ast.ImportFrom)):
+   names=[a.name for a in node.names] if isinstance(node,ast.Import) else [node.module or ""]
+   forbidden += [name for name in names if name.startswith(("hermes_cli","issue_cmux","v2_grant_authority"))]
+ assert not forbidden, "project import occurred before preflight: "+repr(forbidden)
+ assert runtime_source.index("_load_and_verify_preimport_config(args.install_config)") < runtime_source.index("from hermes_cli import kanban_db")
+ assert runtime_source.index("_consume_authority(args.grant_authority_socket") < runtime_source.index("from hermes_cli import kanban_db")
+ assert "provider import closure digest mismatch" in runtime_source
+ print("PASS: malicious/writable provider dependency is rejected before consume/provider import")
+ print("PASS: runtime has no module-scope project import and defers provider imports")
+ authority_source=(ROOT/"bin_verify"/"v2_grant_authority.py").read_text()
+ assert "DropInPaths" in authority_source and "NeedDaemonReload" in authority_source
+ assert "grant source head does not match verified install pin" in authority_source
+ assert "effective_unit_name" in authority_source
+ print("PASS: effective systemd/drop-in/reload and grant source-head bindings are fail-closed")
  print("RESULT: INSTALL BOUNDARY REGRESSIONS PASS")
 if __name__=="__main__": main()

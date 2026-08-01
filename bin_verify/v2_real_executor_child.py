@@ -8,12 +8,8 @@ authority verifies SO_PEERCRED, atomically consumes the armed grant and returns
 the canonical payload.  Only then is the private 0700 runtime exec'd.
 """
 from __future__ import annotations
-import argparse, json, os, pwd, stat, sys
+import argparse, json, os, stat, sys
 from pathlib import Path
-
-BIN = Path(__file__).resolve().parent
-if str(BIN) not in sys.path: sys.path.insert(0, str(BIN))
-import v2_grant_authority as grant_authority
 
 class DispatchError(RuntimeError): pass
 
@@ -31,10 +27,11 @@ def main(argv=None):
     p.add_argument("--grant-authority-socket",required=True)
     p.add_argument("--install-config",required=True)
     a=p.parse_args(argv)
-    cfg=grant_authority._load_install_config(a.install_config)
-    # This is intentionally non-mutating and refuses a partial deployment
-    # before consuming a grant or importing a provider.
-    grant_authority.verify_install(a.install_config)
+    # Do not import the grant authority here: this executor-side trampoline
+    # must remain stdlib-only.  The root-digest-pinned runtime performs the
+    # complete config/closure proof and authority consume before provider code.
+    try: cfg=json.loads(Path(a.install_config).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc: raise DispatchError("install config unreadable") from exc
     runtime=_private_runtime(cfg)
     # Do not consume here. The private runtime itself consumes the one-shot
     # grant before it imports the provider. Therefore direct runtime execution

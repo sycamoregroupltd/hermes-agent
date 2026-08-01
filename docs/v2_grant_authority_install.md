@@ -75,7 +75,10 @@ canonical runtime arguments.
 
 `/etc/hermes-grants/install.json` is exact-schema configuration and includes
 `runtime_path`, `authority_path`, `executor_child_path`, `executor_launcher`,
-`executor_unit_template`, `python_path`, `source_head`, and SHA-256 pins for
+`executor_unit_template`, `python_path`, canonical 64-hex `source_head`,
+canonical `source_root`, `effective_unit_name`, and an exhaustive
+`provider_import_closure` map of relative source files to SHA-256 pins, plus
+SHA-256 pins for
 the runtime, authority, child, launcher and unit, in addition
 to the three account IDs, socket group, state/socket paths, and token paths.
 The runtime is root-owned `0755`; the compiled launcher is root-owned `4750`
@@ -89,4 +92,10 @@ of these facts, including socket owner/group/mode and that every service account
 belongs to the configured socket group.
 
 Before enabling either unit, run `verify-install`; retain its JSON output with
+the install evidence. `verify-install` resolves the effective
+`hermes-real-executor@.service` through systemd, requires its FragmentPath to
+be the pinned template, rejects all drop-ins/overrides, and refuses while
+systemd reports a pending daemon reload. The install config itself must be a
+root-owned regular `0600` file below a root-owned, non-writable path chain;
+the source root and every closure member must be root-owned and non-writable.
 the canary evidence. A failed check is a hard activation refusal.
