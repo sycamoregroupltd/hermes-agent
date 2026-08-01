@@ -572,16 +572,19 @@ def main():
         check("fixture module exposes no real gate-owned lifecycle",
               not hasattr(executor_mod, "_dispatch_gate_owned_canary"))
 
-        # The real child cannot reach Claude merely by being executed: an
-        # inherited authority FD is mandatory and is consumed before the
-        # delayed provider import/construction.
+        # The real child cannot reach Claude merely by being executed.  An
+        # unreadable install config must be rejected before the child can
+        # resolve the private runtime (and therefore before it can import or
+        # construct the provider).  A valid config then binds the subsequent
+        # authority consume to the configured executor identity.
         child = os.path.join(ROOT, "bin_verify", "v2_real_executor_child.py")
         raw = subprocess.run([sys.executable, child, "--grant-id", secrets.token_hex(32),
                               "--grant-authority-socket", os.path.join(td, "missing.sock"),
                               "--install-config", os.path.join(td, "missing-config.json")],
                              text=True, capture_output=True)
-        check("real child refuses missing private authority before Claude construction",
-              raw.returncode != 0 and "authority" in (raw.stdout + raw.stderr))
+        check("real child refuses unreadable install config before Claude construction",
+              raw.returncode != 0 and "install config unreadable" in (raw.stdout + raw.stderr)
+              and "Claude" not in (raw.stdout + raw.stderr))
         child_spec = importlib.util.spec_from_file_location("v2_real_child_wire", child)
         child_mod = importlib.util.module_from_spec(child_spec)
         child_spec.loader.exec_module(child_mod)
