@@ -35,12 +35,12 @@ def _safe_state(d, *, expected_uid=None):
  if not stat.S_ISDIR(st.st_mode) or _mode(d)!=0o700: raise GrantError("grant state directory must be mode 0700")
  if expected_uid is not None and st.st_uid != expected_uid: raise GrantError("grant state directory owner mismatch")
 
-def _peer_uid(conn):
+def _peer_credentials(conn):
  """Refuse if the platform cannot attest the Unix peer identity."""
  if not hasattr(socket,"SO_PEERCRED"): raise GrantError("Unix peer credential verification unavailable")
  try:
   import struct
-  return struct.unpack("3i",conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[0]
+  return struct.unpack("3i",conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
  except (AttributeError, OSError) as exc: raise GrantError("Unix peer credential verification failed") from exc
 
 def _load_install_config(path):
@@ -167,6 +167,13 @@ def _receipt_fingerprint(receipt):
  clone={k:v for k,v in receipt.items() if k!="receipt_fingerprint"}
  return "sha256:"+hashlib.sha256(_canon(clone).encode()).hexdigest()
 def _outcome_path(d,gid): return d/("grant-"+gid+".outcome.json")
+def _executor_instance_attested(pid,gid,cfg):
+ """Bind executor RPC to this root-launched systemd instance and PID."""
+ if not isinstance(pid,int) or pid<=1: raise GrantError("executor peer pid invalid")
+ unit=cfg["effective_unit_name"][:-9] + "@" + gid + ".service"
+ try: lines=Path(f"/proc/{pid}/cgroup").read_text(encoding="utf-8").splitlines()
+ except OSError as exc: raise GrantError("executor peer cgroup unavailable") from exc
+ if not any(line.rsplit(":",1)[-1].endswith("/"+unit) for line in lines): raise GrantError("executor peer is not constrained systemd grant instance")
 def _consume_receipt(gid,g):
  # This is minted by the authority before the grant becomes visible.  It is
  # copied verbatim into the consumed record and is the identity every later
@@ -205,6 +212,8 @@ def _arm(req,d):
  except (OSError, ValueError) as exc: raise GrantError("grant absent or malformed") from exc
  if g.get("launch_armed") is not False: raise GrantError("grant already armed")
  g["launch_armed"] = True
+ # Not part of the deterministic receipt: release only to the attested child.
+ g["outcome_capability"] = secrets.token_hex(32); g["executor_pid"] = None
  tmp=p.with_suffix(".arming")
  try:
   with open(tmp,"x") as fh: json.dump(g,fh,sort_keys=True)
@@ -213,7 +222,7 @@ def _arm(req,d):
   try: tmp.unlink()
   except FileNotFoundError: pass
  return True
-def _consume(req,d):
+def _consume(req,d,*,peer_pid=None,cfg=None):
  gid=req.get("grant_id"); expected=req.get("expected")
  if not isinstance(expected,dict): raise GrantError("grant consume expected fields missing")
  p=_path(d,gid); used=p.with_suffix(".consumed")
@@ -226,6 +235,7 @@ def _consume(req,d):
  receipt_preview=preview.get("consume_receipt")
  if not isinstance(receipt_preview,dict) or receipt_preview.get("receipt_fingerprint")!=_receipt_fingerprint(receipt_preview): raise GrantError("grant consume receipt missing or corrupt")
  if expected != header: raise GrantError("grant consume receipt binding mismatch")
+ if cfg is not None: _executor_instance_attested(peer_pid,gid,cfg)
  try: os.replace(p,used)
  except FileNotFoundError as e: raise GrantError("grant absent or already consumed") from e
  g=json.load(open(used))
@@ -238,13 +248,22 @@ def _consume(req,d):
  # binding used by terminal persistence/readback.
  if expected != header: raise GrantError("grant consume receipt binding mismatch")
  if g.get("expires_at",0)<=int(time.time()): raise GrantError("grant expired")
+ if cfg is not None:
+  g["executor_pid"]=peer_pid; tmp=used.with_suffix(".attested")
+  with open(tmp,"x") as fh: json.dump(g,fh,sort_keys=True)
+  os.replace(tmp,used)
  return g
-def _record_outcome(req,d):
+def _record_outcome(req,d,*,peer_pid=None,cfg=None):
  gid=req.get("grant_id"); outcome=req.get("outcome")
  if not isinstance(outcome,dict): raise GrantError("terminal outcome missing")
  try: g=json.load(open(_path(d,gid).with_suffix(".consumed")))
  except (OSError,ValueError) as exc: raise GrantError("consumed grant absent") from exc
  receipt=g.get("consume_receipt")
+ if cfg is not None:
+  if peer_pid!=g.get("executor_pid"): raise GrantError("terminal outcome peer is not consumed executor instance")
+  _executor_instance_attested(peer_pid,gid,cfg)
+  cap=req.get("outcome_capability")
+  if not isinstance(cap,str) or not secrets.compare_digest(cap,g.get("outcome_capability","")): raise GrantError("terminal outcome capability refused")
  if not isinstance(receipt,dict) or outcome.get("consume_receipt_fingerprint")!=receipt.get("receipt_fingerprint"): raise GrantError("terminal outcome receipt mismatch")
  required={"outcome_kind","schema_version","grant_id","consume_receipt_fingerprint","status","task_id","source_head","terminal"}
  if set(outcome)!=required or outcome.get("outcome_kind")!="v2-executor-terminal-outcome" or outcome.get("schema_version")!=1 or outcome.get("grant_id")!=gid or outcome.get("task_id")!=receipt.get("task_id") or outcome.get("source_head")!=receipt.get("source_head") or outcome.get("status") not in ("completed","errored") or not isinstance(outcome.get("terminal"),dict): raise GrantError("terminal outcome fields invalid")
@@ -295,7 +314,7 @@ def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
    with conn:
     try:
      req=_recv(conn)
-     peer=_peer_uid(conn) if cfg else None
+     peer,pid,_peer_gid=_peer_credentials(conn) if cfg else (None,None,None)
      if req.get("op")=="issue":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant issue peer identity refused")
       gid=_issue(req,d,token_digest,cfg)
@@ -305,10 +324,10 @@ def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
       out={"ok":True,"armed":_arm(req,d)}
      elif req.get("op")=="consume":
       if cfg and peer!=cfg["executor_uid"]: raise GrantError("grant consume peer identity refused")
-      out={"ok":True,"grant":_consume(req,d)}
+      out={"ok":True,"grant":_consume(req,d,peer_pid=pid,cfg=cfg)}
      elif req.get("op")=="record_outcome":
       if cfg and peer!=cfg["executor_uid"]: raise GrantError("terminal outcome peer identity refused")
-      out={"ok":True,"outcome":_record_outcome(req,d)}
+      out={"ok":True,"outcome":_record_outcome(req,d,peer_pid=pid,cfg=cfg)}
      elif req.get("op")=="read_outcome":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("terminal outcome read peer identity refused")
       out={"ok":True,**_read_outcome(req,d)}

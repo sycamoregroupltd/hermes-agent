@@ -93,7 +93,12 @@ RECEIPT_MAX_WINDOW_SECONDS = 600
 
 RC_OK = 0
 RC_REFUSE = 5
-OUTCOME_POLL_SECONDS = 15
+# Bounded deadline: two 20s run-bound heartbeats plus terminal allowance.
+HEARTBEAT_INTERVAL_SECONDS = 20
+REQUIRED_RUN_BOUND_HEARTBEATS = 2
+OUTCOME_TERMINAL_ALLOWANCE_SECONDS = 15
+OUTCOME_POLL_SECONDS = (HEARTBEAT_INTERVAL_SECONDS * REQUIRED_RUN_BOUND_HEARTBEATS
+                        + OUTCOME_TERMINAL_ALLOWANCE_SECONDS)
 
 
 def observe_executor_outcome(authority_socket, grant_id, consume_receipt, *, timeout_seconds=OUTCOME_POLL_SECONDS):
@@ -105,7 +110,10 @@ def observe_executor_outcome(authority_socket, grant_id, consume_receipt, *, tim
     """
     if not isinstance(consume_receipt, dict) or not isinstance(consume_receipt.get("receipt_fingerprint"), str):
         raise RuntimeError("authority did not return a canonical consume receipt")
-    deadline = time.monotonic() + max(0, min(int(timeout_seconds), OUTCOME_POLL_SECONDS))
+    requested = int(timeout_seconds)
+    if requested != OUTCOME_POLL_SECONDS:
+        raise RuntimeError("outcome timeout must equal the bounded heartbeat/fence deadline")
+    deadline = time.monotonic() + OUTCOME_POLL_SECONDS
     while True:
         reply = grant_authority.request(authority_socket, {"op": "read_outcome", "grant_id": grant_id,
             "consume_receipt_fingerprint": consume_receipt["receipt_fingerprint"]})

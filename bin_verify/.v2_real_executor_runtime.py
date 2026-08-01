@@ -93,6 +93,7 @@ class DispatchError(RuntimeError):
 _RUNTIME_GRANT_CONSUMED = None
 _RUNTIME_CONSUME_RECEIPT = None
 _RUNTIME_AUTHORITY_SOCKET = None
+_RUNTIME_OUTCOME_CAPABILITY = None
 
 
 def _sha256_file(path):
@@ -181,7 +182,7 @@ def _publish_terminal_outcome(*, status, record=None):
                "consume_receipt_fingerprint": _RUNTIME_CONSUME_RECEIPT["receipt_fingerprint"],
                "status": status, "task_id": _RUNTIME_CONSUME_RECEIPT["task_id"],
                "source_head": _RUNTIME_CONSUME_RECEIPT["source_head"], "terminal": terminal}
-    payload = json.dumps({"op": "record_outcome", "grant_id": outcome["grant_id"], "outcome": outcome}, sort_keys=True).encode()
+    payload = json.dumps({"op": "record_outcome", "grant_id": outcome["grant_id"], "outcome_capability": _RUNTIME_OUTCOME_CAPABILITY, "outcome": outcome}, sort_keys=True).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.connect(_RUNTIME_AUTHORITY_SOCKET); sock.sendall(payload); raw = sock.recv(8193)
     if not raw or len(raw) > 8192:
@@ -607,10 +608,13 @@ def main(argv=None):
     # all bindings locally before importing provider code.
     if receipt.get("task_id") != grant.get("task_id") or receipt.get("source_head") != grant.get("source_head"):
         raise DispatchError("authority consume receipt binding mismatch")
-    global ClaudeResumeExecutor, _RUNTIME_GRANT_CONSUMED, _RUNTIME_CONSUME_RECEIPT, _RUNTIME_AUTHORITY_SOCKET
+    global ClaudeResumeExecutor, _RUNTIME_GRANT_CONSUMED, _RUNTIME_CONSUME_RECEIPT, _RUNTIME_AUTHORITY_SOCKET, _RUNTIME_OUTCOME_CAPABILITY
     _RUNTIME_GRANT_CONSUMED = grant
     _RUNTIME_CONSUME_RECEIPT = receipt
     _RUNTIME_AUTHORITY_SOCKET = args.grant_authority_socket
+    _RUNTIME_OUTCOME_CAPABILITY = grant.get("outcome_capability")
+    if not isinstance(_RUNTIME_OUTCOME_CAPABILITY, str) or len(_RUNTIME_OUTCOME_CAPABILITY) != 64:
+        raise DispatchError("authority outcome capability missing or malformed")
     # First project imports: closure validated and authority consumed above.
     if str(REPO_ROOT) not in sys.path: sys.path.insert(0, str(REPO_ROOT))
     from hermes_cli import kanban_db as imported_kb

@@ -3,6 +3,7 @@
 import importlib.util, json, tempfile, time
 from pathlib import Path
 
+
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location("ga",ROOT/"bin_verify"/"v2_grant_authority.py")
 ga=importlib.util.module_from_spec(spec); spec.loader.exec_module(ga)
@@ -37,6 +38,24 @@ def main():
   check("only matching guarded terminal success is readable",ga._read_outcome({"grant_id":gid,"consume_receipt_fingerprint":rec["receipt_fingerprint"]},root).get("outcome")==good)
   check("terminal outcome cannot replay or overwrite",refused(lambda:ga._record_outcome({"grant_id":gid,"outcome":good},root)))
   check("read refuses forged receipt fingerprint",refused(lambda:ga._read_outcome({"grant_id":gid,"consume_receipt_fingerprint":"sha256:forged"},root)))
+  gate_spec=importlib.util.spec_from_file_location("gate",ROOT/"bin_verify"/"dispatch_gate_v2.py"); gate=importlib.util.module_from_spec(gate_spec); gate_spec.loader.exec_module(gate)
+  check("outcome deadline covers required heartbeats and remains bounded", gate.OUTCOME_POLL_SECONDS == gate.HEARTBEAT_INTERVAL_SECONDS * gate.REQUIRED_RUN_BOUND_HEARTBEATS + gate.OUTCOME_TERMINAL_ALLOWANCE_SECONDS and gate.OUTCOME_POLL_SECONDS == 55)
+
+  try:
+   gate.observe_executor_outcome("unused", gid, rec, timeout_seconds=15); short_refused=False
+  except RuntimeError: short_refused=True
+  check("short outcome deadline is refused before any wait", short_refused)
+  gid2=grant(root); rec2=json.load(open(ga._path(root,gid2)))["consume_receipt"]
+  original_attest=ga._executor_instance_attested; ga._executor_instance_attested=lambda pid,gid,cfg: None
+  try:
+   consumed2=ga._consume({"grant_id":gid2,"expected":{"receipt_kind":"v2-executor-grant-consume-receipt","schema_version":1,"grant_id":gid2}},root,peer_pid=101,cfg={})
+   good2=dict(good); good2["grant_id"]=gid2; good2["consume_receipt_fingerprint"]=rec2["receipt_fingerprint"]
+   check("same UID forged outcome without authority capability is refused",refused(lambda:ga._record_outcome({"grant_id":gid2,"outcome":good2},root,peer_pid=101,cfg={})))
+   cap=consumed2["outcome_capability"]
+   check("same UID replay from a different PID is refused",refused(lambda:ga._record_outcome({"grant_id":gid2,"outcome_capability":cap,"outcome":good2},root,peer_pid=202,cfg={})))
+   ga._record_outcome({"grant_id":gid2,"outcome_capability":cap,"outcome":good2},root,peer_pid=101,cfg={})
+   check("attested executor PID plus per-launch capability can record once",ga._read_outcome({"grant_id":gid2,"consume_receipt_fingerprint":rec2["receipt_fingerprint"]},root).get("outcome")==good2)
+  finally: ga._executor_instance_attested=original_attest
  print("RESULT: "+("PASS" if not FAIL else "FAIL "+repr(FAIL)))
  return 0 if not FAIL else 1
 if __name__=="__main__": raise SystemExit(main())
