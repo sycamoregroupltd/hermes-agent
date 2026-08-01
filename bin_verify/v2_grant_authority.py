@@ -46,7 +46,7 @@ def _peer_uid(conn):
 def _load_install_config(path):
  try: cfg=json.loads(Path(path).read_text())
  except (OSError,ValueError) as exc: raise GrantError("grant install configuration unreadable") from exc
- required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file"}
+ required={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid","state_dir","socket_path","gate_issuer_token_file","authority_issuer_digest_file","runtime_path","executor_launcher","executor_unit_template"}
  if set(cfg)!=required: raise GrantError("grant install configuration fields are not exact")
  nums={"authority_uid","authority_gid","gate_uid","gate_gid","executor_uid","executor_gid","socket_gid"}
  if not all(isinstance(cfg[k],int) for k in nums): raise GrantError("grant install numeric identities invalid")
@@ -67,6 +67,19 @@ def verify_install(config_path):
  if state.stat().st_gid!=cfg["authority_gid"]: raise GrantError("authority state group mismatch")
  _owned_mode(cfg["gate_issuer_token_file"],cfg["gate_uid"],0o600,"gate issuer token")
  _owned_mode(cfg["authority_issuer_digest_file"],cfg["authority_uid"],0o600,"authority issuer digest")
+ _owned_mode(cfg["runtime_path"],cfg["executor_uid"],0o700,"private executor runtime")
+ launcher=Path(cfg["executor_launcher"])
+ try: lst=launcher.stat()
+ except OSError as exc: raise GrantError("executor launcher missing") from exc
+ if lst.st_uid != 0 or not stat.S_ISREG(lst.st_mode) or _mode(launcher) not in (0o4750,0o4755):
+  raise GrantError("executor launcher must be root-owned fixed privileged binary")
+ unit=Path(cfg["executor_unit_template"])
+ try: ust=unit.stat(); unit_text=unit.read_text()
+ except OSError as exc: raise GrantError("executor unit template missing") from exc
+ if ust.st_uid != 0 or _mode(unit) not in (0o640,0o644): raise GrantError("executor unit template owner/mode mismatch")
+ executor_name=pwd.getpwuid(cfg["executor_uid"]).pw_name
+ if f"User={executor_name}" not in unit_text or "v2_real_executor_child.py" not in unit_text or "--grant-id %i" not in unit_text:
+  raise GrantError("executor unit does not bind fixed executor identity/grant id")
  parent=sock.parent
  if not parent.is_dir() or _mode(parent)&0o022: raise GrantError("authority socket parent unsafe")
  try: st=sock.stat()
@@ -76,7 +89,11 @@ def verify_install(config_path):
   try: groups=os.getgrouplist(pwd.getpwuid(uid).pw_name,pwd.getpwuid(uid).pw_gid)
   except KeyError as exc: raise GrantError(f"{label} account missing") from exc
   if gid not in groups: raise GrantError(f"{label} lacks grant socket group")
- return {"ok":True,"authority_uid":cfg["authority_uid"],"gate_uid":cfg["gate_uid"],"executor_uid":cfg["executor_uid"],"socket":str(sock)}
+ try: epw=pwd.getpwuid(cfg["executor_uid"])
+ except KeyError as exc: raise GrantError("executor account missing") from exc
+ if epw.pw_shell not in ("/usr/sbin/nologin","/sbin/nologin","/bin/false"):
+  raise GrantError("executor account must be non-login")
+ return {"ok":True,"authority_uid":cfg["authority_uid"],"gate_uid":cfg["gate_uid"],"executor_uid":cfg["executor_uid"],"socket":str(sock),"runtime":str(cfg["runtime_path"]),"launcher":str(launcher)}
 def _path(d,gid):
  if not isinstance(gid,str) or len(gid)!=64 or any(c not in "0123456789abcdef" for c in gid): raise GrantError("grant id invalid")
  return d/("grant-"+gid+".json")
@@ -93,9 +110,24 @@ def _issue(req,d,token_digest):
   gid=secrets.token_hex(32); p=_path(d,gid)
   try:
    fd=os.open(p,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+   g["launch_armed"] = False
    with os.fdopen(fd,"w") as f: json.dump(g,f,sort_keys=True)
    return gid
   except FileExistsError: pass
+def _arm(req,d):
+ gid=req.get("grant_id"); p=_path(d,gid)
+ try: g=json.load(open(p))
+ except (OSError, ValueError) as exc: raise GrantError("grant absent or malformed") from exc
+ if g.get("launch_armed") is not False: raise GrantError("grant already armed")
+ g["launch_armed"] = True
+ tmp=p.with_suffix(".arming")
+ try:
+  with open(tmp,"x") as fh: json.dump(g,fh,sort_keys=True)
+  os.replace(tmp,p)
+ finally:
+  try: tmp.unlink()
+  except FileNotFoundError: pass
+ return True
 def _consume(req,d):
  gid=req.get("grant_id"); expected=req.get("expected")
  if not isinstance(expected,dict): raise GrantError("grant consume expected fields missing")
@@ -103,9 +135,10 @@ def _consume(req,d):
  try: os.replace(p,used)
  except FileNotFoundError as e: raise GrantError("grant absent or already consumed") from e
  g=json.load(open(used))
+ if g.get("launch_armed") is not True: raise GrantError("grant was not armed by gate launcher")
  if any(g.get(k)!=v for k,v in expected.items()): raise GrantError("grant binding mismatch")
  if g.get("expires_at",0)<=int(time.time()): raise GrantError("grant expired")
- return True
+ return g
 def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
  cfg=_load_install_config(install_config) if install_config else None
  if cfg:
@@ -117,7 +150,18 @@ def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
  if len(token_digest)!=64 or any(c not in "0123456789abcdef" for c in token_digest): raise GrantError("issuer token digest invalid")
  sp=Path(socket_path)
  if sp.exists(): raise GrantError("grant authority socket already exists; do not replace a live authority")
- srv=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); srv.bind(str(sp)); os.chmod(sp,0o660); srv.listen(16)
+ srv=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); srv.bind(str(sp))
+ if cfg:
+  # Authority owns the socket and explicitly selects the configured shared
+  # socket group; bind+chmod alone would leave an installation dependent on
+  # the daemon's primary gid/umask.
+  os.chown(sp,cfg["authority_uid"],cfg["socket_gid"])
+ os.chmod(sp,0o660)
+ if cfg:
+  st=sp.stat()
+  if st.st_uid!=cfg["authority_uid"] or st.st_gid!=cfg["socket_gid"] or _mode(sp)!=0o660:
+   raise GrantError("authority socket ownership/mode setup failed")
+ srv.listen(16)
  try:
   while True:
    conn,_=srv.accept()
@@ -128,9 +172,12 @@ def serve(socket_path,state_dir,issuer_secret_file, *, install_config=None):
      if req.get("op")=="issue":
       if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant issue peer identity refused")
       out={"ok":True,"grant_id":_issue(req,d,token_digest)}
+     elif req.get("op")=="arm":
+      if cfg and peer!=cfg["gate_uid"]: raise GrantError("grant arm peer identity refused")
+      out={"ok":True,"armed":_arm(req,d)}
      elif req.get("op")=="consume":
       if cfg and peer!=cfg["executor_uid"]: raise GrantError("grant consume peer identity refused")
-      out={"ok":True,"consumed":_consume(req,d)}
+      out={"ok":True,"grant":_consume(req,d)}
      else: raise GrantError("unknown grant operation")
     except Exception as e: out={"ok":False,"error":str(e)[:300]}
     _send(conn,out)

@@ -374,6 +374,7 @@ def main(argv):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--grant-authority-socket", default=os.environ.get("HERMES_GRANT_AUTHORITY_SOCKET"), help="production verifier-owned grant authority socket")
     ap.add_argument("--grant-issuer-secret-file", default=os.environ.get("HERMES_GRANT_ISSUER_SECRET_FILE"), help="production gate-only issuer token file")
+    ap.add_argument("--grant-install-config", default=os.environ.get("HERMES_GRANT_INSTALL_CONFIG"), help="production authority install configuration")
     args = ap.parse_args(argv)
 
     # Real runner derives the task packet itself; callers cannot select it.
@@ -480,8 +481,11 @@ def main(argv):
                     hermes_home=args.hermes_home,
                     runner=v2ce.StubRunner(args.stub_events_dir))
             else:
-                if not args.grant_authority_socket or not args.grant_issuer_secret_file:
-                    raise RuntimeError("real dispatch requires verifier-owned grant authority socket and gate-only issuer token")
+                if not args.grant_authority_socket or not args.grant_issuer_secret_file or not args.grant_install_config:
+                    raise RuntimeError("real dispatch requires authority socket, gate-only issuer token and verified install configuration")
+                install=grant_authority.verify_install(args.grant_install_config)
+                if os.geteuid()!=install["gate_uid"]:
+                    raise RuntimeError("real dispatch gate must run as configured gate UID")
                 issuer_secret = Path(args.grant_issuer_secret_file).read_text(encoding="utf-8").strip()
                 if len(issuer_secret) < 32:
                     raise RuntimeError("gate issuer token is missing or too short")
@@ -502,29 +506,16 @@ def main(argv):
                 }
                 grant_id = grant_authority.request(args.grant_authority_socket,
                     {"op": "issue", "issuer_token": issuer_secret, "grant": envelope})["grant_id"]
-                read_fd, write_fd = os.pipe()
-                try:
-                    os.write(write_fd, json.dumps({"grant_id": grant_id}, sort_keys=True).encode("utf-8"))
-                finally:
-                    os.close(write_fd)
-                child = os.path.join(BIN_DIR, "v2_real_executor_child.py")
-                command = [sys.executable, child, "--auth-fd", str(read_fd),
-                           "--board-db", args.board_db, "--canary-task", dispatch_task,
-                           "--workspace-root", args.workspace_root, "--session-binding", args.session_binding,
-                           "--cmux-receipt", args.cmux_receipt, "--reservation-json", args.reservation_json,
-                           "--binding-issuer", args.binding_issuer, "--hermes-home", args.hermes_home,
-                           "--lease-file", args.lease_file, "--grant-authority-socket", args.grant_authority_socket]
-                try:
-                    child_run = subprocess.run(command, pass_fds=(read_fd,), text=True,
-                                               capture_output=True, timeout=180)
-                finally:
-                    os.close(read_fd)
-                try:
-                    record = json.loads(child_run.stdout.strip().splitlines()[-1])
-                except (ValueError, IndexError):
-                    record = {"status": "DISPATCH-ERRORED", "error": child_run.stderr[-500:]}
-                if child_run.returncode:
-                    raise RuntimeError(record.get("error", "real executor child failed"))
+                # Arming is separate from issuing. Only the configured root-owned
+                # narrow launcher can start `hermes-real-executor@<grant>` as the
+                # non-login executor UID; the gate never execs the child itself.
+                grant_authority.request(args.grant_authority_socket,{"op":"arm","grant_id":grant_id})
+                launch=subprocess.run([install["launcher"],grant_id],text=True,capture_output=True,timeout=30)
+                if launch.returncode:
+                    raise RuntimeError("executor launcher refused: "+launch.stderr[-300:])
+                record={"record_kind":"v2-dispatch-record","canary_task":dispatch_task,
+                        "executor":"ClaudeResumeExecutor","status":"EXECUTOR-LAUNCHED",
+                        "grant_id":grant_id,"launcher":install["launcher"]}
             record["lease_file"] = args.lease_file
             verdict, rc = "DISPATCHED-ONCE", RC_OK
         except Exception as exc:

@@ -40,9 +40,38 @@ ProtectSystem=strict
 ReadWritePaths=/run/hermes-grants /var/lib/hermes-grants
 ```
 
-`hermes-real-executor@.service` must use `User=hermes-executor`, only receive
-the consumed opaque grant descriptor from the gate hand-off, and execute the
-private runtime. It must not receive the gate issuer-token path.
+`hermes-real-executor@.service` must use `User=hermes-executor` and be the
+*only* route that can start the child. The instance identifier is the opaque
+grant ID; it is not an issuer secret. The gate first asks the authority to
+issue and arm the grant, then invokes a small root-owned compiled launcher
+which is hard-coded to `systemctl start hermes-real-executor@<64-hex>.service`.
+The launcher rejects every other unit name and argument. A shell script cannot
+be used here: Linux ignores set-id bits on scripts.
+
+```ini
+# /etc/systemd/system/hermes-real-executor@.service
+[Service]
+User=hermes-executor
+Group=hermes-executor
+SupplementaryGroups=hermes-grant-socket
+ExecStart=/usr/bin/python3 /opt/hermes/bin_verify/v2_real_executor_child.py --grant-id %i --grant-authority-socket /run/hermes-grants/authority.sock --install-config /etc/hermes-grants/install.json
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+```
+
+The unit must not receive the gate issuer-token path. The child connects to
+the authority as `hermes-executor`; `SO_PEERCRED` checks that identity and the
+authority atomically consumes the already-armed grant before returning the
+canonical runtime arguments.
+
+`/etc/hermes-grants/install.json` is exact-schema configuration and includes
+`runtime_path`, `executor_launcher`, and `executor_unit_template`, in addition
+to the three account IDs, socket group, state/socket paths, and token paths.
+The runtime is executor-owned `0700`; the launcher and unit are root-owned.
+The executor account must have a non-login shell. `verify-install` checks all
+of these facts, including socket owner/group/mode and that every service account
+belongs to the configured socket group.
 
 Before enabling either unit, run `verify-install`; retain its JSON output with
 the canary evidence. A failed check is a hard activation refusal.

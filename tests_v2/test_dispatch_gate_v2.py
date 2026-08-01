@@ -576,38 +576,16 @@ def main():
         # inherited authority FD is mandatory and is consumed before the
         # delayed provider import/construction.
         child = os.path.join(ROOT, "bin_verify", "v2_real_executor_child.py")
-        raw = subprocess.run([sys.executable, child, "--auth-fd", "0",
-                              "--board-db", os.path.join(td, "unused-child.db"),
-                              "--canary-task", "t_beefcafe",
-                              "--workspace-root", os.path.join(td, "unused-workspace"),
-                              "--session-binding", os.path.join(td, "unused-binding.json"),
-                              "--cmux-receipt", os.path.join(td, "unused-receipt.json"),
-                              "--reservation-json", os.path.join(td, "unused-reservation.json"),
-                              "--binding-issuer", os.path.join(td, "unused-issuer.py"),
-                              "--hermes-home", os.path.join(td, "unused-profile"),
-                              "--lease-file", os.path.join(td, "unused-lease.json")],
+        raw = subprocess.run([sys.executable, child, "--grant-id", secrets.token_hex(32),
+                              "--grant-authority-socket", os.path.join(td, "missing.sock"),
+                              "--install-config", os.path.join(td, "missing-config.json")],
                              text=True, capture_output=True)
         check("real child refuses missing private authority before Claude construction",
               raw.returncode != 0 and "authority" in (raw.stdout + raw.stderr))
         child_spec = importlib.util.spec_from_file_location("v2_real_child_wire", child)
         child_mod = importlib.util.module_from_spec(child_spec)
         child_spec.loader.exec_module(child_mod)
-        lease = os.path.join(td, "wire-lease.json")
-        open(lease, "w").write("consumed\n")
-        expected = {"task_id": "t_beefcafe", "board_db": os.path.realpath(os.path.join(td, "wire.db")),
-                    "workspace_root": os.path.realpath(os.path.join(td, "wire-workspace")),
-                    "session_binding": os.path.realpath(os.path.join(td, "wire-binding.json")),
-                    "cmux_receipt": os.path.realpath(os.path.join(td, "wire-receipt.json")),
-                    "reservation_json": os.path.realpath(os.path.join(td, "wire-reservation.json")),
-                    "binding_issuer": os.path.realpath(os.path.join(td, "wire-issuer.py")),
-                    "hermes_home": os.path.realpath(os.path.join(td, "wire-home")),
-                    "lease_file": os.path.realpath(lease)}
-        rfd, wfd = os.pipe(); os.write(wfd, json.dumps({"grant_id": secrets.token_hex(32)}).encode()); os.close(wfd)
-        try:
-            child_mod._read_authority(rfd, expected, ""); forged_refused = False
-        except child_mod.DispatchError:
-            forged_refused = True
-        check("self-forged FD grant is refused without verifier-owned authority", forged_refused)
+        check("grant child has no inherited-FD authority reader", not hasattr(child_mod, "_read_authority"))
         check("imported grant child exposes no provider lifecycle", not hasattr(child_mod, "_run_child_lifecycle"))
         check("imported grant child exposes no Claude provider symbols", not any("Claude" in name for name in dir(child_mod)))
 

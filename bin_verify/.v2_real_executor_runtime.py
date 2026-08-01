@@ -91,6 +91,13 @@ class DispatchError(RuntimeError):
     """Deterministic canonical-lifecycle failure (fail-closed, no retry)."""
 
 
+# Set only by main after the authority has atomically consumed an armed grant.
+# Direct/imported lifecycle calls therefore fail closed before a provider can
+# be constructed; cross-principal security still comes from OS account
+# isolation and authority SO_PEERCRED checks.
+_RUNTIME_GRANT_CONSUMED = None
+
+
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -261,6 +268,10 @@ def _run_child_lifecycle(*, board_db, canary_task, workspace_root,
     underlying kb error) on any failure — the caller (dispatch_gate_v2) has
     already consumed the one-shot lease, so a failure is terminal: no retry.
     """
+    if not isinstance(_RUNTIME_GRANT_CONSUMED, dict):
+        raise DispatchError("private lifecycle requires consumed authority grant")
+    if _RUNTIME_GRANT_CONSUMED.get("task_id") != canary_task:
+        raise DispatchError("private lifecycle task is not authority-bound")
     if runner is None:
         raise DispatchError("child lifecycle requires its runner after authority validation")
     board_db = Path(board_db)
@@ -476,20 +487,30 @@ def _read_authority(fd, expected, authority_socket):
         raise DispatchError("child authority refused: " + str(exc)) from exc
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="private executable real Claude runtime")
-    parser.add_argument("--board-db", required=True)
-    parser.add_argument("--canary-task", required=True)
-    parser.add_argument("--workspace-root", required=True)
-    parser.add_argument("--session-binding", required=True)
-    parser.add_argument("--cmux-receipt", required=True)
-    parser.add_argument("--reservation-json", required=True)
-    parser.add_argument("--binding-issuer", required=True)
-    parser.add_argument("--hermes-home", required=True)
-    parser.add_argument("--lease-file", required=True)
+    parser = argparse.ArgumentParser(description="private authority-bound real Claude runtime")
+    parser.add_argument("--grant-id", required=True)
+    parser.add_argument("--grant-authority-socket", required=True)
+    parser.add_argument("--install-config", required=True)
     args = parser.parse_args(argv)
-    global ClaudeResumeExecutor
+    # Direct invocation is insufficient: the private runtime itself must
+    # consume an armed authority grant while running as the executor account.
+    cfg = grant_authority._load_install_config(args.install_config)
+    grant_authority.verify_install(args.install_config)
+    if os.geteuid() != cfg["executor_uid"]:
+        raise DispatchError("private runtime must run as configured executor UID")
+    try:
+        out = grant_authority.request(args.grant_authority_socket,
+            {"op":"consume", "grant_id":args.grant_id, "expected":{}})
+    except grant_authority.GrantError as exc:
+        raise DispatchError("runtime authority refused: " + str(exc)) from exc
+    grant = out.get("grant")
+    required=("board_db","task_id","workspace_root","session_binding","cmux_receipt","reservation_json","binding_issuer","hermes_home","lease_file")
+    if not isinstance(grant,dict) or any(not isinstance(grant.get(k),str) or not grant[k] for k in required):
+        raise DispatchError("authority grant payload incomplete")
+    global ClaudeResumeExecutor, _RUNTIME_GRANT_CONSUMED
+    _RUNTIME_GRANT_CONSUMED = grant
     from hermes_cli.claude_executor import ClaudeResumeExecutor, SubprocessClaudeRunner
-    return _run_child_lifecycle(board_db=args.board_db, canary_task=args.canary_task, workspace_root=args.workspace_root, session_binding_path=args.session_binding, cmux_receipt_path=args.cmux_receipt, reservation_path=args.reservation_json, issuer_path=args.binding_issuer, hermes_home=args.hermes_home, runner=SubprocessClaudeRunner())
+    return _run_child_lifecycle(board_db=grant["board_db"], canary_task=grant["task_id"], workspace_root=grant["workspace_root"], session_binding_path=grant["session_binding"], cmux_receipt_path=grant["cmux_receipt"], reservation_path=grant["reservation_json"], issuer_path=grant["binding_issuer"], hermes_home=grant["hermes_home"], runner=SubprocessClaudeRunner())
 
 
 if __name__ == "__main__":

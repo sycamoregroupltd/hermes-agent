@@ -1,74 +1,49 @@
 #!/usr/bin/env python3
-"""Restricted gate child for the real executor.
+"""Executor-UID-only consumer for an authority-launched real canary.
 
-This module deliberately contains no provider imports and no provider
-lifecycle.  It consumes the one-shot authority grant, then execs the private
-runtime file.  The runtime is a deployment-owned executable, not a public
-Python module: the provisioning verifier requires it to be mode 0700 and
-owned by the dedicated executor account.
+This file contains no provider imports or lifecycle.  The gate does *not*
+execute it.  A root-owned narrow launcher starts the fixed systemd template as
+the non-login executor account with only an opaque, one-shot grant id.  The
+authority verifies SO_PEERCRED, atomically consumes the armed grant and returns
+the canonical payload.  Only then is the private 0700 runtime exec'd.
 """
 from __future__ import annotations
-import argparse
-import json
-import os
-import sys
+import argparse, json, os, pwd, stat, sys
 from pathlib import Path
 
 BIN = Path(__file__).resolve().parent
-if str(BIN) not in sys.path:
-    sys.path.insert(0, str(BIN))
+if str(BIN) not in sys.path: sys.path.insert(0, str(BIN))
 import v2_grant_authority as grant_authority
 
 class DispatchError(RuntimeError): pass
 
-def _read_authority(fd, expected, authority_socket):
-    try:
-        raw = os.read(fd, 513)
-    finally:
-        os.close(fd)
-    if not raw or len(raw) > 512:
-        raise DispatchError("child authority grant missing or oversized")
-    try:
-        grant_id = json.loads(raw).get("grant_id")
-    except (ValueError, AttributeError):
-        raise DispatchError("child authority grant malformed")
-    if not authority_socket:
-        raise DispatchError("child authority socket is required")
-    try:
-        grant_authority.request(authority_socket, {"op":"consume", "grant_id":grant_id,
-                                                   "expected":expected})
-    except grant_authority.GrantError as exc:
-        raise DispatchError("child authority refused: " + str(exc)) from exc
+def _private_runtime(cfg):
+    runtime=Path(cfg["runtime_path"]).resolve(); st=runtime.stat()
+    if os.geteuid()!=cfg["executor_uid"]:
+        raise DispatchError("real executor child must run as configured executor UID")
+    if st.st_uid!=cfg["executor_uid"] or stat.S_IMODE(st.st_mode)!=0o700:
+        raise DispatchError("private real runtime owner/mode mismatch")
+    return runtime
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description="restricted real-executor grant consumer")
-    parser.add_argument("--auth-fd",required=True,type=int)
-    parser.add_argument("--board-db",required=True); parser.add_argument("--canary-task",required=True)
-    parser.add_argument("--workspace-root",required=True); parser.add_argument("--session-binding",required=True)
-    parser.add_argument("--cmux-receipt",required=True); parser.add_argument("--reservation-json",required=True)
-    parser.add_argument("--binding-issuer",required=True); parser.add_argument("--hermes-home",required=True)
-    parser.add_argument("--lease-file",required=True); parser.add_argument("--grant-authority-socket",required=True)
-    args=parser.parse_args(argv)
-    expected={"task_id":args.canary_task,"board_db":str(Path(args.board_db).resolve()),
-              "workspace_root":str(Path(args.workspace_root).resolve()),"session_binding":str(Path(args.session_binding).resolve()),
-              "cmux_receipt":str(Path(args.cmux_receipt).resolve()),"reservation_json":str(Path(args.reservation_json).resolve()),
-              "binding_issuer":str(Path(args.binding_issuer).resolve()),"hermes_home":str(Path(args.hermes_home).resolve()),
-              "lease_file":str(Path(args.lease_file).resolve())}
-    _read_authority(args.auth_fd,expected,args.grant_authority_socket)
-    runtime=BIN / ".v2_real_executor_runtime.py"
-    # The install verifier requires this to be a private executable owned by
-    # the executor account. Refuse an editable/public runtime before exec.
-    st=runtime.stat()
-    if not os.access(runtime,os.X_OK) or (st.st_mode & 0o077):
-        raise DispatchError("private real runtime has unsafe permissions")
-    forwarded=[]; skip={"--auth-fd","--grant-authority-socket"}; i=0; raw=list(argv if argv is not None else sys.argv[1:])
-    while i < len(raw):
-        if raw[i] in skip: i += 2
-        else: forwarded.append(raw[i]); i += 1
-    os.execv(sys.executable,[sys.executable,str(runtime),*forwarded])
+    p=argparse.ArgumentParser(description="authority-launched executor child")
+    p.add_argument("--grant-id",required=True)
+    p.add_argument("--grant-authority-socket",required=True)
+    p.add_argument("--install-config",required=True)
+    a=p.parse_args(argv)
+    cfg=grant_authority._load_install_config(a.install_config)
+    # This is intentionally non-mutating and refuses a partial deployment
+    # before consuming a grant or importing a provider.
+    grant_authority.verify_install(a.install_config)
+    runtime=_private_runtime(cfg)
+    # Do not consume here. The private runtime itself consumes the one-shot
+    # grant before it imports the provider. Therefore direct runtime execution
+    # without a real authority grant also refuses, rather than inheriting an
+    # already-authorized plain argv lifecycle.
+    args=[sys.executable,str(runtime),"--grant-id",a.grant_id,"--grant-authority-socket",a.grant_authority_socket,"--install-config",a.install_config]
+    os.execv(sys.executable,args)
 
-if __name__ == "__main__":
+if __name__=="__main__":
     try: main()
     except Exception as exc:
-        print(json.dumps({"status":"DISPATCH-ERRORED","error_type":type(exc).__name__,"error":str(exc)[:500]}))
-        raise
+        print(json.dumps({"status":"DISPATCH-ERRORED","error_type":type(exc).__name__,"error":str(exc)[:500]})); raise

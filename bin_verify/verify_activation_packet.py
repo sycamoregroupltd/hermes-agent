@@ -48,7 +48,7 @@ CANONICAL_BOARD_ROOT = "/home/frank/.hermes/kanban/boards/jarvis-os/workspaces"
 CANONICAL_BOARD_DB = "/home/frank/.hermes/kanban/boards/jarvis-os/kanban.db"
 MANDATORY_SOURCE_FILES = (
     "bin_verify/verify_activation_packet.py", "bin_verify/dispatch_gate_v2.py",
-    "bin_verify/v2_canary_executor.py", "bin_verify/v2_real_executor_child.py", "bin_verify/mint_cmux_receipt.py",
+    "bin_verify/v2_canary_executor.py", "bin_verify/v2_real_executor_child.py", "bin_verify/.v2_real_executor_runtime.py", "bin_verify/v2_grant_authority.py", "bin_verify/mint_cmux_receipt.py",
     "bin_verify/issue_cmux_claude_session_binding.py", "bin_verify/cmux_dual_anchor_contract.py",
 )
 A2_AUTHOR = "jarvis-orchestrator"
