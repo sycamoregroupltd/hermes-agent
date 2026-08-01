@@ -109,6 +109,35 @@ def _release_singleton_lock(handle) -> None:
         pass
 
 
+_FALSE_GATE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def _kanban_notifier_enabled(kanban_cfg: dict[str, Any]) -> bool:
+    """Resolve the notifier gate without changing the dispatcher gate.
+
+    ``kanban.notify_in_gateway`` is an optional independent override. A
+    missing or null value deliberately inherits the historical notifier
+    behaviour: the dispatch env escape hatch can disable it, otherwise it
+    follows ``kanban.dispatch_in_gateway`` (default true). This keeps old
+    configs byte-for-byte compatible while allowing either watcher to run
+    without the other.
+    """
+    notify_value = kanban_cfg.get("notify_in_gateway")
+    if notify_value is not None:
+        if isinstance(notify_value, str):
+            return notify_value.strip().lower() not in _FALSE_GATE_VALUES
+        return bool(notify_value)
+
+    # Backward-compatibility path only. Once notify_in_gateway is explicit,
+    # the dispatcher env override must not silently recouple the two loops.
+    dispatch_env = os.environ.get(
+        "HERMES_KANBAN_DISPATCH_IN_GATEWAY", ""
+    ).strip().lower()
+    if dispatch_env in _FALSE_GATE_VALUES:
+        return False
+    return bool(kanban_cfg.get("dispatch_in_gateway", True))
+
+
 class GatewayKanbanWatchersMixin:
     """Kanban watcher / notifier / dispatcher loops for GatewayRunner."""
 
@@ -130,19 +159,15 @@ class GatewayKanbanWatchersMixin:
         tick. Subscriptions live inside each board's own DB and cannot
         cross boards, so delivery semantics are unchanged — this is
         purely a fan-out of the single-DB poll.
+
+        Activation is controlled independently by
+        ``kanban.notify_in_gateway``. When that key is omitted or null,
+        notifier activation inherits the legacy dispatcher gate.
         """
-        # Gate: only the dispatch-owning gateway opens kanban DBs for notifier polling.
-        # Non-dispatch gateways have no subscriptions to deliver — all kanban state lives
-        # in the dispatch owner's per-board DBs. This prevents N-gateway -shm contention.
-        # TODO: gate per-board when per-board dispatcher_owner tracking lands.
         try:
             from hermes_cli.config import load_config as _load_config
         except Exception:
             logger.warning("kanban notifier: config loader unavailable; disabled")
-            return
-        env_override = os.environ.get("HERMES_KANBAN_DISPATCH_IN_GATEWAY", "").strip().lower()
-        if env_override in {"0", "false", "no", "off"}:
-            logger.info("kanban notifier: disabled via HERMES_KANBAN_DISPATCH_IN_GATEWAY env")
             return
         try:
             cfg = _load_config()
@@ -150,9 +175,10 @@ class GatewayKanbanWatchersMixin:
             logger.warning("kanban notifier: cannot load config (%s); disabled", exc)
             return
         kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
-        if not kanban_cfg.get("dispatch_in_gateway", True):
+        if not _kanban_notifier_enabled(kanban_cfg):
             logger.info(
-                "kanban notifier: disabled via config kanban.dispatch_in_gateway=false"
+                "kanban notifier: disabled via kanban.notify_in_gateway "
+                "or inherited dispatcher gate"
             )
             return
         from gateway.config import Platform as _Platform

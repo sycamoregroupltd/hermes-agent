@@ -3012,6 +3012,13 @@ DEFAULT_CONFIG = {
         # behaviour — e.g. for a profile that prefers explicit
         # ``kanban_notify-subscribe`` calls per task.
         "auto_subscribe_on_create": True,
+        # Run the completion/block notifier inside this gateway. None means
+        # inherit dispatch_in_gateway (including its false-only env escape
+        # hatch), preserving the historical coupled behaviour for every
+        # existing config. Set true on a non-dispatch gateway that owns
+        # profile-specific platform adapters; set false on a dispatch owner
+        # that must not poll notification subscriptions.
+        "notify_in_gateway": None,
         # Run the dispatcher inside the gateway process. On by default —
         # the cost is ~300µs every `dispatch_interval_seconds` when idle,
         # and gateway is the supervisor users already have. Set to false

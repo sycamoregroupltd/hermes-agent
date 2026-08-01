@@ -2401,6 +2401,7 @@ def test_default_config_kanban_block_not_dropped_by_duplicate_key():
     assert kanban.get("auto_subscribe_on_create") is True
     # From the second block:
     assert "dispatch_in_gateway" in kanban
+    assert "notify_in_gateway" in kanban
     assert "auto_decompose" in kanban
 
 

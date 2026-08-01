@@ -3488,6 +3488,10 @@ def test_config_default_dispatch_in_gateway_is_true():
         "kanban.dispatch_in_gateway default should be True; got "
         f"{kanban.get('dispatch_in_gateway')!r}"
     )
+    assert kanban.get("notify_in_gateway") is None, (
+        "kanban.notify_in_gateway must inherit dispatch_in_gateway when omitted; "
+        f"got {kanban.get('notify_in_gateway')!r}"
+    )
     interval = kanban.get("dispatch_interval_seconds")
     assert isinstance(interval, (int, float)) and interval >= 1, (
         f"dispatch_interval_seconds must be a positive number, got {interval!r}"
