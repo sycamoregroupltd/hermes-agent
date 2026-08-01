@@ -608,12 +608,8 @@ def main():
         except child_mod.DispatchError:
             forged_refused = True
         check("self-forged FD grant is refused without verifier-owned authority", forged_refused)
-        try:
-            child_mod._run_child_lifecycle(board_db=expected["board_db"], canary_task="t_beefcafe", workspace_root=expected["workspace_root"], session_binding_path=expected["session_binding"], cmux_receipt_path=expected["cmux_receipt"], reservation_path=expected["reservation_json"], issuer_path=expected["binding_issuer"], hermes_home=expected["hermes_home"], runner=object())
-            direct_child_refused = False
-        except child_mod.DispatchError as exc:
-            direct_child_refused = "executable-only" in str(exc)
-        check("direct imported child lifecycle refuses before provider construction", direct_child_refused)
+        check("imported grant child exposes no provider lifecycle", not hasattr(child_mod, "_run_child_lifecycle"))
+        check("imported grant child exposes no Claude provider symbols", not any("Claude" in name for name in dir(child_mod)))
 
 
 
