@@ -510,6 +510,7 @@ def test_board_stats_reports_protocol_violation_streaks(kanban_home):
         tid = kb.create_task(conn, title="streak-card", assignee="worker")
         _drive_protocol_violation(conn, tid, 994000)
         task = kb.get_task(conn, tid)
+        assert task is not None
         assert task.status == "ready"
 
         stats = kb.board_stats(conn)
@@ -545,8 +546,9 @@ def test_board_stats_reports_completed_pending_review_and_blocks_clean_cards(
         limit = _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
         for i in range(limit):
             _drive_protocol_violation(conn, reconciled, 995000 + i)
-        task = kb.get_task(conn, reconciled)
-        assert task.status == "completed_pending_review"
+        reconciled_task = kb.get_task(conn, reconciled)
+        assert reconciled_task is not None
+        assert reconciled_task.status == "completed_pending_review"
 
         stats = kb.board_stats(conn)
         entries = stats["protocol_violations"]
@@ -4659,6 +4661,34 @@ def test_detect_crashed_workers_protocol_violation_streak_reconciles_pending_rev
         assert tid not in _kb.detect_crashed_workers._last_auto_blocked
         # Surfaced through the dedicated side channel instead.
         assert tid in _kb.detect_crashed_workers._last_completed_pending_review
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert any(
+            entry["task_id"] == tid and entry["streak"] == limit and entry["limit"] == limit
+            for entry in entries
+        ), f"expected stats counter for reconciled card, got {entries}"
+
+        # ... and the held card is not re-picked across further dispatcher
+        # sweeps: neither ready nor review dispatch may spawn it again, and
+        # the stats counter keeps reporting the same held streak.
+        for sweep in range(3):
+            _kb.detect_crashed_workers(conn)
+            assert not _kb.has_spawnable_ready(conn), (
+                f"sweep {sweep + 1}: held card must not be re-picked as ready"
+            )
+            assert not _kb.has_spawnable_review(conn), (
+                f"sweep {sweep + 1}: held card must not be re-picked as review"
+            )
+            held_task = kb.get_task(conn, tid)
+            assert held_task is not None
+            assert held_task.status == "completed_pending_review"
+            held = [
+                e for e in kb.board_stats(conn)["protocol_violations"]
+                if e["task_id"] == tid
+            ]
+            assert held and held[0]["streak"] == limit, (
+                f"sweep {sweep + 1}: expected held streak={limit}, got {held}"
+            )
     finally:
         conn.close()
 
