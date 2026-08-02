@@ -8119,7 +8119,14 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     violations=streak, violation_limit=violation_limit,
                 )
                 completed_pending_review.append(tid)
-                detect_crashed_workers._last_completed_pending_review.append(tid)
+                # NOTE: do NOT append to
+                # ``detect_crashed_workers._last_completed_pending_review`` here.
+                # That side-channel attribute is only assigned at function
+                # exit (below), so a cold-start process whose very first
+                # ``detect_crashed_workers`` call reaches this branch would
+                # raise AttributeError mid-dispatch-tick. The local
+                # ``completed_pending_review`` list is reassigned onto the
+                # function attribute at exit, which is the correct, safe path.
                 continue
             fp = _error_fingerprint(error_text)
             is_systemic = _fp_counts.get(fp, 0) >= 3

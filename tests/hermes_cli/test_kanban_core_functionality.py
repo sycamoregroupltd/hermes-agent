@@ -4693,6 +4693,57 @@ def test_detect_crashed_workers_protocol_violation_streak_reconciles_pending_rev
         conn.close()
 
 
+def test_detect_crashed_workers_cold_start_reconciles_pending_review(kanban_home):
+    """Cold-start process must not raise when the streak trips on the FIRST call.
+
+    Regression for the AttributeError os-reviewer caught in CHANGES_REQUESTED
+    on ``fix/t_8f8f5d1f`` (jarvis-os t_298c12ce / t_8f8f5d1f): the reconcile
+    branch appended to ``detect_crashed_workers._last_completed_pending_review``
+    before that attribute was assigned (it is only set at function exit), so a
+    fresh dispatch process whose very first ``detect_crashed_workers`` sweep
+    reached a card already at the violation bound raised mid-tick.
+
+    The existing sibling test exercises the branch only after earlier sweeps
+    have already installed the function attribute at exit, so it never hits the
+    cold path. This test accumulates the exhausted streak in the DB exactly
+    like that test, then DELETES the module-global side-channel attribute to
+    simulate a freshly-started gateway (function never called yet in the new
+    process) and performs the bound-tripping sweep through the normal function.
+    On the unfixed code the mid-function ``.append`` raises AttributeError; on
+    the fixed code it reconciles and the attribute is populated at exit.
+    """
+    import hermes_cli.kanban_db as _kb
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="cold-quiet", assignee="worker")
+        limit = _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
+        for i in range(limit - 1):
+            _drive_protocol_violation(conn, tid, 991000 + i)
+            assert kb.get_task(conn, tid).status == "ready"
+
+        # Simulate a freshly-started gateway: the side channel attribute is
+        # absent on the module-global function (it is only set at function
+        # exit, and this process has not yet called detect_crashed_workers in
+        # a way that reached the trip branch). The DB already holds the
+        # exhausted streak from the loop above.
+        delattr(_kb.detect_crashed_workers, "_last_completed_pending_review")
+
+        # This single call trips the branch as a cold process.
+        _drive_protocol_violation(conn, tid, 991900)
+
+        task = kb.get_task(conn, tid)
+        assert task.status == "completed_pending_review", (
+            f"cold-start trip must reconcile to completed_pending_review, "
+            f"got {task.status}"
+        )
+        assert task.consecutive_failures == 0
+        # The side channel is populated at function exit, safely.
+        assert tid in _kb.detect_crashed_workers._last_completed_pending_review
+        assert tid not in _kb.detect_crashed_workers._last_auto_blocked
+    finally:
+        conn.close()
+
+
 def test_completed_pending_review_excluded_from_dispatch_and_reconcilable(kanban_home):
     """``completed_pending_review`` is a terminal-ish review state.
 
