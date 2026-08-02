@@ -2764,6 +2764,14 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     age = stats["oldest_ready_age_seconds"]
     if age is not None:
         print(f"\nOldest ready task age: {int(age)}s")
+    violations = stats.get("protocol_violations") or []
+    if violations:
+        print("\nProtocol violation streaks:")
+        for entry in violations:
+            print(
+                f"  {entry['task_id']:10s}  {entry['title'][:40]:40s}  "
+                f"status={entry['status']}  streak={entry['streak']}/{entry['limit']}"
+            )
     return 0
 
 

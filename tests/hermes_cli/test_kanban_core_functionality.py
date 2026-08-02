@@ -494,6 +494,67 @@ def test_board_stats(kanban_home):
         assert stats["by_assignee"]["x"]["done"] == 1
         assert stats["by_assignee"]["y"]["ready"] == 1
         assert stats["oldest_ready_age_seconds"] is not None
+        assert stats["protocol_violations"] == []
+    finally:
+        conn.close()
+
+
+def test_board_stats_reports_protocol_violation_streaks(kanban_home):
+    """board_stats surfaces the violation streak counter for cards that have
+    one, including ``completed_pending_review`` and ``blocked``.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="streak-card", assignee="worker")
+        _drive_protocol_violation(conn, tid, 994000)
+        task = kb.get_task(conn, tid)
+        assert task.status == "ready"
+
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert len(entries) == 1
+        assert entries[0]["task_id"] == tid
+        assert entries[0]["streak"] == 1
+        assert entries[0]["limit"] == _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
+        assert entries[0]["status"] == "ready"
+
+        _drive_protocol_violation(conn, tid, 994001)
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert len(entries) == 1
+        assert entries[0]["streak"] == 2
+    finally:
+        conn.close()
+
+
+def test_board_stats_reports_completed_pending_review_and_blocks_clean_cards(
+    kanban_home,
+):
+    """Protocol violation streaks are shown for active/reconciled cards, but
+    not for cards whose recent runs were not violations.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    conn = kb.connect()
+    try:
+        good = kb.create_task(conn, title="good", assignee="worker")
+        kb.complete_task(conn, good, result="clean")
+        reconciled = kb.create_task(conn, title="reconciled", assignee="worker")
+        limit = _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
+        for i in range(limit):
+            _drive_protocol_violation(conn, reconciled, 995000 + i)
+        task = kb.get_task(conn, reconciled)
+        assert task.status == "completed_pending_review"
+
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert all(entry["task_id"] != good for entry in entries)
+        assert any(
+            entry["task_id"] == reconciled and entry["status"] == "completed_pending_review"
+            for entry in entries
+        )
     finally:
         conn.close()
 

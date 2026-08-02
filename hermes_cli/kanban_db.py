@@ -9958,10 +9958,29 @@ def board_stats(conn: sqlite3.Connection) -> dict:
         if oldest_row and oldest_row["ts"] is not None else None
     )
 
+    protocol_violations: list[dict[str, int]] = []
+    for row in conn.execute(
+        "SELECT id, title, status FROM tasks "
+        "WHERE status IN ('ready', 'running', 'blocked', 'completed_pending_review') "
+        "ORDER BY created_at ASC"
+    ):
+        streak = _protocol_violation_streak(conn, row["id"])
+        if streak > 0:
+            protocol_violations.append(
+                {
+                    "task_id": row["id"],
+                    "title": row["title"],
+                    "status": row["status"],
+                    "streak": streak,
+                    "limit": _PROTOCOL_VIOLATION_FAILURE_LIMIT,
+                }
+            )
+
     return {
         "by_status": by_status,
         "by_assignee": by_assignee,
         "oldest_ready_age_seconds": oldest_ready_age,
+        "protocol_violations": protocol_violations,
         "now": now,
     }
 
