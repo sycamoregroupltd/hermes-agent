@@ -72,13 +72,21 @@ def comment_count(root: Path, task_id: str) -> int:
     return int(n)
 
 
-def test_refuses_non_sycode_board_scope():
+def test_refuses_board_outside_the_allowlist():
+    """Scope widened to an allowlist (t_6240a616): jarvis-os is now permitted,
+    but any board outside the allowlist is still refused."""
     try:
-        pilot.board_db(Path(tempfile.mkdtemp()), "jarvis-os")
+        pilot.board_db(Path(tempfile.mkdtemp()), "upero")
     except ValueError as exc:
-        assert "sycode-trading" in str(exc)
+        assert "upero" in str(exc)
     else:
-        raise AssertionError("expected non-sycode board scope to be refused")
+        raise AssertionError("expected a board outside the allowlist to be refused")
+
+
+def test_allowlisted_boards_are_accepted():
+    root = Path(tempfile.mkdtemp())
+    for board in ("sycode-trading", "jarvis-os"):
+        assert pilot.board_db(root, board).parent.name == board
 
 
 def test_routes_capability_and_a3_to_frank_gate_hold():
