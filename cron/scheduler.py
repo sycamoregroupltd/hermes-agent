@@ -327,6 +327,172 @@ _parallel_pool_max_workers: Optional[int] = None
 _running_job_ids: set = set()
 _running_lock = threading.Lock()
 
+# Wall-clock (time.time()) instant each in-flight job id was claimed by
+# ``_submit_with_guard``, plus the future that owns its release (None until
+# ``pool.submit`` returns).  Together these bound the in-flight set: an id
+# whose claim is older than its allowance AND has no live future can only be
+# a leak — the release path never ran — so the stale-sweep force-releases it
+# instead of letting every later tick short-circuit on "already running"
+# until the whole gateway process restarts (#t_560fc38a).
+_running_since: dict = {}
+_running_futures: dict = {}
+
+# Countable signal for unified-health: how many stale claims this process has
+# force-released, and the most recent ones.  Exposed via
+# ``get_inflight_guard_stats()`` and mirrored to a JSONL under the cron dir so
+# an out-of-process probe can catch a wedge in-cycle.
+_forced_release_count: int = 0
+_forced_releases: list = []
+_FORCED_RELEASE_HISTORY = 20
+
+# Floor for the stale allowance, in minutes.  Effective allowance per job is
+# max(2 * interval, this) so a slow-but-healthy hourly job is never clipped.
+_INFLIGHT_MIN_ALLOWANCE_MINUTES = 30.0
+
+
+def _inflight_min_allowance_minutes() -> float:
+    raw = os.getenv("HERMES_CRON_INFLIGHT_MAX_MINUTES", "").strip()
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0:
+                return val
+        except (ValueError, TypeError):
+            logger.warning(
+                "Invalid HERMES_CRON_INFLIGHT_MAX_MINUTES=%r; using default %s",
+                raw,
+                _INFLIGHT_MIN_ALLOWANCE_MINUTES,
+            )
+    return _INFLIGHT_MIN_ALLOWANCE_MINUTES
+
+
+def _job_interval_minutes(job: dict) -> Optional[float]:
+    """Best-effort interval length for a job, in minutes (None if unknown)."""
+    try:
+        from cron.jobs import parse_schedule
+
+        parsed = parse_schedule(str(job.get("schedule") or "")) or {}
+        if parsed.get("kind") == "interval":
+            return float(parsed.get("minutes") or 0) or None
+    except Exception:
+        return None
+    return None
+
+
+def get_inflight_guard_stats() -> dict:
+    """Probe-visible snapshot of the in-flight guard.
+
+    ``forced_releases`` is a monotonic counter of stale claims this process
+    has force-released; any non-zero value means a cron job wedged and was
+    recovered without a gateway restart.
+    """
+    now = time.time()
+    with _running_lock:
+        return {
+            "running": sorted(_running_job_ids),
+            "running_ages_seconds": {
+                jid: round(now - started, 1)
+                for jid, started in _running_since.items()
+            },
+            "forced_releases": _forced_release_count,
+            "recent_forced_releases": list(_forced_releases),
+        }
+
+
+def _record_forced_release(job_id: str, name: str, age_seconds: float, allowance_seconds: float) -> None:
+    """Persist a countable signal for one forced release (best-effort)."""
+    entry = {
+        "job_id": job_id,
+        "name": name,
+        "age_seconds": round(age_seconds, 1),
+        "allowance_seconds": round(allowance_seconds, 1),
+        "at": _hermes_now().isoformat(),
+    }
+    with _running_lock:
+        _forced_releases.append(entry)
+        del _forced_releases[:-_FORCED_RELEASE_HISTORY]
+    try:
+        path = _get_hermes_home() / "cron" / "inflight_forced_releases.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception as e:  # never let telemetry break a tick
+        logger.debug("Could not append forced-release record: %s", e)
+
+
+def sweep_stale_inflight(due_jobs: Optional[list] = None) -> list:
+    """Force-release in-flight claims that can no longer be making progress.
+
+    A claim is stale when it is older than ``max(2 * interval, floor)`` AND
+    either has no future at all (the wedge class: the claim was taken but the
+    release path was never installed — e.g. a hung ``SessionDB.__init__``
+    before ``pool.submit`` returned) or has a future that already finished
+    without discarding the id.
+
+    Every release logs a WARNING, bumps a countable counter, and writes
+    ``last_error`` on the job so the wedge surfaces on the job row instead of
+    being invisible until a downstream liveness key goes dead hours later.
+
+    Returns the list of released job ids.
+    """
+    global _forced_release_count
+
+    by_id = {j.get("id"): j for j in (due_jobs or []) if isinstance(j, dict)}
+    floor_seconds = _inflight_min_allowance_minutes() * 60.0
+    now = time.time()
+    stale: list = []
+
+    with _running_lock:
+        for job_id in list(_running_job_ids):
+            started = _running_since.get(job_id)
+            if started is None:
+                # Claim predates this guard (or was injected directly) — adopt
+                # it now so it becomes sweepable one allowance from here.
+                _running_since[job_id] = now
+                continue
+            age = now - started
+            interval_minutes = _job_interval_minutes(by_id.get(job_id) or {})
+            allowance = floor_seconds
+            if interval_minutes:
+                allowance = max(allowance, 2.0 * interval_minutes * 60.0)
+            if age < allowance:
+                continue
+            fut = _running_futures.get(job_id)
+            if fut is not None and not fut.done():
+                continue  # genuinely still executing
+            _running_job_ids.discard(job_id)
+            _running_since.pop(job_id, None)
+            _running_futures.pop(job_id, None)
+            _forced_release_count += 1
+            stale.append((job_id, age, allowance, fut is None))
+
+    for job_id, age, allowance, no_future in stale:
+        job = by_id.get(job_id) or {}
+        name = job.get("name") or job_id
+        logger.warning(
+            "cron.inflight.forced_release job='%s' id=%s age=%.0fs allowance=%.0fs "
+            "future=%s — stale in-flight claim released; the job was skipping "
+            "every fire with 'already running'",
+            name,
+            job_id,
+            age,
+            allowance,
+            "missing" if no_future else "finished",
+        )
+        _record_forced_release(job_id, name, age, allowance)
+        try:
+            mark_job_run(
+                job_id,
+                False,
+                f"Stale in-flight claim force-released after {age / 60:.1f}m "
+                f"(allowance {allowance / 60:.1f}m); previous run never released "
+                f"the scheduler in-flight guard",
+            )
+        except Exception as e:
+            logger.warning("Could not record forced release for job %s: %s", job_id, e)
+
+    return [s[0] for s in stale]
+
 # Job IDs the gateway shutdown path force-killed the tool subprocess of
 # while still in ``_running_job_ids`` (see ``mark_running_jobs_interrupted``
 # below). ``run_one_job``'s own completion path checks this set before
@@ -4144,6 +4310,22 @@ def tick(
 
         due_jobs = get_due_jobs()
 
+        # Bound the in-flight set BEFORE the dedup guard is consulted, so a
+        # leaked claim is force-released in-cycle rather than silently eating
+        # every subsequent fire until the gateway process restarts. Runs even
+        # when nothing is due — a wedged job's own fires are exactly what the
+        # leak suppresses.
+        try:
+            from cron.jobs import load_jobs as _load_all_jobs
+
+            _all_jobs = _load_all_jobs()
+        except Exception:
+            _all_jobs = due_jobs
+        try:
+            sweep_stale_inflight(_all_jobs)
+        except Exception as e:
+            logger.warning("Stale in-flight sweep failed: %s", e)
+
         if verbose and not due_jobs:
             logger.info("%s - No jobs due", _hermes_now().strftime('%H:%M:%S'))
             return 0
@@ -4229,6 +4411,11 @@ def tick(
                     logger.info("Job '%s' already running — skipping", job.get("name", job_id))
                     return None
                 _running_job_ids.add(job_id)
+                # Claim timestamp is recorded in the SAME critical section as
+                # the add, so there is no window where an id is in-flight
+                # without an age the stale sweep can bound it by.
+                _running_since[job_id] = time.time()
+                _running_futures.pop(job_id, None)
             # Record the attempt before executor dispatch. Recovery classifies
             # abandoned records as unknown; it never automatically retries them.
             execution = create_execution(job_id, source="builtin")
@@ -4241,12 +4428,16 @@ def tick(
                 finally:
                     with _running_lock:
                         _running_job_ids.discard(j["id"])
+                        _running_since.pop(j["id"], None)
+                        _running_futures.pop(j["id"], None)
 
             try:
-                return pool.submit(_run_and_release)
+                fut = pool.submit(_run_and_release)
             except Exception as submit_err:
                 with _running_lock:
                     _running_job_ids.discard(job_id)
+                    _running_since.pop(job_id, None)
+                    _running_futures.pop(job_id, None)
                 finish_execution(
                     execution["id"],
                     success=False,
@@ -4266,6 +4457,13 @@ def tick(
                     submit_err,
                 )
                 return None
+
+            # Record the owning future so the stale sweep can distinguish
+            # "still executing" from "claim leaked before/after the future".
+            with _running_lock:
+                if job_id in _running_job_ids:
+                    _running_futures[job_id] = fut
+            return fut
 
         # Sequential pass for env-mutating (workdir) jobs.
         # Queued to a persistent single-thread pool so they run one at a time
