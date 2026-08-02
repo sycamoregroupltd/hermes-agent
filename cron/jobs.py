@@ -1080,7 +1080,14 @@ def _merge_jobs_for_write(
 
     Runs inside ``_jobs_lock()`` — the on-disk store is the freshest truth.
     Returns ``(merged_list, dropped_enabled_count)``.
+
+    Provenance rule: merge-on-write only protects callers that declare what
+    they loaded (``loaded_ids``). A caller that passes no ``loaded_ids`` is
+    writing an authoritative list — resurrecting unknown on-disk ids for it
+    would silently undo legitimate deletions (``save_jobs(remaining)`` is the
+    long-standing delete idiom used by e.g. curator rollback).
     """
+    authoritative = loaded_ids is None
     removed_ids = removed_ids or set()
     loaded_ids = loaded_ids or set()
 
@@ -1096,10 +1103,10 @@ def _merge_jobs_for_write(
             continue
         if oid in removed_ids:
             continue
-        if oid not in loaded_ids:
+        if oid not in loaded_ids and not authoritative:
             merged[oid] = on_disk_job
             continue
-        if bool(on_disk_job.get("enabled", True)):
+        if not authoritative and bool(on_disk_job.get("enabled", True)):
             dropped_enabled += 1
         _journal_removed_job(on_disk_job)
 

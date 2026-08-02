@@ -14,9 +14,18 @@ def all_assignees_spawnable(monkeypatch):
     patch, the dispatcher's profile-exists guard (PR #20105) routes
     those tasks into ``skipped_nonspawnable`` instead of spawning, which
     would break tests that assert spawn behavior.
+
+    The review lane adds a second capability gate (``profile_has_terminal``,
+    t_a2ef2ea2) that reads the profile's config.yaml and fails closed when
+    it is absent — synthetic assignees have no config.yaml, so review
+    dispatch tests need it stubbed here too, otherwise they land in
+    ``skipped_reviewer_incapable``.
     """
     from hermes_cli import profiles
     monkeypatch.setattr(profiles, "profile_exists", lambda name: True)
+    monkeypatch.setattr(
+        profiles, "profile_has_terminal", lambda name, **kw: True, raising=False,
+    )
 
 
 @pytest.fixture(autouse=True)
