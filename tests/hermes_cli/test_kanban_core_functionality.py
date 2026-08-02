@@ -494,6 +494,69 @@ def test_board_stats(kanban_home):
         assert stats["by_assignee"]["x"]["done"] == 1
         assert stats["by_assignee"]["y"]["ready"] == 1
         assert stats["oldest_ready_age_seconds"] is not None
+        assert stats["protocol_violations"] == []
+    finally:
+        conn.close()
+
+
+def test_board_stats_reports_protocol_violation_streaks(kanban_home):
+    """board_stats surfaces the violation streak counter for cards that have
+    one, including ``completed_pending_review`` and ``blocked``.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="streak-card", assignee="worker")
+        _drive_protocol_violation(conn, tid, 994000)
+        task = kb.get_task(conn, tid)
+        assert task is not None
+        assert task.status == "ready"
+
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert len(entries) == 1
+        assert entries[0]["task_id"] == tid
+        assert entries[0]["streak"] == 1
+        assert entries[0]["limit"] == _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
+        assert entries[0]["status"] == "ready"
+
+        _drive_protocol_violation(conn, tid, 994001)
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert len(entries) == 1
+        assert entries[0]["streak"] == 2
+    finally:
+        conn.close()
+
+
+def test_board_stats_reports_completed_pending_review_and_blocks_clean_cards(
+    kanban_home,
+):
+    """Protocol violation streaks are shown for active/reconciled cards, but
+    not for cards whose recent runs were not violations.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    conn = kb.connect()
+    try:
+        good = kb.create_task(conn, title="good", assignee="worker")
+        kb.complete_task(conn, good, result="clean")
+        reconciled = kb.create_task(conn, title="reconciled", assignee="worker")
+        limit = _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
+        for i in range(limit):
+            _drive_protocol_violation(conn, reconciled, 995000 + i)
+        reconciled_task = kb.get_task(conn, reconciled)
+        assert reconciled_task is not None
+        assert reconciled_task.status == "completed_pending_review"
+
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert all(entry["task_id"] != good for entry in entries)
+        assert any(
+            entry["task_id"] == reconciled and entry["status"] == "completed_pending_review"
+            for entry in entries
+        )
     finally:
         conn.close()
 
@@ -4545,13 +4608,18 @@ def test_detect_crashed_workers_protocol_violation_first_occurrence_retries(kanb
         conn.close()
 
 
-def test_detect_crashed_workers_protocol_violation_streak_trips_at_limit(kanban_home):
-    """The violation streak trips the terminal path exactly at the bound.
+def test_detect_crashed_workers_protocol_violation_streak_reconciles_pending_review(kanban_home):
+    """The violation streak reconciles to ``completed_pending_review`` at the bound.
 
     Genuine repeat offenders (a worker whose CLI keeps returning 0 without a
-    terminal transition) must still surface to a human: the
-    ``_PROTOCOL_VIOLATION_FAILURE_LIMIT``-th consecutive violation blocks the
-    task with a ``gave_up`` event carrying the streak accounting.
+    terminal transition) must still surface for human/worker review, but they
+    must NOT trip the circuit breaker into ``blocked`` — that path only fed
+    the perpetual "clean-exit sweep" churn (jarvis-os t_83fbc6f2), generating
+    sweep cards that were themselves not a fix. Once the bounded violation
+    streak is exhausted the task reconciles to ``completed_pending_review``:
+    excluded from ready/review dispatch (no respawn, no breaker trip) yet
+    still reconcilable by ``kanban_complete`` / ``kanban_block``. No
+    ``consecutive_failures`` increment.
     """
     import hermes_cli.kanban_db as _kb
     conn = kb.connect()
@@ -4567,21 +4635,144 @@ def test_detect_crashed_workers_protocol_violation_streak_trips_at_limit(kanban_
         _drive_protocol_violation(conn, tid, 990900)
 
         task = kb.get_task(conn, tid)
-        assert task.status == "blocked", (
-            f"violation streak at the bound must block, got {task.status}"
+        assert task.status == "completed_pending_review", (
+            f"violation streak at the bound must reconcile to "
+            f"completed_pending_review, got {task.status}"
+        )
+        # The structural fix: never rides into the breaker.
+        assert task.consecutive_failures == 0, (
+            "completed_pending_review must not count a failure, got "
+            f"consecutive_failures={task.consecutive_failures}"
         )
         events = kb.list_events(conn, tid)
         kinds = [e.kind for e in events]
         assert kinds.count("protocol_violation") == limit
         assert "crashed" not in kinds
-        gave_up = [e for e in events if e.kind == "gave_up"]
-        assert len(gave_up) == 1, f"expected exactly one gave_up, got {kinds}"
-        payload = gave_up[0].payload or {}
+        assert "gave_up" not in kinds, (
+            "breaker must never trip on a clean-exit streak, got "
+            f"{kinds}"
+        )
+        cpr = [e for e in events if e.kind == "completed_pending_review"]
+        assert len(cpr) == 1, f"expected exactly one completed_pending_review, got {kinds}"
+        payload = cpr[0].payload or {}
         assert payload.get("protocol_violations") == limit
         assert payload.get("protocol_violation_limit") == limit
-        # Side channel consumed by dispatch_once — read through the same
-        # (current) module object the reaper ran in, see _drive_worker_exit.
-        assert tid in _kb.detect_crashed_workers._last_auto_blocked
+        # Not surfaced as an auto-block to the dispatcher (no breaker trip).
+        assert tid not in _kb.detect_crashed_workers._last_auto_blocked
+        # Surfaced through the dedicated side channel instead.
+        assert tid in _kb.detect_crashed_workers._last_completed_pending_review
+        stats = kb.board_stats(conn)
+        entries = stats["protocol_violations"]
+        assert any(
+            entry["task_id"] == tid and entry["streak"] == limit and entry["limit"] == limit
+            for entry in entries
+        ), f"expected stats counter for reconciled card, got {entries}"
+
+        # ... and the held card is not re-picked across further dispatcher
+        # sweeps: neither ready nor review dispatch may spawn it again, and
+        # the stats counter keeps reporting the same held streak.
+        for sweep in range(3):
+            _kb.detect_crashed_workers(conn)
+            assert not _kb.has_spawnable_ready(conn), (
+                f"sweep {sweep + 1}: held card must not be re-picked as ready"
+            )
+            assert not _kb.has_spawnable_review(conn), (
+                f"sweep {sweep + 1}: held card must not be re-picked as review"
+            )
+            held_task = kb.get_task(conn, tid)
+            assert held_task is not None
+            assert held_task.status == "completed_pending_review"
+            held = [
+                e for e in kb.board_stats(conn)["protocol_violations"]
+                if e["task_id"] == tid
+            ]
+            assert held and held[0]["streak"] == limit, (
+                f"sweep {sweep + 1}: expected held streak={limit}, got {held}"
+            )
+    finally:
+        conn.close()
+
+
+def test_detect_crashed_workers_cold_start_reconciles_pending_review(kanban_home):
+    """Cold-start process must not raise when the streak trips on the FIRST call.
+
+    Regression for the AttributeError os-reviewer caught in CHANGES_REQUESTED
+    on ``fix/t_8f8f5d1f`` (jarvis-os t_298c12ce / t_8f8f5d1f): the reconcile
+    branch appended to ``detect_crashed_workers._last_completed_pending_review``
+    before that attribute was assigned (it is only set at function exit), so a
+    fresh dispatch process whose very first ``detect_crashed_workers`` sweep
+    reached a card already at the violation bound raised mid-tick.
+
+    The existing sibling test exercises the branch only after earlier sweeps
+    have already installed the function attribute at exit, so it never hits the
+    cold path. This test accumulates the exhausted streak in the DB exactly
+    like that test, then DELETES the module-global side-channel attribute to
+    simulate a freshly-started gateway (function never called yet in the new
+    process) and performs the bound-tripping sweep through the normal function.
+    On the unfixed code the mid-function ``.append`` raises AttributeError; on
+    the fixed code it reconciles and the attribute is populated at exit.
+    """
+    import hermes_cli.kanban_db as _kb
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="cold-quiet", assignee="worker")
+        limit = _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
+        for i in range(limit - 1):
+            _drive_protocol_violation(conn, tid, 991000 + i)
+            assert kb.get_task(conn, tid).status == "ready"
+
+        # Simulate a freshly-started gateway: the side channel attribute is
+        # absent on the module-global function (it is only set at function
+        # exit, and this process has not yet called detect_crashed_workers in
+        # a way that reached the trip branch). The DB already holds the
+        # exhausted streak from the loop above.
+        delattr(_kb.detect_crashed_workers, "_last_completed_pending_review")
+
+        # This single call trips the branch as a cold process.
+        _drive_protocol_violation(conn, tid, 991900)
+
+        task = kb.get_task(conn, tid)
+        assert task.status == "completed_pending_review", (
+            f"cold-start trip must reconcile to completed_pending_review, "
+            f"got {task.status}"
+        )
+        assert task.consecutive_failures == 0
+        # The side channel is populated at function exit, safely.
+        assert tid in _kb.detect_crashed_workers._last_completed_pending_review
+        assert tid not in _kb.detect_crashed_workers._last_auto_blocked
+    finally:
+        conn.close()
+
+
+def test_completed_pending_review_excluded_from_dispatch_and_reconcilable(kanban_home):
+    """``completed_pending_review`` is a terminal-ish review state.
+
+    It must NOT be spawned by the ready or review dispatch paths, and a
+    worker must still be able to ``kanban_complete`` it to ``done`` (or
+    ``kanban_block`` to escalate). This is what makes the reconciled card
+    settle instead of looping (jarvis-os t_83fbc6f2).
+    """
+    import hermes_cli.kanban_db as _kb
+    conn = kb.connect()
+    try:
+        # Force a task directly into the reconciled state.
+        tid = kb.create_task(conn, title="reconciled", assignee="worker")
+        _kb.claim_task(conn, tid, claimer=f"{_kb._claimer_id().split(':',1)[0]}:mock")
+        _kb.reconcile_completed_pending_review(
+            conn, tid, error="clean exit no signal (test)", pid=12345,
+            claimer="x:mock", violations=3, violation_limit=3,
+        )
+        task = kb.get_task(conn, tid)
+        assert task.status == "completed_pending_review"
+
+        # Not spawnable as ready or review.
+        assert not _kb.has_spawnable_ready(conn)
+        assert not _kb.has_spawnable_review(conn)
+
+        # A worker reconciles it to done via complete_task.
+        ok = kb.complete_task(conn, tid, summary="verified, work was done")
+        assert ok is True
+        assert kb.get_task(conn, tid).status == "done"
     finally:
         conn.close()
 
@@ -4622,13 +4813,17 @@ def test_protocol_violation_budget_not_consumed_by_other_failures(kanban_home):
                 "below-budget violations must not tick the unified counter"
             )
 
-        # Third consecutive violation: streak hits the bound — blocked.
+        # Third consecutive violation: streak hits the bound — reconcile to
+        # completed_pending_review (no breaker trip, no failure counted).
         _drive_protocol_violation(conn, tid, 991003)
         task = kb.get_task(conn, tid)
-        assert task.status == "blocked"
-        gave_up = [e for e in kb.list_events(conn, tid) if e.kind == "gave_up"]
-        assert len(gave_up) == 1
-        assert (gave_up[0].payload or {}).get("protocol_violations") == \
+        assert task.status == "completed_pending_review"
+        assert task.consecutive_failures == 1, (
+            "completed_pending_review must not add to the unified counter"
+        )
+        cpr = [e for e in kb.list_events(conn, tid) if e.kind == "completed_pending_review"]
+        assert len(cpr) == 1
+        assert (cpr[0].payload or {}).get("protocol_violations") == \
             _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
     finally:
         conn.close()
@@ -4661,9 +4856,10 @@ def test_protocol_violation_streak_resets_on_other_failure_kind(kanban_home):
         _drive_protocol_violation(conn, tid, 993004)
         assert kb.get_task(conn, tid).status == "ready"
 
-        # Third consecutive violation since the crash: blocked.
+        # Third consecutive violation since the crash: bound hit —
+        # reconcile to completed_pending_review, not blocked.
         _drive_protocol_violation(conn, tid, 993005)
-        assert kb.get_task(conn, tid).status == "blocked"
+        assert kb.get_task(conn, tid).status == "completed_pending_review"
     finally:
         conn.close()
 
@@ -4672,10 +4868,14 @@ def test_protocol_violation_respects_max_retries_precedence(kanban_home):
     """Per-task ``max_retries`` overrides the violation bound, both ways.
 
     Same top precedence it has for every other failure kind in
-    ``_record_task_failure``: ``max_retries=1`` blocks on the FIRST violation
-    (zero retries — the pre-fix behavior, now opt-in per task);
-    ``max_retries=5`` keeps retrying past the default bound of 3 and blocks
-    on the 5th consecutive violation.
+    ``_record_task_failure``: ``max_retries=1`` reconciles on the FIRST
+    violation (zero retries — reconcile immediately rather than loop);
+    ``max_retries=5`` keeps retrying past the default bound of 3 and
+    reconciles on the 5th consecutive violation. Either way the terminal
+    state is ``completed_pending_review`` (never ``blocked``), so a
+    per-task override changes the *retry budget*, not the destination —
+    the destination is always the review-pending reconcile (jarvis-os
+    t_83fbc6f2).
     """
     conn = kb.connect()
     try:
@@ -4684,12 +4884,12 @@ def test_protocol_violation_respects_max_retries_precedence(kanban_home):
         )
         _drive_protocol_violation(conn, strict, 992000)
         task = kb.get_task(conn, strict)
-        assert task.status == "blocked", (
-            f"max_retries=1 must block on the first violation, got {task.status}"
+        assert task.status == "completed_pending_review", (
+            f"max_retries=1 must reconcile on the first violation, got {task.status}"
         )
-        gave_up = [e for e in kb.list_events(conn, strict) if e.kind == "gave_up"]
-        assert len(gave_up) == 1
-        payload = gave_up[0].payload or {}
+        cpr = [e for e in kb.list_events(conn, strict) if e.kind == "completed_pending_review"]
+        assert len(cpr) == 1
+        payload = cpr[0].payload or {}
         assert payload.get("protocol_violations") == 1
         assert payload.get("protocol_violation_limit") == 1
 
@@ -4702,7 +4902,7 @@ def test_protocol_violation_respects_max_retries_precedence(kanban_home):
                 f"violation {i + 1}/5 should retry under max_retries=5"
             )
         _drive_protocol_violation(conn, lenient, 992104)
-        assert kb.get_task(conn, lenient).status == "blocked"
+        assert kb.get_task(conn, lenient).status == "completed_pending_review"
     finally:
         conn.close()
 

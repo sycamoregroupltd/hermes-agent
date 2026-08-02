@@ -39,6 +39,8 @@ _STATUS_ICONS = {
     "running":  "●",
     "scheduled":"⏱",
     "blocked":  "⊘",
+    "review":   "🔍",
+    "completed_pending_review": "✓?",
     "done":     "✓",
     "archived": "—",
 }
@@ -2752,8 +2754,11 @@ def _cmd_stats(args: argparse.Namespace) -> int:
         print(json.dumps(stats, indent=2, ensure_ascii=False))
         return 0
     print("By status:")
-    for k in ("triage", "todo", "scheduled", "ready", "running", "blocked", "done"):
-        print(f"  {k:8s}  {stats['by_status'].get(k, 0)}")
+    for k in (
+        "triage", "todo", "scheduled", "ready", "running", "blocked",
+        "completed_pending_review", "done",
+    ):
+        print(f"  {k:24s}  {stats['by_status'].get(k, 0)}")
     if stats["by_assignee"]:
         print("\nBy assignee:")
         for who, counts in sorted(stats["by_assignee"].items()):
@@ -2762,6 +2767,14 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     age = stats["oldest_ready_age_seconds"]
     if age is not None:
         print(f"\nOldest ready task age: {int(age)}s")
+    violations = stats.get("protocol_violations") or []
+    if violations:
+        print("\nProtocol violation streaks:")
+        for entry in violations:
+            print(
+                f"  {entry['task_id']:10s}  {entry['title'][:40]:40s}  "
+                f"status={entry['status']}  streak={entry['streak']}/{entry['limit']}"
+            )
     return 0
 
 
