@@ -501,6 +501,169 @@ def test_delete_task_removes_task_and_cascades(kanban_home):
 # Respawn guard (check_respawn_guard + dispatch_once integration)
 # ---------------------------------------------------------------------------
 
+def test_respawn_guard_active_pr_defers_own_worker_pr_comment(kanban_home):
+    """A GitHub PR URL in a recent comment triggers active_pr ONLY when the
+    comment author is a profile that has actually run this task (the prior
+    worker opened the PR). Dedupe behaviour is preserved for cards whose own
+    worker opened a PR.
+    """
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="has-pr", assignee="alice")
+        # Simulate a prior worker run under the assignee profile, then a
+        # PR reference authored by that same worker. The completed run is
+        # OLDER than the success window (3600s) but inside the PR window
+        # (86400s), so the guard reaches the active_pr check instead of
+        # short-circuiting on recent_success.
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
+        kb.add_comment(
+            conn, t, "alice",
+            "PR created: https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        reason = kb.check_respawn_guard(conn, t)
+    assert reason == "active_pr"
+
+
+def test_respawn_guard_active_pr_ignores_third_party_pr_comment(kanban_home):
+    """REGRESSION (t_24c405ba / t_439547d4): a PR URL in a comment authored
+    by a THIRD PARTY (e.g. a reviewer lane card referencing the PR it
+    reviews) must NOT trigger active_pr when this task never spawned — there
+    is no prior worker to dedupe against, so the card must be dispatched.
+    """
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review-pr", assignee="alice")
+        kb.add_comment(
+            conn, t, "fable-reviewer",
+            "Independent review: https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_respawn_guard_active_pr_ignores_third_party_comment_even_with_prior_run(
+    kanban_home,
+):
+    """A PR URL in a THIRD-PARTY comment must not defer even when the task
+    HAS a prior run: the run belongs to a different profile, so the PR was
+    not opened by this task's own worker (reviewer lane pattern).
+    """
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review-pr-2", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='blocked', status='blocked', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 60, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
+        kb.add_comment(
+            conn, t, "fable-reviewer",
+            "reviewed https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_respawn_guard_old_pr_comment_not_guarded(kanban_home):
+    """A GitHub PR URL in a comment older than the PR window does not block."""
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="old-pr", assignee="alice")
+        old_ts = int(time.time()) - kb._RESPAWN_GUARD_PR_WINDOW - 60
+        conn.execute(
+            "INSERT INTO task_comments (task_id, author, body, created_at) "
+            "VALUES (?, 'alice', "
+            "'PR: https://github.com/totemx-AI/subsidysmart/pull/10', ?)",
+            (t, old_ts),
+        )
+        reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_dispatch_spawns_ready_card_with_third_party_pr_comment(
+    kanban_home, all_assignees_spawnable
+):
+    """REGRESSION (t_24c405ba / t_439547d4): a ready card with a real
+    profile assignee and a PR-url comment from a third party, with no prior
+    run, IS spawned by dispatch_once and does NOT appear in respawn_guarded.
+    """
+    spawned_ids = []
+
+    def fake_spawn(task, workspace):
+        spawned_ids.append(task.id)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="reviewer-lane", assignee="alice")
+        kb.add_comment(
+            conn, t, "fable-reviewer",
+            "Independent review: https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+
+    assert t in spawned_ids, (
+        f"never-spawned card with third-party PR comment must spawn; "
+        f"spawned={spawned_ids!r}"
+    )
+    assert (t, "active_pr") not in res.respawn_guarded, (
+        f"third-party PR comment must not respawn-guard a never-spawned "
+        f"card; respawn_guarded={res.respawn_guarded!r}"
+    )
+
+
+def test_dispatch_respawn_guard_skips_own_worker_active_pr(
+    kanban_home, all_assignees_spawnable
+):
+    """dispatch_once still skips (but does not block) a card whose own
+    worker previously opened a PR (prior run + PR comment by that profile).
+    """
+    spawned_ids = []
+
+    def fake_spawn(task, workspace):
+        spawned_ids.append(task.id)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="has-pr", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        # Completed run older than the success window (3600s) but inside
+        # the PR window (86400s) so the guard reaches active_pr instead of
+        # short-circuiting on recent_success.
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
+        kb.add_comment(
+            conn, t, "alice",
+            "Opened https://github.com/totemx-AI/subsidysmart/pull/99",
+        )
+        res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+
+    assert (t, "active_pr") in res.respawn_guarded
+    assert t not in spawned_ids
+    assert t not in res.auto_blocked
+    with kb.connect() as conn:
+        assert kb.get_task(conn, t).status == "ready"  # not blocked, just skipped
+
 
 
 

@@ -8049,8 +8049,13 @@ def check_respawn_guard(conn: sqlite3.Connection, task_id: str) -> Optional[str]
 
     ``"active_pr"``
         A GitHub PR URL appears in a recent task comment (within
-        ``_RESPAWN_GUARD_PR_WINDOW`` seconds).  A prior worker already
-        opened a PR; re-spawning risks a duplicate PR on the same task.
+        ``_RESPAWN_GUARD_PR_WINDOW`` seconds) AND that comment was authored
+        by a profile that has actually run this task (``task_runs.profile``).
+        A prior worker already opened a PR; re-spawning risks a duplicate PR
+        on the same task. A PR URL in a THIRD-PARTY comment (e.g. a reviewer
+        lane card referencing the PR it reviews) is NOT treated as proof that
+        this task's own worker opened a PR — such cards must be dispatched
+        normally (t_24c405ba / t_439547d4 reviewer-lane starvation).
 
     Stale / dead claim locks are NOT a guard reason — they are handled
     by ``release_stale_claims`` and ``detect_crashed_workers`` which
@@ -8133,13 +8138,36 @@ def check_respawn_guard(conn: sqlite3.Connection, task_id: str) -> Optional[str]
             return "recent_success"
 
     # 4. GitHub PR URL in a recent comment — prior worker already opened a PR.
+    #    Only defer when the PR reference was authored by a profile that has
+    #    ACTUALLY RUN this task. Reviewer-lane cards (e.g. t_24c405ba
+    #    "Independent review: PR #844 …", assignee=trading-risk-reviewer)
+    #    carry the reviewed PR reference in a third-party review comment
+    #    (author != any profile in task_runs), so a bare PR URL in the thread
+    #    must NOT defer their first dispatch — they were never spawned, so
+    #    there is no prior worker to dedupe against. A card whose own worker
+    #    opened a PR still defers: the comment author matches a profile that
+    #    ran the task.
     pr_cutoff = now - _RESPAWN_GUARD_PR_WINDOW
-    for c in conn.execute(
-        "SELECT body FROM task_comments WHERE task_id = ? AND created_at >= ?",
-        (task_id, pr_cutoff),
-    ).fetchall():
-        if c["body"] and _RESPAWN_GUARD_PR_URL_RE.search(c["body"]):
-            return "active_pr"
+    own_worker_profiles = {
+        r["profile"]
+        for r in conn.execute(
+            "SELECT DISTINCT profile FROM task_runs "
+            "WHERE task_id = ? AND profile IS NOT NULL",
+            (task_id,),
+        ).fetchall()
+    }
+    if own_worker_profiles:
+        for c in conn.execute(
+            "SELECT author, body FROM task_comments "
+            "WHERE task_id = ? AND created_at >= ?",
+            (task_id, pr_cutoff),
+        ).fetchall():
+            if (
+                c["body"]
+                and c["author"] in own_worker_profiles
+                and _RESPAWN_GUARD_PR_URL_RE.search(c["body"])
+            ):
+                return "active_pr"
 
     return None
 
