@@ -679,6 +679,201 @@ def test_detect_crashed_workers_detector_gap_coalesces_alert(
         assert len(fired) == 0
 
 
+def test_abandoned_popen_handle_is_stolen_by_subprocess_reaper():
+    """Documents the ROOT CAUSE of the 100%-NULL ``dispatch_death_reason``.
+
+    ``_default_spawn`` used to abandon its ``Popen`` handle and rely on
+    ``os.waitpid(-1, WNOHANG)`` to harvest the exit status. Python's
+    ``subprocess`` module reaps abandoned children itself (via
+    ``Popen.__del__`` / ``_cleanup()``), so ``waitpid(-1)`` sees NOTHING and
+    the durable verdict is never written — every death degrades to a generic
+    ``pid N not alive`` DETECTOR GAP (t_6a5a8d9e).
+
+    This test pins the OS/interpreter behaviour that makes the fix necessary.
+    If a future Python stops stealing the child, this test fails loudly and
+    the handle registry can be revisited.
+    """
+    import gc
+    import subprocess
+
+    def _spawn_and_abandon():
+        p = subprocess.Popen(
+            ["/bin/sh", "-c", "exit 7"],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        pid = p.pid
+        del p  # the old fire-and-forget pattern
+        return pid
+
+    pid = _spawn_and_abandon()
+    time.sleep(0.5)
+    gc.collect()
+    # Any later Popen() triggers subprocess._cleanup(), reaping stragglers.
+    subprocess.Popen(["/bin/true"]).wait()
+
+    reaped = []
+    try:
+        while True:
+            rp, _status = os.waitpid(-1, os.WNOHANG)
+            if rp == 0:
+                break
+            reaped.append(rp)
+    except ChildProcessError:
+        pass
+
+    assert pid not in reaped, (
+        "waitpid(-1) unexpectedly harvested an abandoned child; the "
+        "fire-and-forget reap assumption may be valid again"
+    )
+
+
+def test_reap_worker_zombies_harvests_abandoned_handle_verdict(
+    kanban_home, monkeypatch,
+):
+    """END-TO-END: a REAL spawned worker yields a SPECIFIC durable verdict.
+
+    This is the acceptance test for t_6a5a8d9e #1 that the original
+    hardening lacked: the earlier tests called ``_record_worker_exit``
+    directly, so they passed while production wrote NULL to every
+    ``dispatch_death_reason`` row (6896/6896 NULL on the jarvis-os board).
+
+    Here we drive the ACTUAL path — retain handle at spawn, let the child
+    die, run the dispatcher's reap tick — and assert the durable columns
+    are populated with a specific reason rather than a generic gap.
+    """
+    import subprocess
+
+    import hermes_cli.kanban_db as _kb
+
+    _kb._recent_worker_exits.clear()
+    _kb._worker_handles.clear()
+
+    with kb.connect() as conn:
+        host = _kb._claimer_id().split(":", 1)[0]
+        tid = kb.create_task(conn, title="real-spawn", assignee="a")
+        claimed = kb.claim_task(conn, tid, claimer=f"{host}:w")
+        assert claimed is not None, "task was not claimable"
+
+        # Spawn a real short-lived child exactly like _default_spawn does,
+        # and retain the handle through the production helper.
+        proc = subprocess.Popen(
+            ["/bin/sh", "-c", "exit 3"],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        _kb._register_worker_handle(proc.pid, proc)
+        _kb._set_worker_pid(conn, tid, proc.pid)
+        conn.commit()
+
+        # Let the child exit, then run the dispatcher's reap tick.
+        for _ in range(50):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+
+        reaped = _kb.reap_worker_zombies(conn)
+        assert proc.pid in reaped, (
+            f"reap tick did not harvest the worker pid {proc.pid}; got {reaped}"
+        )
+
+        run = conn.execute(
+            "SELECT dispatch_death_reason, dispatch_exit_code "
+            "FROM task_runs WHERE task_id=? ORDER BY id DESC LIMIT 1",
+            (tid,),
+        ).fetchone()
+        assert run["dispatch_death_reason"] == "nonzero_exit", (
+            "durable verdict was not persisted from a REAL spawn; got "
+            f"{run['dispatch_death_reason']!r} (this is the production bug: "
+            "every row NULL -> generic pid-not-alive DETECTOR GAP)"
+        )
+        assert run["dispatch_exit_code"] == 3
+
+        # And the crash detector must now report the SPECIFIC cause.
+        monkeypatch.setenv("HERMES_KANBAN_CRASH_GRACE_SECONDS", "0")
+        monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+        _kb._recent_worker_exits.clear()  # force the durable-verdict path
+        crashed = kb.detect_crashed_workers(conn)
+        assert tid in crashed
+        err = conn.execute(
+            "SELECT error FROM task_runs WHERE task_id=? ORDER BY id DESC LIMIT 1",
+            (tid,),
+        ).fetchone()["error"] or ""
+        assert "not alive" not in err, f"generic gap leaked: {err!r}"
+        assert "exited with code 3" in err, f"specific reason missing: {err!r}"
+
+
+def test_harvest_worker_handles_classifies_signal_death(kanban_home):
+    """A signal-killed worker (OOM/SIGKILL) records ``signaled``, not unknown."""
+    import subprocess
+
+    import hermes_cli.kanban_db as _kb
+
+    _kb._recent_worker_exits.clear()
+    _kb._worker_handles.clear()
+
+    with kb.connect() as conn:
+        host = _kb._claimer_id().split(":", 1)[0]
+        tid = kb.create_task(conn, title="sigkill", assignee="a")
+        claimed = kb.claim_task(conn, tid, claimer=f"{host}:w")
+        assert claimed is not None
+
+        proc = subprocess.Popen(
+            ["/bin/sh", "-c", "kill -9 $$"],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        _kb._register_worker_handle(proc.pid, proc)
+        _kb._set_worker_pid(conn, tid, proc.pid)
+        conn.commit()
+
+        for _ in range(50):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+
+        _kb.reap_worker_zombies(conn)
+
+        run = conn.execute(
+            "SELECT dispatch_death_reason, dispatch_exit_code "
+            "FROM task_runs WHERE task_id=? ORDER BY id DESC LIMIT 1",
+            (tid,),
+        ).fetchone()
+        assert run["dispatch_death_reason"] == "signaled"
+        assert run["dispatch_exit_code"] == 9
+
+
+def test_harvest_worker_handles_leaves_running_workers_registered(kanban_home):
+    """A still-running worker must NOT be harvested or misclassified."""
+    import subprocess
+
+    import hermes_cli.kanban_db as _kb
+
+    _kb._worker_handles.clear()
+    proc = subprocess.Popen(
+        ["/bin/sh", "-c", "sleep 30"],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        _kb._register_worker_handle(proc.pid, proc)
+        harvested = _kb._harvest_worker_handles(None)
+        assert harvested == [], "a live worker must not be harvested"
+        assert proc.pid in _kb._worker_handles, "live handle must stay registered"
+    finally:
+        proc.kill()
+        proc.wait()
+        _kb._worker_handles.pop(proc.pid, None)
+
+
 def test_resolve_crash_grace_seconds_handles_bad_env(monkeypatch):
     """Bad env values fall back to DEFAULT_CRASH_GRACE_SECONDS."""
     import hermes_cli.kanban_db as _kb

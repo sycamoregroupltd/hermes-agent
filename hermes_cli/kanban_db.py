@@ -8424,6 +8424,100 @@ _RECENT_WORKER_EXIT_TTL_SECONDS = 600
 _RECENT_WORKER_EXITS_MAX = 4096
 _recent_worker_exits: "dict[int, tuple[int, float]]" = {}
 
+# Live ``subprocess.Popen`` handles for workers spawned by THIS dispatcher
+# process, keyed by pid.
+#
+# Why this exists (t_6a5a8d9e, root cause of the 100%-NULL
+# ``dispatch_death_reason`` column):
+#
+# ``_default_spawn`` used to abandon the ``Popen`` handle ("fire and
+# forget"), relying on ``reap_worker_zombies``'s ``os.waitpid(-1, WNOHANG)``
+# to harvest the exit status. That never works. Python's ``subprocess``
+# module keeps its OWN global list of live ``Popen`` objects
+# (``subprocess._active``) and reaps them internally from ``Popen.__del__``
+# and the ``_cleanup()`` call at the top of every new ``Popen(...)``. The
+# abandoned handle is garbage-collected, its ``__del__`` calls
+# ``_internal_poll()``, and the child is reaped by the subprocess module
+# BEFORE the dispatcher's ``waitpid(-1)`` ever sees it. ``waitpid(-1)``
+# then returns nothing, ``_record_worker_exit`` is never called, and no
+# durable verdict is written — every death degrades to the generic
+# ``pid N not alive`` DETECTOR GAP.
+#
+# Empirically verified: spawn + abandon + gc + a later ``Popen`` ⇒
+# ``waitpid(-1, WNOHANG)`` reaps NOTHING (see the regression test
+# ``test_reap_worker_zombies_harvests_abandoned_handle_verdict``).
+#
+# Holding the handle makes the dispatcher the authoritative reaper: we call
+# ``poll()`` ourselves, get a real returncode for every death class
+# (clean_exit / nonzero_exit / signaled / rate_limited), and persist the
+# durable verdict. The dispatcher is a single long-lived process (the
+# gateway ``_kanban_dispatcher_watcher`` loop), so an in-process registry is
+# the right lifetime. Entries are removed as soon as they are harvested;
+# a size cap guards against a pathological leak.
+_WORKER_HANDLES_MAX = 4096
+_worker_handles: "dict[int, Any]" = {}
+
+
+def _register_worker_handle(pid: int, proc: Any) -> None:
+    """Retain a spawned worker's ``Popen`` handle for authoritative reaping.
+
+    Called by ``_default_spawn`` right after the child starts. Without this
+    the ``subprocess`` module reaps the child behind our back and the
+    durable ``dispatch_death_reason`` verdict can never be recorded
+    (t_6a5a8d9e). Never raises — spawning must not fail because bookkeeping
+    did.
+    """
+    if not pid or pid <= 0 or proc is None:
+        return
+    try:
+        _worker_handles[int(pid)] = proc
+        # Belt-and-braces: if a handle is somehow never harvested (child
+        # outlives the dispatcher's interest), drop the oldest entries so
+        # the registry cannot grow without bound.
+        if len(_worker_handles) > _WORKER_HANDLES_MAX:
+            for _pid in list(_worker_handles)[: len(_worker_handles) // 2]:
+                _worker_handles.pop(_pid, None)
+    except Exception:
+        pass
+
+
+def _harvest_worker_handles(
+    conn: Optional[sqlite3.Connection] = None,
+) -> "list[int]":
+    """Poll retained worker handles and record verdicts for the finished ones.
+
+    This is the reliable half of the reap path: ``poll()`` on a handle we
+    still own returns the child's returncode (negative for a signal death),
+    which we convert back into a raw wait-status so the existing
+    ``_classify_raw_status`` logic — and therefore the durable
+    ``dispatch_death_reason`` column — behaves identically to the
+    ``waitpid`` path.
+
+    Returns the list of pids harvested. Never raises.
+    """
+    harvested: "list[int]" = []
+    for pid, proc in list(_worker_handles.items()):
+        try:
+            rc = proc.poll()
+        except Exception:
+            _worker_handles.pop(pid, None)
+            continue
+        if rc is None:
+            continue  # still running — leave it registered
+        _worker_handles.pop(pid, None)
+        # Rebuild a raw wait-status so classification stays in ONE place.
+        # Popen.returncode is -N when the child died from signal N.
+        raw_status = (-rc) if rc < 0 else (rc << 8)
+        try:
+            _record_worker_exit(pid, raw_status, conn=conn)
+        except Exception:
+            _log.warning(
+                "failed to record harvested worker exit for pid %s", pid,
+                exc_info=True,
+            )
+        harvested.append(pid)
+    return harvested
+
 
 def _record_worker_exit(
     pid: int,
@@ -8675,6 +8769,12 @@ def reap_worker_zombies(
     reaped-outside-reap-tick race, t_6a5a8d9e).
     """
     reaped: "list[int]" = []
+    # FIRST harvest handles we still own. Python's subprocess module reaps
+    # abandoned children behind our back, so waitpid(-1) below would other-
+    # wise return nothing and no durable verdict would ever be persisted
+    # (t_6a5a8d9e). Handles are the authoritative source; waitpid stays as a
+    # fallback for children spawned outside _default_spawn.
+    reaped.extend(_harvest_worker_handles(conn))
     if os.name != "nt":
         try:
             while True:
@@ -11677,6 +11777,15 @@ def _default_spawn(
     # handle is kept alive by the child's inheritance.  The parent's
     # reference goes out of scope and is GC'd, but the OS-level FD stays
     # open in the child until the child exits.
+    #
+    # We DO retain the Popen object itself (t_6a5a8d9e). Abandoning it lets
+    # the subprocess module's internal reaper harvest the child before the
+    # dispatcher's waitpid(-1) sees it, which silently destroys the exit
+    # status and forces every death to degrade into a generic
+    # ``pid N not alive`` DETECTOR GAP. Holding the handle lets
+    # ``_harvest_worker_handles`` read a real returncode and persist a
+    # specific ``dispatch_death_reason``.
+    _register_worker_handle(proc.pid, proc)
     return proc.pid
 
 
