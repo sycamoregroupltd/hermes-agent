@@ -27,6 +27,9 @@ OUT="$VAULT/$TODAY-model-catalogue.md"
 python3 - "$STATE" "$OUT" <<'PY'
 import json, os, subprocess, sys, datetime, yaml
 
+sys.path.insert(0, "/home/frank/.hermes/scripts")
+from second_brain_writer import render_markdown, write_text_atomic
+
 state_path, out_path = sys.argv[1], sys.argv[2]
 prev = {}
 if os.path.exists(state_path):
@@ -82,22 +85,37 @@ for prov, models in sorted(providers.items()):
         if added:   lines.append(f"  {prov}: NEW MODELS -> {', '.join(added[:8])}" + (" …" if len(added)>8 else ""))
         if removed: lines.append(f"  {prov}: REMOVED    -> {', '.join(removed[:8])}" + (" …" if len(removed)>8 else ""))
 
-# durable vault record, written every run
-with open(out_path, 'w') as f:
-    f.write(f"---\ntitle: Provider model catalogue {datetime.date.today()}\ntype: reference\n"
-            f"created: {datetime.date.today()}\ntags: [providers, models, cost]\n"
-            f"author: model-deal-scanner.sh (weekly cron)\n---\n\n")
-    f.write("# Provider model catalogue\n\nRead-only sweep. This scanner NEVER changes a model pin —\n"
-            "routing is a Frank decision (A3).\n\n")
-    for prov, models in sorted(providers.items()):
-        f.write(f"## {prov}\n\n")
-        for m in models: f.write(f"- {m}\n")
-        f.write("\n")
-    f.write("## What this scanner CANNOT see\n\n"
-            "Provider APIs expose model IDs and (sometimes) context windows — **not prices, discounts or\n"
-            "promotions**. The 2026-08-03 DeepSeek V4 Flash 0731 90%-off window was announced socially and\n"
-            "is invisible here. Pricing must still be checked at the portal, and any deal worth acting on\n"
-            "should be recorded in the suggestion register.\n")
+# durable vault record, written every run via the canonical writer
+today = datetime.date.today()
+body = "# Provider model catalogue\n\nRead-only sweep. This scanner NEVER changes a model pin —\n" \
+       "routing is a Frank decision (A3).\n\n"
+for prov, models in sorted(providers.items()):
+    body += f"## {prov}\n\n"
+    for m in models:
+        body += f"- {m}\n"
+    body += "\n"
+body += ("## What this scanner CANNOT see\n\n"
+         "Provider APIs expose model IDs and (sometimes) context windows — **not prices, discounts or\n"
+         "promotions**. The 2026-08-03 DeepSeek V4 Flash 0731 90%-off window was announced socially and\n"
+         "is invisible here. Pricing must still be checked at the portal, and any deal worth acting on\n"
+         "should be recorded in the suggestion register.\n")
+props = {
+    "title": f"Provider model catalogue {today}",
+    "type": "source",
+    "status": "active",
+    "created": today.isoformat(),
+    "updated": today.isoformat(),
+    "confidence": "high",
+    "tags": ["providers", "models", "cost"],
+    "sources": [
+        "https://api.groq.com/openai/v1/models",
+        "https://integrate.api.nvidia.com/v1/models",
+        "hermes model --refresh (nous catalogue)",
+    ],
+    "generated": True,
+    "generator": "model-deal-scanner.sh",
+}
+write_text_atomic(out_path, render_markdown(body, props))
 
 json.dump(providers, open(state_path,'w'), indent=1)
 

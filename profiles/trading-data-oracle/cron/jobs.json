@@ -237,6 +237,39 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor"
+    },
+    {
+      "id": "d72201006a87",
+      "name": "e4-hl-vaults-oos-weekly-pull",
+      "prompt": "E4 HL vaults OOS weekly pull (t_b62fa701): run the data-only collector for the frozen 22-vault shortlist + HLP. Appends raw JSON + sha256 + metrics to the Sycode vault tracker note (append-only). No capital action.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "e4_hl_vault_oos_weekly.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * 3",
+        "display": "0 9 * * 3"
+      },
+      "schedule_display": "0 9 * * 3",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T11:26:16.015984+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/e4-hl-vaults-oos"
     }
   ]
 }

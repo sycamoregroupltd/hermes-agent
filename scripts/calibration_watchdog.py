@@ -74,6 +74,10 @@ def parse_metrics(output: str) -> dict:
         "win_rate": None,
         "avg_pnl": None,
         "weighted_mce": None,
+        "merged_mce": None,
+        "tier1_scored_mce": None,
+        "tier1_scored_n": None,
+        "tier1_scored_error": None,
         "sql_errors": 0,
         "has_integrity_warning": False,
         "is_v2_report": "# Fusion Engine Calibration Report v2" in output,
@@ -151,11 +155,19 @@ def parse_metrics(output: str) -> dict:
         if pnl_match_7:
             metrics["avg_pnl"] = float(pnl_match_7.group(1))
 
-    # Extract sample-weighted MCE
-    # Might find it in the table or the observations
+    # Extract sample-weighted MCE.
+    # NOTE (t_0bfed6a8 headline-display fix): the pinned v2 report emits exactly
+    # ONE "Sample-weighted MCE" line (Section 2 table AND Section 7 text) and it
+    # is computed on the MERGED sample — fusion_calibration_report_v2.py Section
+    # 2 calls compute_weighted_mce(buckets, merged_n) over Tier-1 + Tier-2
+    # synthetic rows. It is a DILUTED display figure (~90% synthetic rows),
+    # NOT the authoritative Tier-1 miscalibration. We parse it as merged_mce and
+    # NEVER label it Tier-1. The authoritative Tier-1 scored-only MCE is
+    # computed read-only by compute_tier1_scored_mce() (see below).
     mce_match = re.search(r'Sample-weighted MCE.*?\*\*([0-9.]+)\s*pp\*\*', output, re.IGNORECASE)
     if mce_match:
         metrics["weighted_mce"] = float(mce_match.group(1))
+        metrics["merged_mce"] = float(mce_match.group(1))
 
     # Check for SQL/Database failures
     if "SQL failed" in output or "SQL timed out" in output or "DATA-INTEGRITY WARNING" in output:
@@ -298,6 +310,165 @@ def compute_clean_avg_pnl() -> tuple[float | None, str | None]:
     except Exception as e:
         return None, str(e)
 
+# ---------------------------------------------------------------------------
+# Authoritative Tier-1 scored-only MCE (t_0bfed6a8 headline-display fix)
+# ---------------------------------------------------------------------------
+# The pinned report (run_fusion_calibration_report.sh PIN) computes its single
+# "Sample-weighted MCE" headline on the MERGED sample (Tier-1 realized-exit +
+# ~90% Tier-2 synthetic candle-replay rows) — fusion_calibration_report_v2.py
+# Section 2 calls compute_weighted_mce(buckets, merged_n). Pairing that figure
+# with the Tier-1 n (the t_016ac4e4 sample-identity gate) is the display
+# defect classified in the 2026-08-03 incident (t_f0b7209a §6): the merged MCE
+# is diluted ~2-2.5x below the Tier-1 truth. The authoritative calibration
+# denominator per runbook §1b is the Tier-1 sample, NET-of-cost scored-only
+# (ledger-reconciled, fail-closed — NS-P1 CHILD-B t_07523bcb). Because the
+# pinned report does not emit a Tier-1-only MCE, the watchdog computes it
+# directly with the SAME read-only predicate as the report's dedup_rows CTE
+# (anchored on signal_journeys + decision_outcomes, LEFT JOIN trade_setups,
+# LEFT JOIN v_ledger_reward, DISTINCT ON (sj.id), clean-epoch gate) — the
+# method independently verified at 32.72pp / n=381 in t_7865a6af.
+def _is_true(v) -> bool:
+    return str(v).lower() in ("true", "t", "1", "yes")
+
+
+def _bucket_key(score: float) -> str:
+    """0.05-width conviction bucket key (mirrors fusion_calibration_report_v2)."""
+    start = int(score * 20) / 20.0
+    end = start + 0.05
+    if end >= 1.0:
+        return f"[{start:.2f}, 1.00]"
+    return f"[{start:.2f}, {end:.2f})"
+
+
+TIER1_SCORED_SQL = """
+    SELECT DISTINCT ON (sj.id)
+        sj.id,
+        COALESCE(ts.conviction_score::numeric,
+                 sj.composite_confidence_score::numeric)::text AS conviction_score,
+        (lr.position_id IS NOT NULL)::text AS ledger_matched,
+        lr.is_win::text AS ledger_is_win
+    FROM signal_journeys sj
+    JOIN decision_outcomes d ON d.journey_id = sj.id
+    LEFT JOIN trade_setups ts ON ts.signal_id = sj.id::text
+    LEFT JOIN v_ledger_reward lr
+        ON lr.correlation_id = sj.correlation_id
+        OR lr.signal_id = sj.signal_id
+    WHERE d.outcome_class IN ('WIN', 'LOSS')
+      AND d.contaminated = false
+      AND d.is_counterfactual = false
+      AND d.label_source NOT IN ('interim_1h', 'interim_4h')
+      AND abs(d.pnl_percent::numeric) <= 1000
+      AND COALESCE(d.finalized_at, d.decided_at, d.created_at) >= now() - interval '30 days'
+      AND sj.triggered_at >= '{epoch_start}'
+    ORDER BY sj.id,
+             d.is_final DESC,
+             COALESCE(d.finalized_at, d.decided_at, d.created_at) DESC,
+             (ts.signal_id IS NOT NULL) DESC,
+             ts.generated_at DESC;
+"""
+
+
+def build_tier1_scored_sql(epoch_start: str) -> str:
+    """Return the read-only Tier-1 scored-only MCE query for a given epoch.
+
+    Pure function (no DB access) so the predicate can be regression-tested.
+    Mirrors the report's dedup_rows CTE exactly (see module docstring above).
+    """
+    if not epoch_start or not str(epoch_start).strip():
+        raise ValueError(
+            "epoch_start is required; refusing to compute Tier-1 MCE without a clean-epoch bound")
+    return TIER1_SCORED_SQL.format(epoch_start=epoch_start)
+
+
+def compute_bucket_weighted_mce(rows) -> tuple[float | None, int]:
+    """Sample-weighted MCE over ledger-scored Tier-1 rows (pure, testable).
+
+    Faithful to fusion_calibration_report_v2.py Section 2 + _net_win():
+      * only rows that reconciled to v_ledger_reward (ledger_matched=true) are
+        scored (fail-closed net-of-cost label, NS-P1 CHILD-B t_07523bcb);
+      * buckets are 0.05-width conviction intervals with
+        expected_wr = bucket_mean_score * 100 and weight = bucket_n / scored_n;
+      * weighted_mce = sum(|actual_wr - expected_wr| * weight).
+
+    ``rows`` are dicts with keys conviction_score / ledger_matched /
+    ledger_is_win. Returns (weighted_mce_pp, scored_n); (None, 0) when there
+    are no scored rows.
+    """
+    scored = []
+    for r in rows:
+        if not _is_true(r.get("ledger_matched", "")):
+            continue  # fail-closed: unreconciled Tier-1 rows are NOT scored
+        try:
+            score = float(r.get("conviction_score") or 0)
+        except (ValueError, TypeError):
+            score = 0.0
+        scored.append((score, _is_true(r.get("ledger_is_win", ""))))
+    scored_n = len(scored)
+    if scored_n == 0:
+        return None, 0
+    buckets: dict[str, dict] = {}
+    for score, win in scored:
+        key = _bucket_key(score)
+        b = buckets.setdefault(key, {"total": 0, "wins": 0, "score_sum": 0.0})
+        b["total"] += 1
+        if win:
+            b["wins"] += 1
+        b["score_sum"] += score
+    weighted = 0.0
+    for b in buckets.values():
+        wr = (b["wins"] / b["total"] * 100) if b["total"] else 0.0
+        avg_score = (b["score_sum"] / b["total"]) if b["total"] else 0.0
+        expected_wr = avg_score * 100
+        weighted += abs(wr - expected_wr) * (b["total"] / scored_n)
+    return round(weighted, 2), scored_n
+
+
+def compute_tier1_scored_mce() -> tuple[float | None, int | None, str | None]:
+    """Compute the authoritative Tier-1 scored-only (net-of-cost) MCE.
+
+    Returns (weighted_mce_pp, scored_n, error). Read-only psql using the same
+    clean-epoch gate as compute_clean_avg_pnl. Never fabricates a value: on any
+    failure it returns (None, None, message) and the caller must fall back to
+    the merged figure LABELED non-authoritative rather than claiming a Tier-1
+    number it did not measure.
+    """
+    epoch_start = get_clean_epoch_start()
+    if epoch_start is None:
+        return None, None, (
+            "clean-epoch registry row missing; refusing to compute Tier-1 MCE "
+            "on untrusted pre-epoch data")
+    try:
+        sql = build_tier1_scored_sql(epoch_start)
+    except ValueError as e:
+        return None, None, str(e)
+    env = os.environ.copy()
+    env["PGPASSWORD"] = env.get("PGPASSWORD", env.get("PGPASS", "postgres"))
+    try:
+        res = subprocess.run(
+            PSQL_CMD + ["-c", sql],
+            capture_output=True, text=True, env=env, timeout=90,
+        )
+        if res.returncode != 0:
+            return None, None, res.stderr.strip() or f"psql exited {res.returncode}"
+        rows = []
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) != 4:
+                continue
+            rows.append({
+                "conviction_score": parts[1].strip(),
+                "ledger_matched": parts[2].strip(),
+                "ledger_is_win": parts[3].strip(),
+            })
+        mce, scored_n = compute_bucket_weighted_mce(rows)
+        return mce, scored_n, None
+    except Exception as e:
+        return None, None, str(e)
+
+
 def save_to_obsidian(content: str):
     """Write the living calibration report through the canonical atomic writer."""
     report_date = datetime.now(timezone.utc).date().isoformat()
@@ -385,14 +556,44 @@ def decide_alert(metrics: dict) -> dict | None:
     win_rate = metrics.get("win_rate")
     avg_pnl = metrics.get("avg_pnl")
     weighted_mce = metrics.get("weighted_mce")
+    # t_0bfed6a8 headline-display fix: two MCE figures with EXPLICIT sample
+    # identity. The pinned report's parsed MCE is the MERGED (diluted,
+    # non-authoritative) figure; the authoritative Tier-1 scored-only MCE is
+    # computed read-only by compute_tier1_scored_mce() in main().
+    tier1_scored_mce = metrics.get("tier1_scored_mce")
+    tier1_scored_n = metrics.get("tier1_scored_n")
+    merged_mce = metrics.get("merged_mce", weighted_mce)
+    merged_n = metrics.get("merged_n")
 
     def fmt(v, suffix=""):
         return f"{v:.1f}{suffix}" if isinstance(v, (int, float)) else "--"
 
+    def mce_decision_value():
+        """(value, label) for the MCE the alert decision keys on.
+
+        Prefer the authoritative Tier-1 scored-only MCE (runbook §1b contract:
+        MCE computed on the Tier-1 sample, never the MERGED sample). When the
+        read-only compute was unavailable, fall back to the parsed report MCE
+        but label it MERGED / non-authoritative so it can never be misread as
+        Tier-1.
+        """
+        if tier1_scored_mce is not None:
+            return tier1_scored_mce, (
+                f"Tier-1 scored-only (authoritative, net-of-cost), "
+                f"n={tier1_scored_n if tier1_scored_n is not None else '--'}")
+        return merged_mce, (
+            f"MERGED sample (non-authoritative), "
+            f"n={merged_n if merged_n is not None else '--'}")
+
     def monitored_block():
         return [
             f"- Tier-1 clean unique journeys (n): {n if n is not None else '--'}",
-            f"- Sample-weighted MCE: {fmt(weighted_mce, 'pp')}",
+            f"- Tier-1 scored-only MCE (authoritative, net-of-cost): "
+            f"{fmt(tier1_scored_mce, 'pp')} "
+            f"(n={tier1_scored_n if tier1_scored_n is not None else '--'})",
+            f"- Sample-weighted MCE (MERGED sample — non-authoritative): "
+            f"{fmt(merged_mce, 'pp')} "
+            f"(n={merged_n if merged_n is not None else '--'})",
             f"- Win Rate: {fmt(win_rate, '%')}",
             f"- Average PnL%: {fmt(avg_pnl, '%')}",
         ]
@@ -423,8 +624,11 @@ def decide_alert(metrics: dict) -> dict | None:
         breaches.append(f"Win Rate: {win_rate:.1f}% (Threshold: < {WIN_RATE_THRESHOLD:.1f}%)")
     if avg_pnl is not None and avg_pnl < PNL_THRESHOLD:
         breaches.append(f"Average PnL%: {avg_pnl:.2f}% (Threshold: < {PNL_THRESHOLD:.2f}%)")
-    if weighted_mce is not None and weighted_mce > MCE_THRESHOLD:
-        breaches.append(f"Sample-weighted MCE: {weighted_mce:.1f}pp (Threshold: > {MCE_THRESHOLD:.1f}pp)")
+    _mce, _mce_label = mce_decision_value()
+    if _mce is not None and _mce > MCE_THRESHOLD:
+        breaches.append(
+            f"Sample-weighted MCE ({_mce_label}): {_mce:.1f}pp "
+            f"(Threshold: > {MCE_THRESHOLD:.1f}pp)")
 
     # --- SAMPLE ACCUMULATION TRACKER (t_e79f6568) ---
     # Track cumulative Tier-1 realized-exit outcomes and surface accumulation
@@ -519,19 +723,18 @@ def decide_alert(metrics: dict) -> dict | None:
 
     # Confident sample (n >= 300) with a breach: emit BREACH.
     breach_summary = "\n".join(f"- {b}" for b in breaches)
+    _mon_lines = monitored_block()
     body = (
-        f"The Fusion Engine Calibration watchdog detected one or more performance/calibration "
+        "The Fusion Engine Calibration watchdog detected one or more performance/calibration "
         f"breaches on a confident sample (n={n}):\n\n"
         f"{breach_summary}\n\n"
-        f"[All Monitored Metrics]\n"
-        f"- Clean Unique Journeys (n): {n}\n"
-        f"- Win Rate: {fmt(win_rate, '%')}\n"
-        f"- Average PnL%: {fmt(avg_pnl, '%')}\n"
-        f"- Sample-weighted MCE: {fmt(weighted_mce, 'pp')}\n\n"
-        f"Please refer to the response runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]\n"
-        f"See detailed report in Obsidian: [[devops/latest-fusion-calibration-report.md]]"
+        "[All Monitored Metrics]\n"
+        + "\n".join(_mon_lines)
+        + "\n\n"
+        "Please refer to the response runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]\n"
+        "See detailed report in Obsidian: [[devops/latest-fusion-calibration-report.md]]"
     )
-    title = f"Sample-weighted Calibration Threshold Breach: MCE={fmt(weighted_mce, 'pp')}"
+    title = f"Sample-weighted Calibration Threshold Breach: MCE={fmt(_mce, 'pp')}"
     lines = [
         "🚨 FUSION CALIBRATION THRESHOLD BREACH ALERT 🚨",
         "At least one key performance or calibration metric has breached safety thresholds on a confident sample.\n",
@@ -539,10 +742,7 @@ def decide_alert(metrics: dict) -> dict | None:
     ] + [f"- {b}" for b in breaches] + [
         "",
         "[All Monitored Metrics]",
-        f"- Clean Unique Journeys (n): {n}",
-        f"- Win Rate: {fmt(win_rate, '%')}",
-        f"- Average PnL%: {fmt(avg_pnl, '%')}",
-        f"- Sample-weighted MCE: {fmt(weighted_mce, 'pp')}",
+    ] + _mon_lines + [
         "",
         "Living Dashboard: [[devops/latest-fusion-calibration-report.md]]",
         "Response Runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]",
@@ -632,12 +832,14 @@ def regression_test() -> int:
     # open a card. Accumulation evidence persists only via the living dashboard
     # (save_to_obsidian, run every tick at line 640) which is bypassed here in a
     # DB-free harness so this test has no Obsidian / kanban / DB side effects.
-    global run_report, save_to_obsidian, parse_metrics
+    global run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce
     import io as _io, contextlib as _cl
-    _orig_run, _orig_save, _orig_parse = run_report, save_to_obsidian, parse_metrics
+    _orig_run, _orig_save, _orig_parse, _orig_t1mce = (
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce)
     try:
         run_report = lambda: (0, "")
         save_to_obsidian = lambda c: None
+        compute_tier1_scored_mce = lambda: (None, None, "mocked")
         parse_metrics = lambda out: {
             "n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
             "weighted_mce": 19.4, "has_integrity_warning": False,
@@ -652,8 +854,8 @@ def regression_test() -> int:
         check("below floor (n=127): main returns 0",
               _rc == 0)
     finally:
-        run_report, save_to_obsidian, parse_metrics = (
-            _orig_run, _orig_save, _orig_parse)
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce = (
+            _orig_run, _orig_save, _orig_parse, _orig_t1mce)
 
     # (I) LIVE-PATH n<100 gap (t_7223ef5b acceptance #2): the live main() must
     # route a numeric n<100 through decide_alert() so the THIN_SAMPLE verdict
@@ -663,11 +865,13 @@ def regression_test() -> int:
     # defect closed by this task: previously main() early-returned `return 0`
     # for n<MIN_CLEAN_N and the THIN_SAMPLE verdict was dead code in the live
     # path, so the smallest samples were a blind spot on the dashboard.
-    _orig_run, _orig_save, _orig_parse = run_report, save_to_obsidian, parse_metrics
+    _orig_run, _orig_save, _orig_parse, _orig_t1mce = (
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce)
     _dash = {}
     try:
         run_report = lambda: (0, "RAW-REPORT")
         save_to_obsidian = lambda c: _dash.update(content=c)
+        compute_tier1_scored_mce = lambda: (None, None, "mocked")
         parse_metrics = lambda out: {
             "n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
             "weighted_mce": 9.0, "has_integrity_warning": False,
@@ -687,6 +891,10 @@ def regression_test() -> int:
               "n=42" in _dash_c)
         check("live n=42: dashboard logged Sample-weighted MCE metric",
               "Sample-weighted MCE" in _dash_c)
+        check("live n=42: dashboard logged Tier-1 scored-only MCE metric",
+              "Tier-1 scored-only MCE (authoritative" in _dash_c)
+        check("live n=42: dashboard labels merged MCE non-authoritative",
+              "MERGED sample — non-authoritative" in _dash_c)
         check("live n=42: dashboard logged Win Rate metric",
               "Win Rate" in _dash_c)
         check("live n=42: dashboard logged Average PnL% metric",
@@ -695,16 +903,18 @@ def regression_test() -> int:
               "MCE breach" not in _dash_c.lower()
               and "Sample-weighted MCE: 9.0pp (Threshold" not in _dash_c)
     finally:
-        run_report, save_to_obsidian, parse_metrics = (
-            _orig_run, _orig_save, _orig_parse)
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce = (
+            _orig_run, _orig_save, _orig_parse, _orig_t1mce)
 
     # (J) LIVE-PATH n=None stays fully silent (runbook §5 taxonomy): no
     # verdict persisted, no stdout, no card.
-    _orig_run, _orig_save, _orig_parse = run_report, save_to_obsidian, parse_metrics
+    _orig_run, _orig_save, _orig_parse, _orig_t1mce = (
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce)
     _dash_none = {}
     try:
         run_report = lambda: (0, "RAW-REPORT")
         save_to_obsidian = lambda c: _dash_none.update(content=c)
+        compute_tier1_scored_mce = lambda: (None, None, "mocked")
         parse_metrics = lambda out: {
             "n": None, "win_rate": None, "avg_pnl": None,
             "weighted_mce": None, "has_integrity_warning": False,
@@ -720,13 +930,75 @@ def regression_test() -> int:
               "too thin" not in _dash_none.get("content", "").lower()
               and "BREACH" not in _dash_none.get("content", ""))
     finally:
-        run_report, save_to_obsidian, parse_metrics = (
-            _orig_run, _orig_save, _orig_parse)
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce = (
+            _orig_run, _orig_save, _orig_parse, _orig_t1mce)
+
+    # (K) t_0bfed6a8 headline-display fix: the watchdog must NEVER pair the
+    # merged-sample MCE with the Tier-1 n. When the authoritative Tier-1
+    # scored-only MCE is available, the breach/headline keys on it and the
+    # merged figure is labeled non-authoritative with its own n.
+    d = decide_alert({
+        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
+        "tier1_scored_mce": 32.72, "tier1_scored_n": 381,
+    })
+    check("t_0bfed6a8: authoritative MCE returns a BREACH decision", d is not None)
+    if d is not None:
+        check("t_0bfed6a8: authoritative MCE drives the BREACH decision",
+              d["kind"] == "BREACH")
+        check("t_0bfed6a8: breach line labels Tier-1 scored-only as authoritative",
+              any("Tier-1 scored-only (authoritative" in ln for ln in d["stdout_lines"]))
+        check("t_0bfed6a8: merged figure labeled non-authoritative with own n",
+              any("MERGED sample — non-authoritative" in ln and "n=7842" in ln
+                  for ln in d["stdout_lines"]))
+        check("t_0bfed6a8: authoritative MCE + scored n in monitored block",
+              any("Tier-1 scored-only MCE (authoritative, net-of-cost): 32.7pp (n=381)"
+                  in ln for ln in d["stdout_lines"]))
+        check("t_0bfed6a8: headline n is Tier-1 clean n, not merged",
+              any("Tier-1 clean unique journeys (n): 400" in ln
+                  for ln in d["stdout_lines"]))
+
+    # (L) Fallback: when the authoritative compute is unavailable, the merged
+    # figure is used but explicitly labeled non-authoritative (never misread
+    # as Tier-1).
+    d = decide_alert({
+        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
+    })
+    check("t_0bfed6a8: merged fallback returns a BREACH decision", d is not None)
+    if d is not None:
+        check("t_0bfed6a8: merged fallback breach line labeled non-authoritative",
+              d["kind"] == "BREACH"
+              and any("MERGED sample (non-authoritative)" in ln
+                      for ln in d["stdout_lines"]))
+        check("t_0bfed6a8: authoritative line renders -- when unavailable",
+              any("Tier-1 scored-only MCE (authoritative, net-of-cost): --" in ln
+                  for ln in d["stdout_lines"]))
+
+    # (M) Pure math parity: compute_bucket_weighted_mce excludes unreconciled
+    # rows and reproduces the report's bucket math.
+    _fixture = [
+        {"conviction_score": "0.62", "ledger_matched": "true", "ledger_is_win": "false"},
+        {"conviction_score": "0.62", "ledger_matched": "true", "ledger_is_win": "false"},
+        {"conviction_score": "0.62", "ledger_matched": "true", "ledger_is_win": "false"},
+        {"conviction_score": "0.62", "ledger_matched": "true", "ledger_is_win": "true"},
+        {"conviction_score": "0.90", "ledger_matched": "true", "ledger_is_win": "true"},
+        {"conviction_score": "0.90", "ledger_matched": "true", "ledger_is_win": "false"},
+        {"conviction_score": "0.30", "ledger_matched": "false", "ledger_is_win": ""},
+    ]
+    _mce, _n = compute_bucket_weighted_mce(_fixture)
+    check("t_0bfed6a8: compute_bucket_weighted_mce excludes unreconciled rows",
+          _n == 6)
+    # [0.60,0.65): n=4, wr=25.0, expected=62.0 -> err 37.0, weight 4/6
+    # [0.90,0.95): n=2, wr=50.0, expected=90.0 -> err 40.0, weight 2/6
+    # weighted = 37.0*4/6 + 40.0*2/6 = 38.0
+    check("t_0bfed6a8: compute_bucket_weighted_mce math matches report",
+          _mce is not None and abs(_mce - 38.0) < 0.01)
 
     if failures:
         print(f"\nREGRESSION FAILED: {len(failures)} assertion(s) failed: {failures}")
         return 1
-    print("\nREGRESSION PASSED: all t_d8ccf4bd / t_7223ef5b assertions hold.")
+    print("\nREGRESSION PASSED: all t_d8ccf4bd / t_7223ef5b / t_0bfed6a8 assertions hold.")
     return 0
 
 
@@ -792,6 +1064,19 @@ def main() -> int:
         if avg_pnl is None and n is not None and n >= MIN_CLEAN_N:
             metrics["has_integrity_warning"] = True
             metrics["sql_errors"] = max(metrics["sql_errors"], 1)
+
+    # t_0bfed6a8 headline-display fix: compute the authoritative Tier-1
+    # scored-only (net-of-cost) MCE directly. The pinned report's parsed
+    # "Sample-weighted MCE" is the MERGED figure (diluted by ~90% synthetic
+    # Tier-2 rows); pairing it with the Tier-1 n was the display defect. The
+    # decision in decide_alert() keys on this authoritative value when
+    # available and otherwise falls back to the merged figure LABELED
+    # non-authoritative. Best-effort read-only: a failure here never silences
+    # the alert, it only degrades the headline to the labeled merged figure.
+    tier1_mce, tier1_n, tier1_err = compute_tier1_scored_mce()
+    metrics["tier1_scored_mce"] = tier1_mce
+    metrics["tier1_scored_n"] = tier1_n
+    metrics["tier1_scored_error"] = tier1_err
 
     # 1. Check database/SQL errors (Critical Alert — regardless of n)
     if metrics["has_integrity_warning"] or metrics["sql_errors"] > 0:
