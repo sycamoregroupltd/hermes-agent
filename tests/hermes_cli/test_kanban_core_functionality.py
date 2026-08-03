@@ -1368,6 +1368,139 @@ def test_protocol_violation_budget_not_consumed_by_other_failures(kanban_home):
         conn.close()
 
 
+def test_protocol_violation_emits_fleet_artifact(kanban_home):
+    """A synthetic rc=0/no-terminal-call run consumes no strike, requeues
+    once, and appends one protocol_violation record to the fleet artifact.
+
+    Acceptance for t_dac02e83 (elon-proposal-20260802-dispatcher-exit-
+    contract): the artifact record carries the agreed contract shape
+    (event_type / event_id / card_id / run_id / ts / exit_code /
+    missing_terminal_call / board), and the violation is annotated on the
+    card with the run id + timestamp + missing terminal call.
+    """
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="quiet-artifact", assignee="worker")
+        _drive_protocol_violation(conn, tid, 998001)
+
+        task = kb.get_task(conn, tid)
+        assert task is not None
+        assert task.status == "ready", (
+            "a first protocol violation must requeue once, "
+            f"got status={task.status}"
+        )
+        assert task.consecutive_failures == 0, (
+            "an rc=0/no-terminal-call run must not consume a strike, "
+            f"got consecutive_failures={task.consecutive_failures}"
+        )
+
+        # The in-DB event carries the run id / timestamp / missing call.
+        events = kb.list_events(conn, tid)
+        viol = [e for e in events if e.kind == "protocol_violation"]
+        assert len(viol) == 1, f"expected one protocol_violation event, got {events}"
+        payload = viol[0].payload or {}
+        assert payload.get("run_id") is not None
+        assert payload.get("ts")
+        assert payload.get("missing_terminal_call") is True
+
+        # Fleet artifact: exactly one record with the contract shape.
+        path = kb.protocol_violations_artifact_path()
+        assert path.exists(), f"artifact missing at {path}"
+        lines = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(lines) == 1, f"expected exactly one artifact record, got {lines}"
+        rec = lines[0]
+        assert rec["event_type"] == "protocol_violation"
+        assert rec["card_id"] == tid
+        assert rec["run_id"] == payload["run_id"]
+        assert rec["exit_code"] == 0
+        assert rec["missing_terminal_call"] is True
+        assert rec["board"] == "default"
+        assert rec["event_id"] == f"{tid}:{rec['run_id']}", (
+            "event_id must be the dedupe key (card_id:run_id)"
+        )
+
+        # On-card annotation carries the run id + missing terminal call.
+        ann = task.last_failure_error or ""
+        assert "kanban_complete" in ann
+        assert f"run {rec['run_id']}" in ann, (
+            f"annotation must reference the run id, got {ann!r}"
+        )
+        assert "missing" in ann.lower()
+    finally:
+        conn.close()
+
+
+def test_protocol_violation_artifact_one_record_per_run(kanban_home):
+    """Two violation runs on the same card produce two artifact records with
+    distinct dedupe ids, and the card annotation tracks the latest run.
+    """
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="quiet-artifact-2", assignee="worker")
+        _drive_protocol_violation(conn, tid, 998010)
+        _drive_protocol_violation(conn, tid, 998011)
+
+        task = kb.get_task(conn, tid)
+        assert task is not None
+        assert task.status == "ready"
+        assert task.consecutive_failures == 0
+
+        path = kb.protocol_violations_artifact_path()
+        lines = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(lines) == 2, f"expected one record per run, got {lines}"
+        assert lines[0]["event_id"] != lines[1]["event_id"]
+        assert lines[0]["run_id"] != lines[1]["run_id"]
+
+        ann = task.last_failure_error or ""
+        assert f"run {lines[-1]['run_id']}" in ann, (
+            f"card annotation must reference the latest run, got {ann!r}"
+        )
+    finally:
+        conn.close()
+
+
+def test_protocol_violation_artifact_emit_failure_never_breaks_reaper(kanban_home, monkeypatch, tmp_path):
+    """A best-effort artifact emit must never abort the crash accounting.
+
+    If the artifact path cannot be written (unwritable parent, disk error),
+    the dispatcher sweep still requeues the card and records the violation
+    event — the artifact is observability, not a gate.
+    """
+    import hermes_cli.kanban_db as _kb
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="quiet-artifact-3", assignee="worker")
+
+        # Force the emit to fail: point the artifact at a path whose parent
+        # is a regular file, so mkdir() raises inside the emitter.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("i am a file, not a dir")
+        bad_path = blocker / "protocol_violations.jsonl"
+        monkeypatch.setattr(
+            _kb, "protocol_violations_artifact_path", lambda: bad_path
+        )
+
+        result = _drive_worker_exit(conn, tid, 998020, 0)
+        assert tid in result, "violation must still be detected as crashed"
+
+        task = kb.get_task(conn, tid)
+        assert task is not None
+        assert task.status == "ready", "reaper must still requeue on emit failure"
+        assert task.consecutive_failures == 0
+        kinds = [e.kind for e in kb.list_events(conn, tid)]
+        assert "protocol_violation" in kinds
+    finally:
+        conn.close()
+
+
 
 
 

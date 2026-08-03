@@ -7515,6 +7515,100 @@ def _protocol_violation_streak(conn: sqlite3.Connection, task_id: str) -> int:
     return streak
 
 
+def _utc_now_iso() -> str:
+    """ISO-8601 UTC timestamp for violation annotations / artifact records."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def protocol_violations_artifact_path() -> Path:
+    """Return the fleet-wide protocol-violation JSONL artifact path.
+
+    ``<kanban_home()>/var/log/protocol_violations.jsonl`` — the same
+    ``var/log`` tree that hosts ``delegation_outcomes.jsonl``. Shared
+    across boards and profiles by design: every board's dispatcher
+    appends here from its crash sweep, and the single fleet consumer
+    aggregates from this one file so protocol violations are counted
+    fleet-wide instead of rediscovered per card (elon proposal
+    ``elon-proposal-20260802-dispatcher-exit-contract``, child t_dac02e83).
+    """
+    return kanban_home() / "var" / "log" / "protocol_violations.jsonl"
+
+
+def _board_slug_from_conn(conn: sqlite3.Connection) -> str:
+    """Best-effort board slug for the given connection's DB file.
+
+    Named boards live at ``<root>/kanban/boards/<slug>/kanban.db`` → the
+    parent directory name is the slug; the legacy ``<root>/kanban.db``
+    default board → ``"default"``. Never raises.
+    """
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+        db_file = None
+        for r in rows:
+            if r[1] == "main":
+                db_file = r[2]
+                break
+        if db_file:
+            p = Path(str(db_file)).resolve()
+            if p.name == "kanban.db" and p.parent.parent.name == "boards":
+                return p.parent.name
+    except Exception:
+        pass
+    return "default"
+
+
+def _emit_protocol_violation_artifact(
+    *,
+    card_id: str,
+    run_id: Optional[int],
+    ts: str,
+    exit_code: int,
+    missing_terminal_call: bool,
+    board: str = "default",
+) -> Optional[str]:
+    """Append one ``protocol_violation`` record to the fleet artifact.
+
+    Contract (consumed by the fleet protocol-violation artifact, child
+    t_319196b4, and asserted by the E2E acceptance, child t_ad880278):
+
+    * path: :func:`protocol_violations_artifact_path` (append-only JSONL)
+    * one record per protocol-violation run detected by
+      ``detect_crashed_workers`` (both below-budget retries and at-bound
+      trips), emitted from the post-run crash sweep OUTSIDE the SQLite txn
+    * record: ``{"event_type": "protocol_violation", "event_id":
+      "<card_id>:<run_id>", "card_id": ..., "run_id": ..., "ts": ...,
+      "exit_code": ..., "missing_terminal_call": ..., "board": ...}``
+      where ``event_id`` is the dedupe key (unique per card + run)
+
+    Best-effort: never raises (a log-write failure must not kill the
+    dispatcher loop). Returns the path written, or ``None`` on failure.
+    """
+    try:
+        path = protocol_violations_artifact_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "event_type": "protocol_violation",
+            "event_id": f"{card_id}:{run_id}"
+            if run_id is not None
+            else f"{card_id}:<no-run>",
+            "card_id": card_id,
+            "run_id": run_id,
+            "ts": ts,
+            "exit_code": exit_code,
+            "missing_terminal_call": missing_terminal_call,
+            "board": board,
+        }
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
+        return str(path)
+    except Exception:
+        _log.debug("protocol-violation artifact emit failed", exc_info=True)
+        return None
+
+
 def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     """Reclaim ``running`` tasks whose worker PID is no longer alive.
 
@@ -7551,8 +7645,8 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # clean-exit-but-still-running case, which is accounted against its
     # own bounded violation streak instead of the unified failure
     # counter (see the post-txn loop below).
-    crash_details: list[tuple[str, int, str, bool, str]] = []
-    # (task_id, pid, claimer, protocol_violation, error_text)
+    crash_details: list[tuple[str, int, str, bool, str, Optional[int], Optional[str]]] = []
+    # (task_id, pid, claimer, protocol_violation, error_text, run_id, ts)
     with write_txn(conn):
         rows = conn.execute(
             "SELECT id, worker_pid, claim_lock, started_at FROM tasks "
@@ -7657,6 +7751,17 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     error=error_text,
                     metadata=dict(event_payload),
                 )
+                _violation_ts: Optional[str] = None
+                if protocol_violation:
+                    # Annotate the violation with the run id, timestamp, and
+                    # the missing terminal call so the card + the fleet
+                    # artifact carry a full record (t_dac02e83). The run
+                    # metadata was already closed with the base payload; the
+                    # event below carries the enriched copy.
+                    _violation_ts = _utc_now_iso()
+                    event_payload["run_id"] = run_id
+                    event_payload["ts"] = _violation_ts
+                    event_payload["missing_terminal_call"] = True
                 _append_event(
                     conn, row["id"], event_kind,
                     event_payload,
@@ -7680,16 +7785,27 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                         # (which stamps this column for every other failure
                         # kind), yet the board UI and the retry worker's
                         # context still need the violation message + the
-                        # corrective guidance it carries.
+                        # corrective guidance it carries. Include the run id,
+                        # timestamp, and missing terminal call so the
+                        # annotation on the card is a complete record
+                        # (t_dac02e83).
+                        _ann = error_text
+                        if run_id is not None:
+                            _ann = (
+                                f"{error_text} [run {run_id}, "
+                                f"{_violation_ts}; terminal "
+                                f"kanban_complete/kanban_block call missing]"
+                            )
                         conn.execute(
                             "UPDATE tasks SET last_failure_error = ? "
                             "WHERE id = ?",
-                            (error_text[:500], row["id"]),
+                            (_ann[:500], row["id"]),
                         )
                     crashed.append(row["id"])
                     crash_details.append(
                         (row["id"], pid, row["claim_lock"],
-                         protocol_violation, error_text)
+                         protocol_violation, error_text, run_id,
+                         _violation_ts if protocol_violation else None)
                     )
     # Outside the main txn: account each crashed task and maybe trip the
     # breaker (the task transitions ready → blocked with a ``gave_up`` event
@@ -7711,11 +7827,27 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     if crash_details:
         # Fingerprint errors to detect systemic failures.
         _fp_counts: dict[str, int] = {}
-        for _, _, _, _, err_text in crash_details:
+        for _, _, _, _, err_text, _, _ in crash_details:
             fp = _error_fingerprint(err_text)
             _fp_counts[fp] = _fp_counts.get(fp, 0) + 1
-        for tid, pid, claimer, protocol_violation, error_text in crash_details:
+        # Board slug for the fleet artifact (same for every entry in this
+        # sweep — the connection is one board's DB).
+        _artifact_board = _board_slug_from_conn(conn)
+        for tid, pid, claimer, protocol_violation, error_text, run_id, _vts in crash_details:
             if protocol_violation:
+                # Fleet-wide violation artifact: one record per violation
+                # run, regardless of whether this occurrence stays under the
+                # retry budget or trips it (t_dac02e83). Best-effort —
+                # ``_emit_protocol_violation_artifact`` never raises, so a
+                # log-write failure cannot abort the crash accounting.
+                _emit_protocol_violation_artifact(
+                    card_id=tid,
+                    run_id=run_id,
+                    ts=_vts or _utc_now_iso(),
+                    exit_code=0,
+                    missing_terminal_call=True,
+                    board=_artifact_board,
+                )
                 streak = _protocol_violation_streak(conn, tid)
                 trow = conn.execute(
                     "SELECT max_retries FROM tasks WHERE id = ?", (tid,),
