@@ -1019,8 +1019,115 @@ def load_jobs() -> List[Dict[str, Any]]:
     )
 
 
-def _save_jobs_unlocked(jobs: List[Dict[str, Any]]):
-    """Save all jobs to storage. Caller must hold _jobs_lock()."""
+# Lost-update defense (t_b793ddfc): merge-on-write + removal journal.
+_REMOVALS_JOURNAL_NAME = "removals.jsonl"
+_REMOVAL_MASS_DROP_THRESHOLD = 1
+_PID = os.getpid()
+
+
+def _read_on_disk_job_list() -> List[Dict[str, Any]]:
+    """Best-effort re-read of the on-disk jobs list (defensive, never raises)."""
+    jobs_file = _current_cron_store().jobs_file
+    try:
+        if not jobs_file.exists():
+            return []
+        with open(jobs_file, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception as e:  # pragma: no cover - defensive fallback
+        logger.warning(
+            "Lost-update guard: failed to re-read on-disk store (%s); trusting "
+            "incoming list as-is", e
+        )
+        return []
+    if isinstance(data, dict):
+        return data.get("jobs", []) or []
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _journal_removed_job(job: Dict[str, Any]):
+    """Append one append-only line to <cron dir>/removals.jsonl. Never raises."""
+    try:
+        store = _current_cron_store()
+        journal_path = store.cron_dir / _REMOVALS_JOURNAL_NAME
+        ensure_dirs()
+        line = {
+            "ts": _hermes_now().isoformat(),
+            "id": job.get("id"),
+            "name": job.get("name") or job.get("id"),
+            "enabled": bool(job.get("enabled", True)),
+            "pid": _PID,
+            "HERMES_PROFILE": os.getenv("HERMES_PROFILE", ""),
+            "HERMES_KANBAN_TASK": os.getenv("HERMES_KANBAN_TASK", ""),
+        }
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        _secure_file(journal_path)
+    except Exception as e:  # pragma: no cover - best-effort audit only
+        logger.error("Lost-update guard: failed to append removal journal (%s)", e)
+
+
+def _merge_jobs_for_write(
+    incoming: List[Dict[str, Any]],
+    *,
+    loaded_ids: Optional[Set[str]] = None,
+    removed_ids: Optional[Set[str]] = None,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Merge an incoming job list against the on-disk store, journaling drops.
+
+    Runs inside ``_jobs_lock()`` — the on-disk store is the freshest truth.
+    Returns ``(merged_list, dropped_enabled_count)``.
+    """
+    removed_ids = removed_ids or set()
+    loaded_ids = loaded_ids or set()
+
+    incoming_by_id = {j.get("id"): j for j in incoming if j.get("id")}
+    on_disk = _read_on_disk_job_list()
+    on_disk_by_id = {j.get("id"): j for j in on_disk if j.get("id")}
+
+    merged = dict(incoming_by_id)
+    dropped_enabled = 0
+
+    for oid, on_disk_job in on_disk_by_id.items():
+        if oid in incoming_by_id:
+            continue
+        if oid in removed_ids:
+            continue
+        if oid not in loaded_ids:
+            merged[oid] = on_disk_job
+            continue
+        if bool(on_disk_job.get("enabled", True)):
+            dropped_enabled += 1
+        _journal_removed_job(on_disk_job)
+
+    return list(merged.values()), dropped_enabled
+
+
+def _save_jobs_unlocked(
+    jobs: List[Dict[str, Any]],
+    *,
+    loaded_ids: Optional[Set[str]] = None,
+    removed_ids: Optional[Set[str]] = None,
+) -> int:
+    """Persist a job list with lost-update protection. Caller must hold _jobs_lock()."""
+    merged, dropped_enabled = _merge_jobs_for_write(
+        jobs, loaded_ids=loaded_ids, removed_ids=removed_ids
+    )
+
+    if dropped_enabled > _REMOVAL_MASS_DROP_THRESHOLD:
+        logger.error(
+            "Lost-update guard: write would drop %d enabled job(s) with no explicit "
+            "removal request (threshold=%d). Writing anyway and journaling each so "
+            "the mass drop is attributable — investigate a stale long-held snapshot "
+            "(#t_035603f3).",
+            dropped_enabled,
+            _REMOVAL_MASS_DROP_THRESHOLD,
+        )
+
+    jobs = merged
     jobs_file = _current_cron_store().jobs_file
     ensure_dirs()
     # Snapshot the current owner BEFORE the atomic replace so a privileged
@@ -1051,12 +1158,21 @@ def _save_jobs_unlocked(jobs: List[Dict[str, Any]]):
         except OSError:
             pass
         raise
+    return dropped_enabled
 
 
-def save_jobs(jobs: List[Dict[str, Any]]):
-    """Save all jobs to storage."""
+def save_jobs(
+    jobs: List[Dict[str, Any]],
+    *,
+    loaded_ids: Optional[Set[str]] = None,
+    removed_ids: Optional[Set[str]] = None,
+) -> int:
+    """Save all jobs to storage with lost-update protection.
+
+    Returns the number of ENABLED jobs silently dropped by this write.
+    """
     with _jobs_lock():
-        _save_jobs_unlocked(jobs)
+        return _save_jobs_unlocked(jobs, loaded_ids=loaded_ids, removed_ids=removed_ids)
 
 
 def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
@@ -1631,13 +1747,14 @@ def remove_job(job_id: str) -> bool:
     with _jobs_lock():
         jobs = load_jobs()
         original_len = len(jobs)
+        loaded_ids = {j["id"] for j in jobs}
         jobs = [j for j in jobs if j["id"] != canonical_id]
         if len(jobs) < original_len:
             # Resolve the output dir BEFORE saving so a legacy unsafe ID (e.g.
             # left over from before the create-time guard) fails closed without
             # half-applying the removal.
             job_output_dir = _job_output_dir(canonical_id)
-            save_jobs(jobs)
+            save_jobs(jobs, loaded_ids=loaded_ids, removed_ids={canonical_id})
             # Clean up output directory to prevent orphaned dirs accumulating
             if job_output_dir.exists():
                 shutil.rmtree(job_output_dir)
@@ -1699,7 +1816,7 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                     if times is not None and times > 0 and completed >= times:
                         # Remove the job (limit reached)
                         jobs.pop(i)
-                        save_jobs(jobs)
+                        save_jobs(jobs, loaded_ids={j["id"] for j in jobs}, removed_ids={job["id"]})
                         return
                 
                 # Compute next run
@@ -1776,7 +1893,7 @@ def claim_dispatch(job_id: str) -> bool:
                 # tick claimed then died before mark_job_run could remove it).
                 # Clean up so it stops appearing as due on every tick.
                 jobs.pop(i)
-                save_jobs(jobs)
+                save_jobs(jobs, loaded_ids={j["id"] for j in jobs}, removed_ids={job["id"]})
                 logger.info(
                     "Job '%s': dispatch limit reached (%d/%d) — removing",
                     job.get("name", job.get("id", "?")),
@@ -1959,6 +2076,7 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
     now = _hermes_now()
     raw_jobs = load_jobs()
     needs_save = False
+    _explicit_removals: Set[str] = set()
 
     # Repair id-less records BEFORE anything keys off ``job["id"]``. A direct
     # jobs.json edit that bypassed add_job() can leave a record without an "id"
@@ -2248,6 +2366,7 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
                                 if rj["id"] == job["id"]:
                                     raw_jobs.remove(rj)
                                     needs_save = True
+                                    _explicit_removals.add(job["id"])
                                     break
                             continue
 
@@ -2285,7 +2404,11 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
             continue
 
     if needs_save:
-        save_jobs(raw_jobs)
+        save_jobs(
+            raw_jobs,
+            loaded_ids={rj["id"] for rj in raw_jobs} | _explicit_removals,
+            removed_ids=_explicit_removals,
+        )
 
     return due
 

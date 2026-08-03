@@ -6211,15 +6211,20 @@ def promote_task(
     force: bool = False,
     dry_run: bool = False,
 ) -> tuple[bool, Optional[str]]:
-    """Manually promote a `todo` or `blocked` task to `ready`.
+    """Manually promote a `todo`/`blocked` task to `ready`, or a
+    `triage`-parked task back to `todo`.
 
     Mirrors the automatic promotion done by ``recompute_ready`` but
     drives it from a deliberate operator action with an audit-trail
-    entry. Refuses to promote if any parent dep is not in a terminal
-    state (`done`/`archived`) unless ``force=True``. Does NOT change
-    assignee or claim state. Returns ``(True, None)`` on success and
-    ``(False, reason)`` if refused. ``dry_run=True`` validates the
-    promotion would succeed without mutating state.
+    entry. Refuses to promote to `ready` if any parent dep is not in a
+    terminal state (`done`/`archived`) unless ``force=True``. A
+    `triage` source always routes to `todo` (the normal intake lane) —
+    never directly to `ready` — so the parent gate and the normal
+    ``recompute_ready`` path still apply before the dispatcher can
+    claim the card. Does NOT change assignee or claim state. Returns
+    ``(True, None)`` on success and ``(False, reason)`` if refused.
+    ``dry_run=True`` validates the promotion would succeed without
+    mutating state.
     """
     row = conn.execute(
         "SELECT status FROM tasks WHERE id = ?", (task_id,)
@@ -6228,13 +6233,20 @@ def promote_task(
         return False, f"task {task_id} not found"
 
     cur_status = row["status"]
-    if cur_status not in ("todo", "blocked"):
+    if cur_status not in ("todo", "blocked", "triage"):
         return False, (
             f"task {task_id} is {cur_status!r}; promote only applies to "
-            f"'todo' or 'blocked'"
+            f"'todo', 'blocked', or 'triage'"
         )
 
-    if not force:
+    # A triage-parked card re-enters the normal intake lane at `todo`
+    # (the same exit ``specify_task`` uses). Routing to `todo` is always
+    # safe even with unsatisfied parents — `todo` is the dependency-
+    # waiting lane and ``recompute_ready`` gates the todo -> ready hop.
+    # Only the todo/blocked -> ready hop checks parents here.
+    target_status = "todo" if cur_status == "triage" else "ready"
+
+    if target_status == "ready" and not force:
         parents = conn.execute(
             "SELECT t.id, t.status FROM tasks t "
             "JOIN task_links l ON l.parent_id = t.id "
@@ -6256,9 +6268,9 @@ def promote_task(
 
     with write_txn(conn):
         upd = conn.execute(
-            "UPDATE tasks SET status = 'ready' "
-            "WHERE id = ? AND status IN ('todo', 'blocked')",
-            (task_id,),
+            "UPDATE tasks SET status = ? "
+            "WHERE id = ? AND status IN ('todo', 'blocked', 'triage')",
+            (target_status, task_id),
         )
         if upd.rowcount != 1:
             return False, f"task {task_id} status changed during promotion"
@@ -6266,7 +6278,12 @@ def promote_task(
             conn,
             task_id,
             "promoted_manual",
-            {"actor": actor, "reason": reason, "forced": force},
+            {
+                "actor": actor,
+                "reason": reason,
+                "forced": force,
+                "target": target_status,
+            },
         )
 
     return True, None
