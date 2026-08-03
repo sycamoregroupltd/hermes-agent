@@ -354,3 +354,34 @@ def test_dependency_block_in_todo_still_auto_recovers(kanban_home: Path) -> None
         # and the sticky-guard extension must NOT block this path.
         assert kb.recompute_ready(conn) == 1
         assert kb.get_task(conn, child).status == "ready"
+
+
+def test_human_authority_block_resists_approval_auto_clear(kanban_home: Path) -> None:
+    """t_552cc9e1 / t_15b7ebc4: a ``needs_input`` human-authority hold must
+    NOT be auto-cleared by ``apply_approvals`` even when a genuine anchored
+    REVIEW_VERDICT=APPROVED comment exists. The hold stays blocked so a human
+    (Frank) must make the decision, and the sticky gate keeps it parked.
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="needs Frank decision")
+        kb.add_comment(
+            conn, tid, "reviewer", "REVIEW_VERDICT=APPROVED please proceed",
+        )
+        kb.claim_task(conn, tid)
+        kb.block_task(
+            conn, tid,
+            reason="awaiting Frank decision",
+            kind="needs_input",
+            expected_run_id=kb.get_task(conn, tid).current_run_id,
+        )
+        assert kb.get_task(conn, tid).status == "blocked"
+
+        # apply_approvals (the dispatcher lane) must NOT clear this hold.
+        cleared = kb.apply_approvals(conn)
+        assert tid not in cleared
+        assert kb.get_task(conn, tid).status == "blocked"
+
+        # And the sticky gate must keep it parked across recompute ticks.
+        for _ in range(3):
+            assert kb.recompute_ready(conn) == 0
+            assert kb.get_task(conn, tid).status == "blocked"

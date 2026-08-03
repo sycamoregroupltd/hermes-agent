@@ -4441,7 +4441,6 @@ def recompute_ready(
                 promoted += 1
     return promoted
 
-
 # Approval markers recognised by the fleet relapse detector
 # (~/.hermes/scripts/kanban-approve-block-lockgate.py) -- kept in sync.
 _APPROVAL_NEGATED_RE = re.compile(
@@ -4453,6 +4452,87 @@ _APPROVAL_REOPEN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Anchored approval verdict (t_552cc9e1). The old selection query matched the
+# literal substring ``REVIEW_VERDICT=APPROVED`` ANYWHERE in a comment body, so
+# a quoted/cited occurrence inside narrative prose cleared the block. We now
+# require the marker at a line start (optionally after list/quote punctuation),
+# and we ignore markers that sit inside a fenced code block (a comment can
+# legitimately *quote* another card's verdict inside a code span). A bare
+# ``REVIEW_VERDICT=APPROVED`` must only clear a card when it is the comment
+# author's own deliberate verdict line — not a citation, not prose, not code.
+_APPROVAL_APPROVED_RE = re.compile(
+    r"^\s*(?:[-*>]\s*)?REVIEW_VERDICT\s*[:=]\s*APPROVED\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Block kinds that represent a human-authority decision gate (Frank /
+# operator) and must NEVER be auto-cleared by an approval comment. A code
+# review verdict addresses code correctness; it is not authority to waive a
+# human-decision hold. Note: a legacy un-typed block (``None``) is the normal
+# ``review-required`` handoff and STAYS auto-clearable — only the explicit
+# ``needs_input`` / ``capability`` human-decision kinds are excluded
+# (t_552cc9e1, t_15b7ebc4, t_cb5a275a).
+_HUMAN_AUTHORITY_BLOCK_KINDS = frozenset({"needs_input", "capability"})
+
+
+def _strip_fenced_code(text: str) -> str:
+    """Drop fenced code blocks (``` or ~~~) so a verdict cited inside a code
+    span cannot be mistaken for the comment author's own approval verdict.
+
+    Used by :func:`apply_approvals` to avoid clearing a block when the only
+    ``REVIEW_VERDICT=APPROVED`` match lives inside a quoted code block.
+    """
+    out_lines = []
+    in_fence = False
+    fence_marker: str | None = None
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not in_fence:
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_fence = True
+                fence_marker = stripped[:3]
+                continue
+            out_lines.append(line)
+        else:
+            if fence_marker and stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = None
+                # drop the closing fence line too
+                continue
+            # content inside the fence is skipped
+    return "\n".join(out_lines)
+
+
+# Reviewer-role profiles allowed to post an approval verdict that auto-clears
+# a block. This is the separation-of-duties allowlist (t_cb5a275a / t_552cc9e1):
+# a worker may not approve its own block, but a designated reviewer/guardian may.
+# Kept deliberately small and explicit; extend only with a reviewed change.
+_APPROVAL_REVIEWER_ROLES = (
+    "reviewer",
+    "guardian",
+    "os-reviewer",
+    "guardian-merge",
+)
+
+
+def _is_approval_reviewer(author: Optional[str]) -> bool:
+    """Return True when ``author`` is on the reviewer-role allowlist.
+
+    The allowlist is matched against either the bare profile name or a
+    ``role:profile`` / ``profile@role`` style author string, so a reviewer
+    posting under any common attribution form is recognised.
+    """
+    if not author:
+        return False
+    a = author.strip().casefold()
+    if not a:
+        return False
+    for role in _APPROVAL_REVIEWER_ROLES:
+        r = role.casefold()
+        if a == r or a.endswith(":" + r) or a.startswith(r + ":") or a.endswith("@" + r):
+            return True
+    return False
+
 
 def apply_approvals(conn: sqlite3.Connection) -> list:
     """Auto-clear approved-but-stuck cards (t_6009ccaa).
@@ -4461,12 +4541,22 @@ def apply_approvals(conn: sqlite3.Connection) -> list:
     auto-clears to ``todo`` (``recompute_ready`` then promotes it to
     ``ready`` once parents are done) when ALL hold:
 
-    * a non-negated approval marker comment exists
-      (``REVIEW_VERDICT=APPROVED`` / ``REVIEW_VERDICT: APPROVED``);
+    * a non-negated approval marker comment exists, ANCHORED at a line
+      start (``REVIEW_VERDICT=APPROVED`` / ``REVIEW_VERDICT: APPROVED``)
+      and NOT inside a fenced code block. A marker that is only *quoted*,
+      *cited*, or *mentioned in prose* about another card does NOT count
+      (t_552cc9e1);
     * no reviewer re-open (CHANGES_REQUESTED / REJECT / re-open) comment
       was posted AFTER that approval;
     * the approval comment has not already auto-cleared this card once
       (idempotence — see below);
+    * the approval comment author is NOT the task's own assignee, unless
+      the author is on the reviewer-role allowlist (separation of duties,
+      t_cb5a275a / t_552cc9e1). A worker may not approve its own block;
+    * the block is a REVIEW-class hold — ``needs_input`` / ``capability``
+      human-decision kinds are never auto-cleared by an approval comment
+      (t_552cc9e1). A legacy un-typed (``None``) block is the normal
+      ``review-required`` handoff and STAYS auto-clearable.
     * no open parent dependency.
 
     Idempotence (t_jarvis_autopromote_20260728): an approval verdict
@@ -4487,22 +4577,51 @@ def apply_approvals(conn: sqlite3.Connection) -> list:
     cleared = []
     with write_txn(conn):
         rows = conn.execute(
-            "SELECT id, status FROM tasks "
+            "SELECT id, status, assignee, block_kind FROM tasks "
             "WHERE status IN ('blocked', 'review', 'scheduled')"
         ).fetchall()
         for row in rows:
             task_id = row["id"]
-            approval = conn.execute(
-                "SELECT id, body FROM task_comments WHERE task_id = ? AND ("
-                "body LIKE '%REVIEW_VERDICT=APPROVED%' "
-                "OR body LIKE '%REVIEW_VERDICT: APPROVED%') "
-                "ORDER BY id DESC LIMIT 1",
+            task_assignee = row["assignee"]
+            task_block_kind = row["block_kind"] if "block_kind" in row.keys() else None
+
+            # HUMAN-AUTHORITY GATE (t_552cc9e1): a code review verdict is not
+            # authority to waive a Frank/operator decision hold. needs_input,
+            # capability, and legacy un-typed blocks must be cleared by a human
+            # or an explicit approvals-registry grant, never by this loop.
+            if task_block_kind in _HUMAN_AUTHORITY_BLOCK_KINDS:
+                continue
+
+            # Fetch all approval-shaped comments and pick the anchored verdict.
+            # Anchoring moved out of SQL LIKE into the Python regex layer so a
+            # quoted/cited marker in narrative prose can no longer clear a block.
+            candidates = conn.execute(
+                "SELECT id, author, body FROM task_comments WHERE task_id = ? "
+                "AND (body LIKE '%REVIEW_VERDICT=%' OR body LIKE '%REVIEW_VERDICT:%') "
+                "ORDER BY id ASC",
                 (task_id,),
-            ).fetchone()
+            ).fetchall()
+            approval = None
+            for cand in candidates:
+                body = cand["body"] or ""
+                # A marker inside a fenced code block is a quotation, not a verdict.
+                if not _APPROVAL_APPROVED_RE.search(_strip_fenced_code(body)):
+                    continue
+                if _APPROVAL_NEGATED_RE.search(body):
+                    continue  # "No REVIEW_VERDICT=APPROVED..." is a denial
+                # Separation of duties (t_cb5a275a / t_552cc9e1): the approver
+                # must not be the blocked card's own assignee, unless they are
+                # on the reviewer-role allowlist.
+                if cand["author"] == task_assignee and not _is_approval_reviewer(
+                    cand["author"]
+                ):
+                    continue
+                approval = cand
+                break  # oldest qualifying verdict wins; do not let a newer
+                # accidental mention override a real one (was ORDER BY DESC LIMIT 1)
+
             if approval is None:
                 continue
-            if _APPROVAL_NEGATED_RE.search(approval["body"] or ""):
-                continue  # "No REVIEW_VERDICT=APPROVED..." is a denial
             already_fired = conn.execute(
                 "SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'unblocked' "
                 "AND json_extract(payload, '$.reason') = 'approval-auto-clear' "
