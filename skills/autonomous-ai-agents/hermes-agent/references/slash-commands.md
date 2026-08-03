@@ -17,7 +17,6 @@ it. New commands land often; `/help` in-session is always authoritative.
 /stop                    Kill background processes
 /rollback [N]            List/restore filesystem checkpoints
 /diff [mode] [--stat]    Git changes in cwd (staged|all|session modes)
-/snapshot [sub]          Create/restore Hermes config+state snapshots (CLI)
 /background (/bg) <p>    Run prompt in background
 /queue (/q) <prompt>     Queue prompt for next turn
 /steer <prompt>          Inject a message after the next tool call
