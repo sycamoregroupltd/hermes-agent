@@ -1923,14 +1923,88 @@ def test_respawn_guard_stale_success_not_guarded(kanban_home):
 
 
 def test_respawn_guard_active_pr_in_comment(kanban_home):
-    """A GitHub PR URL in a recent comment triggers active_pr."""
+    """A GitHub PR URL in a recent comment triggers active_pr when the PR is OPEN."""
     with kb.connect() as conn:
         t = kb.create_task(conn, title="has-pr", assignee="alice")
         kb.add_comment(
             conn, t, "worker",
             "PR created: https://github.com/totemx-AI/subsidysmart/pull/42",
         )
-        reason = kb.check_respawn_guard(conn, t)
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason == "active_pr"
+
+
+def test_respawn_guard_active_pr_unknown_state_fails_closed(kanban_home):
+    """When gh cannot resolve PR state (None), the guard stays (fail closed)."""
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="unknown-pr", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "PR created: https://github.com/totemx-AI/subsidysmart/pull/43",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value=None):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason == "active_pr"
+
+
+def test_respawn_guard_merged_pr_not_guarded(kanban_home):
+    """A MERGED GitHub PR in a recent comment must NOT block re-spawn (t_9799c507).
+
+    Replay of the sycode-trading/t_30c13209 stall: PR #856 is MERGED, so the
+    active_pr guard must not fire even though the PR URL is in recent comments.
+    """
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="merged-pr", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "PR merged: https://github.com/sycamoregroupltd/sycode-trading/pull/856",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="MERGED"):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_respawn_guard_closed_pr_not_guarded(kanban_home):
+    """A CLOSED GitHub PR in a recent comment must NOT block re-spawn."""
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="closed-pr", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "PR closed: https://github.com/totemx-AI/subsidysmart/pull/44",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="CLOSED"):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_respawn_guard_mixed_pr_states_guards_on_open(kanban_home):
+    """One OPEN PR among MERGED/CLOSED PRs still blocks re-spawn."""
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="mixed-pr", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "https://github.com/a/b/pull/1 https://github.com/c/d/pull/2",
+        )
+
+        def fake_state(repo, number):
+            return "MERGED" if number == "1" else "OPEN"
+
+        with unittest.mock.patch.object(kb, "_github_pr_state", side_effect=fake_state):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason == "active_pr"
+
+
+def test_respawn_guard_pr_state_check_disabled_keeps_legacy(kanban_home):
+    """HERMES_KANBAN_PR_STATE_CHECK=0 keeps the legacy URL-only guard."""
+    with unittest.mock.patch.dict(os.environ, {"HERMES_KANBAN_PR_STATE_CHECK": "0"}):
+        with kb.connect() as conn:
+            t = kb.create_task(conn, title="legacy-pr", assignee="alice")
+            kb.add_comment(
+                conn, t, "worker",
+                "PR created: https://github.com/totemx-AI/subsidysmart/pull/45",
+            )
+            reason = kb.check_respawn_guard(conn, t)
     assert reason == "active_pr"
 
 
@@ -2035,13 +2109,38 @@ def test_dispatch_respawn_guard_skips_active_pr(
             conn, t, "worker",
             "Opened https://github.com/totemx-AI/subsidysmart/pull/99",
         )
-        res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
 
     assert (t, "active_pr") in res.respawn_guarded
     assert t not in spawned_ids
     assert t not in res.auto_blocked
     with kb.connect() as conn:
         assert kb.get_task(conn, t).status == "ready"
+
+
+def test_dispatch_respawn_guard_spawns_when_pr_merged(
+    kanban_home, all_assignees_spawnable
+):
+    """dispatch_once SPAWNS a ready task whose recent PR comment is MERGED
+    (t_9799c507 regression: the PR-state-blind guard used to block it)."""
+    spawned_ids = []
+
+    def fake_spawn(task, workspace):
+        spawned_ids.append(task.id)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="merged-pr", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "Opened https://github.com/sycamoregroupltd/sycode-trading/pull/856",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="MERGED"):
+            res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+
+    assert (t, "active_pr") not in res.respawn_guarded
+    assert t in spawned_ids
+    assert t not in res.auto_blocked
 
 
 def test_dispatch_respawn_guard_dry_run_no_auto_block(
