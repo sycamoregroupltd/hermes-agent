@@ -4331,6 +4331,90 @@ def _has_sticky_block(conn: sqlite3.Connection, task_id: str) -> bool:
     return bool(row) and row["kind"] == "blocked"
 
 
+def _latest_block_ref(
+    conn: sqlite3.Connection, task_id: str,
+) -> Optional[dict]:
+    """Return a reference to the still-pending block for ``task_id``.
+
+    The reference is derived from the most recent ``blocked`` / ``unblocked``
+    event row.  When the latest such event is ``blocked`` (i.e. no
+    ``unblocked`` has fired since — the same predicate as
+    :func:`_has_sticky_block`), we return the event id plus the original
+    block's reason/kind so an ``unblocked`` emission can prove which block it
+    resolves (t_e6bb0f1e).  Returns ``None`` when the latest event is
+    ``unblocked`` (already cleared) or there is no block event at all —
+    callers treat that as "nothing to unblock" and skip the emission, which
+    makes unblock emission idempotent by construction.
+
+    Returns a dict shaped like::
+
+        {"block_ref": <blocked-event-id>, "block_reason": ..., "block_kind": ...}
+
+    ``block_reason`` / ``block_kind`` are ``None`` when the original block
+    event carried no payload or the payload was unparseable.
+    """
+    row = conn.execute(
+        "SELECT id, kind, payload FROM task_events "
+        "WHERE task_id = ? AND kind IN ('blocked', 'unblocked') "
+        "ORDER BY id DESC LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    if row is None or row["kind"] != "blocked":
+        return None
+    block_payload: dict = {}
+    if row["payload"]:
+        try:
+            parsed = json.loads(row["payload"])
+            if isinstance(parsed, dict):
+                block_payload = parsed
+        except (json.JSONDecodeError, TypeError):
+            block_payload = {}
+    return {
+        "block_ref": int(row["id"]),
+        "block_reason": block_payload.get("reason"),
+        "block_kind": block_payload.get("kind"),
+    }
+
+
+def _emit_unblocked(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    reason: Optional[str] = None,
+    extra: Optional[dict] = None,
+) -> bool:
+    """Emit the block-lifecycle ``unblocked`` event for a transition out of
+    ``blocked`` (t_e6bb0f1e).
+
+    Shared writer-layer path: every code path that moves a card out of
+    ``blocked`` (promote_task, unblock_task, reclaim_task, dashboard drag-
+    drop, fleet reapers) MUST call this before persisting ``ready``/``todo``
+    so that :func:`_has_sticky_block` flips off and the dispatcher can claim
+    the card again.  A blocked→ready write that skips this helper leaves the
+    card sticky-blocked forever (the dispatcher refuses to claim it).
+
+    Idempotent by construction: no event is written when the most recent
+    block-lifecycle event is not ``blocked`` (already unblocked, or the block
+    came from the circuit breaker which emits ``gave_up`` and is
+    intentionally not sticky).  Returns ``True`` when an event was appended.
+
+    The emitted payload always carries ``block_ref`` — the id of the
+    original ``blocked`` event being resolved — plus the original block's
+    reason/kind when available, so audit trails and detectors can prove the
+    pairing.  ``reason`` and ``extra`` are merged on top (``extra`` wins).
+    """
+    ref = _latest_block_ref(conn, task_id)
+    if ref is None:
+        return False
+    payload = dict(ref)
+    if reason:
+        payload["reason"] = reason
+    if extra:
+        payload.update(extra)
+    _append_event(conn, task_id, "unblocked", payload)
+    return True
+
+
 def recompute_ready(
     conn: sqlite3.Connection, failure_limit: int = None,
 ) -> int:
@@ -4533,11 +4617,23 @@ def apply_approvals(conn: sqlite3.Connection) -> list:
                 "WHERE id = ? AND status IN ('blocked', 'review', 'scheduled')",
                 (task_id,),
             )
+            # Keep the comment_id-keyed idempotency record exactly as before
+            # (t_jarvis_autopromote_20260728) and additionally attach
+            # block_ref / block_reason / block_kind to the original 'blocked'
+            # event when one is still pending (t_e6bb0f1e) so audit trails
+            # can prove which block this unblock resolves.
+            _unblocked_payload: dict = {
+                "reason": "approval-auto-clear",
+                "comment_id": approval["id"],
+            }
+            _block_ref = _latest_block_ref(conn, task_id)
+            if _block_ref:
+                _unblocked_payload.update(_block_ref)
             _append_event(
                 conn,
                 task_id,
                 "unblocked",
-                {"reason": "approval-auto-clear", "comment_id": approval["id"]},
+                _unblocked_payload,
             )
             cleared.append(task_id)
     return cleared
@@ -4962,6 +5058,17 @@ def reclaim_task(
         )
         if cur.rowcount != 1:
             return False
+        if row["status"] == "blocked":
+            # Shared writer-layer path (t_e6bb0f1e): operator reclaim of a
+            # blocked card to ready must emit 'unblocked' (idempotent, with
+            # block_ref) so _has_sticky_block() flips off and the dispatcher
+            # will claim the card again.
+            _emit_unblocked(
+                conn,
+                task_id,
+                reason="reclaim",
+                extra={"prev_status": row["status"]},
+            )
         run_id = _end_run(
             conn, task_id,
             outcome="reclaimed", status="reclaimed",
@@ -6215,6 +6322,22 @@ def promote_task(
         )
         if upd.rowcount != 1:
             return False, f"task {task_id} status changed during promotion"
+        if row["status"] == "blocked":
+            # Shared writer-layer path (t_e6bb0f1e): always emit the
+            # block-lifecycle 'unblocked' before persisting 'ready' so
+            # _has_sticky_block() flips off and the dispatcher will claim
+            # the card. The helper is idempotent and attaches block_ref to
+            # the original 'blocked' event.
+            _emit_unblocked(
+                conn,
+                task_id,
+                reason="promote",
+                extra={
+                    "actor": actor,
+                    "promote_reason": reason,
+                    "forced": force,
+                },
+            )
         _append_event(
             conn,
             task_id,
@@ -6284,9 +6407,16 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
         )
         if cur.rowcount != 1:
             return False
-        _append_event(
-            conn, task_id, "unblocked",
-            {"status": new_status} if new_status != "ready" else None,
+        # Shared writer-layer path (t_e6bb0f1e): emit the block-lifecycle
+        # 'unblocked' (idempotent, with block_ref to the original 'blocked'
+        # event) so _has_sticky_block() flips off and the dispatcher can
+        # claim the card. Only fires when a 'blocked' event is actually
+        # pending — a scheduled→ready move with no block event is a no-op.
+        _emit_unblocked(
+            conn,
+            task_id,
+            reason="unblock",
+            extra=({"status": new_status} if new_status != "ready" else None),
         )
         return True
 

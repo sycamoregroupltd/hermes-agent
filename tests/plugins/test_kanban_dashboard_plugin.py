@@ -8,6 +8,7 @@ REST surface without spinning up the whole dashboard.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -2545,3 +2546,51 @@ def test_dashboard_parent_notice_and_child_results_use_detail_links():
     assert "t.link_counts" not in detail
     assert "Child Results" in detail
     assert "props.data.child_results" in detail
+
+
+def test_patch_drag_drop_blocked_to_ready_emits_unblocked(client, kanban_home):
+    """t_e6bb0f1e: moving a blocked card to ready through the dashboard
+    (PATCH status=ready) must emit the block-lifecycle 'unblocked' event
+    carrying the original block reference, so the dispatcher's
+    _has_sticky_block() gate clears and the card can actually be claimed.
+
+    Before the writer-layer fix this path left the card in 'ready' forever —
+    sticky-blocked, refused by the dispatcher.
+    """
+    r = client.post("/api/plugins/kanban/tasks", json={"title": "recover me"})
+    assert r.status_code == 200
+    tid = r.json()["task"]["id"]
+
+    # Block the card (worker/operator handoff → 'blocked' event).
+    r = client.patch(f"/api/plugins/kanban/tasks/{tid}", json={"status": "blocked"})
+    assert r.status_code == 200
+    assert r.json()["task"]["status"] == "blocked"
+
+    with kb.connect() as conn:
+        assert kb._has_sticky_block(conn, tid) is True
+        blocked_ref = conn.execute(
+            "SELECT id FROM task_events "
+            "WHERE task_id = ? AND kind = 'blocked' ORDER BY id DESC LIMIT 1",
+            (tid,),
+        ).fetchone()["id"]
+
+    # Governor/PM push-pass through the dashboard: drag it to ready.
+    r = client.patch(f"/api/plugins/kanban/tasks/{tid}", json={"status": "ready"})
+    assert r.status_code == 200
+    assert r.json()["task"]["status"] == "ready"
+
+    with kb.connect() as conn:
+        assert kb._has_sticky_block(conn, tid) is False
+        unblocked = conn.execute(
+            "SELECT payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'unblocked' ORDER BY id DESC LIMIT 1",
+            (tid,),
+        ).fetchone()
+        assert unblocked is not None, "blocked→ready must emit an unblocked event"
+        payload = json.loads(unblocked["payload"] or "{}")
+        assert payload.get("block_ref") == blocked_ref, (
+            f"unblocked must reference the original block; got "
+            f"{payload.get('block_ref')!r} want {blocked_ref}"
+        )
+        assert payload.get("reason") == "unblock"
+

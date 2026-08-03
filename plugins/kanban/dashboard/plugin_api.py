@@ -1085,6 +1085,17 @@ def _set_status_direct(
             "VALUES (?, ?, 'status', ?, ?)",
             (task_id, run_id, json.dumps({"status": new_status}), int(time.time())),
         )
+        if prev["status"] == "blocked" and new_status == "ready":
+            # Shared writer-layer path (t_e6bb0f1e): dashboard drag-drop of a
+            # blocked card to ready must emit 'unblocked' (idempotent, with
+            # block_ref) so _has_sticky_block() flips off and the dispatcher
+            # will claim the card again.
+            kanban_db._emit_unblocked(
+                conn,
+                task_id,
+                reason="dashboard_direct",
+                extra={"prev_status": prev["status"]},
+            )
         if reopening_satisfied_parent:
             # A parent leaving done/archived invalidates any direct child that
             # was sitting in ready solely because that parent used to satisfy
