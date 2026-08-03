@@ -1419,8 +1419,9 @@ def test_protocol_violation_emits_fleet_artifact(kanban_home):
         assert rec["exit_code"] == 0
         assert rec["missing_terminal_call"] is True
         assert rec["board"] == "default"
-        assert rec["event_id"] == f"{tid}:{rec['run_id']}", (
-            "event_id must be the dedupe key (card_id:run_id)"
+        assert rec["event_id"] == f"default:{tid}:{rec['run_id']}", (
+            "event_id must be the fleet-unique dedupe key "
+            "(board:card_id:run_id — run ids are per-board-DB)"
         )
 
         # On-card annotation carries the run id + missing terminal call.

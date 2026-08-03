@@ -7578,9 +7578,11 @@ def _emit_protocol_violation_artifact(
       ``detect_crashed_workers`` (both below-budget retries and at-bound
       trips), emitted from the post-run crash sweep OUTSIDE the SQLite txn
     * record: ``{"event_type": "protocol_violation", "event_id":
-      "<card_id>:<run_id>", "card_id": ..., "run_id": ..., "ts": ...,
+      "<board>:<card_id>:<run_id>", "card_id": ..., "run_id": ..., "ts": ...,
       "exit_code": ..., "missing_terminal_call": ..., "board": ...}``
-      where ``event_id`` is the dedupe key (unique per card + run)
+      where ``event_id`` is the fleet-unique dedupe key (run ids are unique
+      per board DB, so the board:card:run triple is fleet-unique — matches
+      the consumer artifact's derivation on t_319196b4)
 
     Best-effort: never raises (a log-write failure must not kill the
     dispatcher loop). Returns the path written, or ``None`` on failure.
@@ -7590,9 +7592,9 @@ def _emit_protocol_violation_artifact(
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "event_type": "protocol_violation",
-            "event_id": f"{card_id}:{run_id}"
+            "event_id": f"{board}:{card_id}:{run_id}"
             if run_id is not None
-            else f"{card_id}:<no-run>",
+            else f"{board}:{card_id}:<no-run>",
             "card_id": card_id,
             "run_id": run_id,
             "ts": ts,
