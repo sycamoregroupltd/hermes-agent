@@ -225,8 +225,15 @@ up on the next tick (60s by default).
 # config.yaml
 kanban:
   dispatch_in_gateway: true        # default
+  notify_in_gateway: null          # default: inherit dispatch_in_gateway
   dispatch_interval_seconds: 60    # default
 ```
+
+`notify_in_gateway` is an independent optional gate for completion/block
+delivery. Set it to `true` on a non-dispatch gateway that hosts the profile
+adapter owning subscriptions, or `false` on a dispatch gateway that must not
+poll them. Omitting it (or leaving it `null`) preserves the historical coupled
+behaviour.
 
 Override the config flag at runtime via `HERMES_KANBAN_DISPATCH_IN_GATEWAY=0`
 for debugging. Standard gateway supervision applies: run `hermes gateway
