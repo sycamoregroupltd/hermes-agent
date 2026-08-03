@@ -3984,6 +3984,14 @@ def test_dispatch_review_counts_toward_max_spawn(
     # Only 2 should spawn (ready tasks get priority in the loop)
     assert len(res.spawned) == 2
     assert len(spawns) == 2
+    # ...and the review card must have been held back BY THE CAP, not
+    # dropped earlier by a capability/spawnability guard. Without this the
+    # assertions above hold even when the review card never reaches the
+    # cap check at all, which is exactly how this test went green while
+    # the terminal-capability gate was silently swallowing t3.
+    assert res.skipped_reviewer_incapable == []
+    assert res.skipped_nonspawnable == []
+    assert t3 not in spawns
 
 
 def test_dispatch_review_spawns_when_ready_empty(
@@ -4002,6 +4010,166 @@ def test_dispatch_review_spawns_when_ready_empty(
         res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
     assert len(res.spawned) == 1
     assert spawns[0] == t
+
+
+# ---------------------------------------------------------------------------
+# Review-dispatch terminal-capability gate (t_a2ef2ea2)
+#
+# These exercise the REAL guard against on-disk profiles — they deliberately
+# do NOT use the ``all_assignees_spawnable`` fixture, which grants capability.
+# ---------------------------------------------------------------------------
+
+def _write_profile(name: str, config: str) -> Path:
+    """Create an on-disk profile whose config.yaml is exactly *config*.
+
+    The directory is resolved through ``profiles.get_profile_dir`` — the same
+    call the dispatcher's gate uses — so this helper cannot drift from the
+    code under test if the profile layout changes.
+    """
+    from hermes_cli import profiles
+    d = profiles.get_profile_dir(name)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "config.yaml").write_text(config, encoding="utf-8")
+    _clear_terminal_capability_cache()
+    return d
+
+
+def _clear_terminal_capability_cache() -> None:
+    """Drop ``profile_has_terminal``'s memo between tests.
+
+    The helper memoizes into a mutable keyword default that is never
+    invalidated, so a verdict computed for a profile name in one test would
+    otherwise leak into the next one in this file (every test file runs in
+    one process). Tests must not depend on which of them ran first.
+    """
+    from hermes_cli import profiles
+    kwdefaults = getattr(profiles.profile_has_terminal, "__kwdefaults__", None) or {}
+    cache = kwdefaults.get("_cache")
+    if isinstance(cache, dict):
+        cache.clear()
+
+
+def test_dispatch_review_refuses_terminal_less_profile(kanban_home):
+    """A real profile without the terminal toolset must NOT get review work.
+
+    This is the separation-of-duties gate: a reviewer that cannot run
+    pytest/git/gh would spawn, fail on capability and re-block, so the
+    dispatcher refuses up front and leaves an audit trail instead.
+    """
+    _write_profile("reviewless", "toolsets:\n- hermes-cli\n- file\n")
+    spawns = []
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review me", assignee="reviewless")
+        _set_task_status(conn, t, "review")
+        res = kb.dispatch_once(conn, spawn_fn=lambda *a, **k: spawns.append(a) or 42)
+
+        assert res.spawned == []
+        assert res.skipped_reviewer_incapable == [t]
+        assert res.skipped_nonspawnable == []  # the profile DOES exist
+        assert spawns == []  # no process was created
+
+        # Refusal is durable and attributable.
+        kinds = [e.kind for e in kb.list_events(conn, t)]
+        assert "reviewer_capability" in kinds
+        payload = conn.execute(
+            "SELECT payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'reviewer_capability'",
+            (t,),
+        ).fetchone()[0]
+        assert "reviewless" in payload
+
+        # The card is left claimable for a capable reviewer, not consumed.
+        task = kb.get_task(conn, t)
+        assert task.status == "review"
+        assert task.claim_lock is None
+
+
+def test_dispatch_review_incapable_dry_run_writes_no_event(kanban_home):
+    """Dry-run reports the same refusal without mutating the board."""
+    _write_profile("reviewless2", "toolsets:\n- hermes-cli\n")
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review me", assignee="reviewless2")
+        _set_task_status(conn, t, "review")
+        before = len(kb.list_events(conn, t))
+        res = kb.dispatch_once(conn, dry_run=True)
+
+        assert res.spawned == []
+        assert res.skipped_reviewer_incapable == [t]
+        assert len(kb.list_events(conn, t)) == before
+        assert "reviewer_capability" not in [e.kind for e in kb.list_events(conn, t)]
+
+
+def test_dispatch_review_terminal_capable_profile_spawns_with_only_sdlc_review(
+    kanban_home,
+):
+    """A terminal-capable profile passes the real gate and is routed to review.
+
+    Also pins the routing itself: the review agent's skill set is *replaced*
+    with exactly ``["sdlc-review"]``. Carrying the maker's skills into the
+    review spawn would hand the checker the maker's tooling and collapse the
+    maker/checker separation.
+    """
+    _write_profile("reviewer", "toolsets:\n- hermes-cli\n- file\n- terminal\n")
+    spawned_tasks = []
+
+    def capture_spawn(task, workspace, board=None):
+        spawned_tasks.append(task)
+        return 42
+
+    with kb.connect() as conn:
+        t = kb.create_task(
+            conn, title="review me", assignee="reviewer",
+            skills=["maker-only-skill", "another-maker-skill"],
+        )
+        _set_task_status(conn, t, "review")
+        res = kb.dispatch_once(conn, spawn_fn=capture_spawn)
+
+    assert res.skipped_reviewer_incapable == []
+    assert [s[0] for s in res.spawned] == [t]
+    assert len(spawned_tasks) == 1
+    assert spawned_tasks[0].skills == ["sdlc-review"]
+
+
+def test_dispatch_review_accepts_terminal_from_platform_toolsets(kanban_home):
+    """``terminal`` granted per-platform still counts as reviewer-capable."""
+    _write_profile(
+        "reviewer-platform",
+        "toolsets:\n- hermes-cli\nplatform_toolsets:\n  telegram:\n  - terminal\n",
+    )
+    spawns = []
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review me", assignee="reviewer-platform")
+        _set_task_status(conn, t, "review")
+        res = kb.dispatch_once(
+            conn, spawn_fn=lambda task, ws, board=None: spawns.append(task.id) or 42,
+        )
+
+    assert res.skipped_reviewer_incapable == []
+    assert spawns == [t]
+
+
+def test_dispatch_review_fails_closed_on_unreadable_profile_config(kanban_home):
+    """A malformed config.yaml must never read as reviewer-capable.
+
+    Fail-open here would route review work onto a profile whose capabilities
+    are unknown — the exact outcome the gate exists to prevent.
+    """
+    _write_profile("reviewer-broken", "toolsets: [terminal\n  - : : broken yaml\n")
+    spawns = []
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review me", assignee="reviewer-broken")
+        _set_task_status(conn, t, "review")
+        res = kb.dispatch_once(
+            conn, spawn_fn=lambda task, ws, board=None: spawns.append(task.id) or 42,
+        )
+
+    assert res.spawned == []
+    assert res.skipped_reviewer_incapable == [t]
+    assert spawns == []
 
 
 def test_has_spawnable_review_true(kanban_home):

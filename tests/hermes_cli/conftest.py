@@ -7,16 +7,31 @@ import pytest
 
 @pytest.fixture
 def all_assignees_spawnable(monkeypatch):
-    """Pretend every assignee maps to a real Hermes profile.
+    """Pretend every assignee maps to a real, fully capable Hermes profile.
 
     Most dispatcher tests use synthetic assignees ("alice", "bob") that
     don't correspond to actual profile directories on disk. Without this
     patch, the dispatcher's profile-exists guard (PR #20105) routes
     those tasks into ``skipped_nonspawnable`` instead of spawning, which
     would break tests that assert spawn behavior.
+
+    The review column applies a *second*, stricter guard on top of that
+    one: ``profile_has_terminal`` (t_a2ef2ea2) refuses to spawn a review
+    agent on a profile whose ``config.yaml`` does not advertise the
+    ``terminal`` toolset. A synthetic assignee has no ``config.yaml`` at
+    all, so it fails that guard too and lands in
+    ``skipped_reviewer_incapable``. Patching only ``profile_exists`` here
+    would make this fixture mean "exists but cannot do anything", which is
+    not what any of its callers want.
+
+    Tests that want to exercise either guard for real must NOT use this
+    fixture — they create an on-disk profile instead (see
+    ``_write_profile`` in ``test_kanban_db.py``). This fixture deliberately
+    grants capability rather than weakening the guards.
     """
     from hermes_cli import profiles
     monkeypatch.setattr(profiles, "profile_exists", lambda name: True)
+    monkeypatch.setattr(profiles, "profile_has_terminal", lambda name: True)
 
 
 @pytest.fixture(autouse=True)
