@@ -7522,6 +7522,33 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ts_to_epoch_seconds(value: object) -> int:
+    """Normalize a timestamp to epoch seconds (int) for the fleet artifact.
+
+    The consumer artifact (t_319196b4) contract requires ``ts`` as epoch
+    seconds (int) — see protocol_violation_artifact.py REQUIRED_FIELDS and
+    ``_normalize``/``_query`` which call ``int(ev["ts"])``. The dispatcher
+    emits ISO-8601 strings for on-card annotations; the artifact record must
+    carry the machine-readable epoch form so the fleet consumer can parse
+    it. Accepts both forms defensively (fail-open, never raises).
+    """
+    if isinstance(value, bool):
+        return int(time.time())
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return int(value)
+    try:
+        from datetime import datetime
+
+        s = str(value).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return int(datetime.fromisoformat(s).timestamp())
+    except Exception:
+        return int(time.time())
+
+
 def protocol_violations_artifact_path() -> Path:
     """Return the fleet-wide protocol-violation JSONL artifact path.
 
@@ -7597,7 +7624,10 @@ def _emit_protocol_violation_artifact(
             else f"{board}:{card_id}:<no-run>",
             "card_id": card_id,
             "run_id": run_id,
-            "ts": ts,
+            # Consumer contract (t_319196b4): epoch seconds (int). The
+            # on-card annotation keeps the human ISO form; the artifact
+            # record carries the machine form the fleet consumer parses.
+            "ts": _ts_to_epoch_seconds(ts),
             "exit_code": exit_code,
             "missing_terminal_call": missing_terminal_call,
             "board": board,
