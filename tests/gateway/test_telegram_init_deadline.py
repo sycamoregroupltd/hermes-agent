@@ -200,12 +200,14 @@ async def test_shutdown_abandoned_app_handles_none_and_missing_requests():
     app.bot = None
     await tg_adapter._shutdown_abandoned_app(app)  # must not raise
 
-
 @pytest.mark.asyncio
-async def test_blocked_loop_after_expiry_dumps_diagnostics(monkeypatch):
+async def test_blocked_loop_after_expiry_dumps_diagnostics_and_interrupts(monkeypatch):
     """#63309: when the loop thread is stuck in a synchronous call, the expiry
     callback never runs and every asyncio timeout goes silent. The off-loop
-    watchdog must detect that state and emit diagnostics from its own thread."""
+    watchdog must detect that state, emit diagnostics from its own thread, AND
+    forcibly interrupt the main thread via SIGALRM so the blocking call is
+    broken — not just diagnosed (#t_tg_deadline_fix).
+    """
     import asyncio as _asyncio
     import time as _time
 
@@ -216,6 +218,13 @@ async def test_blocked_loop_after_expiry_dumps_diagnostics(monkeypatch):
         lambda timeout, grace: dumps.append((timeout, grace)),
     )
     monkeypatch.setattr(tg_adapter, "_LOOP_BLOCKED_DUMP_GRACE", 0.15)
+
+    interrupts = []
+    monkeypatch.setattr(
+        tg_adapter._thread,
+        "interrupt_main",
+        lambda signum: interrupts.append(signum),
+    )
 
     hung = _asyncio.get_running_loop().create_future()  # never completes
     task = _asyncio.ensure_future(
@@ -231,6 +240,7 @@ async def test_blocked_loop_after_expiry_dumps_diagnostics(monkeypatch):
         await task
 
     assert dumps == [(0.05, 0.15)]
+    assert interrupts == [tg_adapter._LOOP_BLOCKED_BREAK_SIGNAL]
     hung.cancel()
 
 
