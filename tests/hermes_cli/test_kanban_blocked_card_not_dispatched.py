@@ -341,150 +341,157 @@ def test_unblock_task_is_the_only_exit(
         )
 
 
-# ── defense-in-depth: block-gate audit in _dispatch_once_locked ────────
+# ── status-first gate: stale blocked tail vs genuinely blocked (t_d1e107a2) ──
 
 
-def test_block_gate_audit_fires_when_ready_card_has_blocked_event(
+def test_ready_card_with_stale_blocked_event_tail_is_spawnable(
     kanban_home: Path,
     all_assignees_spawnable: None,
 ) -> None:
-    """Defense-in-depth block-gate audit (t_fc1fdf31): a card in ``ready``
-    status that somehow has a ``blocked`` event (bypassing the
-    ``recompute_ready`` blind-spot guard) must be caught by
-    ``_dispatch_once_locked``, which:
+    """t_d1e107a2 regression: a card whose CURRENT status is ``ready`` with
+    only a stale ``blocked`` event tail (the unblock event was missed — a
+    force-promote, historical card, or any path that dropped it) MUST be
+    spawnable.
 
-    1. Skips the spawn (card is NOT claimed).
-    2. Appends the task id to ``result.skipped_block_gate``.
-    3. Emits a ``block_gate_audit`` event in ``task_events``.
-
-    This tests the third layer of defense — the defense-in-depth audit
-    inside the dispatch tick itself, after both the ``recompute_ready``
-    guard and the blind-spot guard have been bypassed (e.g. via direct
-    DB manipulation that leaves status='ready' + a stale blocked event).
+    Before the status-first gate, ``_has_sticky_block`` read only the last
+    block-lifecycle event, so a ready card whose last event was ``blocked``
+    was refused forever — the 07-30 fleet stall refused 22,044 dispatches
+    this way. The current lifecycle state (status='ready') is a CLEAR
+    transition out of blocked and wins over the event tail.
     """
     with kb.connect() as conn:
         tid = kb.create_task(
             conn,
-            title="block-gate-audit-test",
+            title="ready-with-stale-blocked-tail",
             assignee="test-profile",
         )
         # Task is ready (no parents, valid assignee).
         assert kb.get_task(conn, tid).status == "ready"
 
-        # Inject a 'blocked' event directly, as if a block happened
-        # before but the card was then put back to 'ready' via direct
-        # DB manipulation — bypassing the first two defense layers.
+        # Inject a stale 'blocked' event WITHOUT touching the status column
+        # (simulates a force-promote / missed-unblocked historical card).
         now = int(time.time())
         conn.execute(
             "INSERT INTO task_events (task_id, kind, payload, created_at) "
             "VALUES (?, 'blocked', ?, ?)",
-            (tid, '{"origin":"db-injection","reason":"test"}', now),
+            (tid, '{"origin":"test-injection","reason":"stale"}', now),
         )
         conn.commit()
 
-        # _has_sticky_block must now return True
-        assert kb._has_sticky_block(conn, tid), (
-            "_has_sticky_block must detect the injected blocked event"
+        # Status-first gate: a ready card is NOT sticky even with a stale
+        # 'blocked' event tail.
+        assert kb._has_sticky_block(conn, tid) is False, (
+            "ready card with stale blocked tail must not be sticky"
         )
 
-        # Run dispatch — the block-gate audit in _dispatch_once_locked
-        # must catch this ready-but-blocked card.
+        # Dispatch MUST claim and spawn it.
         spy = _spy_spawn()
         result = kb.dispatch_once(conn, spawn_fn=spy)
 
-        # (a) Card must NOT be claimed/spawned
-        assert tid not in result.spawned, (
-            f"Block-gate audit failed: blocked+ready card was spawned "
-            f"(spawned={result.spawned!r})"
+        assert tid in spy.calls, (
+            f"ready card with stale blocked tail must be spawned; "
+            f"got spawned={result.spawned!r}"
         )
-        assert len(spy.calls) == 0, (
-            f"spawn_fn must not be called for a blocked+ready card; "
+        assert len(spy.calls) == 1, (
+            f"spawn_fn must be called exactly once for the ready card; "
             f"got calls={spy.calls!r}"
         )
-
-        # (b) Card must appear in skipped_block_gate (audit triggered)
-        assert tid in result.skipped_block_gate, (
-            f"Block-gate audit failed: card must be in "
-            f"skipped_block_gate; got {result.skipped_block_gate!r}"
+        assert len(result.spawned) == 1, (
+            f"DispatchResult.spawned must list the ready card; "
+            f"got {result.spawned!r}"
+        )
+        # No audit: the card is not blocked, so it must not land in any
+        # blocked-card telemetry bucket.
+        assert tid not in result.skipped_block_gate
+        assert tid not in result.blocked_claim_attempts
+        assert _block_gate_audit_count(conn, tid) == 0, (
+            "no block_gate_audit event expected for a ready card"
         )
 
-        # (c) A block_gate_audit event must exist in task_events
-        audit_count = _block_gate_audit_count(conn, tid)
-        assert audit_count >= 1, (
-            f"block_gate_audit event was not created; "
-            f"expected >=1, got {audit_count}"
-        )
 
-        # Card stays 'ready' — the audit is a no-mutate gate, not a
-        # status change.
-        assert kb.get_task(conn, tid).status == "ready"
-
-
-def test_dispatch_once_skips_blocked_card_at_spawn_time(
+def test_genuinely_blocked_card_stays_gated(
     kanban_home: Path,
     all_assignees_spawnable: None,
 ) -> None:
-    """End-to-end regression: ``dispatch_once`` must skip a ready card
-    with a sticky block AND produce a ``block_gate_audit`` event.
-
-    This is the full trace from the task body AC — creates a blocked
-    card, attempts to dispatch it, and verifies:
-    (a) the card is not claimed,
-    (b) an audit log entry is created with the reason 'blocked'.
+    """t_d1e107a2 regression: a GENUINELY blocked card — current status
+    column is 'blocked' (worker/operator ``kanban_block``) — must stay
+    gated even if an earlier event tail could be misread. The status-first
+    gate preserves approval blocks: status='blocked' wins over everything.
     """
     with kb.connect() as conn:
-        # Create the task so it lands in 'ready' (no parents, assignee).
         tid = kb.create_task(
             conn,
-            title="blocked-dispatch-audit-e2e",
+            title="genuinely-blocked",
+            assignee="test-profile",
+            initial_status="running",
+        )
+        assert kb.get_task(conn, tid).status == "ready"
+
+        # A real worker/operator block: status flips to 'blocked' AND a
+        # 'blocked' event is emitted (block_task does both).
+        kb.block_task(conn, tid, reason="review-required: human eyes please")
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked"
+
+        # Status-first gate: blocked status is always sticky.
+        assert kb._has_sticky_block(conn, tid) is True, (
+            "genuinely blocked card must be sticky"
+        )
+
+        # Dispatch must NOT claim or spawn it, and must keep it blocked.
+        spy = _spy_spawn()
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked", (
+            f"genuinely blocked card must stay blocked; got {task.status!r}"
+        )
+        assert tid not in [s[0] for s in result.spawned]
+        assert len(spy.calls) == 0, (
+            f"spawn_fn must not be called for a blocked card; "
+            f"got calls={spy.calls!r}"
+        )
+        assert task.claim_lock is None, (
+            f"blocked card must not be claimed; claim_lock={task.claim_lock!r}"
+        )
+
+
+def test_ready_card_stale_tail_not_in_skipped_bucket(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """t_d1e107a2: defense-in-depth audit must NOT fire for a ready card
+    that merely carries a stale 'blocked' event tail. The
+    ``skipped_block_gate`` / ``block_gate_audit`` machinery exists for
+    cards whose CURRENT lifecycle state is blocked — a ready card is a
+    clear transition out of blocked and is spawned, not skipped.
+    """
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn,
+            title="stale-tail-no-audit",
             assignee="test-profile",
         )
         assert kb.get_task(conn, tid).status == "ready"
 
-        # Inject a 'blocked' event to create a sticky block without
-        # touching the status. This simulates the exact edge case:
-        # a card that is technically 'ready' but has an unresolved
-        # block from a prior manual DB manipulation or missed event.
         now = int(time.time())
         conn.execute(
             "INSERT INTO task_events (task_id, kind, payload, created_at) "
             "VALUES (?, 'blocked', ?, ?)",
-            (tid, '{"origin":"test-injection","reason":"blocked"}', now),
+            (tid, '{"origin":"test","reason":"stale"}', now),
         )
         conn.commit()
-
-        # (a) Card must NOT be claimed — verify before and after dispatch
-        pre_task = kb.get_task(conn, tid)
-        assert pre_task.claim_lock is None, "No claim lock before dispatch"
 
         spy = _spy_spawn()
         result = kb.dispatch_once(conn, spawn_fn=spy)
 
-        # Card is still not claimed after dispatch
-        post_task = kb.get_task(conn, tid)
-        assert post_task.claim_lock is None, (
-            f"Card was claimed despite having a sticky block; "
-            f"claim_lock={post_task.claim_lock!r}"
+        assert tid in spy.calls, (
+            f"ready card with stale tail must be spawned; got spawned={result.spawned!r}"
         )
-        assert tid not in result.spawned, (
-            f"Card was spawned despite sticky block"
-        )
-
-        # (b) Audit event exists with reason 'blocked' in the payload
-        audit_rows = conn.execute(
-            "SELECT payload FROM task_events "
-            "WHERE task_id = ? AND kind = 'block_gate_audit'",
-            (tid,),
-        ).fetchall()
-        assert len(audit_rows) >= 1, (
-            "No block_gate_audit event was created"
-        )
-
-        # Card appears in skipped_block_gate as final evidence
-        assert tid in result.skipped_block_gate, (
-            f"Card must be in skipped_block_gate; "
-            f"got {result.skipped_block_gate!r}"
-        )
+        assert len(result.spawned) == 1, f"got {result.spawned!r}"
+        assert tid not in result.skipped_block_gate
+        assert tid not in result.blocked_claim_attempts
+        assert _block_gate_audit_count(conn, tid) == 0
+        assert len(_blocked_dispatch_attempt_events(conn, tid)) == 0
 
 
 # ── t_73a70cde: blocked-card exclusion + audit logging ────────────────────
@@ -512,14 +519,71 @@ def test_t73a70cde_sticky_block_audit_event_metadata(
 ) -> None:
     """t_73a70cde acceptance (b): every blocked-card claim attempt logs a
     ``blocked_dispatch_attempt`` event carrying card id, timestamp, and
-    dispatcher id — for the normal sticky-block (human-parked) case.
+    dispatcher id.
+
+    Under the status-first gate (t_d1e107a2), a READY card with a stale
+    ``blocked`` event tail is spawnable — it is not a blocked card. The
+    audit path fires for the racy-writer case the code comment describes:
+    a card selected as ``ready`` in the snapshot that a concurrent writer
+    flips to ``status='blocked'`` before the per-row re-read. We simulate
+    that deterministically: card A's spawn flips card B to ``blocked``
+    mid-loop, so when the loop reaches B the fresh re-read sees a blocked
+    card and the audit fires.
+    """
+    with kb.connect() as conn:
+        # Card A is processed first (earlier created_at); its spawn_fn
+        # simulates the concurrent operator block on card B.
+        a = kb.create_task(conn, title="t73-a", assignee="test-profile")
+        b = kb.create_task(conn, title="t73-b", assignee="test-profile")
+        assert kb.get_task(conn, a).status == "ready"
+        assert kb.get_task(conn, b).status == "ready"
+
+        flips: list[str] = []
+
+        def spy(task, workspace_path, board=None):
+            # Simulate a concurrent writer blocking card B while A is being
+            # claimed/spawned — the exact racy re-read case.
+            conn.execute("UPDATE tasks SET status = 'blocked' WHERE id = ?", (b,))
+            conn.commit()
+            flips.append(getattr(task, "id", str(task)))
+            return 999999
+
+        result = kb.dispatch_once(conn, spawn_fn=spy)
+
+        # (a) A spawned; B was never claimed (blocked mid-loop).
+        assert a in [s[0] for s in result.spawned]
+        assert flips == [a]
+        assert b not in [s[0] for s in result.spawned]
+        assert kb.get_task(conn, b).status == "blocked"
+        # (b) audit event present with required metadata for B
+        assert b in result.blocked_claim_attempts
+        assert b in result.skipped_block_gate
+        events = _blocked_dispatch_attempt_events(conn, b)
+        assert events, "blocked_dispatch_attempt event was not created"
+        ev = events[0]
+        assert ev.get("task_id") == b
+        assert isinstance(ev.get("timestamp"), int) and ev["timestamp"] > 0
+        assert ev.get("dispatcher_id")  # host:pid identifier
+        assert ev.get("sticky_block") is True
+        assert ev.get("status_column") == "blocked"
+
+
+def test_t73a70cde_stale_tail_ready_card_is_not_an_audit_event(
+    kanban_home: Path,
+    all_assignees_spawnable: None,
+) -> None:
+    """t_d1e107a2: the audit path must NOT fire for a ready card with a
+    stale ``blocked`` event tail — that card is spawnable, so no
+    ``blocked_dispatch_attempt`` is written. The audit is reserved for
+    cards whose CURRENT lifecycle state is blocked (racy re-read or a
+    genuinely blocked card reaching the claim loop).
     """
     with kb.connect() as conn:
         tid = kb.create_task(
-            conn, title="t73-sticky", assignee="test-profile",
+            conn, title="t73-stale-tail", assignee="test-profile",
         )
         assert kb.get_task(conn, tid).status == "ready"
-        # Sticky block via injected blocked event (human/worker park).
+        # Stale blocked event tail only — status stays 'ready'.
         now = int(time.time())
         conn.execute(
             "INSERT INTO task_events (task_id, kind, payload, created_at) "
@@ -527,22 +591,18 @@ def test_t73a70cde_sticky_block_audit_event_metadata(
             (tid, '{"origin":"test","reason":"parked"}', now),
         )
         conn.commit()
-        assert kb._has_sticky_block(conn, tid)
+        assert kb._has_sticky_block(conn, tid) is False
 
         spy = _spy_spawn()
         result = kb.dispatch_once(conn, spawn_fn=spy)
-        # (a) not claimed
-        assert tid not in result.spawned
-        assert tid in result.skipped_block_gate
-        # (b) audit event present with required metadata
-        assert tid in result.blocked_claim_attempts
-        events = _blocked_dispatch_attempt_events(conn, tid)
-        assert events, "blocked_dispatch_attempt event was not created"
-        ev = events[0]
-        assert ev.get("task_id") == tid
-        assert isinstance(ev.get("timestamp"), int) and ev["timestamp"] > 0
-        assert ev.get("dispatcher_id")  # host:pid identifier
-        assert ev.get("sticky_block") is True
+        assert tid in spy.calls, (
+            f"ready card with stale tail must be spawned; got spawned={result.spawned!r}"
+        )
+        assert len(result.spawned) == 1, f"got {result.spawned!r}"
+        assert tid not in result.skipped_block_gate
+        assert tid not in result.blocked_claim_attempts
+        assert _blocked_dispatch_attempt_events(conn, tid) == []
+        assert _block_gate_audit_count(conn, tid) == 0
 
 
 def test_t73a70cde_blind_spot_status_blocked_excluded_from_claim(
@@ -570,7 +630,7 @@ def test_t73a70cde_blind_spot_status_blocked_excluded_from_claim(
         spy = _spy_spawn()
         result = kb.dispatch_once(conn, spawn_fn=spy)
         # (a) never claim a blocked card
-        assert tid not in result.spawned
+        assert tid not in [s[0] for s in result.spawned]
         assert len(spy.calls) == 0
         # The card carries no blocked event, so the loop's sticky check does
         # not fire and no audit event is expected for this path — the
