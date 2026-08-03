@@ -4294,41 +4294,58 @@ def _synthesize_ended_run(
 # ---------------------------------------------------------------------------
 
 def _has_sticky_block(conn: sqlite3.Connection, task_id: str) -> bool:
-    """Return True when ``task_id`` is sticky-blocked by an explicit
-    worker/operator ``kanban_block`` call (#28712).
+    """Return True when ``task_id`` is sticky-blocked and must stay gated.
 
-    A ``blocked`` status can come from two very different sources:
+    Blocked-ness is resolved from the card's CURRENT lifecycle state first
+    (t_d1e107a2). The status column is the authoritative current state; the
+    block-lifecycle event tail is only a fallback for states that do not
+    themselves prove a transition out of ``blocked``.
 
-    * **Worker- or operator-initiated** — a worker called
-      ``kanban_block(reason="review-required: ...")`` (or somebody ran
-      ``hermes kanban block <id>``).  This is a deliberate handoff that
-      should stay blocked until an operator unblocks it.  The block tool
-      emits a ``"blocked"`` event row in ``task_events``.
+    * **status == 'blocked'** — the card is genuinely blocked right now,
+      however it got there: worker/operator ``kanban_block`` (emits a
+      ``"blocked"`` event), the circuit breaker (``_record_task_failure``,
+      emits ``"gave_up"``), or a direct status write with no event. All
+      stay gated. ``recompute_ready`` must never auto-promote them, and the
+      dispatcher must never claim them.
 
-    * **Circuit-breaker** — ``_record_task_failure`` tripped after
-      repeated crashes / spawn failures / timeouts.  This emits
-      ``"gave_up"``, *not* ``"blocked"``, and is meant to recover
-      automatically once the underlying conditions change (e.g. parents
-      finish, transient infra error clears).
+    * **status == 'ready'** — the card has a CLEAR transition out of
+      ``blocked``: its current lifecycle state is the dispatcher's own
+      ready pool. A stale ``"blocked"`` event tail (e.g. a ``promote_task``
+      / operator force-promote that missed emitting ``unblocked``, a
+      historical card, or any path that dropped the unblock event) must not
+      keep it gated forever — that is the 07-30 stall class
+      (``_has_sticky_block`` refused 22,044 dispatches). Returns False.
 
-    The cheapest signal that distinguishes the two is the most recent
-    ``"blocked"`` / ``"unblocked"`` event for the task.  If the most
-    recent one is ``"blocked"`` (or there is a ``"blocked"`` event and
-    no ``"unblocked"`` event has fired since), the task is sticky and
-    ``recompute_ready`` must *not* auto-promote it.
+    * **status == 'todo'** — no clear transition out of ``blocked`` has
+      been proven. A blocked→todo reset WITHOUT an ``unblocked`` event
+      (triage reset / approval-auto-clear / direct status write) must stay
+      parked (t_jarvis_autopromote_20260728), so fall back to the
+      block-lifecycle event tail: sticky if the most recent
+      ``"blocked"``/``"unblocked"`` event is ``"blocked"``.
 
-    Returns ``False`` when there is no such event at all (e.g. the task
-    was set to ``status='blocked'`` by the circuit breaker or by direct
-    DB manipulation) — preserves the pre-#28712 auto-recover semantics
-    for that path.
+    Returns ``False`` when the task is missing.
     """
     row = conn.execute(
+        "SELECT status FROM tasks WHERE id = ?", (task_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    cur_status = row["status"]
+    if cur_status == "blocked":
+        return True
+    if cur_status == "ready":
+        return False
+    # 'todo' / anything else: no clear transition out of blocked — use the
+    # event-tail heuristic (the pre-#28712 auto-recover path for
+    # circuit-breaker ``gave_up`` blocks is preserved: no 'blocked' event
+    # means not sticky).
+    ev = conn.execute(
         "SELECT kind FROM task_events "
         "WHERE task_id = ? AND kind IN ('blocked', 'unblocked') "
         "ORDER BY id DESC LIMIT 1",
         (task_id,),
     ).fetchone()
-    return bool(row) and row["kind"] == "blocked"
+    return bool(ev) and ev["kind"] == "blocked"
 
 
 def recompute_ready(
@@ -4343,9 +4360,13 @@ def recompute_ready(
     blocked purely by a parent dependency unblocks itself when the
     parent completes), *except* in two cases:
 
-    1. The most recent block event was a worker-initiated
-       ``kanban_block`` — those stay blocked until an explicit
-       ``kanban_unblock`` (#28712).
+    1. The card's current status is ``blocked`` — ``_has_sticky_block``
+       resolves blocked-ness from the CURRENT lifecycle state first
+       (t_d1e107a2): any card whose status column still reads ``blocked``
+       stays gated, whether the block came from a worker-initiated
+       ``kanban_block`` (#28712), the circuit breaker, or a direct status
+       write. Those stay blocked until an explicit ``kanban_unblock`` /
+       status transition out of ``blocked``.
 
     2. The task's ``consecutive_failures`` has reached the effective
        failure limit.  This prevents infinite retry loops when a task
@@ -7199,10 +7220,27 @@ class DispatchResult:
     actively preventing two dispatchers from racing on ``kanban.db``."""
     skipped_block_gate: list[str] = field(default_factory=list)
     """Ready task ids skipped because the task has an unresolved block gate
-    (t_fc1fdf31). A task that was worker/operator-blocked but somehow
-    reached the ready queue (manual DB edit, missed event, code-path bug)
-    is caught here: an audit event is logged and no spawn is attempted.
+    (t_fc1fdf31). A task whose CURRENT lifecycle state is blocked
+    (status='blocked' via manual DB edit, missed event, code-path bug, or
+    a stale 'blocked' event tail with no proven transition out) is caught
+    here: an audit event is logged and no spawn is attempted.
+    Blocked-ness is resolved from the card's current status first
+    (t_d1e107a2) — a ready card with only a stale 'blocked' event tail IS
+    spawnable and does not land in this bucket.
     This is the defense-in-depth guard for the dispatch tick."""
+
+    blocked_claim_attempts: list[str] = field(default_factory=list)
+    """Every blocked card the dispatcher refused to claim this tick
+    (t_73a70cde / t_a2ef2ea2). A superset of :attr:`skipped_block_gate`:
+    this captures any ready-queue card whose CURRENT re-read status is
+    ``status='blocked'`` (a racy writer flipping a ready row mid-tick, or
+    a manual DB edit) — the blind-spot guard's safety net. With the
+    status-first gate (t_d1e107a2) a ready card carrying only a stale
+    ``blocked`` event tail is spawnable and never lands here. Each entry
+    corresponds to a ``blocked_dispatch_attempt`` audit event in
+    ``task_events`` carrying the card id, a timestamp, and the dispatcher
+    identifier — so fleet telemetry / a soak watchdog can prove no blocked
+    card was silently claimed."""
 
 
 # Bounded registry of recently-reaped worker child exits, populated by the
@@ -8781,19 +8819,90 @@ def _dispatch_once_locked(
         if max_spawn is not None and running_count + spawned >= max_spawn:
             break
 
-        # Block-gate audit (t_fc1fdf31): defense-in-depth — if a ready
-        # task has an unresolved block gate (worker/operator ``kanban_block``
-        # without a subsequent unblock), something went wrong: manual DB
-        # edit, missed event, or a code-path bug. Log an audit event and
-        # skip the spawn so no claim is sent for a blocked card.
-        if _has_sticky_block(conn, row["id"]):
-            result.skipped_block_gate.append(row["id"])
+        # Blocked-card exclusion + audit logging (t_73a70cde / t_a2ef2ea2).
+        #
+        # Acceptance criterion (a): the dispatcher MUST NEVER transition a
+        # blocked card to ``running`` without an explicit unblock event
+        # recorded in task_events. We treat a ready-row card as "blocked"
+        # when its CURRENT lifecycle state says blocked (t_d1e107a2):
+        #
+        #   1. status == 'blocked' — a card that somehow reached the ready
+        #      queue (manual DB edit, racy writer, recompute_ready bug) while
+        #      still carrying the blocked status column. The blind-spot guard
+        #      in recompute_ready is meant to prevent this, so reaching here
+        #      is a defense-in-depth safety net, not the happy path.
+        #   2. _has_sticky_block(...) — a card whose current status is
+        #      'blocked' (or whose 'todo' lifecycle has no proven transition
+        #      out of blocked). The predicate resolves blocked-ness from the
+        #      card's CURRENT lifecycle/status-transition state first, NOT
+        #      the last event tail: a genuinely blocked card stays gated,
+        #      while a ready card with a stale 'blocked' event tail is a
+        #      clear transition out of blocked and IS spawnable (the 07-30
+        #      stall class — 22,044 dispatches refused on stale tails).
+        #
+        # Acceptance criterion (b): for EVERY attempt to claim a blocked card,
+        # log an audit event carrying the required metadata — card id,
+        # timestamp, and dispatcher identifier — so fleet telemetry / a soak
+        # watchdog can prove no blocked card was silently claimed.
+        #
+        # Read the authoritative status fresh: the ready_rows cursor is a
+        # snapshot taken before the per-row loop, and a concurrent writer
+        # (e.g. an operator block or a racy recompute) could have flipped the
+        # card to 'blocked' in between. The claim gate only acts on 'ready'
+        # rows, so a snapshot status of 'blocked' can never be in this set —
+        # but re-reading keeps the backstop correct even if the WHERE clause
+        # or a future writer changes, so a blocked card can never transition
+        # to running without an explicit unblock event (acceptance (a)).
+        _blocked_row_status = conn.execute(
+            "SELECT status FROM tasks WHERE id = ?", (row["id"],)
+        ).fetchone()
+        _blocked_row_status = (
+            _blocked_row_status["status"] if _blocked_row_status else None
+        )
+        _sticky = _has_sticky_block(conn, row["id"])
+        _is_blocked = (_blocked_row_status == "blocked") or _sticky
+        if _is_blocked:
+            # Back-compat telemetry bucket (t_fc1fdf31) — populated when the
+            # card is blocked by a sticky block event, matching the prior
+            # behaviour that downstream dashboards already read.
+            if _sticky:
+                result.skipped_block_gate.append(row["id"])
+            # t_73a70cde acceptance (b): every blocked-card claim attempt is
+            # logged with card id + timestamp + dispatcher id.
+            result.blocked_claim_attempts.append(row["id"])
             if not dry_run:
                 at = _claimer_id()
+                at_ts = int(time.time())
                 with write_txn(conn):
+                    # Legacy audit event — emit for the sticky-block path so
+                    # existing dashboards / soak watchers that read
+                    # ``block_gate_audit`` keep working (registered design at
+                    # Incidents/Audits/2026-07-28-t_f85428fe-...). The
+                    # non-sticky blind-spot case (status='blocked' with no
+                    # blocked event) is covered only by the new
+                    # ``blocked_dispatch_attempt`` event below.
+                    if _sticky:
+                        _append_event(
+                            conn, row["id"], "block_gate_audit",
+                            {
+                                "origin": at,
+                                "task_id": row["id"],
+                                "timestamp": at_ts,
+                            },
+                        )
+                    # New t_73a70cde audit event — every blocked-card claim
+                    # attempt (sticky OR blind-spot status='blocked') carries
+                    # the required metadata: card id, timestamp, dispatcher id.
                     _append_event(
-                        conn, row["id"], "block_gate_audit",
-                        {"origin": at, "task_id": row["id"]},
+                        conn, row["id"], "blocked_dispatch_attempt",
+                        {
+                            "task_id": row["id"],
+                            "dispatcher_id": at,
+                            "timestamp": at_ts,
+                            "status_column": _blocked_row_status,
+                            "sticky_block": _sticky,
+                            "reason": "dispatcher refused to claim a blocked card",
+                        },
                     )
             continue
 
