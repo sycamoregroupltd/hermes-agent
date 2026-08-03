@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import re
 import sys
@@ -39,6 +40,79 @@ TIER1_INVESTIGATE_FLOOR = 300
 MIN_SOURCE_PARSE_N = 10
 MIN_NEWS_MONITOR_META_N = 100
 
+# --- Authoritative verdict JSON (t_fb422737 / t_df54ca93 / t_7422b8ae) ------
+# The calibration report's machine-readable verdict (``calibration_verdict.json``,
+# fields ``weighted_mce`` + ``tier1_clean_n``) is the PREFERRED source for the
+# two values that drive this watchdog's calibration alert: the sample-weighted
+# MCE and the Tier-1 realized-exit clean sample size it is measured on. Using
+# the JSON removes regex fragility and guarantees the alert is gated/labelled
+# on the SAME Tier-1 sample the MCE is computed on (never the MERGED
+# Tier-1+Tier-2 count — root cause t_fb422737).
+#
+# The report writes the verdict to an ephemeral temp path when run from the
+# pinned-commit wrapper, so we search a small candidate set (fail-open: any
+# missing/unreadable file just falls through to Section-7 regex parsing).
+VERDICT_JSON_CANDIDATES = [
+    # Explicit env override (highest priority).
+    os.environ.get("FUSION_CALIBRATION_VERDICT_JSON", ""),
+    # Ephemeral temp path the pinned-commit report writes while running.
+    "/tmp/calibration_verdict.json",
+    # Static locations where a report producer could land the verdict.
+    "/home/frank/sycode-trading/execution/calibration_verdict.json",
+    "/home/frank/sycode-trading/monitoring/fusion-calibration/calibration_verdict.json",
+]
+
+
+def load_verdict_json() -> dict:
+    """Return ``{"weighted_mce": float, "tier1_clean_n": int}`` from the
+    report's authoritative ``calibration_verdict.json``, or ``{}`` when the
+    verdict is unavailable/unreadable.
+
+    Fail-open by design (t_016ac4e4 lesson): a missing or malformed verdict
+    must never wedge the watchdog — callers fall back to Section-7 regex
+    parsing. Only fields with non-empty values are surfaced.
+    """
+    for raw in VERDICT_JSON_CANDIDATES:
+        if not raw:
+            continue
+        path = Path(raw)
+        try:
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        out: dict = {}
+        for key, cast in (("weighted_mce", float), ("tier1_clean_n", int)):
+            val = data.get(key)
+            if val is None:
+                continue
+            try:
+                out[key] = cast(val)
+            except (TypeError, ValueError):
+                continue
+        if out:
+            return out
+    return {}
+
+# --- t_ba7757c8: evidence-based alert cooldown + payload context ------------
+# Threshold decision (reviewed 2026-08-03, parent triage t_b7204a09):
+#   MCE_THRESHOLD stays 15.0pp. The 15.8pp alert headline was the MERGED-sample
+#   figure; the authoritative Tier-1 scored-only MCE was 32.8-41.9pp (~2x
+#   UNDERSTATED), so the breach is genuine and raising the threshold would mask
+#   it. The noise problem is NOT the threshold — it is the 6h cron re-carding
+#   the same persistent breach (standing duplicate chain t_9f92b853,
+#   t_6c992632, t_a7ea3cf9, t_fd15d9fa, t_893054a5). We therefore keep the
+#   thresholds unchanged and add a per-family CARD-CREATION COOLDOWN: stdout
+#   alerts still emit every tick; only the kanban triage card is created at
+#   most once per family per BREACH_CARD_COOLDOWN_HOURS. Fail-open: any state
+#   read error allows card creation (never suppress on error).
+BREACH_CARD_COOLDOWN_HOURS = 24
+STATE_DIR = Path(__file__).resolve().parent / "state"
+STATE_FILE = STATE_DIR / "calibration_watchdog_state.json"
+
 def run_report() -> tuple[int, str]:
     """Run the report wrapper and capture its output."""
     env = os.environ.copy()
@@ -65,8 +139,19 @@ def run_report() -> tuple[int, str]:
     except Exception as e:
         return -2, f"Error running report: {e}"
 
-def parse_metrics(output: str) -> dict:
-    """Parse key metrics from the report output using robust regex."""
+def parse_metrics(output: str, verdict: dict | None = None) -> dict:
+    """Parse key metrics from the report output using robust regex.
+
+    ``verdict`` (t_7422b8ae) is the optional machine-readable verdict from
+    calibration_verdict.json (see load_verdict_json). When present, its
+    ``weighted_mce`` and ``tier1_clean_n`` are the PREFERRED values and
+    OVERRIDE the regex-parsed figures (applied AFTER the regex so the JSON
+    always wins when both exist). Section-7 / Section-1 ``tier1_clean_n``
+    regex parsing remains the no-JSON fallback. When ``verdict`` is None the
+    loader is consulted; a missing/malformed verdict is fail-open ({}).
+    """
+    if verdict is None:
+        verdict = load_verdict_json()
     metrics = {
         "n": None,
         "merged_n": None,
@@ -78,6 +163,9 @@ def parse_metrics(output: str) -> dict:
         "tier1_scored_mce": None,
         "tier1_scored_n": None,
         "tier1_scored_error": None,
+        "sample_window": None,
+        "resolution_span": None,
+        "epoch_start_reported": None,
         "sql_errors": 0,
         "has_integrity_warning": False,
         "is_v2_report": "# Fusion Engine Calibration Report v2" in output,
@@ -126,25 +214,35 @@ def parse_metrics(output: str) -> dict:
         if _t_txt:
             metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
 
-    # n = the calibration-sample identity (Tier-1). Fall back to merged_n ONLY
-    # when the Tier-1 line is absent (legacy/pre-Tier-2 reports) so the monitor
-    # never goes silently blind — but the MCE is always measured on
-    # tier1_clean_n, so labelling the alert with merged_n is wrong and is the
-    # root-cause defect fixed by t_016ac4e4.
-    metrics["n"] = (
-        metrics["tier1_clean_n"]
-        if metrics["tier1_clean_n"] is not None
-        else metrics["merged_n"]
-    )
+    # n = the calibration-sample identity (Tier-1). NEVER merged_n (t_7422b8ae
+    # / t_fb422737): the merged Tier-1+Tier-2 count must not drive alert
+    # suppression or reporting. If the Tier-1 line is absent AND no JSON
+    # verdict was available, n stays None and main() stays silent (runbook §5)
+    # rather than silently substituting the merged count and re-opening the
+    # suppression gate.
+    metrics["n"] = metrics["tier1_clean_n"]
 
-    # Extract win rate
-    wr_match = re.search(r'\|\s*\*\*Clean win rate\*\*\s*\|\s*\*\*([0-9.]+)%\*\*\s*\|', output)
+    # Extract win rate. t_ba7757c8: the pinned v2 report emits
+    # `**Tier-1 clean win rate**` (Section 1 table) and
+    # `- **Tier-1 clean win rate: 19.0%**` (Section 7 observation) — the old
+    # `Clean win rate` regex silently never matched, so the 40% WR breach never
+    # fired (parent triage t_b7204a09 P1 "watchdog WR regex stale"). Match the
+    # Tier-1 label first, keep the legacy form as a fallback for older reports.
+    wr_match = re.search(r'\|\s*\*\*Tier-1 clean win rate\*\*\s*\|\s*\*\*([0-9.]+)%\*\*\s*\|', output)
     if wr_match:
         metrics["win_rate"] = float(wr_match.group(1))
     else:
-        wr_match_7 = re.search(r'-\s*\*\*Clean win rate:\s*([0-9.]+)%\*\*', output)
-        if wr_match_7:
-            metrics["win_rate"] = float(wr_match_7.group(1))
+        wr_match = re.search(r'\|\s*\*\*Clean win rate\*\*\s*\|\s*\*\*([0-9.]+)%\*\*\s*\|', output)
+        if wr_match:
+            metrics["win_rate"] = float(wr_match.group(1))
+        else:
+            wr_match_7 = re.search(r'-\s*\*\*Tier-1 clean win rate:\s*([0-9.]+)%\*\*', output)
+            if wr_match_7:
+                metrics["win_rate"] = float(wr_match_7.group(1))
+            else:
+                wr_match_7 = re.search(r'-\s*\*\*Clean win rate:\s*([0-9.]+)%\*\*', output)
+                if wr_match_7:
+                    metrics["win_rate"] = float(wr_match_7.group(1))
 
     # Extract average PnL%
     pnl_match = re.search(r'\|\s*\*\*Clean average PnL%\*\*\s*\|\s*\*\*([0-9.-]+)%\*\*\s*\|', output)
@@ -168,6 +266,39 @@ def parse_metrics(output: str) -> dict:
     if mce_match:
         metrics["weighted_mce"] = float(mce_match.group(1))
         metrics["merged_mce"] = float(mce_match.group(1))
+
+    # --- t_7422b8ae: JSON-preferred authoritative values (applied LAST) -----
+    # The machine-readable verdict (calibration_verdict.json, weighted_mce +
+    # tier1_clean_n) is the PREFERRED source for the two values that drive the
+    # calibration alert. Apply AFTER the regex parses so the JSON ALWAYS wins
+    # when both sources exist (earlier draft applied it before the regex and
+    # the report MCE line silently overwrote it — D1). Fail-open: an absent or
+    # partial verdict leaves the regex values in place.
+    if verdict.get("weighted_mce") is not None:
+        metrics["weighted_mce"] = verdict["weighted_mce"]
+    if verdict.get("tier1_clean_n") is not None:
+        metrics["tier1_clean_n"] = verdict["tier1_clean_n"]
+        metrics["n"] = verdict["tier1_clean_n"]
+
+    # --- Sample window / resolution span (t_ba7757c8 payload enrichment) -----
+    # The report header emits `**Window:** last 30d (30d) of resolved outcomes`
+    # and Section 1 emits `| Clean sample resolution span | 2026-07-06 02:57 ->
+    # 2026-08-03 08:03 UTC |`. Both are evidence context so the operator knows
+    # the exact observation window the breach was measured on without opening
+    # the dashboard.
+    win_match = re.search(r'\*\*Window:\*\*\s*([^*\n]+?)\s*of resolved outcomes', output)
+    if win_match:
+        metrics["sample_window"] = win_match.group(1).strip()
+    else:
+        legacy_win = re.search(r'Window:\s*([^\n|]+)', output)
+        if legacy_win:
+            metrics["sample_window"] = legacy_win.group(1).strip()
+    span_match = re.search(r'Clean sample resolution span\s*\|\s*([^|]+)\|', output)
+    if span_match:
+        metrics["resolution_span"] = span_match.group(1).strip()
+    epoch_match = re.search(r'Clean sample epoch gate\s*\|\s*([^|]+)\|', output)
+    if epoch_match:
+        metrics["epoch_start_reported"] = epoch_match.group(1).strip()
 
     # Check for SQL/Database failures
     if "SQL failed" in output or "SQL timed out" in output or "DATA-INTEGRITY WARNING" in output:
@@ -346,7 +477,10 @@ TIER1_SCORED_SQL = """
         COALESCE(ts.conviction_score::numeric,
                  sj.composite_confidence_score::numeric)::text AS conviction_score,
         (lr.position_id IS NOT NULL)::text AS ledger_matched,
-        lr.is_win::text AS ledger_is_win
+        lr.is_win::text AS ledger_is_win,
+        COALESCE(sj.direction, '')::text AS direction,
+        COALESCE(sj.timeframe, '')::text AS timeframe,
+        COALESCE(d.label_source, '')::text AS lane
     FROM signal_journeys sj
     JOIN decision_outcomes d ON d.journey_id = sj.id
     LEFT JOIN trade_setups ts ON ts.signal_id = sj.id::text
@@ -456,17 +590,130 @@ def compute_tier1_scored_mce() -> tuple[float | None, int | None, str | None]:
             if not line:
                 continue
             parts = line.split("|")
-            if len(parts) != 4:
+            if len(parts) < 4:
                 continue
-            rows.append({
+            row = {
                 "conviction_score": parts[1].strip(),
                 "ledger_matched": parts[2].strip(),
                 "ledger_is_win": parts[3].strip(),
-            })
+            }
+            if len(parts) >= 7:
+                row["direction"] = parts[4].strip()
+                row["timeframe"] = parts[5].strip()
+                row["lane"] = parts[6].strip()
+            rows.append(row)
         mce, scored_n = compute_bucket_weighted_mce(rows)
         return mce, scored_n, None
     except Exception as e:
         return None, None, str(e)
+
+
+def compute_top_contributing_slice(rows) -> str | None:
+    """Return a concise ``strategy slice`` evidence line for the alert payload.
+
+    Mirrors the t_b7204a09 triage segmentation: among the ledger-scored Tier-1
+    rows, pick the direction / timeframe / lane slice with the largest
+    sample-weighted MCE contribution (|actual_wr - expected_wr| * n/scored_n,
+    expected_wr = bucket midpoint of the row's conviction score). Read-only,
+    pure function over the same rows as compute_tier1_scored_mce.
+
+    Returns a single line like::
+
+        "Top strategy slice: dir=LONG (n=184, WR 13.6%, contrib 18.70pp)"
+
+    or ``None`` when no scored rows exist. Never raises.
+    """
+    scored = []
+    for r in rows:
+        if not _is_true(r.get("ledger_matched", "")):
+            continue  # fail-closed: only reconciled rows are scored
+        try:
+            score = float(r.get("conviction_score") or 0)
+        except (ValueError, TypeError):
+            score = 0.0
+        scored.append((score, _is_true(r.get("ledger_is_win", "")), r))
+    if not scored:
+        return None
+
+    def slice_contrib(get_key):
+        groups = {}
+        for score, win, r in scored:
+            k = get_key(r)
+            g = groups.setdefault(k, {"n": 0, "w": 0, "score_sum": 0.0})
+            g["n"] += 1
+            if win:
+                g["w"] += 1
+            g["score_sum"] += score
+        best = None
+        denom = len(scored)
+        for k, g in groups.items():
+            act = (g["w"] / g["n"] * 100) if g["n"] else 0.0
+            exp = (g["score_sum"] / g["n"] * 100) if g["n"] else 0.0
+            contrib = abs(act - exp) * (g["n"] / denom)
+            if best is None or contrib > best[0]:
+                best = (contrib, k, g["n"], act)
+        return best
+
+    candidates = []
+    for label, fn in (
+        ("dir", lambda r: str(r.get("direction", "")).upper() or "N/A"),
+        ("tf", lambda r: str(r.get("timeframe", "")) or "N/A"),
+        ("lane", lambda r: str(r.get("lane", "")) or "N/A"),
+    ):
+        c = slice_contrib(fn)
+        if c is not None:
+            candidates.append((label, c))
+    if not candidates:
+        return None
+    label, (contrib, key, n, act_wr) = max(
+        candidates, key=lambda t: t[1][0])
+    return (
+        f"Top strategy slice: {label}={key} "
+        f"(n={n}, WR {act_wr:.1f}%, contrib {contrib:.2f}pp)"
+    )
+
+
+def compute_tier1_slice_context() -> str | None:
+    """Read-only top-slice evidence line from the live DB.
+
+    Best-effort: returns the ``compute_top_contributing_slice`` line or None on
+    any failure (never raises, never blocks the alert). Mirrors
+    compute_tier1_scored_mce's fetch (same predicate + clean-epoch gate).
+    """
+    try:
+        epoch_start = get_clean_epoch_start()
+        if epoch_start is None:
+            return None
+        sql = build_tier1_scored_sql(epoch_start)
+        env = os.environ.copy()
+        env["PGPASSWORD"] = env.get("PGPASSWORD", env.get("PGPASS", "postgres"))
+        res = subprocess.run(
+            PSQL_CMD + ["-c", sql],
+            capture_output=True, text=True, env=env, timeout=90,
+        )
+        if res.returncode != 0:
+            return None
+        rows = []
+        for line in res.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) < 4:
+                continue
+            row = {
+                "conviction_score": parts[1].strip(),
+                "ledger_matched": parts[2].strip(),
+                "ledger_is_win": parts[3].strip(),
+            }
+            if len(parts) >= 7:
+                row["direction"] = parts[4].strip()
+                row["timeframe"] = parts[5].strip()
+                row["lane"] = parts[6].strip()
+            rows.append(row)
+        return compute_top_contributing_slice(rows)
+    except Exception:
+        return None
 
 
 def save_to_obsidian(content: str):
@@ -586,7 +833,7 @@ def decide_alert(metrics: dict) -> dict | None:
             f"n={merged_n if merged_n is not None else '--'}")
 
     def monitored_block():
-        return [
+        lines = [
             f"- Tier-1 clean unique journeys (n): {n if n is not None else '--'}",
             f"- Tier-1 scored-only MCE (authoritative, net-of-cost): "
             f"{fmt(tier1_scored_mce, 'pp')} "
@@ -597,6 +844,24 @@ def decide_alert(metrics: dict) -> dict | None:
             f"- Win Rate: {fmt(win_rate, '%')}",
             f"- Average PnL%: {fmt(avg_pnl, '%')}",
         ]
+        # t_ba7757c8 evidence context (all optional; absent -> omitted):
+        # sample window, resolution span, top strategy slice, baseline/rolling
+        # MCE. Read-only values injected by main(); decide_alert stays pure.
+        sw = metrics.get("sample_window")
+        span = metrics.get("resolution_span")
+        if sw or span:
+            lines.append(
+                f"- Sample window: {sw or 'n/a'} (resolution: {span or 'n/a'})")
+        top_slice = metrics.get("top_slice")
+        if top_slice:
+            lines.append(f"- {top_slice}")
+        baseline = metrics.get("baseline_line")
+        if baseline:
+            lines.append(f"- {baseline}")
+        rolling = metrics.get("rolling_line")
+        if rolling:
+            lines.append(f"- {rolling}")
+        return lines
 
     # Sample too small for any confident statistic — log metrics, never alert.
     if n is None or n < MIN_CLEAN_N:
@@ -747,12 +1012,23 @@ def decide_alert(metrics: dict) -> dict | None:
         "Living Dashboard: [[devops/latest-fusion-calibration-report.md]]",
         "Response Runbook: [[operations/runbooks/fusion-calibration-alert-runbook.md]]",
     ]
+    # t_ba7757c8: stable cooldown family for card creation — the sorted set of
+    # breached metric names (MCE / WIN_RATE / PNL). A persistent breach that
+    # re-fires every 6h maps to the same family, so the 24h cooldown suppresses
+    # duplicate triage cards while stdout keeps alerting every tick.
+    family = sorted({
+        ("MCE" if "MCE" in b else
+         "WIN_RATE" if "Win Rate" in b else
+         "PNL" if "PnL" in b else "OTHER")
+        for b in breaches
+    })
     return {
         "kind": "BREACH",
         "card": True,
         "card_title": title,
         "card_body": body,
         "stdout_lines": lines,
+        "breach_family": family,
     }
 
 
@@ -763,6 +1039,22 @@ def regression_test() -> int:
     ``calibration_watchdog.py --regression-test`` (no DB / report / Obsidian /
     kanban side effects).
     """
+    # t_ba7757c8: keep the cooldown/baseline state file out of the live
+    # ~/.hermes/scripts/state/ dir during the whole DB-free harness.
+    global STATE_FILE, STATE_DIR
+    import tempfile as _tf
+    _orig_state_file, _orig_state_dir = STATE_FILE, STATE_DIR
+    _tmp_state = _tf.TemporaryDirectory(prefix="calibration-watchdog-regression-")
+    STATE_FILE = Path(_tmp_state.name) / "state.json"
+    STATE_DIR = Path(_tmp_state.name)
+    # t_7422b8ae: the harness must not depend on any real calibration_verdict.json
+    # landing on this host mid-run (would make parse tests nondeterministic).
+    # Tests pass the verdict explicitly; the live loader path is exercised by
+    # its own focused assertion against a fixture file.
+    global VERDICT_JSON_CANDIDATES
+    _orig_verdict_candidates = VERDICT_JSON_CANDIDATES
+    VERDICT_JSON_CANDIDATES = []
+
     failures = []
 
     def check(name, cond):
@@ -832,15 +1124,16 @@ def regression_test() -> int:
     # open a card. Accumulation evidence persists only via the living dashboard
     # (save_to_obsidian, run every tick at line 640) which is bypassed here in a
     # DB-free harness so this test has no Obsidian / kanban / DB side effects.
-    global run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce
+    global run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce, compute_tier1_slice_context
     import io as _io, contextlib as _cl
-    _orig_run, _orig_save, _orig_parse, _orig_t1mce = (
-        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce)
+    _orig_run, _orig_save, _orig_parse, _orig_t1mce, _orig_slice = (
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce, compute_tier1_slice_context)
     try:
         run_report = lambda: (0, "")
         save_to_obsidian = lambda c: None
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
-        parse_metrics = lambda out: {
+        compute_tier1_slice_context = lambda: None
+        parse_metrics = lambda output, verdict=None: {
             "n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
             "weighted_mce": 19.4, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
@@ -854,8 +1147,8 @@ def regression_test() -> int:
         check("below floor (n=127): main returns 0",
               _rc == 0)
     finally:
-        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce = (
-            _orig_run, _orig_save, _orig_parse, _orig_t1mce)
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce, compute_tier1_slice_context = (
+            _orig_run, _orig_save, _orig_parse, _orig_t1mce, _orig_slice)
 
     # (I) LIVE-PATH n<100 gap (t_7223ef5b acceptance #2): the live main() must
     # route a numeric n<100 through decide_alert() so the THIN_SAMPLE verdict
@@ -865,14 +1158,15 @@ def regression_test() -> int:
     # defect closed by this task: previously main() early-returned `return 0`
     # for n<MIN_CLEAN_N and the THIN_SAMPLE verdict was dead code in the live
     # path, so the smallest samples were a blind spot on the dashboard.
-    _orig_run, _orig_save, _orig_parse, _orig_t1mce = (
-        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce)
+    _orig_run, _orig_save, _orig_parse, _orig_t1mce, _orig_slice = (
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce, compute_tier1_slice_context)
     _dash = {}
     try:
         run_report = lambda: (0, "RAW-REPORT")
         save_to_obsidian = lambda c: _dash.update(content=c)
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
-        parse_metrics = lambda out: {
+        compute_tier1_slice_context = lambda: None
+        parse_metrics = lambda output, verdict=None: {
             "n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
             "weighted_mce": 9.0, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
@@ -903,19 +1197,20 @@ def regression_test() -> int:
               "MCE breach" not in _dash_c.lower()
               and "Sample-weighted MCE: 9.0pp (Threshold" not in _dash_c)
     finally:
-        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce = (
-            _orig_run, _orig_save, _orig_parse, _orig_t1mce)
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce, compute_tier1_slice_context = (
+            _orig_run, _orig_save, _orig_parse, _orig_t1mce, _orig_slice)
 
     # (J) LIVE-PATH n=None stays fully silent (runbook §5 taxonomy): no
     # verdict persisted, no stdout, no card.
-    _orig_run, _orig_save, _orig_parse, _orig_t1mce = (
-        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce)
+    _orig_run, _orig_save, _orig_parse, _orig_t1mce, _orig_slice = (
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce, compute_tier1_slice_context)
     _dash_none = {}
     try:
         run_report = lambda: (0, "RAW-REPORT")
         save_to_obsidian = lambda c: _dash_none.update(content=c)
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
-        parse_metrics = lambda out: {
+        compute_tier1_slice_context = lambda: None
+        parse_metrics = lambda output, verdict=None: {
             "n": None, "win_rate": None, "avg_pnl": None,
             "weighted_mce": None, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
@@ -930,8 +1225,8 @@ def regression_test() -> int:
               "too thin" not in _dash_none.get("content", "").lower()
               and "BREACH" not in _dash_none.get("content", ""))
     finally:
-        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce = (
-            _orig_run, _orig_save, _orig_parse, _orig_t1mce)
+        run_report, save_to_obsidian, parse_metrics, compute_tier1_scored_mce, compute_tier1_slice_context = (
+            _orig_run, _orig_save, _orig_parse, _orig_t1mce, _orig_slice)
 
     # (K) t_0bfed6a8 headline-display fix: the watchdog must NEVER pair the
     # merged-sample MCE with the Tier-1 n. When the authoritative Tier-1
@@ -995,11 +1290,307 @@ def regression_test() -> int:
     check("t_0bfed6a8: compute_bucket_weighted_mce math matches report",
           _mce is not None and abs(_mce - 38.0) < 0.01)
 
+    # (N) t_ba7757c8: WR regex now matches the pinned report's Tier-1 label.
+    _parsed = parse_metrics(
+        "| **Tier-1 clean win rate** | **19.0%** |\n"
+        "- **Tier-1 clean win rate: 19.0%** (72W / 307L).\n"
+        "**Window:** last 30d (30d) of resolved outcomes\n"
+        "| Clean sample resolution span | 2026-07-06 02:57 -> 2026-08-03 08:03 UTC |\n"
+        "| Clean sample epoch gate | 2026-07-05 22:08:00+00 |\n")
+    check("t_ba7757c8: WR regex matches 'Tier-1 clean win rate' table row",
+          _parsed.get("win_rate") == 19.0)
+    check("t_ba7757c8: WR observation form fallback works",
+          parse_metrics("- **Tier-1 clean win rate: 17.5%**").get("win_rate") == 17.5)
+    check("t_ba7757c8: sample_window parsed from report header",
+          _parsed.get("sample_window") == "last 30d (30d)")
+    check("t_ba7757c8: resolution_span parsed from Section 1",
+          "2026-07-06" in (_parsed.get("resolution_span") or ""))
+
+    # (O) t_ba7757c8: top strategy slice computation (pure, no DB).
+    _slice_rows = [
+        {"conviction_score": "0.60", "ledger_matched": "true", "ledger_is_win": "false",
+         "direction": "LONG", "timeframe": "1h", "lane": "trade_close"},
+        {"conviction_score": "0.60", "ledger_matched": "true", "ledger_is_win": "false",
+         "direction": "LONG", "timeframe": "1h", "lane": "trade_close"},
+        {"conviction_score": "0.60", "ledger_matched": "true", "ledger_is_win": "true",
+         "direction": "LONG", "timeframe": "1h", "lane": "trade_close"},
+        {"conviction_score": "0.90", "ledger_matched": "true", "ledger_is_win": "true",
+         "direction": "SHORT", "timeframe": "1m", "lane": "trade_close"},
+        {"conviction_score": "0.90", "ledger_matched": "true", "ledger_is_win": "false",
+         "direction": "SHORT", "timeframe": "1m", "lane": "journey_finalizer"},
+        {"conviction_score": "0.30", "ledger_matched": "false", "ledger_is_win": "",
+         "direction": "LONG", "timeframe": "1h", "lane": "journey_finalizer"},
+    ]
+    _slice_line = compute_top_contributing_slice(_slice_rows)
+    check("t_ba7757c8: top slice excludes unreconciled rows and returns a line",
+          _slice_line is not None and "Top strategy slice:" in _slice_line)
+    check("t_ba7757c8: top slice picks the largest MCE contributor",
+          "contrib" in (_slice_line or ""))
+
+    # (P) t_ba7757c8: BREACH payload includes evidence context + report links.
+    d = decide_alert({
+        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
+        "tier1_scored_mce": 32.72, "tier1_scored_n": 381,
+        "sample_window": "last 30d (30d)",
+        "resolution_span": "2026-07-06 -> 2026-08-03",
+        "top_slice": "Top strategy slice: dir=LONG (n=184, WR 13.6%, contrib 18.70pp)",
+        "baseline_line": "Baseline (previous run): Tier-1 scored-only MCE 32.8pp (n=382) at 2026-08-03T07:44:00+00:00",
+        "rolling_line": "Rolling MCE (last 2 runs): 32.8pp, 32.7pp",
+    })
+    check("t_ba7757c8: BREACH decision produced", d is not None and d["kind"] == "BREACH")
+    if d is not None:
+        _all = "\n".join(d["stdout_lines"])
+        check("t_ba7757c8: payload includes sample window",
+              "Sample window: last 30d (30d)" in _all)
+        check("t_ba7757c8: payload includes top strategy slice",
+              "Top strategy slice: dir=LONG" in _all)
+        check("t_ba7757c8: payload includes baseline (previous run)",
+              "Baseline (previous run)" in _all)
+        check("t_ba7757c8: payload includes rolling MCE",
+              "Rolling MCE (last 2 runs)" in _all)
+        check("t_ba7757c8: payload keeps report links",
+              "[[devops/latest-fusion-calibration-report.md]]" in _all
+              and "[[operations/runbooks/fusion-calibration-alert-runbook.md]]" in _all)
+        check("t_ba7757c8: breach family computed (MCE only here)",
+              d.get("breach_family") == ["MCE"])
+
+    # (Q) t_ba7757c8: cooldown suppresses duplicate card for the SAME family
+    # within BREACH_CARD_COOLDOWN_HOURS, but a fresh family / expired window
+    # still creates a card. Fail-open: unreadable state allows card creation.
+    global create_kanban_task
+    _orig_ckt = create_kanban_task
+    _cards = []
+    create_kanban_task = lambda title, body, key: _cards.append(key)
+    _now = datetime(2026, 8, 3, 12, 0, 0, tzinfo=timezone.utc)
+    try:
+        _rc1 = emit_verdict({"kind": "BREACH", "card": True,
+                             "card_title": "T", "card_body": "B",
+                             "stdout_lines": ["alert"],
+                             "breach_family": ["MCE"]}, 400)
+        check("t_ba7757c8: first BREACH fires a card", _rc1 == 0 and len(_cards) == 1)
+        _buf2 = _io.StringIO()
+        with _cl.redirect_stdout(_buf2):
+            _rc2 = emit_verdict({"kind": "BREACH", "card": True,
+                                 "card_title": "T", "card_body": "B",
+                                 "stdout_lines": ["alert"],
+                                 "breach_family": ["MCE"]}, 400)
+        check("t_ba7757c8: same-family re-fire within 24h suppresses card",
+              _rc2 == 0 and len(_cards) == 1 and "cooldown" in _buf2.getvalue().lower())
+        _rc3 = emit_verdict({"kind": "BREACH", "card": True,
+                             "card_title": "T", "card_body": "B",
+                             "stdout_lines": ["alert"],
+                             "breach_family": ["PNL"]}, 400)
+        check("t_ba7757c8: different breach family creates a new card",
+              _rc3 == 0 and len(_cards) == 2)
+    finally:
+        create_kanban_task = _orig_ckt
+
+    # (R) t_ba7757c8: state-file fail-open — an unreadable/corrupt state file
+    # must NOT wedge card creation (returns not-in-cooldown).
+    _orig_state_file2 = STATE_FILE
+    try:
+        STATE_FILE = Path(_tmp_state.name) / "missing.json"
+        check("t_ba7757c8: missing state file -> not in cooldown (fail-open)",
+              _card_in_cooldown("MCE", _now) is False)
+    finally:
+        STATE_FILE = _orig_state_file2
+
+    # (S) t_7422b8ae: JSON verdict is the PREFERRED source for weighted_mce +
+    # tier1_clean_n — applied AFTER the regex so it wins even when the report
+    # carries a different (diluted merged) figure (fixes the D1 inversion from
+    # the earlier PR draft: JSON must not be overwritten by the regex).
+    _json_report = (
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "| **Tier-1 clean unique journeys (realized-exit, authoritative)** | **737** |\n"
+        "- **Tier-1 clean unique journeys (realized-exit): n=737**\n"
+        "Sample-weighted MCE: **15.8pp**\n"
+        "- **Tier-1 clean win rate: 19.0%**\n"
+    )
+    _parsed_json = parse_metrics(
+        _json_report, verdict={"weighted_mce": 18.86, "tier1_clean_n": 112})
+    check("t_7422b8ae: JSON weighted_mce wins over regex merged figure",
+          _parsed_json.get("weighted_mce") == 18.86)
+    check("t_7422b8ae: JSON tier1_clean_n wins over regex value",
+          _parsed_json.get("tier1_clean_n") == 112)
+    check("t_7422b8ae: n is the JSON tier1_clean_n (112, not 737/6842)",
+          _parsed_json.get("n") == 112)
+    check("t_7422b8ae: merged_mce still parsed for non-authoritative display",
+          _parsed_json.get("merged_mce") == 15.8)
+
+    # (T) t_7422b8ae: no JSON verdict -> Section-7 / Section-1 tier1_clean_n
+    # regex fallback drives n (never merged_n).
+    _parsed_fb = parse_metrics(
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "- **Tier-1 clean unique journeys (realized-exit): n=112**\n"
+        "Sample-weighted MCE: **15.8pp**\n"
+        "- **Tier-1 clean win rate: 19.0%**\n",
+        verdict={})
+    check("t_7422b8ae: no-JSON fallback parses tier1_clean_n from Section 7",
+          _parsed_fb.get("tier1_clean_n") == 112)
+    check("t_7422b8ae: no-JSON fallback n == tier1_clean_n (never merged)",
+          _parsed_fb.get("n") == 112)
+
+    # (U) t_7422b8ae: when the Tier-1 line is absent AND no JSON verdict is
+    # available, n stays None — the merged count must NEVER become n (this is
+    # the exact t_fb422737 suppression-gate re-open that this task removes).
+    _parsed_merged_only = parse_metrics(
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "Sample-weighted MCE: **15.8pp**\n",
+        verdict={})
+    check("t_7422b8ae: merged-only report -> n is None (never merged_n)",
+          _parsed_merged_only.get("n") is None
+          and _parsed_merged_only.get("tier1_clean_n") is None)
+
+    # (V) t_7422b8ae: load_verdict_json reads weighted_mce + tier1_clean_n from
+    # a real calibration_verdict.json fixture (live loader path, fail-open on
+    # missing file already covered by (T)'s verdict={}).
+    _orig_vj_cands = VERDICT_JSON_CANDIDATES
+    try:
+        _vj_fixture = Path(_tmp_state.name) / "calibration_verdict.json"
+        _vj_fixture.write_text(
+            '{"weighted_mce": 18.86, "tier1_clean_n": 112}', encoding="utf-8")
+        VERDICT_JSON_CANDIDATES = [str(_vj_fixture)]
+        _loaded = load_verdict_json()
+        check("t_7422b8ae: load_verdict_json reads weighted_mce",
+              _loaded.get("weighted_mce") == 18.86)
+        check("t_7422b8ae: load_verdict_json reads tier1_clean_n",
+              _loaded.get("tier1_clean_n") == 112)
+        # parse_metrics with verdict=None consults the loader and prefers JSON.
+        _parsed_via_loader = parse_metrics(_json_report)
+        check("t_7422b8ae: parse_metrics prefers verdict when verdict=None",
+              _parsed_via_loader.get("n") == 112
+              and _parsed_via_loader.get("weighted_mce") == 18.86)
+    finally:
+        VERDICT_JSON_CANDIDATES = _orig_vj_cands
+
+    # Restore the temp state redirect used for the whole harness.
+    VERDICT_JSON_CANDIDATES = _orig_verdict_candidates
+    STATE_FILE, STATE_DIR = _orig_state_file, _orig_state_dir
+    _tmp_state.cleanup()
+
     if failures:
         print(f"\nREGRESSION FAILED: {len(failures)} assertion(s) failed: {failures}")
         return 1
-    print("\nREGRESSION PASSED: all t_d8ccf4bd / t_7223ef5b / t_0bfed6a8 assertions hold.")
+    print("\nREGRESSION PASSED: all t_d8ccf4bd / t_7223ef5b / t_0bfed6a8 / t_ba7757c8 / t_7422b8ae assertions hold.")
     return 0
+
+
+def _load_state() -> dict:
+    """Fail-open JSON state reader. Never raises; on any error returns {} so
+    the caller behaves as if there is no prior state (i.e. allow card
+    creation / emit no baseline) — a state bug must never wedge the alert."""
+    try:
+        if STATE_FILE.exists():
+            import json
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_state(state: dict) -> None:
+    """Best-effort atomic JSON state writer. Never raises (warn on failure)."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        import json
+        import tempfile
+        fd, tmp = tempfile.mkstemp(
+            dir=str(STATE_DIR), prefix=".calibration_watchdog_state-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(state, fh, indent=2, sort_keys=True)
+            os.replace(tmp, STATE_FILE)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+    except Exception as e:
+        print(f"Warning: could not persist watchdog state: {e}", file=sys.stderr)
+
+
+def _card_in_cooldown(family_key: str, now) -> bool:
+    """True when a kanban card for this breach family was created within
+    BREACH_CARD_COOLDOWN_HOURS. Fail-open: any read error returns False so a
+    card is still created (never suppress on error)."""
+    try:
+        state = _load_state()
+        last = (state.get("last_card_at") or {}).get(family_key)
+        if not last:
+            return False
+        last_dt = datetime.fromisoformat(last)
+        return (now - last_dt).total_seconds() < BREACH_CARD_COOLDOWN_HOURS * 3600
+    except Exception:
+        return False
+
+
+def _record_card(family_key: str, now) -> None:
+    """Record a card creation timestamp for a breach family (best-effort)."""
+    try:
+        state = _load_state()
+        state.setdefault("last_card_at", {})[family_key] = now.isoformat()
+        _save_state(state)
+    except Exception:
+        pass
+
+
+def _build_baseline_rolling(metrics: dict) -> tuple[str | None, str | None]:
+    """Build baseline/rolling MCE evidence lines from the persisted run history.
+
+    Returns (baseline_line, rolling_line); both None when no history exists.
+    The history is a list of {at, tier1_scored_mce, tier1_scored_n} dicts
+    written every tick by _record_run_history. Fail-open: unreadable/missing
+    history yields (None, None), never an exception.
+    """
+    try:
+        state = _load_state()
+        hist = state.get("run_history") or []
+        if not hist:
+            return None, None
+        prev = hist[-1]
+        baseline = None
+        if prev.get("tier1_scored_mce") is not None:
+            baseline = (
+                f"Baseline (previous run): Tier-1 scored-only MCE "
+                f"{prev['tier1_scored_mce']:.1f}pp (n={prev.get('tier1_scored_n')}) "
+                f"at {prev.get('at', '?')}"
+            )
+        mce_vals = [
+            r["tier1_scored_mce"] for r in hist
+            if r.get("tier1_scored_mce") is not None
+        ][-5:]
+        rolling = None
+        if len(mce_vals) >= 2:
+            rolling = (
+                "Rolling MCE (last "
+                f"{len(mce_vals)} runs): "
+                + ", ".join(f"{v:.1f}pp" for v in mce_vals)
+            )
+        return baseline, rolling
+    except Exception:
+        return None, None
+
+
+def _record_run_history(metrics: dict) -> None:
+    """Append the current run's Tier-1 scored MCE to the rolling history
+    (capped at 40 runs). Best-effort; never raises."""
+    try:
+        t1 = metrics.get("tier1_scored_mce")
+        if t1 is None:
+            return
+        state = _load_state()
+        hist = state.get("run_history") or []
+        hist.append({
+            "at": datetime.now(timezone.utc).isoformat(),
+            "tier1_scored_mce": t1,
+            "tier1_scored_n": metrics.get("tier1_scored_n"),
+        })
+        state["run_history"] = hist[-40:]
+        _save_state(state)
+    except Exception:
+        pass
 
 
 def emit_verdict(decision: dict | None, n: int | None) -> int:
@@ -1029,11 +1620,25 @@ def emit_verdict(decision: dict | None, n: int | None) -> int:
     for line in decision["stdout_lines"]:
         print(line)
     if decision["card"]:
+        now = datetime.now(timezone.utc)
+        family_key = "|".join(
+            decision.get("breach_family") or [decision["kind"]])
+        if _card_in_cooldown(family_key, now):
+            # t_ba7757c8: persistent breach — stdout alert already emitted
+            # above; suppress only the duplicate triage card while the same
+            # breach family re-fires within the cooldown window.
+            print(
+                f"(cooldown) {decision['kind']} triage card suppressed for "
+                f"family [{family_key}] — last card created within "
+                f"{BREACH_CARD_COOLDOWN_HOURS}h; stdout alert still delivered"
+            )
+            return 0
         id_key = (
             f"calibration-{decision['kind'].lower()}-"
-            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H')}"
+            f"{now.strftime('%Y%m%dT%H')}"
         )
         create_kanban_task(decision["card_title"], decision["card_body"], id_key)
+        _record_card(family_key, now)
     return 0
 
 
@@ -1077,6 +1682,13 @@ def main() -> int:
     metrics["tier1_scored_mce"] = tier1_mce
     metrics["tier1_scored_n"] = tier1_n
     metrics["tier1_scored_error"] = tier1_err
+
+    # t_ba7757c8 payload enrichment: top strategy slice + baseline/rolling MCE.
+    # All best-effort read-only; failures degrade to omitted lines, never block.
+    metrics["top_slice"] = compute_tier1_slice_context()
+    _bl, _rl = _build_baseline_rolling(metrics)
+    metrics["baseline_line"] = _bl
+    metrics["rolling_line"] = _rl
 
     # 1. Check database/SQL errors (Critical Alert — regardless of n)
     if metrics["has_integrity_warning"] or metrics["sql_errors"] > 0:
@@ -1125,6 +1737,9 @@ def main() -> int:
     # emit_verdict() persists the verdict to the living dashboard on every tick
     # but only prints/opens a card above the validated-edge floor.
     decision = decide_alert(metrics)
+    # t_ba7757c8: persist this run's Tier-1 scored MCE into the rolling history
+    # for the next tick's baseline comparison (best-effort, never raises).
+    _record_run_history(metrics)
     return emit_verdict(decision, n)
 
 def self_test() -> None:

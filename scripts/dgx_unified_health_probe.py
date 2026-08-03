@@ -62,6 +62,27 @@ CANARY_STALE_MIN = 40        # newest INDEPENDENT health_canary.jsonl write
                              # the check cannot grade its own liveness (t_0050991e).
 CRASH_LOOKBACK_MIN = 60      # kanban crash/gave_up window
 
+# Cron forced-release observability (t_615aa245): the scheduler mirrors every
+# stale in-flight claim it force-releases to <hermes_home>/cron/
+# inflight_forced_releases.jsonl (cron/scheduler.py _record_forced_release;
+# also exposed in-process via get_inflight_guard_stats()['forced_releases']).
+# This probe is the OUT-OF-PROCESS reader of that mirror so a wedged cron job
+# is visible in-cycle (a forced release means a cron job wedged past its
+# allowance and was recovered by the stale sweep) instead of only when a
+# downstream liveness key goes dead hours later. Read-only: the probe never
+# writes this file.
+CRON_FORCED_RELEASES_LOG = (
+    HOME / ".hermes" / "profiles" / "jarvis" / "cron"
+    / "inflight_forced_releases.jsonl"
+)
+# Rolling window (hours) inside which releases count toward the verdict.
+CRON_FORCED_RELEASE_WINDOW_H = 24
+# >= 1 recent release degrades PASS -> WARN (a wedge happened — attention).
+CRON_FORCED_RELEASE_WARN_MIN = 1
+# >= this many recent releases => BLOCK: repeated wedges mean the scheduler
+# keeps losing in-flight claims to the stale sweep (a crash class, not noise).
+CRON_FORCED_RELEASE_BLOCK_MIN = 3
+
 # Repeat-BLOCK hard-alert escalation (t_7a97ba51 proposal #3 / t_cafc1119 C3).
 # If the canary re-emits BLOCK >= CRITICAL_ALERT_MIN_COUNT times within
 # CRITICAL_ALERT_WINDOW_H hours, escalate BEYOND #fleet-reports to
@@ -282,6 +303,99 @@ def check_canary_freshness() -> tuple[bool, str]:
         f"last INDEPENDENT health_canary write {age_min:.1f}m ago "
         f"(sources: {sorted(indep_sources)})"
     )
+
+
+def check_cron_forced_releases(now: dt.datetime | None = None) -> dict[str, Any]:
+    """Read the scheduler's forced-release mirror (read-only, fail-open).
+
+    The scheduler appends one JSON row per forced release:
+      {"job_id": ..., "name": ..., "age_seconds": ..., "allowance_seconds": ...,
+       "at": <iso>}
+    (cron/scheduler.py ``_record_forced_release``, event=forced_release).  A
+    forced release is a stale in-flight claim the sweep cut — i.e. a cron job
+    wedged past its allowance and was recovered without a gateway restart.
+
+    Fail-open contract (t_615aa245): an absent file means no release has ever
+    been recorded (healthy); an unreadable or partially-corrupt file degrades
+    to count-0 telemetry. The probe never BLOCKs the fleet on a monitoring gap.
+
+    Returns:
+      available — file exists and was parsed (or exists but window empty)
+      count     — releases inside CRON_FORCED_RELEASE_WINDOW_H
+      recent    — newest releases, newest first (job_id/name/at/age_seconds)
+      block     — count >= CRON_FORCED_RELEASE_BLOCK_MIN (repeated wedges)
+      warn      — 1 <= count < block threshold (single/rare wedge)
+      detail    — human-readable summary
+    """
+    now = now or utc_now()
+    if not CRON_FORCED_RELEASES_LOG.exists():
+        return {
+            "available": False, "count": 0, "recent": [],
+            "block": False, "warn": False,
+            "detail": "inflight_forced_releases.jsonl absent — no forced release "
+                      "recorded by the scheduler yet",
+        }
+    cutoff = now.timestamp() - CRON_FORCED_RELEASE_WINDOW_H * 3600
+    records: list[dict[str, Any]] = []
+    try:
+        for line in CRON_FORCED_RELEASES_LOG.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue  # skip a corrupt row; never fail the probe on it
+            at = rec.get("at")
+            if not isinstance(at, str):
+                continue
+            try:
+                t = dt.datetime.fromisoformat(at)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=dt.timezone.utc)
+            except Exception:
+                continue
+            if t.timestamp() >= cutoff:
+                records.append({
+                    "job_id": rec.get("job_id"),
+                    "name": rec.get("name"),
+                    "at": at,
+                    "age_seconds": rec.get("age_seconds"),
+                    "allowance_seconds": rec.get("allowance_seconds"),
+                })
+    except Exception as exc:
+        return {
+            "available": False, "count": 0, "recent": [],
+            "block": False, "warn": False,
+            "detail": f"cannot read forced-release mirror "
+                      f"{CRON_FORCED_RELEASES_LOG}: {type(exc).__name__}: {exc}",
+        }
+    records.sort(key=lambda r: r["at"], reverse=True)
+    count = len(records)
+    block = count >= CRON_FORCED_RELEASE_BLOCK_MIN
+    warn = (not block) and count >= CRON_FORCED_RELEASE_WARN_MIN
+    if not records:
+        detail = (f"no forced release within {CRON_FORCED_RELEASE_WINDOW_H}h "
+                  f"(log present at {CRON_FORCED_RELEASES_LOG.name})")
+    else:
+        recent_names = ", ".join(
+            str(r["name"] or r["job_id"] or "?") for r in records[:3]
+        )
+        detail = (f"{count} forced release(s) within "
+                  f"{CRON_FORCED_RELEASE_WINDOW_H}h: {recent_names}")
+        if block:
+            detail += (f"  <-- BLOCK cause: repeated cron wedges "
+                       f"(>= {CRON_FORCED_RELEASE_BLOCK_MIN} releases)")
+        elif warn:
+            detail += "  (single/rare wedge — attention, not an outage)"
+    return {
+        "available": True,
+        "count": count,
+        "recent": records[:10],
+        "block": block,
+        "warn": warn,
+        "detail": detail,
+    }
 
 
 def check_docker() -> tuple[bool, str, bool]:
@@ -662,6 +776,22 @@ def main() -> int:
                    "observability_only": True,
                    "warn": sycode_ready_backlog.get("warn", False)})
 
+    # Cron forced-release observability (t_615aa245): read the scheduler's
+    # forced-release mirror. Repeated wedges (>= CRON_FORCED_RELEASE_BLOCK_MIN
+    # releases in the window) drive BLOCK; a single/rare release degrades
+    # PASS -> WARN. An absent/corrupt mirror fails open (never BLOCKs the
+    # fleet on a monitoring gap).
+    forced_releases = check_cron_forced_releases(now)
+    checks.append({
+        "name": "cron_forced_releases",
+        "ok": not forced_releases.get("block", False),
+        "detail": forced_releases.get("detail", ""),
+        "fork_resource_pressure": False,
+        "warn": forced_releases.get("warn", False),
+    })
+    forced_block = bool(forced_releases.get("block"))
+    forced_warn = bool(forced_releases.get("warn"))
+
     # Boards whose oldest ready task exceeds READY_BACKLOG_WARN_DAYS (observability
     # only — never a BLOCK cause). Each entry: (board, oldest_task_id, age_days).
     warn_boards: list[tuple[str, str | None, float | None]] = []
@@ -685,7 +815,7 @@ def main() -> int:
                     if not c["ok"] and not c.get("fork_resource_pressure")
                     and c["name"] not in ("mechanism_matrix",)]
     mech_red = bool(mech.get("overall") == "RED")
-    blocked = bool(infra_failed) or mech_red
+    blocked = bool(infra_failed) or mech_red or forced_block
     degraded = fork_pressure and not blocked
 
     record = {
@@ -693,12 +823,21 @@ def main() -> int:
         "profile": PROFILE,
         "verdict": ("BLOCK" if blocked else
                     "DEGRADED" if degraded else
-                    "WARN" if warn_boards else "PASS"),
+                    "WARN" if (bool(warn_boards) or forced_warn) else "PASS"),
         "infra_failed": [c["name"] for c in infra_failed],
         "mechanism_overall": mech.get("overall"),
         "mechanism_dead": mech.get("dead"),
         "kanban_crash_count": crash_count,
         "kanban_crash_stale": stale_count,
+        "cron_forced_releases": {
+            "count": forced_releases.get("count", 0),
+            "window_h": CRON_FORCED_RELEASE_WINDOW_H,
+            "block": forced_block,
+            "warn": forced_warn,
+            "recent": forced_releases.get("recent", []),
+            "log": str(CRON_FORCED_RELEASES_LOG),
+        },
+        "cron_forced_release_count": forced_releases.get("count", 0),
         "jarvis_ready_backlog": ready_backlog,
         "sycode_trading_ready_backlog": sycode_ready_backlog,
         "ready_backlog_warn_boards": [
@@ -744,6 +883,7 @@ def main() -> int:
             + "\n".join(f"  - {c['name']}: {c['detail']}" for c in checks)
             + f"\n\nmechanism={mech.get('overall','n/a')} "
               f"active_crashes={crash_count} stale_crashes={stale_count} "
+              f"forced_releases={forced_releases.get('count', 0)} "
               f"ready_backlog={ready_backlog.get('ready_total')} "
               f"devops_ready={ready_backlog.get('devops_ready_count')}"
         )
@@ -761,8 +901,10 @@ def main() -> int:
     # be replayed, because the .last artifact is overwritten on EVERY run.
     if not blocked and not degraded:
         # Observability-only backlog age may degrade PASS -> WARN without ever
-        # BLOCKing (t_bf11a0ce). WARN names the board + oldest ready task id.
-        verdict = "WARN" if warn_boards else "PASS"
+        # BLOCKing (t_bf11a0ce); a single/rare cron forced release degrades
+        # PASS -> WARN too (t_615aa245). WARN names the board + oldest ready
+        # task id and/or the forced-release count.
+        verdict = "WARN" if (bool(warn_boards) or forced_warn) else "PASS"
         emoji = "🟠" if verdict == "WARN" else "🟢"
         lines = [
             f"{emoji} UNIFIED FLEET HEALTH — {now.isoformat()} — VERDICT: {verdict}",
@@ -787,9 +929,20 @@ def main() -> int:
                 lines.append(f"  - {b}: oldest_ready={t} age_days={a}")
             lines.append("      action: route to PM/devops for review-merge; "
                          "not an infra outage.")
+        if forced_warn:
+            lines.append("")
+            lines.append("## Cron forced-release WARN (single/rare wedge — "
+                         "attention, not an outage)")
+            lines.append(f"  - {forced_releases.get('detail')}")
+            for r in forced_releases.get("recent", [])[:3]:
+                lines.append(f"      - {r.get('name') or r.get('job_id')}: "
+                             f"{r.get('at')} age_s={r.get('age_seconds')}")
+            lines.append("      action: check the wedged cron job's last_error; "
+                         "a second wedge in the window escalates to BLOCK.")
         lines.append("")
         lines.append(f"mechanism={mech.get('overall','n/a')} "
                      f"active_crashes={crash_count} stale_crashes={stale_count} "
+                     f"forced_releases={forced_releases.get('count', 0)} "
                      f"ready_backlog={ready_backlog.get('ready_total')} "
                      f"devops_ready={ready_backlog.get('devops_ready_count')}")
         body = "\n".join(lines)
@@ -827,6 +980,17 @@ def main() -> int:
         if stale_count:
             lines.append(f"## Kanban STALE crash/gave_up runs on parked/resolved "
                          f"tasks: {stale_count}  (monitored, NOT a BLOCK cause)")
+    if forced_block:
+        lines.append("")
+        lines.append(f"## Cron forced releases (repeated wedges, last "
+                     f"{CRON_FORCED_RELEASE_WINDOW_H}h): "
+                     f"{forced_releases.get('count')}  <-- BLOCK cause")
+        for r in forced_releases.get("recent", [])[:5]:
+            lines.append(f"  - {r.get('name') or r.get('job_id')}: "
+                         f"{r.get('at')} age_s={r.get('age_seconds')}")
+        lines.append("      action: inspect the wedged cron job(s) and the "
+                     "scheduler in-flight guard; repeated wedges are a crash "
+                     "class, not noise.")
     if fork_pressure:
         lines.append("")
         lines.append("## fork_resource_pressure (also present, non-fatal): "
@@ -873,6 +1037,7 @@ def main() -> int:
                 "mechanism_dead_keys": mech.get("dead_keys"),
                 "kanban_crash_count": crash_count,
                 "kanban_crash_stale": stale_count,
+                "cron_forced_release_count": forced_releases.get("count", 0),
                 "jarvis_ready_backlog": ready_backlog,
                 "sycode_trading_ready_backlog": sycode_ready_backlog,
                 "ready_backlog_warn_boards": [

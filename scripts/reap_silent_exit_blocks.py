@@ -393,42 +393,6 @@ def _apply_one(db: str, board: str, tid: str, cls: str) -> None:
                     "stale rc=0-without-lifecycle last_failure_error so the phantom "
                     "block CI predicate is honest. reaper=t_74c6693e"
                 )
-            if cls in ("redrive", "redrive_provider"):
-                # A blocked→ready re-drive must ALSO emit the
-                # block-lifecycle 'unblocked' event. Without it the
-                # dispatcher's _has_sticky_block() predicate stays True and
-                # the re-driven card is ready-but-unspawnable — the exact
-                # stall class fixed at the writer layer by t_20759186 /
-                # t_e6bb0f1e. Include the original block reference so
-                # auditors can correlate the unblock with the block that
-                # opened it.
-                last_bl = c.execute(
-                    "SELECT id, kind, payload FROM task_events "
-                    "WHERE task_id = ? AND kind IN ('blocked', 'unblocked') "
-                    "ORDER BY id DESC LIMIT 1",
-                    (tid,),
-                ).fetchone()
-                if last_bl is not None and last_bl["kind"] == "blocked":
-                    unblock_payload = {
-                        "reason": "reaper_redrive",
-                        "reaper": "t_74c6693e",
-                        "block_event_id": last_bl["id"],
-                    }
-                    try:
-                        blk_payload = (
-                            json.loads(last_bl["payload"])
-                            if last_bl["payload"] else {}
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        blk_payload = {}
-                    for key in ("reason", "kind", "comment_id"):
-                        if blk_payload.get(key) is not None:
-                            unblock_payload.setdefault(f"block_{key}", blk_payload[key])
-                    c.execute(
-                        "INSERT INTO task_events (task_id, run_id, kind, payload, "
-                        "created_at) VALUES (?, NULL, 'unblocked', ?, ?)",
-                        (tid, json.dumps(unblock_payload), now),
-                    )
             c.execute(
                 "INSERT INTO task_events (task_id, run_id, kind, payload, "
                 "created_at) VALUES (?, NULL, ?, ?, ?)",

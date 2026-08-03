@@ -23,7 +23,6 @@ Frozen protocol (do not edit without a superseding prereg):
   A1 HL/Bybit BTC 30d premium < 1.2x for 30 consecutive rows; A2 feed stale >26h.
 """
 import csv
-import io
 import json
 import math
 import os
@@ -32,9 +31,6 @@ import sys
 import urllib.request
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
-
-sys.path.insert(0, "/home/frank/.hermes/scripts")
-from second_brain_writer import write_text_atomic
 
 ART = "/home/frank/obsidian/sycode-trading/research/artifacts/hl-funding-carry-oos-2026-08-01"
 OOS_START = date(2026, 8, 1)
@@ -124,23 +120,16 @@ def main() -> int:
               "OOS day is MISSING, not zero. Fix the feed (PR #813 ingester).")
         return 1
 
-    # --- basis snapshot (append-only, read-modify-write atomic) -------------
+    # --- basis snapshot (append-only) --------------------------------------
     snap_path = os.path.join(ART, "basis_snapshots.csv")
     snaps = fetch_basis_snapshot()
-    buf = io.StringIO()
-    if os.path.exists(snap_path):
-        with open(snap_path, "r", newline="", encoding="utf-8") as f:
-            existing = f.read()
-        buf.write(existing)
-        if existing and not existing.endswith("\n"):
-            buf.write("\n")
-    else:
-        w = csv.DictWriter(buf, fieldnames=["ts", "coin", "mark", "oracle", "basis"])
-        w.writeheader()
-    w = csv.DictWriter(buf, fieldnames=["ts", "coin", "mark", "oracle", "basis"])
-    for row in snaps:
-        w.writerow(row)
-    write_text_atomic(snap_path, buf.getvalue())
+    new_file = not os.path.exists(snap_path)
+    with open(snap_path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["ts", "coin", "mark", "oracle", "basis"])
+        if new_file:
+            w.writeheader()
+        for row in snaps:
+            w.writerow(row)
 
     # basis lookup: latest snapshot <= day+1 06:00Z per coin
     by_coin = defaultdict(list)
@@ -274,20 +263,20 @@ def main() -> int:
     fields = ["date", "held", "legs", "gross", "cost", "basis_pnl", "net",
               "net_cum", "ann_since_start", "cost_diag_single_leg",
               "hl_cex_premium_30d", "held_max_abs_ret1d", "flags"]
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=fields)
-    w.writeheader()
-    for r in rows_out:
-        w.writerow(r)
-    write_text_atomic(os.path.join(ART, "oos_ledger.csv"), buf.getvalue())
-    write_text_atomic(os.path.join(ART, "status.json"), json.dumps({
-        "last_run": now.isoformat(), "last_data_day": last_day.isoformat(),
-        "oos_days": n_days, "held": rows_out[-1]["held"] if rows_out else "",
-        "ann_since_start": round(ann, 5), "trail60_ann": round(trail60, 5),
-        "canary_last": rows_out[-1]["hl_cex_premium_30d"] if rows_out else "",
-        "alerts": alerts, "review_date": "2026-11-02",
-        "prereg": "strategies/pre-registrations/2026-08-01-hl-funding-carry-oos-v1-prereg-fable.md",
-    }, indent=1))
+    with open(os.path.join(ART, "oos_ledger.csv"), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for r in rows_out:
+            w.writerow(r)
+    with open(os.path.join(ART, "status.json"), "w") as f:
+        json.dump({
+            "last_run": now.isoformat(), "last_data_day": last_day.isoformat(),
+            "oos_days": n_days, "held": rows_out[-1]["held"] if rows_out else "",
+            "ann_since_start": round(ann, 5), "trail60_ann": round(trail60, 5),
+            "canary_last": rows_out[-1]["hl_cex_premium_30d"] if rows_out else "",
+            "alerts": alerts, "review_date": "2026-11-02",
+            "prereg": "strategies/pre-registrations/2026-08-01-hl-funding-carry-oos-v1-prereg-fable.md",
+        }, f, indent=1)
 
     for line in alerts:
         print(line)

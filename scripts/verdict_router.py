@@ -86,35 +86,6 @@ _RELAY_HINT_RE = re.compile(
     re.I,
 )
 
-# t_9799c507: resume-gate consumer. A READY card whose recent comments carry a
-# satisfied resume gate + an approved REVIEW_VERDICT token has no deterministic
-# consumer (the router only scanned `blocked` cards). We route it to its owning
-# PM seat as a COMMENT — NEVER auto-complete, NEVER auto-merge. Missing /
-# ambiguous target fails closed to NEEDS-PM.
-_RESUME_GATE_RE = re.compile(
-    r"\bRESUME_GATE\b[^.!?\n]{0,60}?\b(SATISFIED|MET)\b",
-    re.I,
-)
-# How far back to look for resume-gate markers on READY cards (covers the
-# dispatcher's PR-guard window + verdict-sweep fallback comments).
-RESUME_GATE_LOOKBACK_SECONDS = 86400 * 7
-
-# Board slug -> owning PM seat. Route target for a satisfied resume gate on a
-# READY card (comment-only). Missing mapping fails closed to NEEDS-PM.
-BOARD_PM_SEAT = {
-    "default": "jarvis-os-pm",
-    "jarvis-os": "jarvis-os-pm",
-    "sycode-trading": "sycode-trading-pm",
-    "upero": "upero-pm",
-    "sycode-ai": "upero-pm",
-    "supero": "upero-pm",
-    "yorkstone": "yorkstone-supplies-pm",
-    "yorkstone-supplies": "yorkstone-supplies-pm",
-    "ai-restaurant": "frankspencer",
-    "quicknote": "jarvis",
-    "legacy-yss": "legacy-yss-manager",
-}
-
 
 def verdict_is_attributed(text: str, author: str, start: int, end: int) -> bool:
     """True if the verdict token [start:end] is *attributed to another author*
@@ -669,132 +640,6 @@ def candidates_for_board(board: Board) -> list[Candidate]:
         con.close()
 
 
-def _resume_gate_satisfied(body: str) -> bool:
-    """True if ``body`` carries an AFFIRMATIVE satisfied-resume-gate marker.
-
-    Fail closed: a negated / no-gate declaration (\"RESUME_GATE not satisfied\",
-    \"RESUME_GATE UNSATISFIED\") must NOT count. ``SATISFIED`` / ``MET`` inside a
-    negation scope is a denial and is excluded.
-    """
-    if not body:
-        return False
-    m = _RESUME_GATE_RE.search(body)
-    if not m:
-        return False
-    sent_start = 0
-    for b in _SENTENCE_BOUNDARY_RE.finditer(body, 0, m.start()):
-        sent_start = b.end()
-    sent_end = len(body)
-    nb = _SENTENCE_BOUNDARY_RE.search(body, m.end())
-    if nb:
-        sent_end = nb.start()
-    sentence = body[sent_start:sent_end]
-    if GATE_DENIAL_CUE_RE.search(sentence):
-        # "no RESUME_GATE SATISFIED" / "RESUME_GATE SATISFIED denied" — denial.
-        return False
-    return True
-
-
-def _approved_verdict_present(body: str) -> bool:
-    """True if ``body`` affirmatively declares an APPROVED verdict token.
-
-    t_9799c507: the resume-gate consumer needs a lighter check than the
-    auto-complete path's sentence-scoped negation logic. Governor fallback
-    comments legitimately pair ``REVIEW_VERDICT=APPROVED`` with "ROUTING NOT
-    AUTO-COMPLETION" — the NOT negates auto-completion, not the verdict. A
-    verdict is suppressed only when a negation cue appears BEFORE the token in
-    the same sentence (direct denial: "No REVIEW_VERDICT=APPROVED").
-    """
-    if not body:
-        return False
-    for m in VERDICT_RE.finditer(body):
-        if m.group(1).strip().upper() not in {"APPROVED", "APPROVE"}:
-            continue
-        sent_start = 0
-        for b in _SENTENCE_BOUNDARY_RE.finditer(body, 0, m.start()):
-            sent_start = b.end()
-        before = body[sent_start:m.start()]
-        if VERDICT_NEGATION_CUE_RE.search(before):
-            continue  # direct denial preceding the token — not an approval
-        return True
-    return False
-
-
-def resume_candidates_for_board(board: Board) -> list[Candidate]:
-    """t_9799c507: READY cards whose recent comments carry a satisfied resume
-    gate + an approved REVIEW_VERDICT token (issued by an allowlisted reviewer
-    seat). These cards have no deterministic consumer today — the router only
-    scanned ``blocked`` cards. Returns the marker comment as the candidate's
-    latest comment so the decision/route machinery stays uniform.
-    """
-    con = open_db_ro(board.db)
-    try:
-        rows = con.execute(
-            "SELECT id, title, body, assignee, block_kind "
-            "FROM tasks WHERE status = 'ready' "
-            "ORDER BY priority DESC, created_at ASC"
-        ).fetchall()
-        cutoff = int(time.time()) - RESUME_GATE_LOOKBACK_SECONDS
-        out: list[Candidate] = []
-        placeholders = ",".join("?" for _ in ROUTER_AUTHORS)
-        for row in rows:
-            comments = con.execute(
-                f"""
-                SELECT id, author, body, created_at
-                  FROM task_comments
-                 WHERE task_id=?
-                   AND created_at >= ?
-                   AND COALESCE(author, '') NOT IN ({placeholders})
-                 ORDER BY id DESC
-                """,
-                (row["id"], cutoff, *sorted(ROUTER_AUTHORS)),
-            ).fetchall()
-            marker = None
-            for c in comments:
-                body = c["body"] or ""
-                # Marker + approved verdict must BOTH be present, and the marker
-                # must be posted by an allowlisted reviewer seat (a random
-                # worker cannot trigger PM routing).
-                if not _resume_gate_satisfied(body):
-                    continue
-                if (c["author"] or "").lower() not in REVIEWER_ALLOWLIST:
-                    continue
-                if not _approved_verdict_present(body):
-                    continue
-                marker = c
-                break
-            if marker is None:
-                continue
-            comment_id = safe_int(marker["id"], context=f"{board.slug}/{row['id']}:task_comments.id")
-            if comment_id is None:
-                continue
-            if router_processed_comment(con, row["id"], comment_id):
-                continue
-            comment_created_at = safe_int(
-                marker["created_at"],
-                context=f"{board.slug}/{row['id']}:task_comments.created_at:{comment_id}",
-                default=0,
-            )
-            out.append(
-                Candidate(
-                    board=board,
-                    task_id=row["id"],
-                    title=row["title"] or "",
-                    body=row["body"] or "",
-                    assignee=row["assignee"],
-                    latest_comment_id=comment_id,
-                    latest_comment_author=marker["author"] or "",
-                    latest_comment_body=marker["body"] or "",
-                    latest_comment_created_at=comment_created_at or 0,
-                    block_reason=None,
-                    block_kind=row["block_kind"],
-                )
-            )
-        return out
-    finally:
-        con.close()
-
-
 def latest_block_reason(con: sqlite3.Connection, task_id: str) -> str | None:
     """Return the documented block reason for ``task_id`` (C2, t_c3bbc27b).
 
@@ -1033,39 +878,6 @@ def decide(candidate: Candidate, dry_run: bool) -> Decision:
     return make_decision(candidate, verdict, "needs_pm", "ambiguous or malformed verdict", dry_run, validation, "ambiguous", "would_comment")
 
 
-def decide_resume(candidate: Candidate, dry_run: bool) -> Decision:
-    """t_9799c507: decision for a READY card whose recent comments carry a
-    satisfied resume gate + an approved REVIEW_VERDICT token.
-
-    The deterministic consumer is a COMMENT routed to the owning PM seat —
-    NEVER auto-complete, NEVER auto-merge (the card's own body may carry
-    deploy/live/DB/A3/credential gates that only a human PM may clear). Missing
-    / ambiguous PM-seat mapping fails closed to NEEDS-PM.
-    """
-    pm_seat = BOARD_PM_SEAT.get(candidate.board.slug)
-    if pm_seat:
-        return make_decision(
-            candidate,
-            "APPROVED",
-            "resume_route",
-            f"resume gate satisfied on READY card; routed to owning PM seat {pm_seat}",
-            dry_run,
-            "same-card",
-            "resume_gate",
-            "would_comment",
-        )
-    return make_decision(
-        candidate,
-        "APPROVED",
-        "needs_pm",
-        "resume gate satisfied but owning PM seat unknown; failed closed",
-        dry_run,
-        "missing-target",
-        "ambiguous",
-        "would_comment",
-    )
-
-
 def shell_cmd(args: list[str]) -> str:
     return " ".join(shlex.quote(a) for a in args)
 
@@ -1148,18 +960,6 @@ def perform(decision: Decision, candidate: Candidate) -> tuple[str | None, subpr
             f"idempotency_key={marker}"
         )
         args = board_cli_prefix(decision.board) + ["unblock", decision.task_id, "--reason", comment]
-        return shell_cmd(args), run_cli(args)
-    if decision.action == "resume_route":
-        pm_seat = BOARD_PM_SEAT.get(decision.board, "UNKNOWN")
-        comment = (
-            "RESUME-GATE ROUTED (deterministic consumer, t_9799c507): this READY card's "
-            "recent comments carry a satisfied resume gate + approved REVIEW_VERDICT.\n"
-            f"{evidence}"
-            f"ROUTE (comment only — verdict-router NEVER auto-completes/merges): owning "
-            f"PM seat `{pm_seat}` to resume/land/disposition this card.\n"
-            "verdict-router took NO complete/merge/deploy/status action."
-        )
-        args = board_cli_prefix(decision.board) + ["comment", decision.task_id, comment, "--author", AUTHOR]
         return shell_cmd(args), run_cli(args)
     if decision.action == "needs_operator":
         comment = (
@@ -1256,54 +1056,6 @@ def apply_enabled(cli_apply: bool, cli_dry_run: bool) -> bool:
     return os.environ.get("VERDICT_ROUTER_APPLY") == "1" or ENABLE_SENTINEL.exists()
 
 
-def _process_one(
-    cand: Candidate,
-    decide_fn: Any,
-    dry_run: bool,
-    mode: str,
-    decisions: list[Decision],
-    failures: list[dict],
-) -> None:
-    """Run one candidate through decide -> idempotency -> shadow-log -> perform."""
-    decision = decide_fn(cand, dry_run)
-    con = open_db_ro(cand.board.db)
-    try:
-        if prior_router_marker(con, cand.task_id, decision.idempotency_key):
-            decision = mark_idempotent(decision)
-    finally:
-        con.close()
-    decisions.append(decision)
-    entry = {
-        "timestamp": utc_now(),
-        "mode": mode,
-        "board": decision.board,
-        "task_id": decision.task_id,
-        "action": decision.action,
-        "verdict": decision.verdict,
-        "verdict_value": decision.verdict,
-        "comment_id": decision.comment_id,
-        "source_comment_id": decision.comment_id,
-        "source_author": decision.source_author,
-        "target_validation": decision.target_validation,
-        "scope_class": decision.scope_class,
-        "result": decision.result,
-        "idempotency_key": decision.idempotency_key,
-        "reason": decision.reason,
-    }
-    if dry_run:
-        append_note(entry)
-        return
-    command, proc = perform(decision, cand)
-    entry["command"] = command or "idempotent-skip"
-    if proc is not None:
-        entry["stdout"] = (proc.stdout or "").strip()
-        entry["stderr"] = (proc.stderr or "").strip()
-        if proc.returncode != 0:
-            entry["action"] = f"{decision.action}_failed"
-            failures.append({"board": decision.board, "task_id": decision.task_id, "rc": proc.returncode, "stderr": proc.stderr})
-    append_note(entry)
-
-
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Route latest kanban REVIEW_VERDICT comments deterministically")
     parser.add_argument("--apply", action="store_true", help="Mutate board state; otherwise dry-run unless sentinel/env enables apply")
@@ -1340,18 +1092,43 @@ def main(argv: Iterable[str] | None = None) -> int:
                 )
                 continue
             for cand in cands:
-                _process_one(cand, decide, dry_run, mode, decisions, failures)
-            # t_9799c507: READY-card resume-gate consumer. A satisfied resume
-            # gate + approved verdict on a READY card has no other deterministic
-            # consumer; route it to the owning PM seat as a comment (never
-            # auto-complete/merge).
-            try:
-                resume_cands = resume_candidates_for_board(board)
-            except Exception as exc:
-                failures.append({"board": board.slug, "error": f"resume-scan: {exc}"})
-                continue
-            for cand in resume_cands:
-                _process_one(cand, decide_resume, dry_run, mode, decisions, failures)
+                decision = decide(cand, dry_run)
+                con = open_db_ro(cand.board.db)
+                try:
+                    if prior_router_marker(con, cand.task_id, decision.idempotency_key):
+                        decision = mark_idempotent(decision)
+                finally:
+                    con.close()
+                decisions.append(decision)
+                entry = {
+                    "timestamp": utc_now(),
+                    "mode": mode,
+                    "board": decision.board,
+                    "task_id": decision.task_id,
+                    "action": decision.action,
+                    "verdict": decision.verdict,
+                    "verdict_value": decision.verdict,
+                    "comment_id": decision.comment_id,
+                    "source_comment_id": decision.comment_id,
+                    "source_author": decision.source_author,
+                    "target_validation": decision.target_validation,
+                    "scope_class": decision.scope_class,
+                    "result": decision.result,
+                    "idempotency_key": decision.idempotency_key,
+                    "reason": decision.reason,
+                }
+                if dry_run:
+                    append_note(entry)
+                    continue
+                command, proc = perform(decision, cand)
+                entry["command"] = command or "idempotent-skip"
+                if proc is not None:
+                    entry["stdout"] = (proc.stdout or "").strip()
+                    entry["stderr"] = (proc.stderr or "").strip()
+                    if proc.returncode != 0:
+                        entry["action"] = f"{decision.action}_failed"
+                        failures.append({"board": decision.board, "task_id": decision.task_id, "rc": proc.returncode, "stderr": proc.stderr})
+                append_note(entry)
 
         summary = {
             "mode": mode,

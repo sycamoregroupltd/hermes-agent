@@ -40,6 +40,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -281,10 +282,91 @@ def audit() -> tuple[list[dict], list[str], list[str]]:
             elif not is_tracked(rel):
                 violations.append({**base,
                                    "reason": f"COMMAND-REF untracked script: {rel}"})
+    # CONTROL: the post-checkout self-heal hook must be installed and current so
+    # branch checkouts cannot silently swap live cron scripts (t_82b9432a).
+    # pre-checkout does not fire on this git build (2.43), so the guard lives in
+    # post-checkout: after any checkout it restores cron-referenced files from
+    # the previous HEAD, making git's native "local changes would be overwritten"
+    # protection block further swaps.
+    hook = REPO / ".git" / "hooks" / "post-checkout"
+    source = REPO / "scripts" / "git-live-cron-postcheckout.sh"
+    if not hook.exists() or not os.access(hook, os.X_OK):
+        violations.append({
+            "job_id": "<control>",
+            "job_name": "live-cron-postcheckout-hook",
+            "profile": "<root>",
+            "script": str(hook),
+            "store": "<control>",
+            "reason": "CONTROL: post-checkout live-cron self-heal hook missing or not executable",
+        })
+    elif source.exists():
+        try:
+            if hashlib.sha256(hook.read_bytes()).digest() != hashlib.sha256(source.read_bytes()).digest():
+                violations.append({
+                    "job_id": "<control>",
+                    "job_name": "live-cron-postcheckout-hook",
+                    "profile": "<root>",
+                    "script": str(hook),
+                    "store": "<control>",
+                    "reason": "CONTROL: post-checkout live-cron self-heal hook source drift "
+                              "(installed hook differs from scripts/git-live-cron-postcheckout.sh)",
+                })
+        except OSError:
+            pass
     return violations, sorted(set(v["reason"] for v in violations)), errors
 
 
+def referenced_paths() -> tuple[list[Path], list[str]]:
+    """Resolve every file referenced by an enabled cron job to an absolute path.
+
+    Used by the post-checkout live-cron self-heal hook (t_82b9432a): the hook
+    restores these files from the previous HEAD after any checkout so a branch
+    swap can never silently change what the fleet executes.
+
+    Only paths inside REPO are returned — a checkout in this repo cannot affect
+    files outside it. Paths are returned whether or not they currently exist:
+    a referenced file that a checkout just deleted is exactly what the hook must
+    restore.
+    """
+    stores, errors = load_stores()
+    paths: list[Path] = []
+    for store in stores:
+        profile = store["profile"]
+        profile_home = REPO if profile == "<root>" else REPO / "profiles" / profile
+        for job in store["jobs"]:
+            script = job["script"]
+            try:
+                resolved, _ = resolve_like_scheduler(profile_home, script)
+            except ValueError:
+                continue  # scheduler-blocked; never a live path
+            try:
+                resolved.relative_to(REPO)
+            except ValueError:
+                continue
+            paths.append(resolved)
+        for ref in store.get("refs", []):
+            resolved = Path(ref["token"]).expanduser().resolve()
+            try:
+                resolved.relative_to(REPO)
+            except ValueError:
+                continue
+            paths.append(resolved)
+    return paths, errors
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--referenced-paths":
+        paths, errors = referenced_paths()
+        if errors:
+            print(json.dumps({
+                "healthy": False,
+                "operational_error": errors,
+            }, indent=2))
+            return 2
+        for p in sorted({str(p) for p in paths}):
+            print(p)
+        return 0
+
     if REPO == RAW_HERMES_HOME and git_repo_root(RAW_HERMES_HOME) is None:
         print(json.dumps({
             "healthy": False,

@@ -10,10 +10,10 @@
 !/shell-hooks-allowlist.json
 !/context_length_cache.yaml
 
-# cron: descend into dir, but track only the job definitions
+# cron: descend into dir; jobs.json is LIVE scheduler state and is intentionally
+# NOT tracked (t_6c32b13c) — a checkout must never rewrite the running store.
 !/cron/
 /cron/*
-!/cron/jobs.json
 
 # === Automation source-of-truth (task t_376ecb33, 2026-07-13) ===
 # Track durable automation scripts (the governor/probe fleet substrate).
@@ -54,7 +54,8 @@
 /agent-hooks/*
 !/agent-hooks/*
 
-# Profile crontabs (dispatch config) — track ONLY jobs.json, exclude profile runtime/state.
+# Profile crontabs — descend into each profile's cron/ dir for the scripts carve-out
+# below, but jobs.json (live scheduler state) is intentionally NOT tracked (t_6c32b13c).
 # Re-include chain must keep every ancestor dir non-excluded (git rule).
 !/profiles/
 /profiles/*
@@ -62,7 +63,6 @@
 /profiles/*/*
 !/profiles/*/cron/
 /profiles/*/cron/*
-!/profiles/*/cron/jobs.json
 
 # === Profile cron scripts (task t_4b7afeac) ===
 # Generic depth-1 carve-out: cron `script` values resolve to the OWNING profile's

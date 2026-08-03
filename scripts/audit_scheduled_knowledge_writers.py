@@ -30,7 +30,6 @@ WRITE_MARKERS = (
     "write_markdown_atomic(",
     "write_json_atomic(",
     "append_markdown_event(",
-    "write_text_atomic(",
     "os.replace(",
     "cp ",
     "> \"$DST",
@@ -39,16 +38,6 @@ EXEC_PATH = re.compile(r"(?:execv|exec|python3?)\s*\(?[\"']?(/home/frank/\.herme
 QUOTED_CENTRAL = re.compile(r"[\"'](/home/frank/\.hermes/scripts/[A-Za-z0-9_.-]+)[\"']")
 QUOTED_SCRIPT = re.compile(r"[\"'](/home/frank/[A-Za-z0-9_./-]+\.(?:py|sh))[\"']")
 SCRIPT_DIR_CHILD = re.compile(r"\$SCRIPT_DIR/([A-Za-z0-9_.-]+\.(?:py|sh))")
-
-_ATOMIC_CALLS = ("os.replace(", "write_markdown_atomic(", "write_json_atomic(", "append_markdown_event(", "write_text_atomic(")
-_ATOMIC_IMPORT = re.compile(
-    r"from\s+second_brain_writer\s+import\s+.*\b"
-    r"(?:write_markdown_atomic|write_json_atomic|append_markdown_event|write_text_atomic)\b"
-)
-
-
-def is_atomic(text: str) -> bool:
-    return any(m in text for m in _ATOMIC_CALLS) or bool(_ATOMIC_IMPORT.search(text))
 
 
 def atomic_write(path: Path, text: str) -> None:
@@ -169,17 +158,6 @@ def self_test() -> None:
         resolved, chain = resolve_script(profiles, shared, "jarvis-os-pm", "pm_reject_monitor.sh")
         if resolved != canonical or len(chain) != 3:
             raise AssertionError(f"profile wrapper resolution failed: resolved={resolved} chain={chain}")
-        # Alias-import fixture: an import of a canonical atomic writer plus an
-        # aliased call must be detected as atomic even though the function name
-        # never appears as a literal call site.
-        alias_script = (
-            "VAULT = \"/home/frank/obsidian-fleet-vault\"\n"
-            "from second_brain_writer import append_markdown_event\n"
-            "_w = append_markdown_event\n"
-            "_w(VAULT, \"event\", initial_body=\"x\")\n"
-        )
-        if not is_atomic(alias_script):
-            raise AssertionError("alias-import fixture must be detected as atomic")
 
 
 def main() -> int:
@@ -244,7 +222,7 @@ def main() -> int:
                 "inspected_path": str(script.resolve()),
                 "jobs": [],
                 "canonical_writer": "second_brain_writer" in text,
-                "atomic_replace": is_atomic(text),
+                "atomic_replace": "os.replace(" in text or "write_markdown_atomic(" in text or "write_json_atomic(" in text or "append_markdown_event(" in text,
                 "profile_chains": [],
             },
         )

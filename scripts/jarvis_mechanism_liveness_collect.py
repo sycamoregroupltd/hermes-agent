@@ -16,7 +16,7 @@ import re
 import sqlite3
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -204,6 +204,121 @@ def consecutive_failed_runs(profile: str, job_id: str | None, limit: int = 10) -
         else:
             break
     return streak
+
+
+def mark_job_run_skip_audit(profile: str = "jarvis", window_hours: int = 24) -> dict[str, Any]:
+    """Read the fail-closed mark_job_run skip journal (t_95fbd07c C2).
+
+    jobs.py now journals every ``mark_job_run`` that cannot find its job in the
+    store (the cf46180e12ee "not found, skipping save" class) instead of
+    silently dropping the completion's last_run_at write. This surfaces that
+    journal as a probe-visible counter + last error so a silent write-loss can
+    never hide again. Read-only; never creates the file.
+    """
+    journal = PROFILES / profile / "cron" / "mark_job_run_skips.jsonl"
+    if not journal.exists():
+        return {"present": False, "count_24h": 0, "last": None}
+    lines: list[dict[str, Any]] = []
+    try:
+        for ln in journal.read_text(errors="replace").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                lines.append(json.loads(ln))
+            except json.JSONDecodeError:
+                continue
+    except Exception as exc:  # pragma: no cover - defensive read
+        return {"present": True, "read_error": str(exc), "count_24h": len(lines), "last": None}
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    recent = []
+    for line in lines:
+        ts = parse_dt(line.get("ts"))
+        if ts is not None and ts >= cutoff:
+            recent.append(line)
+    last = lines[-1] if lines else None
+    return {
+        "present": True,
+        "count_24h": len(recent),
+        "window_hours": window_hours,
+        "last": last,
+    }
+
+
+def completion_last_run_mismatches(
+    profile: str = "jarvis", window_hours: int = 24, limit: int = 20
+) -> dict[str, Any]:
+    """Reconcile the LATEST completed execution per job against jobs.json
+    last_run_at (C2).
+
+    Acceptance for t_95fbd07c: every completed execution must have a matching
+    jobs.json ``last_run_at`` within the same minute (0 mismatches over the
+    window). jobs.json only stores the most recent completion, so the probe
+    compares each job's LATEST terminal execution's ``finished_at`` against its
+    ``last_run_at`` — a mismatch means that completion's mark_job_run write did
+    not persist (a write-loss the probe must see). Older completions are
+    naturally superseded and are not mismatches. Read-only.
+    """
+    db = PROFILES / profile / "cron" / "executions.db"
+    jobs = {j.get("id"): j for j in load_jobs(profile)}
+    if not db.exists():
+        return {"mismatch_count": 0, "checked": 0, "window_hours": window_hours, "mismatches": []}
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+    con: sqlite3.Connection | None = None
+    rows: list[sqlite3.Row] = []
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            "SELECT job_id, finished_at, status FROM executions "
+            "WHERE status IN ('completed','failed') AND finished_at >= ? "
+            "ORDER BY finished_at DESC",
+            (cutoff,),
+        ).fetchall()
+    except Exception:
+        return {"mismatch_count": 0, "checked": 0, "window_hours": window_hours, "mismatches": [], "read_error": True}
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+    # Latest terminal execution per job within the window.
+    latest_by_job: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        job_id = row["job_id"]
+        if job_id in latest_by_job:
+            continue
+        latest_by_job[job_id] = {"job_id": job_id, "finished_at": row["finished_at"], "status": row["status"]}
+    mismatches: list[dict[str, Any]] = []
+    checked = 0
+    for job_id, exec_info in latest_by_job.items():
+        checked += 1
+        finished = parse_dt(exec_info["finished_at"])
+        job = jobs.get(job_id)
+        if job is None:
+            mismatches.append({"job_id": job_id, "reason": "no job in jobs.json"})
+            continue
+        last_run = parse_dt(job.get("last_run_at"))
+        if finished is None or last_run is None:
+            mismatches.append({"job_id": job_id, "reason": "missing timestamp"})
+            continue
+        if abs((finished - last_run).total_seconds()) > 60:
+            mismatches.append(
+                {
+                    "job_id": job_id,
+                    "finished_at": finished.isoformat(),
+                    "last_run_at": last_run.isoformat(),
+                    "delta_seconds": round((finished - last_run).total_seconds(), 1),
+                }
+            )
+    return {
+        "mismatch_count": len(mismatches),
+        "checked": checked,
+        "window_hours": window_hours,
+        "mismatches": mismatches[:limit],
+    }
+
 
 
 def classify_job(
@@ -404,6 +519,10 @@ def make_report(include_fixture: bool = False) -> dict[str, Any]:
             "dead": len(dead),
             "warn_visibility": len(warn),
             "dead_keys": [r.get("key") for r in dead],
+        },
+        "write_loss": {
+            "mark_job_run_skips": mark_job_run_skip_audit(),
+            "completion_last_run_mismatches": completion_last_run_mismatches(),
         },
         "instructions_for_agent": [
             "For every row with status DEAD, create exactly one idempotency-keyed jarvis-os kanban repair card assigned to devops.",

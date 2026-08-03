@@ -57,21 +57,56 @@ CRON_OK=true
 if [ -f "/home/frank/.hermes/cron/jobs.json" ]; then
     total_jobs=$(grep -c '"id"' "/home/frank/.hermes/cron/jobs.json" || echo "0")
     log "  Cron DB: $total_jobs jobs loaded"
-    # Check gateway is running
-    if [ -f "/home/frank/.hermes/gateway.pid" ]; then
-        gwpid=$(grep -oP '"pid":\s*\K[0-9]+' "/home/frank/.hermes/gateway.pid" || true)
+    # Check gateway is running.
+    # Hermes moved to per-profile gateway state (2026-07): the live PID now lives
+    # at /home/frank/.hermes/profiles/<profile>/gateway.pid and the gateway is a
+    # systemd --user unit. The legacy /home/frank/.hermes/gateway.pid no longer
+    # exists, so the old check produced a permanent false "Gateway: NO PID file"
+    # + "HEALTH: DEGRADED" even while the gateway was up. Query live state instead.
+    gw_ok=false
+    gw_detail=""
+    # 1) per-profile PID file (preferred, matches `hermes gateway run` output)
+    for pf in /home/frank/.hermes/profiles/*/gateway.pid; do
+        [ -f "$pf" ] || continue
+        gwpid=$(grep -oP '"pid":\s*\K[0-9]+' "$pf" 2>/dev/null || true)
         if [ -n "$gwpid" ] && kill -0 "$gwpid" 2>/dev/null; then
-            log "  Gateway: RUNNING (pid $gwpid)"
-        else
-            log "  Gateway: STALE (pid $gwpid not alive)"
-            CRON_OK=false
+            gw_ok=true; gw_detail="pid $gwpid ($(dirname "$(dirname "$pf")" | xargs basename))"; break
         fi
+    done
+    # 2) systemd --user gateway units
+    if ! $gw_ok && command -v systemctl >/dev/null 2>&1; then
+        if systemctl --user is-active --quiet hermes-gateway-jarvis.service 2>/dev/null; then
+            gw_ok=true; gw_detail="systemd hermes-gateway-jarvis.service active"
+        fi
+    fi
+    # 3) `hermes status` as last resort
+    if ! $gw_ok; then
+        if timeout 15 hermes status 2>/dev/null | grep -qiE 'gateway.*running|gateway.*active'; then
+            gw_ok=true; gw_detail="hermes status reports gateway running"
+        fi
+    fi
+    if $gw_ok; then
+        log "  Gateway: RUNNING ($gw_detail)"
     else
-        log "  Gateway: NO PID file"
+        log "  Gateway: NOT DETECTED (checked per-profile pid, systemd --user, hermes status)"
         CRON_OK=false
     fi
-    # Count jobs by last_status
-    ok_jobs=$(grep -c '"last_status":\s*"ok"' "/home/frank/.hermes/cron/jobs.json" || true)
+    # Count jobs by last_status against the ACTIVE per-profile cron store(s).
+    # The legacy single-file /home/frank/.hermes/cron/jobs.json is stale (last
+    # written 2026-07-29) and no longer reflects live cron; the real store is the
+    # per-profile jobs.json. Sum ok across all live stores; fall back to
+    # `hermes cron list` output if no store is readable.
+    ok_jobs=0
+    for jf in /home/frank/.hermes/profiles/*/cron/jobs.json /home/frank/.hermes/cron/jobs.json; do
+        [ -f "$jf" ] || continue
+        c=$(grep -c '"last_status": *"ok"' "$jf" 2>/dev/null || true)
+        ok_jobs=$((ok_jobs + ${c:-0}))
+    done
+    if [ "$ok_jobs" -eq 0 ]; then
+        # Fallback: parse `hermes cron list` summary if available
+        hc=$(timeout 30 hermes cron list 2>/dev/null | grep -ciE 'Last run:.*ok' || true)
+        ok_jobs=${hc:-0}
+    fi
     log "  Jobs with last_status=ok: $ok_jobs"
 else
     log "  Cron DB: MISSING"

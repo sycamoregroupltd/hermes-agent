@@ -20,6 +20,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -299,6 +300,88 @@ def inspect_duplicate_mutation_scripts(root: Path) -> tuple[list[dict], list[dic
     return duplicate_alerts, dormant_alerts
 
 
+def inspect_retention_policy_duplicates(root: Path) -> list[dict]:
+    """Alert when the prune-default-state-db retention policy has a second copy.
+
+    SEAT DECISION 2026-08-03 (task t_c198fcb5): one file, one policy. The
+    reviewed runtime policy lives at profiles/jarvis/scripts/prune-default-state-db.py
+    with RETENTION_DAYS=45. Any second copy of this script in an executable
+    script location is a live regression trap (a future copy-from-global or
+    "script missing, let me copy it" repair would silently regress session
+    retention 45 -> 90 days), so this watch FAILS (alerts) when:
+
+      - more than one copy of prune-default-state-db.py exists under
+        root/scripts or any profiles/*/scripts (DUPLICATE_RETENTION_POLICY), or
+      - exactly one copy exists but its RETENTION_DAYS != 45
+        (RETENTION_POLICY_VALUE_DRIFT).
+
+    Scoped to the policy identity (filename + reviewed constant), NOT every
+    file defining a RETENTION_DAYS constant: bak_litter_janitor.py legitimately
+    defines RETENTION_DAYS=7 for a different policy domain and must not trip
+    this check. Non-executable historical copies (.claude/worktrees, backups,
+    __pycache__) are excluded from the scan.
+    """
+    alerts: list[dict] = []
+    target = "prune-default-state-db.py"
+    reviewed_value = 45
+    candidates: list[Path] = []
+    skip_dir_parts = {".git", ".claude", "worktrees", "__pycache__", "backups",
+                      "state-snapshots", "node_modules", ".venv", "venv"}
+
+    search_roots = [root / "scripts"]
+    profiles = root / "profiles"
+    if profiles.exists():
+        search_roots += sorted(profiles.glob("*/scripts"))
+
+    for scripts_dir in search_roots:
+        if not scripts_dir.exists():
+            continue
+        for dirpath, dirnames, filenames in os.walk(scripts_dir):
+            dirnames[:] = [d for d in dirnames if d not in skip_dir_parts]
+            for fn in filenames:
+                if fn == target:
+                    candidates.append(Path(dirpath) / fn)
+
+    if len(candidates) > 1:
+        alerts.append({
+            "type": "DUPLICATE_RETENTION_POLICY",
+            "script": target,
+            "count": len(candidates),
+            "paths": sorted(str(p) for p in candidates),
+            "expected_retention_days": reviewed_value,
+            "task": TASK_ID,
+            "seat_decision": "t_c198fcb5",
+        })
+        return alerts
+
+    if len(candidates) == 1:
+        sole = candidates[0]
+        try:
+            text = sole.read_text(errors="replace")
+        except Exception as exc:
+            alerts.append({
+                "type": "RETENTION_POLICY_READ_ERROR",
+                "script": target,
+                "path": str(sole),
+                "error": f"{type(exc).__name__}: {exc}",
+                "task": TASK_ID,
+            })
+            return alerts
+        m = re.search(r"^\s*RETENTION_DAYS\s*=\s*(\d+)", text, re.MULTILINE)
+        if m is None or int(m.group(1)) != reviewed_value:
+            alerts.append({
+                "type": "RETENTION_POLICY_VALUE_DRIFT",
+                "script": target,
+                "path": str(sole),
+                "found_retention_days": None if m is None else int(m.group(1)),
+                "expected_retention_days": reviewed_value,
+                "task": TASK_ID,
+                "seat_decision": "t_c198fcb5",
+            })
+
+    return alerts
+
+
 def inspect(root: Path) -> tuple[list[dict], list[dict]]:
     """Return (drift_and_dupe_alerts, dormant_shadow_risk_alerts).
 
@@ -385,6 +468,8 @@ def inspect(root: Path) -> tuple[list[dict], list[dict]]:
     # Add duplicate-mutation-script checks
     dupe_alerts, dormant_alerts = inspect_duplicate_mutation_scripts(root)
     alerts.extend(dupe_alerts)
+    # Add retention-policy duplicate/value-drift checks (t_c198fcb5 seat decision)
+    alerts.extend(inspect_retention_policy_duplicates(root))
     return alerts, dormant_alerts
 
 
@@ -499,6 +584,79 @@ def make_fixture_root() -> Path:
     return root
 
 
+def run_retention_fixture() -> int:
+    """Prove the retention-policy duplicate guard (t_c198fcb5) fires correctly.
+
+    Scenarios:
+      1. Single reviewed copy (RETENTION_DAYS=45) at profiles/*/scripts -> clean.
+      2. Deliberate second copy under root/scripts -> DUPLICATE_RETENTION_POLICY.
+      3. Single copy with drifted value (90) -> RETENTION_POLICY_VALUE_DRIFT.
+      4. bak_litter_janitor.py (different policy, RETENTION_DAYS=7) -> NOT counted.
+      5. Historical .claude/worktrees copy -> NOT counted (non-executable).
+    """
+    root = Path(tempfile.mkdtemp(prefix="retention-policy-fixture-"))
+    try:
+        central = root / "scripts"
+        profile = root / "profiles" / "fixture" / "scripts"
+        worktree = root / "scripts" / ".claude" / "worktrees" / "wt-historical" / "scripts"
+        central.mkdir(parents=True)
+        profile.mkdir(parents=True)
+        worktree.mkdir(parents=True)
+
+        reviewed = "# policy\nRETENTION_DAYS = 45\n"
+        drifted = "# policy\nRETENTION_DAYS = 90\n"
+        other_policy = "# different policy domain\nRETENTION_DAYS = 7\n"
+
+        # 1. single reviewed copy -> clean
+        write(profile / "prune-default-state-db.py", reviewed)
+        a = inspect_retention_policy_duplicates(root)
+        if a:
+            sys.stderr.write(f"retention fixture 1 expected clean, got {json.dumps(a, sort_keys=True)}\n")
+            return 1
+
+        # 2. second copy under root/scripts -> DUPLICATE_RETENTION_POLICY
+        write(central / "prune-default-state-db.py", reviewed)
+        a = inspect_retention_policy_duplicates(root)
+        if len(a) != 1 or a[0].get("type") != "DUPLICATE_RETENTION_POLICY" or a[0].get("count") != 2:
+            sys.stderr.write(f"retention fixture 2 expected DUPLICATE_RETENTION_POLICY count=2, got {json.dumps(a, sort_keys=True)}\n")
+            return 1
+
+        # remove duplicate again -> clean
+        (central / "prune-default-state-db.py").unlink()
+        a = inspect_retention_policy_duplicates(root)
+        if a:
+            sys.stderr.write(f"retention fixture 2b expected clean after removal, got {json.dumps(a, sort_keys=True)}\n")
+            return 1
+
+        # 3. drifted value -> RETENTION_POLICY_VALUE_DRIFT
+        write(profile / "prune-default-state-db.py", drifted)
+        a = inspect_retention_policy_duplicates(root)
+        if len(a) != 1 or a[0].get("type") != "RETENTION_POLICY_VALUE_DRIFT" or a[0].get("found_retention_days") != 90:
+            sys.stderr.write(f"retention fixture 3 expected VALUE_DRIFT(90), got {json.dumps(a, sort_keys=True)}\n")
+            return 1
+
+        # restore reviewed value -> clean
+        write(profile / "prune-default-state-db.py", reviewed)
+
+        # 4. bak_litter_janitor (different policy) must NOT trip the guard
+        write(central / "bak_litter_janitor.py", other_policy)
+        a = inspect_retention_policy_duplicates(root)
+        if a:
+            sys.stderr.write(f"retention fixture 4 expected bak_litter_janitor ignored, got {json.dumps(a, sort_keys=True)}\n")
+            return 1
+
+        # 5. historical worktree copy must NOT trip the guard
+        write(worktree / "prune-default-state-db.py", drifted)
+        a = inspect_retention_policy_duplicates(root)
+        if a:
+            sys.stderr.write(f"retention fixture 5 expected worktree copy ignored, got {json.dumps(a, sort_keys=True)}\n")
+            return 1
+
+        return 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def run_fixture() -> int:
     root = make_fixture_root()
     try:
@@ -556,7 +714,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     if args.fixture:
-        return run_fixture()
+        rc = run_fixture()
+        if rc != 0:
+            return rc
+        return run_retention_fixture()
     root = Path(args.root).expanduser()
     alerts, dormant = inspect(root)
     if args.json:

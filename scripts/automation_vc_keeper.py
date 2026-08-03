@@ -43,7 +43,6 @@ ROOT_FILES = {
     "SOUL.md",
     "shell-hooks-allowlist.json",
     "context_length_cache.yaml",
-    "cron/jobs.json",
 }
 SCRIPT_SUFFIXES = (".py", ".sh", ".md")
 DENY_PARTS = {
@@ -99,8 +98,10 @@ def is_allowed(rel: str) -> bool:
         return True
     if rel.startswith("agent-hooks/") and len(p.parts) == 2:
         return True
-    if fnmatch.fnmatch(rel, "profiles/*/cron/jobs.json"):
-        return True
+    # Live cron stores (cron/jobs.json, profiles/*/cron/jobs.json) are mutable
+    # scheduler runtime state and are intentionally NOT synced (t_6c32b13c): the
+    # branch keeps only the last historical snapshot; a store that survives branch
+    # swaps cannot be reverted or re-fired by a checkout.
     # The devops-profile keeper dispatcher wrapper is durable on this branch (see
     # FORCE_INCLUDE). It holds no secrets and only delegates to the tracked root script.
     if rel == "profiles/devops/scripts/automation-vc-keeper.sh":

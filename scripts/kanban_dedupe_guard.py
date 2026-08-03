@@ -12,7 +12,8 @@ Five deterministic rules (no LLM):
   failure signature (referenced t_xxxxxxxx ids, file names, quoted error
   strings) overlaps a CURRENTLY gate-blocked task on the same board is a
   clone. PMs must `hermes kanban link`, not clone. Properly linked tasks
-  (parent/child of the blocked task) are exempt.
+  (parent/child of the blocked task) are exempt, as are declared bounded
+  correction cards for the blocked task itself (t_e818b151).
 
   RULE 2 (gate-marker dispatch): an active task whose title/body carries
   strong Frank-gate markers (FRANK-GATED, approval-gated, requires Frank
@@ -22,7 +23,9 @@ Five deterministic rules (no LLM):
   RULE 3 (title-token duplicate window): an active task whose normalized title
   token set is identical to, or Jaccard >= 0.85 with, another non-archived task
   created on the same board in the last 14 days is a HIGH duplicate. Jaccard
-  0.50-0.85 is MEDIUM and comment-only. Parent/child links are exempt.
+  0.50-0.85 is MEDIUM and comment-only. Parent/child links are exempt, and a
+  declared bounded correction card for a blocked task mirrors its source title
+  by design — that pair is exempt too (t_e818b151).
 
   RULE 4 (stale-reference lane): a blocked RESEARCH-ACTIONABLE / REVIEW lane
   whose referenced source task is already done is a phantom blocker; report it,
@@ -110,6 +113,49 @@ SOUL_GATE_RE = re.compile(
     r"(?i)(escalate\s+to\s+frank|frank\s+approval|requires?\s+frank|"
     r"frank[- ]gate|never\s+bypass|guardian\s+gate|must\s+escalate)"
 )
+
+# --- bounded-correction card declaration (t_e818b151) -----------------------
+# A "bounded correction card" is the sanctioned lane for carrying the fixes a
+# gate-blocked task is waiting on (its review defects). It is NOT a clone,
+# even though it necessarily shares the blocked task's failure signature
+# (same files/errors — those are the defects it fixes) and often mirrors its
+# title (same work, next round). To let the guard tell the two apart WITHOUT
+# weakening clone detection, a correction card must explicitly declare itself:
+# carry a correction/remediation marker AND reference the exact source task id.
+CORRECTION_CARD_MARKER_RE = re.compile(
+    r"(?i)\b(correction|corrections|corrective|correcting|rework|reworked|"
+    r"r2r|remediation|remediate|remediating|revision|revised|revising|"
+    r"re[- ]?fix|bounded[- ]fix|bounded[- ]correction|"
+    r"changes?[- ]required[- ]follow[- ]up|"
+    r"changes?[- ]requested[- ]follow[- ]up)\b"
+)
+
+def is_bounded_correction_of(title: str, body: str, blocked_task_id: str) -> bool:
+    """True when the candidate card explicitly declares itself a bounded
+    correction/remediation of ``blocked_task_id``.
+
+    This is the "correction card" concept the guard was missing (t_e818b151).
+    A legitimate bounded-correction card for a gate-blocked task necessarily
+    shares the blocked task's failure signature (same files/errors — those are
+    the defects it fixes) and often mirrors its title (same work, next round),
+    so without an explicit declaration both RULE 1 and RULE 3 classify it as a
+    clone and swallow the only live route to fix the blocked task.
+
+    Contract (deterministic, no LLM):
+      * candidate title/body carries an explicit correction/remediation marker
+        (CORRECTION / REWORK / R2R / REMEDIATION / REVISION / bounded fix /
+        changes-required follow-up, ...), AND
+      * candidate references the exact blocked task id it is correcting.
+
+    The exemption is PER-PAIR: only the comparison against the declared source
+    is skipped; every other task on the board is still checked, so an
+    accidental duplicate (no declaration) or a correction card that also
+    duplicates unrelated active work still gets blocked.
+    """
+    text = f"{title or ''}\n{body or ''}"
+    if not CORRECTION_CARD_MARKER_RE.search(text):
+        return False
+    return blocked_task_id in text
 
 COMMON_FILE_NOISE = {"config.yaml", "readme.md", "soul.md", "agents.md", "claude.md"}
 
@@ -543,6 +589,10 @@ def scan_board(board: str, *, include_archived: bool, assume_blocked: set[str],
                 continue
             if (bid, t["id"]) in links or (t["id"], bid) in links:
                 continue  # properly linked — exempt
+            # A declared bounded-correction card for this specific blocked task
+            # is the sanctioned remediation lane, not a clone (t_e818b151).
+            if is_bounded_correction_of(t["title"], t["body"], bid):
+                continue
             # explicit mention of the blocked id counts as a shared token
             mention = 1 if bid in (t["title"] + t["body"]) else 0
             n_ids, n_total, n_classes, tokens = overlap(sigs[t["id"]], sigs[bid])
@@ -599,6 +649,13 @@ def scan_board(board: str, *, include_archived: bool, assume_blocked: set[str],
                     if other_id == t["id"]:
                         continue
                     if (other_id, t["id"]) in links or (t["id"], other_id) in links:
+                        continue
+                    # A declared bounded-correction card for a blocked task
+                    # mirrors the source title by design — sanctioned lane, not
+                    # a title clone (t_e818b151). Scoped to blocked sources.
+                    if tasks[other_id]["status"] == "blocked" and is_bounded_correction_of(
+                        t["title"], t["body"], other_id
+                    ):
                         continue
                     if len(other_toks) < 2:
                         continue
@@ -670,6 +727,10 @@ def hook_check() -> None:
         for t in data["tasks"].values():
             if not is_gate_blocked(t, data["comments"].get(t["id"], [])):
                 continue
+            # A declared bounded-correction card for this specific blocked task
+            # is the sanctioned remediation lane, not a clone (t_e818b151).
+            if is_bounded_correction_of(title, body, t["id"]):
+                continue
             mention = 1 if t["id"] in (title + body) else 0
             n_ids, n_total, n_classes, tokens = overlap(
                 new_sig, extract_signature(t["title"] + "\n" + t["body"]))
@@ -693,6 +754,13 @@ def hook_check() -> None:
         if len(new_title_tokens) >= 2:
             for t in data["tasks"].values():
                 if not recent_non_archived(t):
+                    continue
+                # A declared bounded-correction card for this specific blocked
+                # task mirrors the source title by design — it is the sanctioned
+                # remediation lane, not a title clone (t_e818b151). Scoped to
+                # actually-blocked sources so a "REWORK of t_running123" card
+                # cannot dodge title-duplicate detection against an active task.
+                if t["status"] == "blocked" and is_bounded_correction_of(title, body, t["id"]):
                     continue
                 old_tokens = title_tokens(t["title"])
                 if len(old_tokens) < 2:

@@ -2,8 +2,10 @@
 """Deterministic Pending-Frank triage and orphan-router report.
 
 Default mode is report-only. With --apply, the script only adds idempotent
-`delegated:` comments to tasks classified delegated-review; it never unblocks,
-reassigns, dispatches, archives, or mutates critical-list / ambiguous tasks.
+`delegated:` comments to tasks classified delegated-review and idempotent
+`orphan-router:` route comments to null-assignee ready/todo cards; it never
+unblocks, reassigns, dispatches, archives, or mutates critical-list / ambiguous
+tasks.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
-from hermes_cli import kanban_db as kb
 
 BOARDS_DIR = Path(
     os.environ.get("KANBAN_BOARDS_DIR", "/home/frank/.hermes/kanban/boards")
@@ -27,6 +28,22 @@ DEFAULT_STATUS = Path(
     os.environ.get("FLEET_STATUS", "/home/frank/uaa-rules/FLEET-STATUS.md")
 )
 AUTHOR = os.environ.get("PENDING_FRANK_TRIAGE_AUTHOR", "pending-frank-triage")
+
+# Owning PM lane per board, used by the orphan-router lane so null-assignee
+# ready/todo cards surface deterministically to a PM sweep instead of sitting
+# dispatch-invisible in the report-only tail. DEFAULT_ORPHAN_PM is the fleet
+# shared-substrate PM for boards without an explicit owner.
+BOARD_PM: dict[str, str] = {
+    "jarvis-os": "jarvis-os-pm",
+    "orchestrator-sync": "jarvis-os-pm",
+    "upero": "upero-pm",
+    "sycode-trading": "sycode-trading-pm",
+    "sycode-ai": "sycode-ai-pm",
+    "legacy-yss": "yorkstone-supplies-pm",
+    "yorkstone-supplies": "yorkstone-supplies-pm",
+}
+DEFAULT_ORPHAN_PM = "jarvis-os-pm"
+ORPHAN_MARKER = "orphan-router:v1"
 
 APPROVAL_SCAN_SCRIPT = Path(
     os.environ.get(
@@ -257,11 +274,50 @@ class TaskEvidence:
 
 
 def safe_connect(db: Path) -> sqlite3.Connection | None:
-    """Open a board DB via kanban_db.connect() — handles WAL, init, integrity checks."""
+    """Open a board DB strictly read-only (sqlite3 mode=ro URI).
+
+    Report/classifier path only. mode=ro refuses any write at the SQLite
+    layer (no schema init, no migration, no WAL sidecar creation, no
+    integrity-check writes), so this script can never mutate a board DB
+    even when a legacy schema would otherwise be upgraded. The explicit
+    PRAGMA integrity_check runs as a read; WAL databases are readable in
+    mode=ro without creating -wal/-shm files.
+
+    The --apply write path is deliberately separate (write_connect below)
+    and only opens a connection when the operator explicitly requests it.
+    """
     if not db.is_file():
         return None
     try:
-        return kb.connect(db_path=db)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        con.execute("PRAGMA query_only=ON")  # belt-and-braces: even SELECT-side accidents fail loudly
+        row = con.execute("PRAGMA integrity_check").fetchone()
+        if not row or row[0] != "ok":
+            print(
+                f"WARN: skipping corrupt board db {db}: integrity_check={row[0] if row else 'missing'}",
+                file=sys.stderr,
+            )
+            con.close()
+            return None
+        return con
+    except Exception as exc:
+        print(f"WARN: cannot open {db}: {exc}", file=sys.stderr)
+        return None
+
+
+def write_connect(db: Path) -> sqlite3.Connection | None:
+    """Open a board DB for the --apply write path ONLY.
+
+    The sole mutation in this script is the idempotent `delegated:`
+    comment written by apply_comment(); it is gated behind the explicit
+    --apply flag and never runs in report mode. mode=rw (not kb.connect())
+    keeps the write path raw and minimal: it performs no schema init, no
+    migration, and no integrity-check side effects beyond SQLite's own.
+    """
+    if not db.is_file():
+        return None
+    try:
+        return sqlite3.connect(f"file:{db}?mode=rw", uri=True, timeout=2)
     except Exception as exc:
         print(f"WARN: cannot open {db}: {exc}", file=sys.stderr)
         return None
@@ -454,6 +510,52 @@ def orphan_rows(db: Path, board: str, limit: int = 50) -> list[tuple[str, str, s
         con.close()
 
 
+def orphan_route_comment(db: Path, task_id: str, board: str) -> str:
+    """Idempotently post an orphan-router route comment naming the owning PM.
+
+    Under --apply only. The comment is machine-readable (route=<pm-profile>
+    resume-at=<board-pm-triage>) so the owning PM sweep can assign or park the
+    card deterministically; it never mutates status/assignee itself.
+    """
+    pm = BOARD_PM.get(board, DEFAULT_ORPHAN_PM)
+    body = (
+        f"delegated: {ORPHAN_MARKER} null-assignee ready/todo card; route={pm} "
+        "resume-at=board-pm-triage. Owning PM assigns a real profile or parks "
+        "with a gate so the card is not dispatch-invisible. No status/assignee "
+        "mutation performed by this comment."
+    )
+    con = safe_connect(db)
+    if con is None:
+        return "error:db-open"
+    try:
+        existing = con.execute(
+            "SELECT 1 FROM task_comments WHERE task_id=? AND body LIKE ? LIMIT 1",
+            (task_id, "%orphan-router:%"),
+        ).fetchone()
+        if existing is not None:
+            return "already-present"
+        con.execute(
+            "INSERT INTO task_comments(task_id, author, body, created_at) VALUES (?,?,?,?)",
+            (task_id, AUTHOR, body, int(time.time())),
+        )
+        con.execute(
+            "INSERT INTO task_events(task_id, kind, payload, created_at, run_id) VALUES (?,?,?,?,NULL)",
+            (
+                task_id,
+                "commented",
+                '{"author":"pending-frank-triage","orphan_route":true}',
+                int(time.time()),
+            ),
+        )
+        con.commit()
+        return "comment-added"
+    except Exception as exc:
+        con.rollback()
+        return f"error:{exc}"
+    finally:
+        con.close()
+
+
 def already_commented(con: sqlite3.Connection, task_id: str, marker: str) -> bool:
     # Stable idempotency: any prior pending-frank-triage marker on this task
     # means the route comment already exists. Do not hash evidence because the
@@ -476,7 +578,7 @@ def apply_comment(t: TaskEvidence, classification: str, evidence: list[str]) -> 
         "route to guardian/PM under delegated-authority.md, not Frank, unless a six-critical-list boundary appears. "
         "Evidence: " + " ; ".join(evidence[:3])
     )
-    con = safe_connect(t.db)
+    con = write_connect(t.db)
     if con is None:
         return "error:db-open"
     try:
@@ -608,7 +710,10 @@ def main() -> int:
             orphan_count += len(rows)
             print(f"### {board} ({len(rows)})")
             for tid, status, title in rows:
+                pm = BOARD_PM.get(board, DEFAULT_ORPHAN_PM)
+                action = orphan_route_comment(db, tid, board) if args.apply else "report-only"
                 print(f"- {board} | {tid} | {status} | {title}")
+                print(f"  action: {action}; route={pm} resume-at=board-pm-triage")
         if orphan_count == 0:
             print("- none")
         print(f"Orphan ready/todo assignee=null count: {orphan_count}")

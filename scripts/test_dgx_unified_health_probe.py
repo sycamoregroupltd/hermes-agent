@@ -15,6 +15,13 @@ Covers:
     - per-board scan reports counts + oldest ready task id + age.
     - oldest_ready > READY_BACKLOG_WARN_DAYS (7d) flags warn=True but NEVER
       drives a BLOCK verdict (degrades PASS -> WARN only).
+  * Cron forced-release observability (t_615aa245):
+    - reader counts releases inside CRON_FORCED_RELEASE_WINDOW_H and rolls
+      older releases off the window.
+    - absent file fails open (available False, count 0, never a BLOCK cause).
+    - corrupt/no-`at` rows are skipped without failing the probe.
+    - one recent release degrades PASS -> WARN; >= CRON_FORCED_RELEASE_BLOCK_MIN
+      (3) recent releases drive BLOCK with a countable probe field.
 
 No live board is touched; everything uses temp dirs. The canary module is
 imported with its path constant monkeypatched to the temp layout.
@@ -30,6 +37,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 REPO = Path(__file__).resolve().parent
 MODULE_PATH = REPO / "dgx_unified_health_probe.py"
 
@@ -37,6 +46,34 @@ spec = importlib.util.spec_from_file_location("uhealth", MODULE_PATH)
 assert spec is not None and spec.loader is not None
 uhealth: Any = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(uhealth)
+
+
+def _snapshot_uhealth() -> dict[str, Any]:
+    """Copy the module attribute table so tests can restore it verbatim."""
+    return dict(uhealth.__dict__)
+
+
+def _restore_uhealth(snapshot: dict[str, Any]) -> None:
+    """Restore the module attribute table, undoing any monkeypatches a test
+    made (check-function stubs, path constants, utc_now/run overrides)."""
+    uhealth.__dict__.clear()
+    uhealth.__dict__.update(snapshot)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_uhealth():
+    """Each test starts from a pristine module (import-time state) and leaves
+    the module pristine for the next test.
+
+    Several tests monkeypatch uhealth.check_* / uhealth.utc_now /
+    uhealth.run in place (e.g. _stub_checks_pass) and never restore them.
+    Without this fixture, those stubs leak into later tests that need the
+    REAL function (e.g. check_kanban_crashes), producing order-dependent
+    failures (count=0 when a stub returns (0, [], 0)).
+    """
+    snapshot = _snapshot_uhealth()
+    yield
+    _restore_uhealth(snapshot)
 
 
 def _now_iso(offset_min: float = 0.0) -> datetime:
@@ -174,6 +211,166 @@ def _absent_sycode(tmp: Path) -> Path:
     return tmp / "sycode-trading" / "kanban.db"
 
 
+def _seed_forced_releases(path: Path, count: int, now: datetime | None = None,
+                          base_offset_min: float = 0.0,
+                          gap_min: float = 2.0) -> None:
+    """Write `count` forced-release rows shaped exactly like scheduler.py's
+    _record_forced_release mirror (job_id/name/age_seconds/allowance_seconds/
+    at) so the probe reader is exercised against the real record contract."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ref = now or _now_iso()
+    with path.open("a", encoding="utf-8") as fh:
+        for i in range(count):
+            fh.write(json.dumps({
+                "job_id": f"job_{i}",
+                "name": f"wedged-job-{i}",
+                "age_seconds": 7200.0 + i,
+                "allowance_seconds": 1800.0,
+                "at": (ref - timedelta(minutes=base_offset_min + i * gap_min)).isoformat(),
+            }) + "\n")
+
+
+def _stub_checks_pass() -> None:
+    """Stub every other probe check to PASS so verdict tests isolate the
+    forced-release signal (t_615aa245)."""
+    uhealth.check_hermes_cli = lambda: (True, "ok", False)
+    uhealth.check_gateway_unit = lambda: (True, "ok", False)
+    uhealth.check_gateway_runtime = lambda: (True, True, "ok")
+    uhealth.check_cron_ticker = lambda: (True, "ok", False)
+    uhealth.check_canary_freshness = lambda: (True, "ok")
+    uhealth.check_docker = lambda: (True, "ok", False)
+    uhealth.check_disk = lambda: (True, "ok", False)
+    uhealth.check_mechanism_matrix = lambda: {
+        "available": True,
+        "overall": "GREEN",
+        "dead": 0,
+        "detail": "ok",
+        "fork_resource_pressure": False,
+    }
+    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+
+
+def test_cron_forced_releases_absent_file_fails_open():
+    tmp = Path(tempfile.mkdtemp())
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
+    rep = uhealth.check_cron_forced_releases()
+    assert rep["available"] is False
+    assert rep["count"] == 0
+    assert rep["block"] is False
+    assert rep["warn"] is False
+
+
+def test_cron_forced_releases_counts_recent_and_rolls_off_window():
+    tmp = Path(tempfile.mkdtemp())
+    log = tmp / "inflight_forced_releases.jsonl"
+    now = _now_iso()
+    _seed_forced_releases(log, 2, now=now, base_offset_min=0.0)  # recent
+    _seed_forced_releases(log, 1, now=now,
+                          base_offset_min=uhealth.CRON_FORCED_RELEASE_WINDOW_H * 60 + 30)
+    uhealth.CRON_FORCED_RELEASES_LOG = log
+    rep = uhealth.check_cron_forced_releases(now)
+    assert rep["available"] is True
+    assert rep["count"] == 2, f"old releases must roll off, got {rep['count']}"
+    assert rep["block"] is False
+    assert rep["warn"] is True
+    assert len(rep["recent"]) == 2
+    assert rep["recent"][0]["job_id"] == "job_0"  # newest first
+
+
+def test_cron_forced_releases_corrupt_row_skipped():
+    tmp = Path(tempfile.mkdtemp())
+    log = tmp / "inflight_forced_releases.jsonl"
+    _seed_forced_releases(log, 1, base_offset_min=1.0)
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write("not-json{{{}\n")
+        fh.write(json.dumps({"job_id": "x", "name": "no-at"}) + "\n")
+    uhealth.CRON_FORCED_RELEASES_LOG = log
+    rep = uhealth.check_cron_forced_releases()
+    assert rep["count"] == 1, f"corrupt/no-at rows must be skipped, got {rep['count']}"
+    assert rep["warn"] is True
+    assert rep["block"] is False
+
+
+def test_single_forced_release_warns_not_blocks():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    log = tmp / "inflight_forced_releases.jsonl"
+    _seed_forced_releases(log, 1, now=now, base_offset_min=5.0)
+    uhealth.CRON_FORCED_RELEASES_LOG = log
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    _stub_checks_pass()
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] == "WARN", \
+        f"single release must WARN, not BLOCK: {record['verdict']}"
+    assert record["cron_forced_release_count"] == 1
+    assert record["cron_forced_releases"]["count"] == 1
+    assert record["cron_forced_releases"]["block"] is False
+    assert record["cron_forced_releases"]["warn"] is True
+    assert "cron_forced_releases" not in record["infra_failed"], \
+        "a single release is not an infra failure"
+
+
+def test_repeated_forced_releases_block():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    log = tmp / "inflight_forced_releases.jsonl"
+    _seed_forced_releases(log, uhealth.CRON_FORCED_RELEASE_BLOCK_MIN,
+                          now=now, base_offset_min=2.0, gap_min=1.0)
+    uhealth.CRON_FORCED_RELEASES_LOG = log
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.CRITICAL_ALERT_STATE = tmp / "unified_health_block_history.jsonl"
+    # Stub the escalation path so the BLOCK body never reaches hermes send.
+    uhealth.run = lambda argv, timeout=25: {
+        "rc": 0, "out": "ok", "err": "", "timeout": False,
+        "fork_resource_pressure": False,
+    }
+    _stub_checks_pass()
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0  # BLOCK verdict delivered OK; probe itself is healthy
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] == "BLOCK", \
+        f"repeated wedges must BLOCK: {record['verdict']}"
+    assert record["cron_forced_release_count"] == uhealth.CRON_FORCED_RELEASE_BLOCK_MIN
+    assert record["cron_forced_releases"]["block"] is True
+    assert "cron_forced_releases" in record["infra_failed"], \
+        "repeated wedges must surface as an infra failure"
+    alert_file = uhealth.CRON_OUTPUT / "unified_health_alert.last"
+    assert alert_file.exists()
+    body = alert_file.read_text(encoding="utf-8")
+    assert "## Cron forced releases" in body, "BLOCK body must name the wedge class"
+
+
+def test_forced_releases_absent_main_stays_pass():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    _stub_checks_pass()
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] == "PASS", f"no releases must stay PASS: {record['verdict']}"
+    assert record["cron_forced_release_count"] == 0
+    assert record["cron_forced_releases"]["count"] == 0
+
+
 def test_check_kanban_crashes_active_vs_stale():
     tmp = Path(tempfile.mkdtemp())
     boards = tmp / "boards"
@@ -217,6 +414,7 @@ def test_jarvis_ready_backlog_observability_does_not_block_main():
     uhealth.SYCODE_TRADING_KANBAN_DB = _absent_sycode(tmp)
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
     uhealth.check_hermes_cli = lambda: (True, "ok", False)
     uhealth.check_gateway_unit = lambda: (True, "ok", False)
     uhealth.check_gateway_runtime = lambda: (True, True, "ok")
@@ -252,6 +450,7 @@ def test_legacy_substrate_bridge_stamps_fresh_health_canary_record():
     tmp = Path(tempfile.mkdtemp())
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
     uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
     uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
     uhealth.check_hermes_cli = lambda: (True, "ok", False)
@@ -335,6 +534,7 @@ def test_ready_backlog_warn_does_not_block_main_verdict():
     uhealth.SYCODE_TRADING_KANBAN_DB = sdb
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
     uhealth.check_hermes_cli = lambda: (True, "ok", False)
     uhealth.check_gateway_unit = lambda: (True, "ok", False)
     uhealth.check_gateway_runtime = lambda: (True, True, "ok")

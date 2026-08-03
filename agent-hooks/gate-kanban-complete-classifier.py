@@ -232,6 +232,13 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"\bsuperseded[- ]banner\b",
     r"\bpaper[- ]only knowledge hygiene\b",
     r"\bpaper[- ]only obsidian markdown hygiene\b",
+    # Monitor/report/script cards that describe a metric "renders" as 0pp,
+    # MEASUREMENT_UNAVAILABLE, or a missing section are describing report
+    # output, not a browser/app render surface. Bare "render|renders" in
+    # WEB_PATTERNS must not wedge read-only monitor/report completion. Paired
+    # negative fixture proves the same wording attached to concrete apps/web
+    # work still blocks.
+    r"\b(monitor|report|script)\b[^\n]{0,120}\brenders?\b[^\n]{0,160}\b(0pp|metric|number|value|output|section|marker|unmeasured|unavailable)\b",
 ]
 
 FLEET_SLO_NONAPP_PATTERNS: PatternList = [

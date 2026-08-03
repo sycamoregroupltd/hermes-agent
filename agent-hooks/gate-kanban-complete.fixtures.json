@@ -1023,5 +1023,31 @@
       ]
     },
     "description": "BLOCK: paired negative for t_cdeab9c4 GUC allow terms; concrete apps/web route/page work must still require running-app VERIFY_PASS even when it mentions the app.bypass_append_only GUC."
+  },
+  {
+    "name": "t_ec251392-calibration-drift-monitor-renders-report-allows",
+    "task_id": "t_ec251392_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "FIX (source-only): calibration-drift-monitor renders timed-out queries as 0pp + unweighted MCE inflated by tiny buckets",
+    "body": "Source-only fix to the drift monitor script /home/frank/.hermes/scripts/calibration-drift-monitor.py (no deploy, no schedule change). Defect 1: a timed-out query is rendered as 0pp (perfectly calibrated) because db_query() imposes a hard 30s timeout and overall_calibration() returns {} which build_report renders as stats.get('overall_bias_pp', 0). Fix: never render an unmeasured metric as a number — emit MEASUREMENT_UNAVAILABLE marker in both the report and the card body, and raise the timeout. Defect 2: MCE formula is an unweighted mean over buckets with n>=5 letting 1-row and 2-row buckets drive the headline; report sample-weighted as headline and keep significant-bucket figure alongside. Defect 3: group cohort by composite_confidence_weights_version and print the split. Verify by running the script with --verbose against the live read-only DB and pasting real output.",
+    "summary": "Source-only fix complete and verified live: Overall bias -15.0pp (not 0pp), sample-weighted MCE 15.2pp with unweighted/significant figures alongside, estimator provenance 96.7% conviction alias. No deploy/schedule/DB/trading action.",
+    "metadata": {
+      "changed_files": ["/home/frank/.hermes/scripts/calibration-drift-monitor.py", "/home/frank/.hermes/scripts/test_calibration_drift_monitor.py"]
+    },
+    "description": "ALLOW: real t_ec251392 regression — a source-only monitor script fix whose title says the monitor 'renders' report output as 0pp must NOT be misclassified as frontend/app work; it routes through the readonly_nonapp lane. Paired negative below proves the same 'renders ... 0pp' wording attached to concrete apps/web work still blocks."
+  },
+  {
+    "name": "t_ec251392-paired-frontend-renders-0pp-negative-blocks",
+    "task_id": "t_ec251392_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "FIX: dashboard renders timed-out queries as 0pp in the marketplace frontend",
+    "body": "Implement apps/web React dashboard route component and page layout that renders timed-out queries as 0pp for marketplace users. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "frontend dashboard renders 0pp implemented; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": ["apps/web/src/app/dashboard/queries/page.tsx"]
+    },
+    "description": "BLOCK: paired negative for t_ec251392 monitor-report allow terms; concrete apps/web dashboard/page work must still require running-app VERIFY_PASS even when it uses the same 'renders ... 0pp' wording."
   }
 ]
