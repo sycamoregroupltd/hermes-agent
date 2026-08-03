@@ -1320,6 +1320,27 @@ def _drive_nonzero_crash(conn, tid, fake_pid):
     return _drive_worker_exit(conn, tid, fake_pid, 256)
 
 
+def _drive_dead_pid(conn, tid, fake_pid):
+    """One dead-pid (``unknown`` exit class) reaper pass for ``tid``.
+
+    Unlike ``_drive_worker_exit`` this does NOT record a worker exit in the
+    reap registry, so ``_classify_worker_exit`` returns ``("unknown", None)``
+    and ``detect_crashed_workers`` builds the harness ``pid <n> not alive``
+    signature — the spawn-time worker-death class from t_fc8c903b.
+    """
+    import hermes_cli.kanban_db as _kb
+    host_prefix = _kb._claimer_id().split(":", 1)[0]
+    claimed = _kb.claim_task(conn, tid, claimer=f"{host_prefix}:mock")
+    assert claimed is not None, "task was not claimable for the next attempt"
+    _kb._set_worker_pid(conn, tid, fake_pid)
+    original_alive = _kb._pid_alive
+    _kb._pid_alive = lambda p: False
+    try:
+        return _kb.detect_crashed_workers(conn)
+    finally:
+        _kb._pid_alive = original_alive
+
+
 def test_protocol_violation_budget_not_consumed_by_other_failures(kanban_home):
     """Mixed failure kinds must not consume the violation retry budget.
 
@@ -1364,6 +1385,132 @@ def test_protocol_violation_budget_not_consumed_by_other_failures(kanban_home):
         assert len(gave_up) == 1
         assert (gave_up[0].payload or {}).get("protocol_violations") == \
             _kb._PROTOCOL_VIOLATION_FAILURE_LIMIT
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Recoverable re-dispatch for dead-pid (``pid not alive``) crashes
+# (t_d1bacc9f / t_fc8c903b): a worker that dies at spawn time without any
+# handoff is a harness defect, NOT a capability gap. One dead-pid crash must
+# re-queue the card (retry allowed, counter incremented); repeated dead-pid
+# crashes past the failure limit must hard-block as ``harness_defect``
+# (routed to devops), never ``capability``. Ordinary nonzero-exit crashes
+# keep blocking exactly as before.
+# ---------------------------------------------------------------------------
+
+
+def test_dead_pid_single_crash_requeues_without_capability_block(kanban_home):
+    """A single ``pid <n> not alive`` crash re-queues the card for retry.
+
+    The card must stay ``ready`` (the same profile can retry), the
+    consecutive-failure counter must tick to 1, and no block_kind may be
+    written — a first dead-pid death is a harness spawn crash, not a
+    capability gap.
+    """
+    import hermes_cli.kanban_db as _kb
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="deadpid1", assignee="worker")
+        crashed = _drive_dead_pid(conn, tid, 992000)
+        assert tid in crashed
+        task = kb.get_task(conn, tid)
+        assert task.status == "ready", (
+            f"single dead-pid crash must re-queue, got {task.status}"
+        )
+        assert task.consecutive_failures == 1
+        assert task.block_kind is None, (
+            "single dead-pid crash must NOT hard-block with any kind, "
+            f"got block_kind={task.block_kind!r}"
+        )
+        # No gave_up yet.
+        gave_up = [e for e in kb.list_events(conn, tid) if e.kind == "gave_up"]
+        assert gave_up == []
+        # The crash event carries no harness_defect marker (below limit).
+        crashed_ev = [e for e in kb.list_events(conn, tid) if e.kind == "crashed"]
+        assert len(crashed_ev) == 1
+    finally:
+        conn.close()
+
+
+def test_dead_pid_repeated_crashes_hard_block_harness_defect(kanban_home):
+    """Repeated dead-pid crashes past the limit hard-block as
+    ``harness_defect`` routed to devops — never ``capability``."""
+    import hermes_cli.kanban_db as _kb
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="deadpid2", assignee="worker")
+
+        # Pass 1: re-queue (counter 1).
+        _drive_dead_pid(conn, tid, 992010)
+        task = kb.get_task(conn, tid)
+        assert task.status == "ready"
+        assert task.consecutive_failures == 1
+
+        # Pass 2: counter hits DEFAULT_FAILURE_LIMIT (2) — hard block.
+        _drive_dead_pid(conn, tid, 992011)
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.consecutive_failures == 2
+        assert task.block_kind == "harness_defect", (
+            f"dead-pid crash must hard-block as harness_defect, "
+            f"got block_kind={task.block_kind!r}"
+        )
+
+        # gave_up event records the harness_defect marker + pid context.
+        gave_up = [e for e in kb.list_events(conn, tid) if e.kind == "gave_up"]
+        assert len(gave_up) == 1
+        payload = gave_up[0].payload or {}
+        assert payload.get("harness_defect") is True
+        assert payload.get("pid") == 992011
+
+        # The AUTO-BLOCK comment routes to devops.
+        comments = kb.list_comments(conn, tid)
+        bodies = [c.body for c in comments]
+        auto_blocks = [b for b in bodies if b.startswith("AUTO-BLOCK")]
+        assert len(auto_blocks) == 1
+        assert "harness_defect" in auto_blocks[0]
+        assert "devops" in auto_blocks[0].lower()
+
+        # recompute_ready must NOT auto-recover a harness_defect block.
+        promoted = kb.recompute_ready(conn)
+        assert promoted == 0
+        assert kb.get_task(conn, tid).status == "blocked"
+    finally:
+        conn.close()
+
+
+def test_nonzero_exit_still_blocks_capability_as_before(kanban_home):
+    """Ordinary nonzero-exit crashes still hard-block as before.
+
+    Regression guard: the dead-pid re-dispatch must not change the classic
+    crash path — a repeated nonzero-exit crash still trips the breaker with
+    the capability fallback and a gave_up event, exactly as pre-fix.
+    """
+    import hermes_cli.kanban_db as _kb
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="nonzero", assignee="worker")
+
+        # Pass 1: counter 1, still ready.
+        _drive_nonzero_crash(conn, tid, 993000)
+        task = kb.get_task(conn, tid)
+        assert task.status == "ready"
+        assert task.consecutive_failures == 1
+
+        # Pass 2: counter 2 = DEFAULT_FAILURE_LIMIT — blocked.
+        _drive_nonzero_crash(conn, tid, 993001)
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.consecutive_failures == 2
+        # Non-dead-pid crashes keep the generic capability fallback.
+        assert task.block_kind == "capability"
+
+        gave_up = [e for e in kb.list_events(conn, tid) if e.kind == "gave_up"]
+        assert len(gave_up) == 1
+        assert (gave_up[0].payload or {}).get("harness_defect") is not True
+        # Last failure error names the real crash cause, not "not alive".
+        assert "exited with code" in (task.last_failure_error or "")
     finally:
         conn.close()
 
