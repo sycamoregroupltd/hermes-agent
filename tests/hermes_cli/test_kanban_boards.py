@@ -130,21 +130,34 @@ class TestPathResolution:
             fresh_home / "kanban" / "boards" / "other" / "logs"
         )
 
-    def test_env_var_db_override_still_wins(self, fresh_home, tmp_path, monkeypatch):
+    def test_env_var_db_override_wins_without_explicit_board(
+        self, fresh_home, tmp_path, monkeypatch
+    ):
         """``HERMES_KANBAN_DB`` pins the file when no explicit board= is given.
 
         The dispatcher→worker handoff (board=None) must keep resolving to the
-        env-pinned DB. This is the defense-in-depth case the docstring protects.
-        See kanban task t_e96dd0cb — an *explicit* board= is a different case.
+        env-pinned DB. This is the consciously amended policy from kanban task
+        t_e96dd0cb / t_5bb30e1d: with no explicit board request, the env pin
+        wins unconditionally. An *explicit* board= is a different case and is
+        covered by the sibling tests below.
         """
         forced = tmp_path / "custom.db"
         monkeypatch.setenv("HERMES_KANBAN_DB", str(forced))
         assert kb.kanban_db_path() == forced
         assert kb.kanban_db_path(board=None) == forced
-        # The default board in a legacy single-DB install IS the env-pinned DB
-        # (HERMES_KANBAN_DB predates boards). Even with an explicit board=
-        # request and no board identity, preserving the pin is the documented
-        # contract — NOT a wrong answer (codex rework point 4).
+
+    def test_default_board_relocated_pin_preserved(
+        self, fresh_home, tmp_path, monkeypatch
+    ):
+        """Relocated pin + no identity + explicit ``board=default`` → pin kept.
+
+        Legacy single-DB contract (codex rework point 4): ``HERMES_KANBAN_DB``
+        predates boards and IS the default board's DB, so an explicit default
+        request on a relocated pin preserves the pin instead of raising or
+        silently choosing the slug-derived path.
+        """
+        forced = tmp_path / "custom.db"
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(forced))
         assert kb.kanban_db_path(board="default") == forced
 
     def test_explicit_board_honoured_when_env_identity_differs(
