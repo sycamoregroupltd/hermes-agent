@@ -337,6 +337,15 @@ _running_lock = threading.Lock()
 _running_since: dict = {}
 _running_futures: dict = {}
 
+# Sentinel installed in ``_running_futures`` at claim time, before
+# ``pool.submit`` has returned a real future.  This closes the race the
+# stale sweep previously had: a sweep landing between the claim critical
+# section and the future-record section saw ``missing`` and could (in
+# principle) release a claim that was about to get its future.  With the
+# sentinel there is never a window where a claim has neither an age nor a
+# future marker — it is ``_FUTURE_PENDING`` until the real future lands.
+_FUTURE_PENDING = object()
+
 # Countable signal for unified-health: how many stale claims this process has
 # force-released, and the most recent ones.  Exposed via
 # ``get_inflight_guard_stats()`` and mirrored to a JSONL under the cron dir so
@@ -366,14 +375,64 @@ def _inflight_min_allowance_minutes() -> float:
     return _INFLIGHT_MIN_ALLOWANCE_MINUTES
 
 
-def _job_interval_minutes(job: dict) -> Optional[float]:
-    """Best-effort interval length for a job, in minutes (None if unknown)."""
-    try:
-        from cron.jobs import parse_schedule
+def _cron_interval_minutes(expr: str) -> Optional[float]:
+    """Approximate the natural interval of a cron expression, in minutes.
 
-        parsed = parse_schedule(str(job.get("schedule") or "")) or {}
-        if parsed.get("kind") == "interval":
-            return float(parsed.get("minutes") or 0) or None
+    The persisted job store keeps ``schedule`` as an already-parsed dict
+    (``{"kind": "cron", "expr": "0 9 * * 1"}``), so the stale allowance for
+    a cron job cannot be derived from a schedule *string* — it must come
+    from the expression itself.  We measure the gap between the next two
+    fire times with croniter; that is the job's cadence, and the sweep's
+    allowance becomes ``max(2 * cadence, floor)`` exactly like interval
+    jobs.  Falls back to ``None`` (→ floor allowance) if croniter is
+    missing or the expression cannot be evaluated.
+    """
+    try:
+        from croniter import croniter
+        from datetime import datetime
+
+        base = datetime.now()
+        it = croniter(expr, base)
+        first = it.get_next(datetime)
+        second = it.get_next(datetime)
+        gap = (second - first).total_seconds() / 60.0
+        return gap if gap > 0 else None
+    except Exception:
+        return None
+
+
+def _job_interval_minutes(job: dict) -> Optional[float]:
+    """Best-effort interval length for a job, in minutes (None if unknown).
+
+    Reads the PERSISTED schedule shape first: the job store keeps
+    ``schedule`` as an already-parsed dict (``{"kind": "interval",
+    "minutes": N}`` or ``{"kind": "cron", "expr": "..."}``), NOT the string
+    form that ``parse_schedule`` consumes.  The string path is kept only as
+    a defensive fallback for programmatic callers that still build string
+    schedules (and for tests that exercise that shape).
+
+    ``kind == "once"`` (one-shot) has no recurring interval — returns None,
+    so the sweep uses the documented floor allowance.
+    """
+    try:
+        schedule = job.get("schedule")
+        if isinstance(schedule, dict):
+            kind = schedule.get("kind")
+            if kind == "interval":
+                minutes = schedule.get("minutes")
+                return float(minutes) if minutes else None
+            if kind == "cron":
+                return _cron_interval_minutes(str(schedule.get("expr") or ""))
+            return None
+        if isinstance(schedule, str) and schedule.strip():
+            from cron.jobs import parse_schedule
+
+            parsed = parse_schedule(schedule) or {}
+            if parsed.get("kind") == "interval":
+                minutes = parsed.get("minutes")
+                return float(minutes) if minutes else None
+            if parsed.get("kind") == "cron":
+                return _cron_interval_minutes(str(parsed.get("expr") or ""))
     except Exception:
         return None
     return None
@@ -458,17 +517,29 @@ def sweep_stale_inflight(due_jobs: Optional[list] = None) -> list:
             if age < allowance:
                 continue
             fut = _running_futures.get(job_id)
-            if fut is not None and not fut.done():
+            if fut is _FUTURE_PENDING:
+                # The claim is past its allowance and the owning future still
+                # has not been installed — the submit path itself (SessionDB
+                # init, agent import, config load) hung before ``pool.submit``
+                # returned.  That is exactly the wedge class; release it.
+                pass
+            elif fut is not None and not fut.done():
                 continue  # genuinely still executing
             _running_job_ids.discard(job_id)
             _running_since.pop(job_id, None)
             _running_futures.pop(job_id, None)
             _forced_release_count += 1
-            stale.append((job_id, age, allowance, fut is None))
+            stale.append((job_id, age, allowance, fut))
 
-    for job_id, age, allowance, no_future in stale:
+    for job_id, age, allowance, fut in stale:
         job = by_id.get(job_id) or {}
         name = job.get("name") or job_id
+        if fut is _FUTURE_PENDING:
+            future_state = "pending"
+        elif fut is None:
+            future_state = "missing"
+        else:
+            future_state = "finished"
         logger.warning(
             "cron.inflight.forced_release job='%s' id=%s age=%.0fs allowance=%.0fs "
             "future=%s — stale in-flight claim released; the job was skipping "
@@ -477,9 +548,26 @@ def sweep_stale_inflight(due_jobs: Optional[list] = None) -> list:
             job_id,
             age,
             allowance,
-            "missing" if no_future else "finished",
+            future_state,
         )
         _record_forced_release(job_id, name, age, allowance)
+        # Finite-repeat guard (review MINOR 2): a forced release is NOT a real
+        # run, so it must not consume a finite one-shot's repeat budget or let
+        # mark_job_run auto-delete the row (completed >= times).  Live store
+        # has 0 finite-repeat jobs today, but the guard is cheap and prevents
+        # a forced release from destroying a user's one-shot.  The claim is
+        # released and the row is left untouched, so the job re-fires normally
+        # on its next due tick (self-heal) instead of being deleted.
+        repeat = job.get("repeat") or {}
+        if isinstance(repeat, dict) and repeat.get("times") is not None:
+            logger.warning(
+                "cron.inflight.forced_release.job_untouched job='%s' id=%s — "
+                "finite-repeat job released without mark_job_run (repeat budget "
+                "preserved); row left in place so it re-fires normally",
+                name,
+                job_id,
+            )
+            continue
         try:
             mark_job_run(
                 job_id,
@@ -4415,7 +4503,11 @@ def tick(
                 # the add, so there is no window where an id is in-flight
                 # without an age the stale sweep can bound it by.
                 _running_since[job_id] = time.time()
-                _running_futures.pop(job_id, None)
+                # Pending sentinel closes the future-record race (review
+                # MINOR 1): the sweep never sees a claim with NO future
+                # marker — it is _FUTURE_PENDING until pool.submit returns,
+                # then the real future replaces it below.
+                _running_futures[job_id] = _FUTURE_PENDING
             # Record the attempt before executor dispatch. Recovery classifies
             # abandoned records as unknown; it never automatically retries them.
             execution = create_execution(job_id, source="builtin")

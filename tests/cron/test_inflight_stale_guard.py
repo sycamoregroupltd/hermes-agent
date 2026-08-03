@@ -10,6 +10,12 @@ short-circuits with "already running — skipping" — silently, with no
 These tests pin the bounded guard: a claim older than its allowance with no
 live future is force-released, logged, counted, and surfaced via
 ``mark_job_run(..., success=False, error=...)``.
+
+IMPORTANT (review round 2): the job store persists ``schedule`` as an
+already-parsed DICT (``{"kind": "interval", "minutes": N}`` /
+``{"kind": "cron", "expr": "..."}``), not the string form ``parse_schedule``
+consumes. All fixtures here use the persisted dict shape so the tests prove
+the production path, not a synthetic string shape.
 """
 
 import time
@@ -33,8 +39,66 @@ def _clean_inflight():
     sched._running_futures.clear()
 
 
-def _job(job_id="wedged", schedule="every 60m"):
-    return {"id": job_id, "name": f"board-pm-triage-{job_id}", "schedule": schedule}
+def _job(job_id="wedged", minutes=60, kind="interval", cron_expr=None,
+         repeat=None):
+    """Build a job row using the PERSISTED schedule dict shape."""
+    if kind == "interval":
+        schedule = {"kind": "interval", "minutes": minutes,
+                    "display": f"every {minutes}m"}
+    elif kind == "cron":
+        expr = cron_expr or "0 9 * * 1"
+        schedule = {"kind": "cron", "expr": expr, "display": expr}
+    else:
+        schedule = {"kind": "once", "run_at": "2030-01-01T00:00:00",
+                    "display": "once at 2030-01-01 00:00"}
+    job = {"id": job_id, "name": f"board-pm-triage-{job_id}",
+           "schedule": schedule}
+    if repeat is not None:
+        job["repeat"] = repeat
+    return job
+
+
+# Real persisted row shapes copied verbatim from
+# /home/frank/.hermes/profiles/jarvis/cron/jobs.json (2026-08-03) — the
+# review found the first attempt's string fixture proved nothing about the
+# store, so these pin the actual store shape.
+REAL_INTERVAL_ROW = {"kind": "interval", "minutes": 4320,
+                     "display": "every 4320m"}          # guide-curator
+REAL_CRON_ROW = {"kind": "cron", "expr": "*/15 * * * *",
+                 "display": "*/15 * * * *"}             # dgx-jarvis-health-canary
+REAL_WEEKLY_CRON_ROW = {"kind": "cron", "expr": "0 9 * * 1",
+                        "display": "0 9 * * 1"}         # weekly-security-audit
+
+
+class TestJobIntervalMinutes:
+    """Blocker-1 fix: interval must come from the PERSISTED dict shape."""
+
+    def test_reads_persisted_interval_dict(self):
+        job = {"id": "x", "schedule": dict(REAL_INTERVAL_ROW)}
+        assert sched._job_interval_minutes(job) == 4320.0
+
+    def test_reads_persisted_cron_dict(self):
+        job = {"id": "x", "schedule": dict(REAL_CRON_ROW)}
+        # */15 every 15 minutes → cadence 15m.
+        assert sched._job_interval_minutes(job) == 15.0
+
+    def test_reads_persisted_weekly_cron_dict(self):
+        job = {"id": "x", "schedule": dict(REAL_WEEKLY_CRON_ROW)}
+        # 0 9 * * 1 fires weekly → cadence 7*24*60 = 10080m.
+        assert sched._job_interval_minutes(job) == 7 * 24 * 60
+
+    def test_string_fallback_still_works(self):
+        # Defensive fallback for programmatic callers.
+        job = {"id": "x", "schedule": "every 60m"}
+        assert sched._job_interval_minutes(job) == 60.0
+
+    def test_oneshot_has_no_interval(self):
+        job = _job(kind="once")
+        assert sched._job_interval_minutes(job) is None
+
+    def test_garbage_returns_none(self):
+        job = {"id": "x", "schedule": {"kind": "bogus"}}
+        assert sched._job_interval_minutes(job) is None
 
 
 class TestStaleInflightSweep:
@@ -77,9 +141,31 @@ class TestStaleInflightSweep:
 
     def test_allowance_is_at_least_two_intervals(self, tmp_path):
         """A slow-but-healthy 6h job is not clipped by the 30m floor."""
-        job = _job(schedule="every 360m")
+        job = _job(minutes=360)
         sched._running_job_ids.add(job["id"])
         sched._running_since[job["id"]] = time.time() - 4 * 60 * 60  # 4h < 12h
+
+        with patch.object(sched, "_get_hermes_home", return_value=tmp_path):
+            assert sched.sweep_stale_inflight([job]) == []
+        assert job["id"] in sched.get_running_job_ids()
+
+    def test_allowance_honors_persisted_4320m_row(self, tmp_path):
+        """The REAL guide-curator row (4320m) gets a 144h allowance, not the
+        30m floor — the Blocker-1 regression against the live store shape."""
+        job = _job(job_id="guide-curator", minutes=4320)
+        sched._running_job_ids.add(job["id"])
+        sched._running_since[job["id"]] = time.time() - 4 * 60 * 60  # 4h ≪ 144h
+
+        with patch.object(sched, "_get_hermes_home", return_value=tmp_path):
+            assert sched.sweep_stale_inflight([job]) == []
+        assert job["id"] in sched.get_running_job_ids()
+
+    def test_cron_allowance_not_clipped_to_floor(self, tmp_path):
+        """A weekly cron job (cadence 10080m) is not clipped at 30m: a 24h
+        claim is still healthy (allowance 20160m)."""
+        job = _job(job_id="weekly", kind="cron", cron_expr="0 9 * * 1")
+        sched._running_job_ids.add(job["id"])
+        sched._running_since[job["id"]] = time.time() - 24 * 60 * 60
 
         with patch.object(sched, "_get_hermes_home", return_value=tmp_path):
             assert sched.sweep_stale_inflight([job]) == []
@@ -103,6 +189,46 @@ class TestStaleInflightSweep:
         with patch.object(sched, "mark_job_run"), \
              patch.object(sched, "_get_hermes_home", return_value=tmp_path):
             assert sched.sweep_stale_inflight([job]) == [job["id"]]
+
+    def test_pending_sentinel_released_when_submit_hung(self, tmp_path):
+        """MINOR 1: a claim whose submit path hung stays _FUTURE_PENDING past
+        its allowance (the SessionDB-init wedge) and must be released."""
+        job = _job()
+        sched._running_job_ids.add(job["id"])
+        sched._running_since[job["id"]] = time.time() - 5 * 60 * 60
+        sched._running_futures[job["id"]] = sched._FUTURE_PENDING
+
+        with patch.object(sched, "mark_job_run") as mark, \
+             patch.object(sched, "_get_hermes_home", return_value=tmp_path):
+            assert sched.sweep_stale_inflight([job]) == [job["id"]]
+        assert mark.call_count == 1
+
+    def test_pending_sentinel_young_claim_is_not_released(self, tmp_path):
+        """MINOR 1: a young pending claim (submit still in flight) is safe."""
+        job = _job()
+        sched._running_job_ids.add(job["id"])
+        sched._running_since[job["id"]] = time.time() - 60  # 1 minute
+        sched._running_futures[job["id"]] = sched._FUTURE_PENDING
+
+        with patch.object(sched, "mark_job_run") as mark, \
+             patch.object(sched, "_get_hermes_home", return_value=tmp_path):
+            assert sched.sweep_stale_inflight([job]) == []
+        assert job["id"] in sched.get_running_job_ids()
+        mark.assert_not_called()
+
+    def test_finite_repeat_job_released_without_mark_job_run(self, tmp_path):
+        """MINOR 2: a forced release must not consume a finite repeat budget
+        or auto-delete the row; the claim is released, the row untouched."""
+        job = _job(repeat={"times": 1, "completed": 0})
+        sched._running_job_ids.add(job["id"])
+        sched._running_since[job["id"]] = time.time() - 5 * 60 * 60
+
+        with patch.object(sched, "mark_job_run") as mark, \
+             patch.object(sched, "_get_hermes_home", return_value=tmp_path):
+            assert sched.sweep_stale_inflight([job]) == [job["id"]]
+        assert job["id"] not in sched.get_running_job_ids()
+        mark.assert_not_called()
+        assert sched.get_inflight_guard_stats()["forced_releases"] == 1
 
     def test_claim_without_timestamp_is_adopted_then_swept(self, tmp_path):
         """An id injected with no recorded start (pre-guard claim) must not be
@@ -133,7 +259,8 @@ class TestStaleInflightSweep:
 class TestWedgedJobRefiresWithoutRestart:
     def test_tick_sweeps_then_dispatches_the_previously_wedged_job(self, tmp_path):
         """End-to-end symptom: before the fix, tick() returned 0 forever."""
-        job = dict(_job(), enabled=True, next_run_at="2020-01-01T00:00:00", deliver="local")
+        job = dict(_job(), enabled=True, next_run_at="2020-01-01T00:00:00",
+                   deliver="local")
         sched._running_job_ids.add(job["id"])
         sched._running_since[job["id"]] = time.time() - 6 * 60 * 60
 
