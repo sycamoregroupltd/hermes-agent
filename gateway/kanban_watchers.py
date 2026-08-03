@@ -109,6 +109,30 @@ def _release_singleton_lock(handle) -> None:
         pass
 
 
+def _deliver_fleet_dispatch_alert(message: str) -> None:
+    """Deliver a fleet-dispatch starvation alert to the #critical-alerts channel.
+
+    Same loud escape hatch as the cron dead-pin guard
+    (``cron.scheduler._alert_critical_alerts`` → Discord #critical-alerts,
+    channel id ``cron.scheduler._CRITICAL_ALERTS_CHANNEL_ID``): a dispatcher
+    that spawns nothing while ready work exists is a fleet-level black hole
+    (t_2a652a17) and must page an operator, not sit in a log file. Reusing the
+    existing channel keeps one alert surface for scheduler-level faults — do
+    NOT invent a new channel.
+
+    Fail-safe by design: if the helper or the underlying send raises, the
+    message is still emitted at ``logger.critical`` (the scheduler's own
+    ``_alert_critical_alerts`` already guarantees this as its hard fallback),
+    and a broken alert path never crashes the dispatcher tick.
+    """
+    try:
+        from cron.scheduler import _alert_critical_alerts
+
+        _alert_critical_alerts(message)
+    except Exception:
+        logger.critical("fleet-dispatch alert delivery failed; %s", message)
+
+
 class GatewayKanbanWatchersMixin:
     """Kanban watcher / notifier / dispatcher loops for GatewayRunner."""
 
@@ -1477,23 +1501,31 @@ class GatewayKanbanWatchersMixin:
                             # they carry an unresolved block, not because a
                             # profile is broken. Name the cards + the fix so
                             # an operator can unblock them (t_2a652a17).
-                            logger.warning(
+                            _msg = (
                                 "kanban dispatcher stuck: ready queue non-empty "
                                 "for %d consecutive ticks but 0 workers spawned. "
                                 "%d card(s) are being refused by the block gate "
-                                "(need `hermes kanban unblock`): %s",
-                                bad_ticks,
-                                len(blocked_starved),
-                                ", ".join(sorted(set(blocked_starved))[:20]),
+                                "(need `hermes kanban unblock`): %s"
+                                % (
+                                    bad_ticks,
+                                    len(blocked_starved),
+                                    ", ".join(sorted(set(blocked_starved))[:20]),
+                                )
                             )
                         else:
-                            logger.warning(
+                            _msg = (
                                 "kanban dispatcher stuck: ready queue non-empty for "
                                 "%d consecutive ticks but 0 workers spawned. Check "
                                 "profile health (venv, PATH, credentials) and "
-                                "`hermes kanban list --status ready`.",
-                                bad_ticks,
+                                "`hermes kanban list --status ready`."
+                                % (bad_ticks,)
                             )
+                        # DELIVER the alert, don't just log it — an undelivered
+                        # alert is the failure mode this card exists to close
+                        # (t_2a652a17): the operator must be paged, not left to
+                        # discover a silently starved dispatcher in logs.
+                        logger.warning("%s", _msg)
+                        _deliver_fleet_dispatch_alert(_msg)
                         last_warn_at = now
             except asyncio.CancelledError:
                 logger.debug("kanban dispatcher: cancelled")
