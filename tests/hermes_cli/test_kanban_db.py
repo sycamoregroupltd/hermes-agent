@@ -1583,3 +1583,214 @@ def test_bare_connect_does_not_close_on_context_exit(tmp_path):
     # Still usable after with-block exit (the leak).
     conn.execute("SELECT 1").fetchone()
     conn.close()  # explicit close to avoid leaking THIS test
+
+
+# ---------------------------------------------------------------------------
+# Respawn-guard event throttle (t_37be4d75 regression fixture)
+#
+# The dispatcher ticks roughly every minute, so a ready card held by a
+# persistent guard (e.g. ``active_pr`` while a PR waits in review) used to
+# accumulate one identical ``respawn_guarded {reason}`` row PER TICK
+# (~1,440 rows/day/task). The agreed rule (design t_e3308956) is a
+# state-transition + bounded-heartbeat throttle: emit on first entry, on
+# reason change, and at most once per suppression window thereafter.
+#
+# These tests drive deterministic fake dispatcher passes (monkeypatched
+# clock + ``HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS`` window)
+# so they are hermetic: no live trading, credentials, or production data.
+# They assert the *behavior* through ``dispatch_once`` and therefore pass
+# against any correct implementation of the agreed rule.
+# ---------------------------------------------------------------------------
+
+
+def _respawn_guarded_reasons(conn, task_id):
+    """Return the ordered list of reasons recorded for a task."""
+    events = [
+        e for e in kb.list_events(conn, task_id)
+        if e.kind == "respawn_guarded"
+    ]
+    return [e.payload.get("reason") for e in events]
+
+
+def test_respawn_guard_event_first_active_pr_pass_records(
+    kanban_home, all_assignees_spawnable, monkeypatch,
+):
+    """First guarded pass for (task, active_pr) records exactly one event
+    and never spawns / auto-blocks the card (acceptance #1/#5/#7)."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "3600"
+    )
+    now = 6_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    spawned = []
+
+    def fake_spawn(task, workspace):
+        spawned.append(task.id)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="pr-held", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "Opened https://github.com/acme/repo/pull/42",
+        )
+        res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+
+    assert (t, "active_pr") in res.respawn_guarded
+    assert _respawn_guarded_reasons(conn, t) == ["active_pr"]
+    assert t not in spawned
+    assert t not in res.auto_blocked
+    with kb.connect() as conn:
+        assert kb.get_task(conn, t).status == "ready"
+
+
+def test_respawn_guard_event_same_state_passes_suppressed(
+    kanban_home, all_assignees_spawnable, monkeypatch,
+):
+    """Repeated same-reason (active_pr) passes inside the suppression window
+    append NO new event rows, while the in-memory per-tick telemetry still
+    reports the guard every pass (acceptance #2/#7)."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "3600"
+    )
+    now = 6_000_000
+    spawned = []
+
+    def fake_spawn(task, workspace):
+        spawned.append(task.id)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="pr-repeated", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "Opened https://github.com/acme/repo/pull/7",
+        )
+
+        # First pass at t0: event recorded.
+        monkeypatch.setattr(_kb.time, "time", lambda: now)
+        res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+        assert (t, "active_pr") in res.respawn_guarded
+
+        # Five more per-minute passes: still guarded, no new events.
+        for i in range(1, 6):
+            monkeypatch.setattr(_kb.time, "time", lambda i=i: now + i * 60)
+            res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+            assert (t, "active_pr") in res.respawn_guarded  # in-memory every tick
+
+        assert _respawn_guarded_reasons(conn, t) == ["active_pr"]
+        assert t not in spawned
+    with kb.connect() as conn:
+        assert kb.get_task(conn, t).status == "ready"
+
+
+def test_respawn_guard_event_emits_on_reason_change(
+    kanban_home, all_assignees_spawnable, monkeypatch,
+):
+    """A material state change (guard reason changes) records a new event
+    immediately, even inside the suppression window (acceptance #3)."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "3600"
+    )
+    now = 6_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="reason-change", assignee="alice")
+
+        # First reason: blocker_auth via quota-flavored last failure error.
+        conn.execute(
+            "UPDATE tasks SET last_failure_error = ? WHERE id = ?",
+            ("quota exceeded", t),
+        )
+        kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        assert _respawn_guarded_reasons(conn, t) == ["blocker_auth"]
+
+        # Reason changes to active_pr one minute later (well inside the
+        # 3600s window): a NEW event must be appended immediately.
+        conn.execute(
+            "UPDATE tasks SET last_failure_error = NULL WHERE id = ?", (t,)
+        )
+        kb.add_comment(
+            conn, t, "worker",
+            "PR: https://github.com/acme/repo/pull/99",
+        )
+        monkeypatch.setattr(_kb.time, "time", lambda: now + 60)
+        res = kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        assert (t, "active_pr") in res.respawn_guarded
+        assert _respawn_guarded_reasons(conn, t) == [
+            "blocker_auth",
+            "active_pr",
+        ]
+
+
+def test_respawn_guard_event_heartbeat_after_window(
+    kanban_home, all_assignees_spawnable, monkeypatch,
+):
+    """Same reason persisting past the suppression window emits ONE heartbeat
+    row, then stays silent again until the next window (acceptance #4)."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "60"
+    )
+    now = 6_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="heartbeat", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "Opened https://github.com/acme/repo/pull/1",
+        )
+
+        # First pass: event.
+        kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        assert _respawn_guarded_reasons(conn, t) == ["active_pr"]
+
+        # Inside the 60s window: suppressed.
+        monkeypatch.setattr(_kb.time, "time", lambda: now + 30)
+        kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        assert _respawn_guarded_reasons(conn, t) == ["active_pr"]
+
+        # Past the window: one heartbeat event.
+        monkeypatch.setattr(_kb.time, "time", lambda: now + 61)
+        kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        assert _respawn_guarded_reasons(conn, t) == ["active_pr", "active_pr"]
+
+        # Immediately after the heartbeat: suppressed again.
+        monkeypatch.setattr(_kb.time, "time", lambda: now + 91)
+        kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        assert _respawn_guarded_reasons(conn, t) == ["active_pr", "active_pr"]
+
+
+def test_respawn_guard_event_dry_run_still_no_rows(
+    kanban_home, all_assignees_spawnable, monkeypatch,
+):
+    """dry_run passes still populate in-memory telemetry but write zero event
+    rows (acceptance #6)."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "3600"
+    )
+    now = 6_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="dry", assignee="alice")
+        kb.add_comment(
+            conn, t, "worker",
+            "Opened https://github.com/acme/repo/pull/2",
+        )
+        res = kb.dispatch_once(conn, dry_run=True)
+
+    assert (t, "active_pr") in res.respawn_guarded
+    assert _respawn_guarded_reasons(conn, t) == []
+    with kb.connect() as conn:
+        assert kb.get_task(conn, t).status == "ready"
