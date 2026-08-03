@@ -116,6 +116,61 @@ def test_cli_invalid_max_in_progress_silently_disables(isolated_kanban_home, mon
         )
 
 
+def test_cli_dispatch_json_surfaces_block_gate_visibility(isolated_kanban_home, monkeypatch, capsys):
+    """t_2a652a17: `hermes kanban dispatch --json` must surface block-gate
+    starvation. A card refused by the block gate every tick (upero/t_2fa4b632
+    sat 87.4h with Spawned:0) was invisible in the dispatch summary; the JSON
+    output now includes ``skipped_block_gate`` and ``blocked_claim_attempts``.
+    """
+    import json as _json
+
+    from hermes_cli import kanban as kb_cli
+    from hermes_cli import kanban_db
+
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"kanban": {}})
+
+    def fake_dispatch_once(conn, **kwargs):
+        res = kanban_db.DispatchResult()
+        res.skipped_block_gate = ["t_2fa4b632"]
+        res.blocked_claim_attempts = ["t_2fa4b632", "t_eaab813c"]
+        return res
+
+    monkeypatch.setattr(kanban_db, "dispatch_once", fake_dispatch_once)
+
+    args = argparse.Namespace(dry_run=True, max=None, failure_limit=2, json=True)
+    kb_cli._cmd_dispatch(args)
+
+    out = capsys.readouterr().out
+    payload = _json.loads(out)
+    assert payload["skipped_block_gate"] == ["t_2fa4b632"]
+    assert payload["blocked_claim_attempts"] == ["t_2fa4b632", "t_eaab813c"]
+
+
+def test_cli_dispatch_text_reports_blocked_claim_attempts(isolated_kanban_home, monkeypatch, capsys):
+    """The human-readable dispatch summary must count block-gate refusals so
+    an operator sees WHY Spawned:0 with a non-empty ready queue (t_2a652a17)."""
+    from hermes_cli import kanban as kb_cli
+    from hermes_cli import kanban_db
+
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"kanban": {}})
+
+    def fake_dispatch_once(conn, **kwargs):
+        res = kanban_db.DispatchResult()
+        res.skipped_block_gate = ["t_2fa4b632"]
+        res.blocked_claim_attempts = ["t_2fa4b632"]
+        return res
+
+    monkeypatch.setattr(kanban_db, "dispatch_once", fake_dispatch_once)
+
+    args = argparse.Namespace(dry_run=True, max=None, failure_limit=2, json=False)
+    kb_cli._cmd_dispatch(args)
+
+    out = capsys.readouterr().out
+    assert "Blocked (refused to claim" in out
+    assert "t_2fa4b632" in out
+    assert "sticky block gate" in out
+
+
 def test_kanban_swarm_uses_existing_humanizer_skill():
     """#29415: kanban_swarm.py used to hardcode skills=['avoid-ai-writing'],
     a skill that doesn't exist in any registry — synthesizer workers
