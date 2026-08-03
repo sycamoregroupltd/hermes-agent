@@ -116,13 +116,23 @@ VALID_INITIAL_STATUSES = {"running", "blocked"}
 #   * ``capability``   — hit a hard wall (no access, missing creds, an action no
 #                        AI agent can perform). Genuinely human-only.
 #   * ``transient``    — a flaky/temporary failure that may clear on retry.
+#   * ``harness_defect`` — the dispatcher/harness itself crashed the worker
+#                        (e.g. repeated ``pid not alive`` deaths from a
+#                        spawn-time config error), NOT a task/capability gap.
+#                        Routed to devops for harness repair, and
+#                        distinguishable from ``capability`` so the board
+#                        does not mislabel a broken spawn as \"this task cannot
+#                        be done\".
 #
 # ``needs_input`` and ``capability`` are "truly blocked": they go to ``blocked``
 # for a human, and the unblock-loop breaker (see ``block_task`` /
 # ``BLOCK_RECURRENCE_LIMIT``) escalates them to ``triage`` if a cron keeps
 # unblocking them only to have the worker re-block for the same reason.
+# ``harness_defect`` is also a hard block (the card must not auto-loop), but it
+# is typed separately so devops routing / triage can treat it as a harness
+# problem rather than a task problem.
 # ``None`` = legacy/un-typed block (treated as a generic human blocker).
-VALID_BLOCK_KINDS = {"dependency", "needs_input", "capability", "transient"}
+VALID_BLOCK_KINDS = {"dependency", "needs_input", "capability", "transient", "harness_defect"}
 
 # After a task has been blocked, unblocked, and re-blocked this many times for
 # the same (truly-blocked) reason, the unblock-loop breaker stops trusting the
@@ -5635,8 +5645,9 @@ def block_task(
       promotes it automatically once its parents finish. No human, no cron, no
       retry storm. This is Dale's "Type 2 — dependency blocked".
 
-    * ``needs_input`` / ``capability`` / ``None`` — "truly blocked" (Dale's
-      "Type 1"). Lands in ``blocked`` for a human. BUT: each time such a task
+    * ``needs_input`` / ``capability`` / ``harness_defect`` / ``None`` —
+      "truly blocked" (Dale's "Type 1"). Lands in ``blocked`` for a human
+      (or devops, for ``harness_defect``). BUT: each time such a task
       is re-blocked for the SAME kind after having been unblocked, the
       unblock-loop counter (``block_recurrences``) increments. When it reaches
       :data:`BLOCK_RECURRENCE_LIMIT`, the task is routed to ``triage`` instead
@@ -7550,9 +7561,12 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # write_txn so can't nest). ``protocol_violation`` flags the
     # clean-exit-but-still-running case, which is accounted against its
     # own bounded violation streak instead of the unified failure
-    # counter (see the post-txn loop below).
-    crash_details: list[tuple[str, int, str, bool, str]] = []
-    # (task_id, pid, claimer, protocol_violation, error_text)
+    # counter (see the post-txn loop below). ``pid_not_alive`` flags the
+    # harness ``unknown``-exit class (dead pid, no reap record): those
+    # hard-block as ``harness_defect`` routed to devops, never
+    # ``capability``.
+    crash_details: list[tuple[str, int, str, bool, str, bool]] = []
+    # (task_id, pid, claimer, protocol_violation, error_text, pid_not_alive)
     with write_txn(conn):
         rows = conn.execute(
             "SELECT id, worker_pid, claim_lock, started_at FROM tasks "
@@ -7578,6 +7592,10 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
             pid = int(row["worker_pid"])
             kind, code = _classify_worker_exit(pid)
             rate_limited_exit = False
+            # ``pid_not_alive`` is only True for the harness ``unknown``-exit
+            # class (see the else branch below); all other classes leave it
+            # False so the post-txn accounting treats them as before.
+            pid_not_alive = False
             if kind == "clean_exit":
                 # Worker subprocess returned 0 but its task is still
                 # ``running`` in the DB — it exited without calling
@@ -7627,6 +7645,16 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 }
             else:
                 protocol_violation = False
+                # ``unknown`` exit class (dead pid that was never reaped /
+                # never appeared in the reap registry) is the harness
+                # ``pid not alive`` signature: the worker died at spawn time
+                # before producing any handoff (e.g. CLI skill-resolution
+                # crash). It is NOT a task/capability gap — the card must be
+                # re-queued for a retry, and if it keeps dying the same way
+                # the block must be typed ``harness_defect`` (routed to
+                # devops), never ``capability`` (which falsely reads as "this
+                # task cannot be done").
+                pid_not_alive = kind == "unknown"
                 if kind == "nonzero_exit":
                     error_text = f"pid {pid} exited with code {code}"
                 elif kind == "signaled":
@@ -7689,7 +7717,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     crashed.append(row["id"])
                     crash_details.append(
                         (row["id"], pid, row["claim_lock"],
-                         protocol_violation, error_text)
+                         protocol_violation, error_text, pid_not_alive)
                     )
     # Outside the main txn: account each crashed task and maybe trip the
     # breaker (the task transitions ready → blocked with a ``gave_up`` event
@@ -7711,10 +7739,10 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     if crash_details:
         # Fingerprint errors to detect systemic failures.
         _fp_counts: dict[str, int] = {}
-        for _, _, _, _, err_text in crash_details:
+        for _, _, _, _, err_text, _ in crash_details:
             fp = _error_fingerprint(err_text)
             _fp_counts[fp] = _fp_counts.get(fp, 0) + 1
-        for tid, pid, claimer, protocol_violation, error_text in crash_details:
+        for tid, pid, claimer, protocol_violation, error_text, pid_not_alive in crash_details:
             if protocol_violation:
                 streak = _protocol_violation_streak(conn, tid)
                 trow = conn.execute(
@@ -7763,6 +7791,25 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 continue
             fp = _error_fingerprint(error_text)
             is_systemic = _fp_counts.get(fp, 0) >= 3
+            # ``pid not alive`` deaths are a harness/spawn-time defect, not a
+            # capability gap. When the breaker trips on one, hard-block as
+            # ``harness_defect`` (routed to devops) instead of letting the
+            # generic fallback write ``capability`` — the card says "the
+            # harness crashed the worker", not "this task cannot be done".
+            if pid_not_alive:
+                block_kind = "harness_defect"
+                block_comment = (
+                    f"AUTO-BLOCK (harness_defect): the worker for this card "
+                    f"died at spawn time on {_fp_counts.get(fp, 0)} run(s) "
+                    f"with a dead-pid crash (\"{error_text[:200]}\") — a "
+                    f"harness/dispatcher defect (e.g. bad --skills config, "
+                    f"profile/skill resolution crash), NOT a task or "
+                    f"capability gap. Route to devops: fix the spawn config "
+                    f"or task payload, then unblock for retry."
+                )
+            else:
+                block_kind = None
+                block_comment = None
             tripped = _record_task_failure(
                 conn, tid,
                 error=error_text,
@@ -7770,7 +7817,13 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 failure_limit=1 if is_systemic else None,
                 release_claim=False,
                 end_run=False,
-                event_payload_extra={"pid": pid, "claimer": claimer},
+                block_kind=block_kind,
+                block_comment=block_comment,
+                event_payload_extra={
+                    "pid": pid,
+                    "claimer": claimer,
+                    "harness_defect": bool(pid_not_alive),
+                },
             )
             if tripped:
                 auto_blocked.append(tid)
@@ -7791,11 +7844,13 @@ def _record_task_failure(
     error: str,
     *,
     outcome: str,
-    failure_limit: int = None,
+    failure_limit: Optional[int] = None,
     force_trip: bool = False,
     release_claim: bool = False,
     end_run: bool = False,
     event_payload_extra: Optional[dict] = None,
+    block_kind: Optional[str] = None,
+    block_comment: Optional[str] = None,
 ) -> bool:
     """Record a non-success outcome (spawn_failed / crashed / timed_out)
     and maybe trip the circuit breaker.
@@ -7824,6 +7879,21 @@ def _record_task_failure(
     ``event_payload_extra`` merges into the ``gave_up`` event payload
     when the breaker trips, so callers can include outcome-specific
     context (e.g. pid on crash, elapsed on timeout).
+
+    ``block_kind`` / ``block_comment`` are recorded on the task when the
+    breaker trips (status → ``blocked``). Historically the auto-block path
+    left ``block_kind`` NULL and wrote no comment, so every auto-blocked
+    card looked identical to a generic human/legacy block and the *reason*
+    a card was auto-blocked was invisible on the card itself. That hidden
+    reason is exactly what masked the dead-pid harness-defect failure class
+    (t_fc8c903b / t_d1bacc9f): a spawn-time worker crash (``pid <n> not
+    alive``) was written as a generic ``capability`` block, falsely reading
+    as "this task cannot be done". Callers MAY pass a typed ``block_kind``
+    (one of ``VALID_BLOCK_KINDS``) and a human-readable ``block_comment``;
+    when ``block_kind`` is omitted the dispatcher falls back to
+    ``"capability"`` so the column is never NULL on an auto-block (a NULL
+    block_kind is treated as a generic untyped block, which hid this
+    class).
 
     Resolution order for the effective threshold:
       1. per-task ``max_retries`` if set (nothing else overrides)
@@ -7866,14 +7936,18 @@ def _record_task_failure(
 
         if force_trip or failures >= effective_limit:
             # Trip the breaker.
+            _kind_value = (
+                block_kind if block_kind in VALID_BLOCK_KINDS else "capability"
+            )
             if release_claim:
                 # Spawn path: still running, also clear claim state.
                 conn.execute(
                     "UPDATE tasks SET status = 'blocked', claim_lock = NULL, "
                     "claim_expires = NULL, worker_pid = NULL, "
-                    "consecutive_failures = ?, last_failure_error = ? "
+                    "consecutive_failures = ?, last_failure_error = ?, "
+                    "block_kind = ? "
                     "WHERE id = ? AND status IN ('running', 'ready')",
-                    (failures, error[:500], task_id),
+                    (failures, error[:500], _kind_value, task_id),
                 )
             else:
                 # Timeout/crash path: task is already at ``ready``
@@ -7881,9 +7955,10 @@ def _record_task_failure(
                 # counter fields.
                 conn.execute(
                     "UPDATE tasks SET status = 'blocked', "
-                    "consecutive_failures = ?, last_failure_error = ? "
+                    "consecutive_failures = ?, last_failure_error = ?, "
+                    "block_kind = ? "
                     "WHERE id = ? AND status IN ('ready', 'running')",
-                    (failures, error[:500], task_id),
+                    (failures, error[:500], _kind_value, task_id),
                 )
             run_id = None
             if end_run:
@@ -7911,6 +7986,32 @@ def _record_task_failure(
             _append_event(
                 conn, task_id, "gave_up", payload, run_id=run_id,
             )
+            # Record WHY the card was auto-blocked as a comment, so the
+            # reason is visible on the card itself (it was previously NULL
+            # block_kind + no comment, which hid the dead-pid harness-defect
+            # class in t_fc8c903b / t_d1bacc9f). Prefer an explicit
+            # caller-supplied comment, else a synthesized one describing the
+            # trip. Written directly inside the surrounding write_txn (no
+            # nested txn) so it's atomic with the block transition.
+            _comment_body = block_comment or (
+                f"AUTO-BLOCK ({_kind_value}): circuit breaker tripped after "
+                f"{failures} failure(s) (trigger_outcome={outcome}, "
+                f"limit_source={limit_source}, "
+                f"effective_limit={effective_limit}). {error[:300]}"
+            )
+            try:
+                conn.execute(
+                    "INSERT INTO task_comments (task_id, author, body, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (task_id, "kanban-dispatcher", _comment_body, int(time.time())),
+                )
+                _append_event(
+                    conn, task_id, "commented",
+                    {"author": "kanban-dispatcher", "len": len(_comment_body)},
+                )
+            except Exception:
+                # Never let a comment-write failure abort the auto-block.
+                _log.debug("auto-block comment write failed", exc_info=True)
             blocked = True
         else:
             # Below threshold.
