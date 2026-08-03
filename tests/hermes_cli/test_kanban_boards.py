@@ -16,6 +16,7 @@ Covers the pieces added when boards became a first-class concept:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -61,6 +62,9 @@ def fresh_home(tmp_path, monkeypatch):
         pass
     # Kanban module-level init cache must not leak between tests.
     kb._INITIALIZED_PATHS.clear()
+    # The cross-board conflict warning is rate-limited per (slug, pin) pair;
+    # reset the dedup cache so warning-count assertions are hermetic.
+    kb._board_conflict_warned.clear()
     return home
 
 
@@ -127,11 +131,174 @@ class TestPathResolution:
         )
 
     def test_env_var_db_override_still_wins(self, fresh_home, tmp_path, monkeypatch):
-        """``HERMES_KANBAN_DB`` pins the file regardless of board= arg."""
+        """``HERMES_KANBAN_DB`` pins the file when no explicit board= is given.
+
+        The dispatcher→worker handoff (board=None) must keep resolving to the
+        env-pinned DB. This is the defense-in-depth case the docstring protects.
+        See kanban task t_e96dd0cb — an *explicit* board= is a different case.
+        """
         forced = tmp_path / "custom.db"
         monkeypatch.setenv("HERMES_KANBAN_DB", str(forced))
         assert kb.kanban_db_path() == forced
-        assert kb.kanban_db_path(board="ignored") == forced
+        assert kb.kanban_db_path(board=None) == forced
+        # The default board in a legacy single-DB install IS the env-pinned DB
+        # (HERMES_KANBAN_DB predates boards). Even with an explicit board=
+        # request and no board identity, preserving the pin is the documented
+        # contract — NOT a wrong answer (codex rework point 4).
+        assert kb.kanban_db_path(board="default") == forced
+
+    def test_explicit_board_honoured_when_env_identity_differs(
+        self, fresh_home, tmp_path, monkeypatch, caplog
+    ):
+        """Genuine cross-board read: explicit board= must NOT be shadowed.
+
+        This is the t_e96dd0cb regression: a dispatched worker pinned to its
+        own board (HERMES_KANBAN_DB + HERMES_KANBAN_BOARD both injected by the
+        dispatcher) doing a deliberate cross-board read must reach the
+        requested board, and must emit a loud warning about the disagreement.
+        """
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        # Worker pinned to jarvis-os…
+        pinned = kb.board_dir("jarvis-os") / "kanban.db"
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(pinned))
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "jarvis-os")
+        # …reads board=ai-restaurant (a different board).
+        target = kb.kanban_db_path(board="ai-restaurant")
+        assert target != pinned
+        assert target == kb.board_dir("ai-restaurant") / "kanban.db"
+        assert any(
+            "conflict" in r.message.lower()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
+    def test_same_board_relocated_pin_preserved(
+        self, fresh_home, tmp_path, monkeypatch, caplog
+    ):
+        """Explicit board= equal to the env identity preserves a relocated pin.
+
+        Codex rework point 2: with HERMES_KANBAN_DB pointing at a deliberately
+        relocated DB and HERMES_KANBAN_BOARD naming the same board, an explicit
+        same-board call must keep the dispatcher's pin — NOT be redirected to
+        the slug-derived path under HERMES_HOME. No warning: this is the
+        Docker/tmp/symlink handoff, not a conflict.
+        """
+        relocated = tmp_path / "data" / "kanban.db"
+        relocated.parent.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(relocated))
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "ai-restaurant")
+
+        target = kb.kanban_db_path(board="ai-restaurant")
+        assert target == relocated
+        assert not any(
+            "conflict" in r.message.lower()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
+    def test_ambiguous_relocated_pin_raises_for_named_board(
+        self, fresh_home, tmp_path, monkeypatch
+    ):
+        """Relocated pin + no board identity → fail loudly for named boards.
+
+        Codex rework point 4: if the pin is relocated but HERMES_KANBAN_BOARD
+        is absent, neither the pin nor the board can be attributed. Silently
+        choosing either would be a potentially wrong DB — raise instead.
+        """
+        relocated = tmp_path / "data" / "kanban.db"
+        relocated.parent.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(relocated))
+        # Note: HERMES_KANBAN_BOARD deliberately NOT set.
+
+        with pytest.raises(ValueError, match="HERMES_KANBAN_DB"):
+            kb.kanban_db_path(board="ai-restaurant")
+
+    def test_scoped_current_board_outranks_env_pin(
+        self, fresh_home, monkeypatch, caplog
+    ):
+        """CLI ``--board`` / dashboard ``?board=`` (scoped override) wins.
+
+        upero-pm live repro (2026-08-02): inside a dispatched worker,
+        ``hermes kanban --board jarvis-os …`` resolved to the env-pinned
+        upero DB. The CLI routes ``--board`` through ``scoped_current_board``,
+        so an active scoped override is treated as an explicit board request
+        and must outrank the env pin (cross-board → honour the scoped board).
+        """
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        pinned = kb.board_dir("upero") / "kanban.db"
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(pinned))
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "upero")
+
+        with kb.scoped_current_board("jarvis-os"):
+            target = kb.kanban_db_path()  # board=None, but scoped override active
+        assert target == kb.board_dir("jarvis-os") / "kanban.db"
+        assert any(
+            "conflict" in r.message.lower()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
+    def test_warning_is_rate_limited_per_conflict_pair(
+        self, fresh_home, monkeypatch, caplog
+    ):
+        """The cross-board conflict warning must not flood a hot caller.
+
+        Codex rework point 5: repeated calls with the same (board, pin) pair
+        warn once per window; a different pair warns again. This keeps board
+        watchers / dashboard polls from spamming logs every tick.
+        """
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        pinned = kb.board_dir("jarvis-os") / "kanban.db"
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(pinned))
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "jarvis-os")
+
+        # First call warns.
+        assert kb.kanban_db_path(board="ai-restaurant") == (
+            kb.board_dir("ai-restaurant") / "kanban.db"
+        )
+        warns = [
+            r for r in caplog.records
+            if r.levelno >= logging.WARNING and "conflict" in r.message.lower()
+        ]
+        assert len(warns) == 1
+        caplog.clear()
+        # Second identical call within the window: silent.
+        assert kb.kanban_db_path(board="ai-restaurant") == (
+            kb.board_dir("ai-restaurant") / "kanban.db"
+        )
+        assert not any(
+            "conflict" in r.message.lower()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+        # A *different* conflict pair warns again.
+        caplog.clear()
+        assert kb.kanban_db_path(board="sycode-trading") == (
+            kb.board_dir("sycode-trading") / "kanban.db"
+        )
+        warns = [
+            r for r in caplog.records
+            if r.levelno >= logging.WARNING and "conflict" in r.message.lower()
+        ]
+        assert len(warns) == 1
+
+    def test_explicit_board_no_warning_when_pin_matches(
+        self, fresh_home, tmp_path, monkeypatch, caplog
+    ):
+        """When the env pin already names the requested board, no warning fires."""
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        pinned = kb.board_dir("ai-restaurant") / "kanban.db"
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(pinned))
+
+        target = kb.kanban_db_path(board="ai-restaurant")
+        assert target == pinned
+        assert not any(
+            "conflict" in r.message.lower()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
 
     def test_env_var_workspaces_override(self, fresh_home, tmp_path, monkeypatch):
         forced = tmp_path / "ws"
@@ -461,6 +628,113 @@ class TestWorkerSpawnEnv:
         env = captured["env"]
         assert env["HERMES_KANBAN_BOARD"] == "default"
         assert env["HERMES_KANBAN_DB"] == str(fresh_home / "kanban.db")
+
+    def test_default_spawn_preserves_relocated_same_board_pin(
+        self, fresh_home, tmp_path, monkeypatch,
+    ):
+        """A relocated pin for the SAME board must be passed through verbatim.
+
+        Codex rework point 2 (dispatcher injection): if the dispatcher process
+        itself runs with HERMES_KANBAN_DB pointing at a deliberately relocated
+        DB and HERMES_KANBAN_BOARD naming the same board it is spawning for,
+        the child env must keep that pin — NOT be redirected to the slug-derived
+        path under HERMES_HOME.
+        """
+        relocated = tmp_path / "data" / "kanban.db"
+        relocated.parent.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(relocated))
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "spawntest")
+        kb.create_board("spawntest")
+
+        captured = {}
+
+        class FakeProc:
+            pid = 99
+
+        def fake_popen(cmd, *args, **kwargs):
+            captured["env"] = kwargs.get("env", {})
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        task = kb.Task(
+            id="t_reloc",
+            title="",
+            body=None,
+            assignee="teknium",
+            status="ready",
+            priority=0,
+            created_by=None,
+            created_at=0,
+            started_at=None,
+            completed_at=None,
+            workspace_kind="scratch",
+            workspace_path=None,
+            claim_lock=None,
+            claim_expires=None,
+            tenant=None,
+        )
+        kb._default_spawn(task, str(fresh_home / "ws"), board="spawntest")
+        env = captured["env"]
+        assert env["HERMES_KANBAN_DB"] == str(relocated)
+        assert env["HERMES_KANBAN_BOARD"] == "spawntest"
+
+    def test_default_spawn_cross_board_nested_dispatch(
+        self, fresh_home, monkeypatch,
+    ):
+        """Cross-board nested dispatch must pin the TARGET board's DB.
+
+        upero-pm live repro (2026-08-02): a worker on board 'upero' created a
+        task for board 'sycode-trading' via kanban_create; the spawn that
+        followed inherited the worker's HERMES_KANBAN_DB pin and launched the
+        child against the wrong board. When the dispatching process is itself a
+        pinned worker and spawns for a *different* board, the child env must
+        resolve to the target board's DB (explicit board= outranks the env pin).
+        """
+        monkeypatch.setenv("HERMES_HOME", str(fresh_home))
+        # The dispatching process is a worker pinned to upero.
+        monkeypatch.setenv(
+            "HERMES_KANBAN_DB",
+            str(kb.board_dir("upero") / "kanban.db"),
+        )
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "upero")
+        kb.create_board("spawntest")
+
+        captured = {}
+
+        class FakeProc:
+            pid = 7
+
+        def fake_popen(cmd, *args, **kwargs):
+            captured["env"] = kwargs.get("env", {})
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        task = kb.Task(
+            id="t_cross",
+            title="",
+            body=None,
+            assignee="teknium",
+            status="ready",
+            priority=0,
+            created_by=None,
+            created_at=0,
+            started_at=None,
+            completed_at=None,
+            workspace_kind="scratch",
+            workspace_path=None,
+            claim_lock=None,
+            claim_expires=None,
+            tenant=None,
+        )
+        # Dispatcher spawns a worker on spawntest while its own env is pinned
+        # to upero — the child must land on spawntest's DB, not upero's.
+        kb._default_spawn(task, str(fresh_home / "ws"), board="spawntest")
+        env = captured["env"]
+        assert env["HERMES_KANBAN_DB"] == str(
+            kb.board_dir("spawntest") / "kanban.db"
+        )
+        assert env["HERMES_KANBAN_BOARD"] == "spawntest"
 
 
 # ---------------------------------------------------------------------------

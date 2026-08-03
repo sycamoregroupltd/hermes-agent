@@ -26,7 +26,7 @@ Board resolution order (highest precedence first, all optional):
 
 * ``board=`` argument passed directly to :func:`connect` / :func:`init_db`
   (explicit — used by the CLI ``--board`` flag and the dashboard
-  ``?board=...`` query param).
+  ``?board=...`` query param, and by ``scoped_current_board()``).
 * ``HERMES_KANBAN_BOARD`` env var (used by the dispatcher to pin workers
   to the board their task lives on — workers cannot see other boards).
 * ``HERMES_KANBAN_DB`` env var (pins the DB file path directly — legacy
@@ -35,6 +35,14 @@ Board resolution order (highest precedence first, all optional):
 * ``<root>/kanban/current`` — a one-line text file holding the slug of
   the "currently selected" board. Written by ``hermes kanban boards
   switch <slug>``. When absent, the active board is ``default``.
+
+When an explicit ``board=`` (or ``scoped_current_board``) is given AND
+``HERMES_KANBAN_DB`` is set AND the pinned path disagrees with the
+board's slug-derived path, the ``HERMES_KANBAN_BOARD`` identity is used to
+tell a same-board relocated pin (pin preserved — Docker/tmp/symlink
+layouts) from a genuine cross-board read (explicit board honoured, loud
+warning) from an ambiguous relocation (raise). See :func:`kanban_db_path`
+for the full decision table (kanban task t_e96dd0cb).
 
 In standard installs ``<root>`` is ``~/.hermes``. In Docker / custom
 deployments where ``HERMES_HOME`` points outside ``~/.hermes`` (e.g.
@@ -763,6 +771,104 @@ def board_exists(board: Optional[str] = None) -> bool:
     return (d / "board.json").exists() or (d / "kanban.db").exists()
 
 
+def _resolve_board_db_path(board: Optional[str]) -> Path:
+    """Resolve the on-disk ``kanban.db`` path for ``board`` using pure
+    slug-based resolution, ignoring any ``HERMES_KANBAN_DB`` env pin.
+
+    Used by :func:`kanban_db_path` to detect when the env pin and an
+    explicit ``board=`` argument disagree (see t_e96dd0cb).
+    """
+    slug = _normalize_board_slug(board)
+    if slug is None:
+        slug = get_current_board()
+    if slug == DEFAULT_BOARD:
+        return kanban_home() / "kanban.db"
+    return board_dir(slug) / "kanban.db"
+
+
+def _paths_point_at_same_db(a: Path, b: Path) -> bool:
+    """True if ``a`` and ``b`` name the same kanban.db file.
+
+    Tolerates absolute vs relative, ``..`` segments, and symlinks without
+    requiring the files to exist on disk. Never raises for missing paths.
+    """
+    try:
+        aa = Path(os.path.abspath(str(a))).resolve()
+        bb = Path(os.path.abspath(str(b))).resolve()
+    except (OSError, ValueError):
+        aa = Path(os.path.abspath(str(a)))
+        bb = Path(os.path.abspath(str(b)))
+    return aa == bb
+
+
+def _infer_board_slug_from_pin_path(pinned: Path) -> Optional[str]:
+    """Return the board slug a pinned DB path belongs to, or ``None``.
+
+    Understands the two standard on-disk shapes (resolved through the
+    current kanban home):
+
+    * ``<home>/kanban.db`` → ``default`` (legacy back-compat path)
+    * ``<home>/kanban/boards/<slug>/kanban.db`` → ``<slug>``
+
+    Any other (relocated / custom) path returns ``None`` — the caller must
+    then treat the pin's board identity as unknowable.
+    """
+    try:
+        home = Path(os.path.abspath(str(kanban_home()))).resolve()
+        p = Path(os.path.abspath(str(pinned))).resolve()
+    except (OSError, ValueError):
+        return None
+    if p == home / "kanban.db":
+        return DEFAULT_BOARD
+    boards = home / "kanban" / "boards"
+    if p.parent.parent == boards and p.name == "kanban.db":
+        try:
+            return _normalize_board_slug(p.parent.name)
+        except ValueError:
+            return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Board-conflict warning de-dup / rate limiting (t_e96dd0cb rework)
+#
+# A genuine cross-board read inside a dispatched worker fires a warning so the
+# disagreement is never invisible. But the same conflict can be hit repeatedly
+# by hot callers (board watchers per tick, dashboard polls), so the warning is
+# rate-limited per (explicit_slug, pinned path) pair: at most one warning per
+# ``_BOARD_CONFLICT_WARN_WINDOW_SECONDS`` per pair, per process.
+# ---------------------------------------------------------------------------
+
+_BOARD_CONFLICT_WARN_WINDOW_SECONDS = 300.0
+_board_conflict_warned: dict[tuple[str, str], float] = {}
+
+
+def _warn_board_conflict_once(
+    explicit_slug: str,
+    pinned: Path,
+    resolved: Path,
+) -> None:
+    """Log the env-pin-vs-explicit-board conflict, at most once per window."""
+    key = (explicit_slug, str(pinned))
+    now = time.monotonic()
+    last = _board_conflict_warned.get(key)
+    if last is not None and (now - last) < _BOARD_CONFLICT_WARN_WINDOW_SECONDS:
+        return
+    _board_conflict_warned[key] = now
+    _log.warning(
+        "kanban_db_path(board=%r) conflict: HERMES_KANBAN_DB=%r "
+        "(set by the dispatcher handoff) does NOT correspond to board %r "
+        "(which would resolve to %r). The explicit board= argument is a "
+        "cross-board read, so it is honoured instead of the env pin — "
+        "previously this returned the wrong board silently. See kanban "
+        "task t_e96dd0cb.",
+        explicit_slug,
+        str(pinned),
+        explicit_slug,
+        str(resolved),
+    )
+
+
 def kanban_db_path(board: Optional[str] = None) -> Path:
     """Return the path to the ``kanban.db`` for ``board``.
 
@@ -771,15 +877,112 @@ def kanban_db_path(board: Optional[str] = None) -> Path:
     1. ``HERMES_KANBAN_DB`` env var — pins the path directly. Honoured for
        back-compat and for the dispatcher→worker handoff (defense in
        depth: dispatcher injects this into worker env so workers are
-       immune to any path-resolution disagreement).
+       immune to any path-resolution disagreement). It wins **unconditionally**
+       when no explicit ``board=`` is given, because that is exactly the
+       handoff case the docstring protects.
     2. When ``board`` arg is None, the active board from
        :func:`get_current_board` is used.
     3. Board ``default`` → ``<root>/kanban.db`` (back-compat path).
        Other boards → ``<root>/kanban/boards/<slug>/kanban.db``.
+
+    Conflict detection (t_e96dd0cb): when an explicit ``board=`` argument is
+    passed AND ``HERMES_KANBAN_DB`` is set AND the pinned path does **not**
+    correspond to that board's slug-derived path, the previous behaviour
+    silently returned the pinned (possibly wrong) board — a silent wrong
+    answer. The rework uses the dispatcher-injected ``HERMES_KANBAN_BOARD``
+    identity to tell the three cases apart:
+
+    * **Same board, physically relocated pin** (Docker / tmp / symlink
+      layouts): the pin is deliberately relocated for the board the process
+      belongs to. The pin is preserved — this is the dispatcher handoff, not
+      a conflict.
+    * **Genuine cross-board read**: the explicit ``board=`` names a board
+      different from the process's pinned identity. The explicit board wins
+      (the caller was specific) and a rate-limited warning fires so the
+      disagreement is never invisible.
+    * **Ambiguous** (relocated pin AND no usable ``HERMES_KANBAN_BOARD``
+      identity): neither the pin nor the board can be attributed — fail
+      loudly (raise) rather than silently choosing a potentially wrong DB.
+
+    When ``board=None`` (and no ``scoped_current_board`` override is active)
+    the env pin keeps winning exactly as before — that is the dispatcher→worker
+    handoff. A ``scoped_current_board()`` override (CLI ``--board`` /
+    dashboard ``?board=``) counts as an explicit request and is classified the
+    same way as a ``board=`` argument.
     """
     override = os.environ.get("HERMES_KANBAN_DB", "").strip()
     if override:
-        return Path(override).expanduser()
+        pinned = Path(override).expanduser()
+        # An explicit board request can come from two places:
+        #   1. ``board=`` passed directly (kanban_* tools, connect(board=...))
+        #   2. ``scoped_current_board()`` ContextVar (CLI ``--board`` flag,
+        #      dashboard ``?board=``) — a deliberate per-call override.
+        # board=None WITHOUT a scoped override is the dispatcher→worker
+        # handoff: the env pin wins unconditionally (docstring contract).
+        explicit_slug = _normalize_board_slug(board)
+        if explicit_slug is None:
+            scoped = (_CURRENT_BOARD_OVERRIDE.get() or "").strip()
+            if scoped:
+                try:
+                    explicit_slug = _normalize_board_slug(scoped)
+                except ValueError:
+                    explicit_slug = None
+        if explicit_slug is None:
+            return pinned
+
+        resolved = _resolve_board_db_path(explicit_slug)
+        if _paths_point_at_same_db(pinned, resolved):
+            # Pin already corresponds to the requested board's slug-derived
+            # path — no conflict, nothing to decide.
+            return pinned
+
+        # Pin disagrees with the slug-derived path for the explicit board.
+        # Classify with the dispatcher-injected HERMES_KANBAN_BOARD identity.
+        # A malformed board env is treated as absent (same tolerance as
+        # get_current_board) — it must never crash path resolution.
+        env_board: Optional[str] = None
+        raw_env_board = os.environ.get("HERMES_KANBAN_BOARD", "").strip()
+        if raw_env_board:
+            try:
+                env_board = _normalize_board_slug(raw_env_board)
+            except ValueError:
+                env_board = None
+        if env_board is not None:
+            if env_board == explicit_slug:
+                # Same-board explicit call with a physically relocated pin
+                # (Docker / tmp / symlink layout). The dispatcher deliberately
+                # pinned this DB for THIS board — preserve it. Not a conflict.
+                return pinned
+            # env_board != explicit_slug → genuine cross-board read.
+            _warn_board_conflict_once(explicit_slug, pinned, resolved)
+            return resolved
+
+        # No HERMES_KANBAN_BOARD identity. Try to infer the pin's board from
+        # the pin path shape itself.
+        inferred = _infer_board_slug_from_pin_path(pinned)
+        if inferred is not None and inferred == explicit_slug:
+            return pinned
+        if inferred is not None:
+            # Pin is the slug-derived path of a *different* board → genuine
+            # cross-board read.
+            _warn_board_conflict_once(explicit_slug, pinned, resolved)
+            return resolved
+        # Pin relocated AND no board identity. For ``default`` this is the
+        # legacy single-DB install (``HERMES_KANBAN_DB`` predates boards and
+        # IS the default board's DB — the dispatcher at spawn time computes
+        # exactly this pin). Preserving it is the documented contract, not a
+        # wrong answer. For a *named* board the pin cannot be attributed to
+        # any board — fail loudly rather than silently choosing a potentially
+        # wrong DB.
+        if explicit_slug == DEFAULT_BOARD:
+            return pinned
+        raise ValueError(
+            "HERMES_KANBAN_DB=%r does not correspond to board %r and "
+            "HERMES_KANBAN_BOARD is not set; cannot tell whether this is a "
+            "same-board relocated pin or a cross-board read. Set "
+            "HERMES_KANBAN_BOARD (or unset HERMES_KANBAN_DB) to resolve "
+            "(kanban task t_e96dd0cb)." % (str(pinned), explicit_slug)
+        )
     slug = _normalize_board_slug(board)
     if slug is None:
         slug = get_current_board()
