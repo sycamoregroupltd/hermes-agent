@@ -8587,24 +8587,55 @@ def check_respawn_guard(conn: sqlite3.Connection, task_id: str) -> Optional[str]
             return "recent_success"
 
     # 4. GitHub PR URL in a recent comment — prior worker already opened a PR.
-    #    t_9799c507: the guard was PR-state-BLIND and stalled MERGED-PR cards
-    #    (sycode-trading/t_30c13209, 24.5d). We now resolve the ACTUAL GitHub PR
-    #    state (read-only `gh pr view`): only a still-OPEN PR (or one whose
-    #    state cannot be determined — fail closed) blocks re-spawn. A MERGED or
-    #    CLOSED PR must NOT block — the task is ready for landing follow-up.
-    #    The state check can be disabled via HERMES_KANBAN_PR_STATE_CHECK=0
-    #    (keeps the legacy URL-only behavior).
+    #    Composed guard (t_ac710e3f): defer ONLY when BOTH hold:
+    #      (a) the PR reference was authored by a profile that has ACTUALLY
+    #          RUN this task (``task_runs.profile``) — the dedupe intent is
+    #          "don't re-spawn a card whose own worker already opened a PR";
+    #      (b) the PR is still OPEN (or its state cannot be determined —
+    #          fail closed). A MERGED or CLOSED PR must NOT block re-spawn.
+    #
+    #    (a) t_0536fe58 author-restriction: a third-party PR reference in a
+    #        comment (e.g. a reviewer-lane card "Independent review: PR #844 …",
+    #        author != any profile in task_runs) must NOT defer a card that was
+    #        never spawned — there is no prior worker to dedupe against, so the
+    #        card must dispatch normally (t_24c405ba / t_439547d4 starvation).
+    #    (b) t_9799c507 PR-state: the guard was PR-state-BLIND and stalled
+    #        MERGED-PR cards (sycode-trading/t_30c13209, 24.5d). We now resolve
+    #        the ACTUAL GitHub PR state (read-only `gh pr view`); only a still
+    #        OPEN PR (or unknown — fail closed) blocks. The state check can be
+    #        disabled via HERMES_KANBAN_PR_STATE_CHECK=0 (keeps the legacy
+    #        URL-only behavior — but still under the own-worker restriction).
     pr_cutoff = now - _RESPAWN_GUARD_PR_WINDOW
-    pr_refs = _pr_urls_in_comments(conn, task_id, pr_cutoff)
-    if pr_refs:
-        if not _pr_state_check_enabled():
-            return "active_pr"  # legacy behavior: any recent PR URL blocks
-        for repo, number in pr_refs:
-            state = _github_pr_state(repo, number)
-            if state not in ("MERGED", "CLOSED"):
+    own_worker_profiles = {
+        r["profile"]
+        for r in conn.execute(
+            "SELECT DISTINCT profile FROM task_runs "
+            "WHERE task_id = ? AND profile IS NOT NULL",
+            (task_id,),
+        ).fetchall()
+    }
+    if own_worker_profiles:
+        for c in conn.execute(
+            "SELECT author, body FROM task_comments "
+            "WHERE task_id = ? AND created_at >= ?",
+            (task_id, pr_cutoff),
+        ).fetchall():
+            if not (c["body"] and c["author"] in own_worker_profiles):
+                continue
+            pr_urls = list(_GITHUB_PR_URL_RE.finditer(c["body"]))
+            if not pr_urls:
+                continue
+            if not _pr_state_check_enabled():
+                # Legacy behavior: any own-worker recent PR URL blocks.
+                return "active_pr"
+            pr_states = [
+                _github_pr_state(m.group(1) + "/" + m.group(2), m.group(3))
+                for m in pr_urls
+            ]
+            if any(state not in ("MERGED", "CLOSED") for state in pr_states):
                 # OPEN, or unknown (gh failed) — fail closed, keep the guard.
                 return "active_pr"
-        # Every recent PR URL resolves to MERGED/CLOSED — do not block.
+        # Every own-worker PR URL resolves to MERGED/CLOSED — do not block.
         return None
 
     return None

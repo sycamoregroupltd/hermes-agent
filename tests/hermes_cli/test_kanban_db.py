@@ -1923,11 +1923,26 @@ def test_respawn_guard_stale_success_not_guarded(kanban_home):
 
 
 def test_respawn_guard_active_pr_in_comment(kanban_home):
-    """A GitHub PR URL in a recent comment triggers active_pr when the PR is OPEN."""
+    """A GitHub PR URL in a recent comment by an OWN-WORKER triggers active_pr
+    when the PR is OPEN (composed guard: own-worker author + OPEN state)."""
     with kb.connect() as conn:
         t = kb.create_task(conn, title="has-pr", assignee="alice")
+        # Seed a prior run so the comment author "worker" counts as an
+        # own-worker (task_runs.profile) for the author-restriction half.
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
         kb.add_comment(
-            conn, t, "worker",
+            conn, t, "alice",
             "PR created: https://github.com/totemx-AI/subsidysmart/pull/42",
         )
         with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
@@ -1939,8 +1954,20 @@ def test_respawn_guard_active_pr_unknown_state_fails_closed(kanban_home):
     """When gh cannot resolve PR state (None), the guard stays (fail closed)."""
     with kb.connect() as conn:
         t = kb.create_task(conn, title="unknown-pr", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
         kb.add_comment(
-            conn, t, "worker",
+            conn, t, "alice",
             "PR created: https://github.com/totemx-AI/subsidysmart/pull/43",
         )
         with unittest.mock.patch.object(kb, "_github_pr_state", return_value=None):
@@ -1951,13 +1978,17 @@ def test_respawn_guard_active_pr_unknown_state_fails_closed(kanban_home):
 def test_respawn_guard_merged_pr_not_guarded(kanban_home):
     """A MERGED GitHub PR in a recent comment must NOT block re-spawn (t_9799c507).
 
+    The PR-state-blind guard used to stall MERGED-PR cards; here a third-party
+    comment references a MERGED PR and the card was never spawned by that
+    commenter, so the composed guard returns None regardless.
+
     Replay of the sycode-trading/t_30c13209 stall: PR #856 is MERGED, so the
     active_pr guard must not fire even though the PR URL is in recent comments.
     """
     with kb.connect() as conn:
         t = kb.create_task(conn, title="merged-pr", assignee="alice")
         kb.add_comment(
-            conn, t, "worker",
+            conn, t, "fable-reviewer",
             "PR merged: https://github.com/sycamoregroupltd/sycode-trading/pull/856",
         )
         with unittest.mock.patch.object(kb, "_github_pr_state", return_value="MERGED"):
@@ -1966,11 +1997,15 @@ def test_respawn_guard_merged_pr_not_guarded(kanban_home):
 
 
 def test_respawn_guard_closed_pr_not_guarded(kanban_home):
-    """A CLOSED GitHub PR in a recent comment must NOT block re-spawn."""
+    """A CLOSED GitHub PR in a recent comment must NOT block re-spawn.
+
+    Third-party comment (reviewer lane pattern) — never spawned by the
+    commenter — so the author-restriction half keeps the card dispatchable.
+    """
     with kb.connect() as conn:
         t = kb.create_task(conn, title="closed-pr", assignee="alice")
         kb.add_comment(
-            conn, t, "worker",
+            conn, t, "fable-reviewer",
             "PR closed: https://github.com/totemx-AI/subsidysmart/pull/44",
         )
         with unittest.mock.patch.object(kb, "_github_pr_state", return_value="CLOSED"):
@@ -1979,11 +2014,28 @@ def test_respawn_guard_closed_pr_not_guarded(kanban_home):
 
 
 def test_respawn_guard_mixed_pr_states_guards_on_open(kanban_home):
-    """One OPEN PR among MERGED/CLOSED PRs still blocks re-spawn."""
+    """One OPEN PR among MERGED/CLOSED PRs still blocks re-spawn.
+
+    The comment is authored by an own-worker (seeded prior run) so the
+    author-restriction half admits the scan, and the OPEN PR wins (fail
+    closed) over the MERGED one.
+    """
     with kb.connect() as conn:
         t = kb.create_task(conn, title="mixed-pr", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
         kb.add_comment(
-            conn, t, "worker",
+            conn, t, "alice",
             "https://github.com/a/b/pull/1 https://github.com/c/d/pull/2",
         )
 
@@ -1996,12 +2048,29 @@ def test_respawn_guard_mixed_pr_states_guards_on_open(kanban_home):
 
 
 def test_respawn_guard_pr_state_check_disabled_keeps_legacy(kanban_home):
-    """HERMES_KANBAN_PR_STATE_CHECK=0 keeps the legacy URL-only guard."""
+    """HERMES_KANBAN_PR_STATE_CHECK=0 keeps the legacy URL-only guard.
+
+    With the state check disabled, an own-worker recent PR comment (seeded
+    prior run) defers regardless of PR state — legacy behaviour preserved
+    under the author-restriction half.
+    """
     with unittest.mock.patch.dict(os.environ, {"HERMES_KANBAN_PR_STATE_CHECK": "0"}):
         with kb.connect() as conn:
             t = kb.create_task(conn, title="legacy-pr", assignee="alice")
+            kb.claim_task(conn, t)
+            run_id = kb.get_task(conn, t).current_run_id
+            conn.execute(
+                "UPDATE task_runs SET outcome='completed', status='completed', "
+                "ended_at=? WHERE id=?",
+                (int(time.time()) - 7200, run_id),
+            )
+            conn.execute(
+                "UPDATE tasks SET status='ready', current_run_id=NULL, "
+                "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+                (t,),
+            )
             kb.add_comment(
-                conn, t, "worker",
+                conn, t, "alice",
                 "PR created: https://github.com/totemx-AI/subsidysmart/pull/45",
             )
             reason = kb.check_respawn_guard(conn, t)
@@ -2097,7 +2166,9 @@ def test_dispatch_respawn_guard_skips_recent_success(
 def test_dispatch_respawn_guard_skips_active_pr(
     kanban_home, all_assignees_spawnable
 ):
-    """dispatch_once skips (but does not block) a task with an active PR comment."""
+    """dispatch_once defers (does NOT auto-block) a ready task whose own worker
+    previously opened an OPEN PR (composed guard: own-worker author + OPEN state).
+    """
     spawned_ids = []
 
     def fake_spawn(task, workspace):
@@ -2105,8 +2176,20 @@ def test_dispatch_respawn_guard_skips_active_pr(
 
     with kb.connect() as conn:
         t = kb.create_task(conn, title="has-pr", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
         kb.add_comment(
-            conn, t, "worker",
+            conn, t, "alice",
             "Opened https://github.com/totemx-AI/subsidysmart/pull/99",
         )
         with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
@@ -2122,8 +2205,10 @@ def test_dispatch_respawn_guard_skips_active_pr(
 def test_dispatch_respawn_guard_spawns_when_pr_merged(
     kanban_home, all_assignees_spawnable
 ):
-    """dispatch_once SPAWNS a ready task whose recent PR comment is MERGED
-    (t_9799c507 regression: the PR-state-blind guard used to block it)."""
+    """dispatch_once SPAWNS a ready task whose own worker's recent PR comment is
+    MERGED (t_9799c507 regression: the PR-state-blind guard used to block it;
+    t_0536fe58 keeps the own-worker scan, but a MERGED PR does not block).
+    """
     spawned_ids = []
 
     def fake_spawn(task, workspace):
@@ -2131,8 +2216,20 @@ def test_dispatch_respawn_guard_spawns_when_pr_merged(
 
     with kb.connect() as conn:
         t = kb.create_task(conn, title="merged-pr", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
         kb.add_comment(
-            conn, t, "worker",
+            conn, t, "alice",
             "Opened https://github.com/sycamoregroupltd/sycode-trading/pull/856",
         )
         with unittest.mock.patch.object(kb, "_github_pr_state", return_value="MERGED"):
@@ -5820,3 +5917,162 @@ class TestTriageLifecycleRegression:
         err = capsys.readouterr().err
         assert rc == 1
         assert "current status is 'triage'" in err
+
+
+# ---------------------------------------------------------------------------
+# Respawn guard author-restriction regression tests (t_0536fe58 / t_ed7ed09c)
+# These verify the composed guard (t_ac710e3f) preserves BOTH halves:
+# the own-worker author restriction AND the PR-state resolution.
+# ---------------------------------------------------------------------------
+
+def test_respawn_guard_active_pr_defers_own_worker_pr_comment(kanban_home):
+    """A GitHub PR URL in a recent comment triggers active_pr ONLY when the
+    comment author is a profile that has actually run this task (the prior
+    worker opened the PR). Dedupe behaviour is preserved for cards whose own
+    worker opened a PR.
+    """
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="has-pr", assignee="alice")
+        # Simulate a prior worker run under the assignee profile, then a
+        # PR reference authored by that same worker. The completed run is
+        # OLDER than the success window (3600s) but inside the PR window
+        # (86400s), so the guard reaches the active_pr check instead of
+        # short-circuiting on recent_success.
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
+        kb.add_comment(
+            conn, t, "alice",
+            "PR created: https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason == "active_pr"
+
+
+def test_respawn_guard_active_pr_ignores_third_party_pr_comment(kanban_home):
+    """REGRESSION (t_24c405ba / t_439547d4): a PR URL in a comment authored
+    by a THIRD PARTY (e.g. a reviewer lane card referencing the PR it
+    reviews) must NOT trigger active_pr when this task never spawned — there
+    is no prior worker to dedupe against, so the card must be dispatched.
+    """
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review-pr", assignee="alice")
+        kb.add_comment(
+            conn, t, "fable-reviewer",
+            "Independent review: https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_respawn_guard_active_pr_ignores_third_party_comment_even_with_prior_run(
+    kanban_home,
+):
+    """A PR URL in a THIRD-PARTY comment must not defer even when the task
+    HAS a prior run: the run belongs to a different profile, so the PR was
+    not opened by this task's own worker (reviewer lane pattern).
+    """
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review-pr-2", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        conn.execute(
+            "UPDATE task_runs SET outcome='blocked', status='blocked', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 60, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
+        kb.add_comment(
+            conn, t, "fable-reviewer",
+            "reviewed https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_dispatch_spawns_ready_card_with_third_party_pr_comment(
+    kanban_home, all_assignees_spawnable
+):
+    """REGRESSION (t_24c405ba / t_439547d4): a ready card with a real
+    profile assignee and a PR-url comment from a third party, with no prior
+    run, IS spawned by dispatch_once and does NOT appear in respawn_guarded.
+    """
+    spawned_ids = []
+
+    def fake_spawn(task, workspace):
+        spawned_ids.append(task.id)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="reviewer-lane", assignee="alice")
+        kb.add_comment(
+            conn, t, "fable-reviewer",
+            "Independent review: https://github.com/totemx-AI/subsidysmart/pull/42",
+        )
+        res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+
+    assert t in spawned_ids, (
+        f"never-spawned card with third-party PR comment must spawn; "
+        f"spawned={spawned_ids!r}"
+    )
+    assert (t, "active_pr") not in res.respawn_guarded, (
+        f"third-party PR comment must not respawn-guard a never-spawned "
+        f"card; respawn_guarded={res.respawn_guarded!r}"
+    )
+
+
+def test_dispatch_respawn_guard_skips_own_worker_active_pr(
+    kanban_home, all_assignees_spawnable
+):
+    """dispatch_once still skips (but does not block) a card whose own
+    worker previously opened an OPEN PR (composed guard: own-worker author +
+    OPEN state). The PR state is mocked OPEN so the test isolates the
+    composed guard's behaviour from live GitHub resolution.
+    """
+    spawned_ids = []
+
+    def fake_spawn(task, workspace):
+        spawned_ids.append(task.id)
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="has-pr", assignee="alice")
+        kb.claim_task(conn, t)
+        run_id = kb.get_task(conn, t).current_run_id
+        # Completed run older than the success window (3600s) but inside
+        # the PR window (86400s) so the guard reaches active_pr instead of
+        # short-circuiting on recent_success.
+        conn.execute(
+            "UPDATE task_runs SET outcome='completed', status='completed', "
+            "ended_at=? WHERE id=?",
+            (int(time.time()) - 7200, run_id),
+        )
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL WHERE id=?",
+            (t,),
+        )
+        kb.add_comment(
+            conn, t, "alice",
+            "Opened https://github.com/totemx-AI/subsidysmart/pull/99",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+
+    assert (t, "active_pr") in res.respawn_guarded
+    assert t not in spawned_ids
+    assert t not in res.auto_blocked
+    with kb.connect() as conn:
+        assert kb.get_task(conn, t).status == "ready"
