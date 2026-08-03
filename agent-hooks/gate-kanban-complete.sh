@@ -2,14 +2,32 @@
 # pre_tool_call hook on kanban_complete: HARD-GATE frontend/web task completion on
 # the running-app check. Workers/judges are LLMs and can be fooled by prose (proven:
 # QuickNoteTracker marked done while serving HTTP 500). This is the deterministic veto.
+# Goal-judge provider-error completion traps also fail closed into a deterministic
+# quarantine/override lane so already-reviewed tasks do not recirculate silently.
 #
 # Contract: read JSON payload on stdin; emit {"decision":"block","reason":...} to veto,
 # or {} to allow. FAIL-OPEN on ambiguity — never wedge the fleet on uncertainty.
+#
+# VERIFICATION_MATRIX
+# - store: /home/frank/.hermes/agent-hooks/gate-kanban-complete.sh
+# - liveness: bash /home/frank/.hermes/agent-hooks/gate-kanban-complete.selftest.sh
+# - deliver target: local hook validation in kanban_complete pre_tool_call path
+# - named consumer: jarvis-os-pm / os-reviewer deterministic completion-gate evidence
+# - satisfied verification: gate-kanban-complete selftest output + this task's review
 set -uo pipefail || true
 payload=$(cat 2>/dev/null)
 allow() { echo '{}'; exit 0; }
 block() { python3 -c "import json,sys;print(json.dumps({'decision':'block','reason':sys.argv[1]}))" "$1"; exit 0; }
 kanban_root=${HERMES_HOOK_KANBAN_ROOT:-/home/frank/.hermes}
+# Fail-closed for goal-judge provider-error completion traps. Externally emitted
+# provider exceptions during completion can otherwise leave an already-reviewed
+# task non-terminal. Convert exact repeated judge provider errors into a
+# deterministic operator-quarantine/override lane marker instead of allowing
+# completion to die silently or loop on the same failure.
+goal_judge_provider_error_block() {
+  local reason="$1"
+  block "GOAL_JUDGE_PROVIDER_ERROR_QUARANTINE: ${reason}. Task evidence/review state is preserved; completion requires an operator override via docs/governance or an evidence-based handoff to a terminal-capable control-plane review."
+}
 
 # Only gate kanban_complete
 tool=$(printf '%s' "$payload" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('tool_name',''))" 2>/dev/null) || allow
@@ -95,6 +113,18 @@ print("\n".join(parts))
 ' 2>/dev/null || true)
 classifier="${HERMES_HOOK_CLASSIFIER:-$(dirname "$0")/gate-kanban-complete-classifier.py}"
 class=$(printf '%s\n---BODY---\n%s\n---COMMENTS---\n%s\n---INPUT---\n%s' "$title" "$body" "$comments" "$input_text" | python3 "$classifier" 2>/dev/null) || allow
+# Fail-closed goal-judge provider-error trap MUST be evaluated BEFORE the
+# readonly_nonapp short-circuit: otherwise a card that merely quotes a child
+# review's REVIEW_VERDICT gets allowed before the quarantine lane can fire.
+# The trap is content-based (no task-id format prerequisite) so non-hex /
+# synthetic goal-mode ids cannot fail open. The classifier's strict
+# verified-review override lane (ALLOW_VERIFIED_REVIEW_WITH_EVIDENCE_OVERRIDE)
+# is the only way such a card becomes readonly_nonapp and escapes the trap.
+if [[ "$title${body}${comments}${input_text}" =~ ([Gg]oal[-_ ]?[Jj]udge|[Gg]oal[-_ ]?mode).*([Gg]emini|[N]ot[Ff]ound|provider[-_ ]?error) ]]; then
+  if [ "$class" != "readonly_nonapp" ]; then
+    goal_judge_provider_error_block "Task title/body/comments indicate goal-judge provider error for task $tid"
+  fi
+fi
 [ "$class" = "readonly_nonapp" ] && allow
 [ "$class" = "web" ] || allow   # not a web task -> not our gate -> allow
 

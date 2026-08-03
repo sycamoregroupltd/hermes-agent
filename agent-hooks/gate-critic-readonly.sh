@@ -2,7 +2,8 @@
 # gate-critic-readonly.sh — pre_tool_call hook for CRITIC/REVIEWER profiles.
 # Hard guarantee that a reviewer never mutates the artifact under review (no code edit, git commit/
 # push, or in-place file mutation) while staying able to read, run read-only verification, post
-# kanban verdicts, and write review notes to the Obsidian vault. FAIL-OPEN — never wedge the fleet.
+# kanban verdicts, and write review notes to the Obsidian vaults: obsidian-fleet-vault,
+# obsidian/sycode-trading, or legacy obsidian/quant-team. FAIL-OPEN — never wedge the fleet.
 # Bypass: ALLOW_CRITIC_WRITE=1 (orchestrator/dispatcher only) for an explicitly-approved repair.
 set -uo pipefail || true
 LOG=/home/frank/.hermes/cron/state/critic-readonly-gate.log

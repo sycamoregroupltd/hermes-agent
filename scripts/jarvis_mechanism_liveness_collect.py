@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -147,18 +148,107 @@ def recent_comment_by_author(author: str, since_minutes: int = 1440) -> dict[str
 # GRACE + 1 period) still surface as DEAD.
 LIVENESS_GRACE_MIN = 30
 
+# Retryable-throttle grace (t_ed23d1d1): a single shared-provider-budget HTTP 429
+# on an otherwise on-schedule job is a transient throttle, not a dead mechanism.
+# The pattern is deliberately NARROW — auth failures, 5xx, timeouts and crashes
+# are real deaths and must still return DEAD on the first sample. A bare mention
+# of "rate limit" (e.g. a crash inside a rate_limit helper) is NOT enough: it must
+# carry explicit throttle context (exceeded/reached/too many requests/retry).
+RETRYABLE_THROTTLE_RE = re.compile(
+    r"\b429\b"
+    r"|\btoo many requests\b"
+    r"|\brate[ _-]?limit(?:s|ed|ing)?\b(?=[^\n]{0,60}?\b(?:exceed\w*|reached|hit|retry|slow down|try again)\b)"
+    r"|\b(?:exceed\w*|reached|hit)\b[^\n]{0,40}?\brate[ _-]?limit",
+    re.IGNORECASE,
+)
 
-def classify_job(profile: str, job: dict[str, Any], now: datetime, max_age_minutes: int | None, allow_not_due: bool = True) -> tuple[str, str, float | None]:
+# Overdue tolerance for the throttle grace: next_run_at may sit slightly in the
+# past due to clock skew or a run currently in flight. Anything more overdue than
+# this is a wedged scheduler, NOT a job "armed to retry soon" -> DEAD.
+OVERDUE_TOLERANCE_SEC = 300
+
+
+def is_retryable_throttle(last_error: Any) -> bool:
+    if not last_error:
+        return False
+    return bool(RETRYABLE_THROTTLE_RE.search(str(last_error)))
+
+
+def consecutive_failed_runs(profile: str, job_id: str | None, limit: int = 10) -> int:
+    """Count trailing consecutive failed executions for a job (read-only)."""
+    if not job_id:
+        return 0
+    db = PROFILES / profile / "cron" / "executions.db"
+    if not db.exists():
+        return 0
+    con: sqlite3.Connection | None = None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+        rows = con.execute(
+            "SELECT status FROM executions WHERE job_id=? AND status IN ('completed','failed') "
+            "ORDER BY claimed_at DESC, id DESC LIMIT ?",
+            (job_id, limit),
+        ).fetchall()
+    except Exception:
+        return 0
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+    streak = 0
+    for (status,) in rows:
+        if status == "failed":
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def classify_job(
+    profile: str,
+    job: dict[str, Any],
+    now: datetime,
+    max_age_minutes: int | None,
+    allow_not_due: bool = True,
+    consecutive_failures: int | None = None,
+) -> tuple[str, str, float | None]:
     enabled = bool(job.get("enabled", True)) and job.get("state") != "paused"
     if not enabled:
         return "DEAD", "job paused/disabled", None
-    last_status = job.get("last_status")
-    if last_status not in (None, "ok"):
-        return "DEAD", f"last_status={last_status}", None
     last_run = parse_dt(job.get("last_run_at"))
     next_run = parse_dt(job.get("next_run_at"))
     created = parse_dt(job.get("created_at"))
     age = age_minutes(last_run, now)
+    last_status = job.get("last_status")
+    if last_status not in (None, "ok"):
+        # One-strike retryable-throttle grace: a single 429 on a job that is
+        # still armed to fire again within LIVENESS_GRACE_MIN is a transient
+        # provider throttle -> WARN (non-gating). Two consecutive failed runs,
+        # any non-throttle error, or a job not armed to run again soon is DEAD.
+        streak = consecutive_failures
+        if streak is None:
+            streak = consecutive_failed_runs(profile, str(job.get("id") or ""))
+        armed_soon = False
+        if next_run is not None:
+            delta = (next_run - now).total_seconds()
+            # Two-sided window: must be due soon AND not significantly overdue.
+            # An overdue next_run_at means the scheduler is wedged, which is a
+            # real death, not a throttle to absorb (os-reviewer, t_a9f1d18a).
+            armed_soon = -OVERDUE_TOLERANCE_SEC <= delta <= LIVENESS_GRACE_MIN * 60
+        if (
+            last_status == "error"
+            and is_retryable_throttle(job.get("last_error"))
+            and armed_soon
+            and streak <= 1
+        ):
+            return "WARN", (
+                f"last_status=error but retryable provider throttle (HTTP 429/rate limit) "
+                f"with {streak} consecutive failed run(s); job armed to retry at "
+                f"{next_run.isoformat()} within {LIVENESS_GRACE_MIN}m grace"
+            ), age
+        return "DEAD", f"last_status={last_status}", None
     if last_run is None:
         if allow_not_due and next_run and next_run > now:
             cadence = job.get("schedule", {}).get("kind")

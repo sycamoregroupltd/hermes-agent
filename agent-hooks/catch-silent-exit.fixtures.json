@@ -1,0 +1,27 @@
+[
+  {
+    "name": "rc0-completed-without-kanban-terminal-signal-fails-closed",
+    "description": "A worker/subagent process exits rc=0 and is summarized as completed, but no kanban_complete or kanban_block terminal signal is present. Current hook behavior treats child_status=completed under extra as clean and emits {}, creating the protocol-violation zombie class this regression guards. Payload uses the real agent/shell_hooks.py _serialize_payload wire shape (hook_event_name + extra.*).",
+    "payload": {
+      "hook_event_name": "subagent_stop",
+      "tool_name": null,
+      "tool_input": null,
+      "session_id": "sess_parent_abc123",
+      "cwd": "/home/frank/.hermes",
+      "extra": {
+        "parent_session_id": "sess_parent_abc123",
+        "parent_turn_id": "turn_42",
+        "child_session_id": "sess_child_def456",
+        "child_role": "test-engineer",
+        "child_summary": "worker exited cleanly (rc=0) without calling kanban_complete or kanban_block",
+        "child_status": "completed",
+        "duration_ms": 5000
+      }
+    },
+    "expect": {
+      "decision": "block",
+      "reason_contains": "missing terminal kanban signal",
+      "forbid_clean_allow": true
+    }
+  }
+]

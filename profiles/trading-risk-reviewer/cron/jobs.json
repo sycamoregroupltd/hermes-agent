@@ -24,10 +24,10 @@
       "repeat": {
         "times": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T10:25:49.272923+01:00",
+      "paused_reason": "migrated to trading-devops store (t_0814e3b3)",
       "created_at": "2026-07-05T18:26:43.359415+01:00",
       "deliver": "origin",
       "origin": null,

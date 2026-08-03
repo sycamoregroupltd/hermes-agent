@@ -57,7 +57,7 @@ def _healthcheck_one(board: str) -> bool:
         logger.info("[kanban-startup] board %s has no db yet (fresh) — skip", board)
         return True
     try:
-        conn = sqlite3.connect(str(db), timeout=30.0)
+        conn = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True, timeout=30.0)
         try:
             conn.execute("PRAGMA busy_timeout=30000")
             rows = conn.execute("PRAGMA integrity_check").fetchall()

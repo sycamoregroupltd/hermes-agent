@@ -63,7 +63,7 @@ def running_runs() -> list[Run]:
     for db in sorted(BOARDS.glob("*/kanban.db")):
         board = db.parent.name
         try:
-            con = sqlite3.connect(str(db))
+            con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
             con.row_factory = sqlite3.Row
             rows = con.execute(
                 """

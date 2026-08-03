@@ -178,4 +178,25 @@ if [ "${FLEET_STATUS_WORKER_PREFLIGHT:-1}" != "0" ] && [ -x "$WORKER_PREFLIGHT_S
   rm -f "$OUT.worker-preflight.tmp"
 fi
 
+# Terminal-lane queue report (GAP t_2e808b44, no-black-holes rule).
+# Terminal lanes (fable/codex/grok, external-*, orion-*) are non-spawnable by
+# design — only a human (Frank) or a seat can drain them. Surface the parked
+# cards so the lane tells the human it is filling instead of being a silent
+# black hole. Read-only; never mutates any board. Fail-open.
+TERMINAL_LANE_SCRIPT="/home/frank/.hermes/scripts/terminal-lane-queue-report.py"
+if [ "${FLEET_STATUS_TERMINAL_LANE:-1}" != "0" ] && [ -x "$TERMINAL_LANE_SCRIPT" ]; then
+  if "$TERMINAL_LANE_SCRIPT" --md >> "$OUT" 2>/dev/null; then
+    :
+  fi
+  # Discord digest line: only non-empty when cards exceed the escalation age.
+  DIGEST_LINE=$("$TERMINAL_LANE_SCRIPT" 2>/dev/null)
+  if [ -n "$DIGEST_LINE" ]; then
+    {
+      echo
+      echo "## Terminal-lane digest (Discord)"
+      echo "$DIGEST_LINE"
+    } >> "$OUT"
+  fi
+fi
+
 echo "[SILENT] FLEET-STATUS.md refreshed $ts"

@@ -13,11 +13,22 @@ CLI modes:
     --job-id <id> --jobs-file <path>   Resolve pins for a job in the given jobs.json
     --profile <p> --pins n1 n2 ...     Resolve named pins under the given profile
     --self-test                         Run regression guard against known job IDs
+    --capability-assert <flag>         Verify THIS resolver advertises <flag> via
+                                       --help before a caller relies on it. Exit 0
+                                       if present; exit 2 (with a MECHANISM-GAP
+                                       routing diagnostic) if missing. Guards the
+                                       governor FIRST-RUN PREFLIGHT against a
+                                       per-task branch rotation silently dropping a
+                                       required flag (the 2026-08-01 --script-check
+                                       rollback, which crashed the governor with an
+                                       opaque argparse "unrecognized arguments" exit 2).
 
 Exit codes:
-    0   All pins resolved
-    1   One or more pins missing
-    2   Usage error
+    0   All pins resolved / capability asserted
+    1   One or more pins missing (a real per-job failure — routable preflight card)
+    2   Usage error OR capability-assert miss (MECHANISM-GAP — the resolver binary
+        itself lacks a flag the governor depends on; routable as a mechanism
+        regression card, NOT as a per-job MISSING-script card)
 """
 
 import argparse
@@ -181,13 +192,33 @@ def run_prompt_self_test() -> int:
     expected = (
         "--script-check --job-id <id> --jobs-file"
     )
+    # The 2026-08-01 hardening: the FIRST-RUN PREFLIGHT must assert the resolver
+    # capability FIRST, before invoking --script-check. A missing capability must
+    # route a MECHANISM-GAP card (exit 2), never be mistaken for a per-job failure
+    # (exit 1) or crash the governor with an opaque argparse exit 2.
+    capability_clause = (
+        "capability-assert script-check"
+    )
     forbidden = "script path exists, workdir exists"
     exit_semantics = (
         "Treat exit 0 (RESOLVED/NO-SCRIPT) as PASS; exit 1 "
         "(MISSING/BLOCKED-ESCAPE) is the only condition that may route "
         "a first-run preflight card."
     )
-    expected_jobs_path = str(PROFILES_DIR / "jarvis" / "cron" / "jobs.json")
+    mechanism_gap = "MECHANISM-GAP"
+    # Resolve the jobs.json relative to THIS resolver's checkout (repo-faithful),
+    # so the guard validates the code under test rather than a hardcoded live
+    # path. Falls back to the absolute HERMES_ROOT path when the relative form is
+    # not co-located (e.g. resolver imported from an unusual location).
+    def _candidate_jobs_paths():
+        here = Path(__file__).resolve()
+        # Walk up to a dir that contains profiles/jarvis/cron/jobs.json
+        for parent in [here, *here.parents]:
+            cand = parent / "profiles" / "jarvis" / "cron" / "jobs.json"
+            if cand.is_file():
+                yield str(cand)
+        yield str(PROFILES_DIR / "jarvis" / "cron" / "jobs.json")
+    expected_jobs_path = next(_candidate_jobs_paths())
     expected_job_id = "e51c9e2fa5df"
 
     def load_prompt(path: str, job_id: str):
@@ -203,11 +234,12 @@ def run_prompt_self_test() -> int:
         print(f"PROMPT SELF-TEST FAIL: job {expected_job_id} not found")
         return 1
 
-    # Fixture controls: set either True to force the opposite outcome and prove
-    # the assertions are active. Keep both False for the real live check.
+    # Fixture controls: set any True to force the opposite outcome and prove
+    # the assertions are active. Keep all False for the real live check.
     force_missing_resolver = False
     force_forbidden_present = False
     force_missing_exit_semantics = False
+    force_missing_capability_clause = False
 
     def force_fail(flag: bool) -> bool:
         return not flag
@@ -223,6 +255,14 @@ def run_prompt_self_test() -> int:
 
     ok = force_fail(force_missing_exit_semantics) and (exit_semantics in prompt)
     print(f"[exit-semantics] {'PASS' if ok else 'FAIL'}")
+    ok_all = ok_all and ok
+
+    ok = force_fail(force_missing_capability_clause) and (capability_clause in prompt)
+    print(f"[capability-assert-clause] {'PASS' if ok else 'FAIL'}")
+    ok_all = ok_all and ok
+
+    ok = force_fail(force_missing_capability_clause) and (mechanism_gap in prompt)
+    print(f"[mechanism-gap-verdict] {'PASS' if ok else 'FAIL'}")
     ok_all = ok_all and ok
 
     if ok_all:
@@ -245,6 +285,129 @@ def run_prompt_self_test_negative_fixture() -> int:
     else:
         print("NEGATIVE FIXTURE PASS: assertion failed as expected")
     return 0 if failed else 1
+
+
+def run_capability_assert(flag: str, resolver_path: str = None) -> int:
+    """Verify THIS resolver advertises ``flag`` before a caller relies on it.
+
+    A per-task branch rotation of the live Hermes repo can silently roll the
+    resolver back to a version that lacks a flag the governor depends on (the
+    FIRST-RUN PREFLIGHT ``--script-check`` rollback of 2026-08-01). Without this
+    guard the governor's invocation fails with argparse "unrecognized arguments"
+    exit 2 — an opaque mechanism regression indistinguishable from a usage error.
+
+    This inspects the resolver's OWN ``--help`` output so it is faithful to the
+    exact artifact on disk (no hard-coded flag list to drift). Exit 0 if the flag
+    is advertised; exit 2 with a MECHANISM-GAP routing diagnostic if it is not.
+    The non-zero exit (2) is DISTINCT from the pin-resolution exit 1, so callers
+    can route a *mechanism-missing* preflight card rather than a false
+    MISSING-script (exit 1) card.
+    """
+    import subprocess
+    target = resolver_path or __file__
+    try:
+        out = subprocess.run(
+            [sys.executable, target, "--help"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except Exception as e:  # pragma: no cover - defensive
+        print(json.dumps({
+            "status": "CAPABILITY-CHECK-ERROR",
+            "flag": flag,
+            "error": f"could not invoke resolver --help: {e}",
+        }))
+        return 2
+    tokens = out.split()
+    if f"--{flag.lstrip('-')}" in tokens:
+        print(json.dumps({"status": "CAPABILITY-OK", "flag": flag}))
+        return 0
+    print(json.dumps({
+        "status": "MECHANISM-GAP",
+        "flag": flag,
+        "diagnosis": (
+            "Resolver on disk does not advertise the required --%s flag. A "
+            "per-task branch rotation likely rolled the live resolver back to a "
+            "version without it. Do NOT invoke the resolver with --%s (it would "
+            "crash with argparse 'unrecognized arguments' exit 2 — a silent "
+            "mechanism regression, not a per-job failure). Route a FIRST-RUN "
+            "PREFLIGHT MECHANISM-GAP card reporting the resolver regression and "
+            "restore the resolver from origin before relying on it." % (flag, flag)
+        ),
+    }))
+    return 2
+
+
+def run_guard_regression_self_test() -> int:
+    """Regression guard for the capability-assert mechanism itself.
+
+    Positive control: the live resolver DOES advertise ``--script-check``, so a
+    capability assert must PASS (exit 0).
+
+    Negative control (the real bug from 2026-08-01): a resolver WITHOUT
+    ``--script-check`` (the pin-only rollback) must make the capability assert
+    FAIL (exit 2) and emit MECHANISM-GAP — NOT an argparse "unrecognized
+    arguments" crash. This proves the guard converts the silent regression into
+    a routable preflight condition, satisfying acceptance criterion (2).
+    """
+    import subprocess
+    import tempfile
+    live_ok = run_capability_assert("script-check") == 0
+
+    # Negative control: reconstruct the pin-only resolver body (no --script-check)
+    # that the 2026-08-01 branch rotation dropped back to.
+    pin_only_body = (
+        "import argparse, sys\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--job-id')\n"
+        "p.add_argument('--jobs-file')\n"
+        "p.add_argument('--profile')\n"
+        "p.add_argument('--pins', nargs='*')\n"
+        "p.add_argument('--self-test', action='store_true')\n"
+        "p.parse_args()\n"
+    )
+    all_ok = True
+    with tempfile.TemporaryDirectory(prefix="preflight-pinonly-") as tmp:
+        pin_path = Path(tmp) / "pin_only_resolver.py"
+        pin_path.write_text(pin_only_body)
+        try:
+            res = subprocess.run(
+                [sys.executable, str(pin_path), "--help"],
+                capture_output=True, text=True, check=True,
+            ).stdout or ""
+        except Exception as e:
+            print(f"[pin-only --help] ERROR: {e}")
+            res = ""
+        pin_has_flag = "--script-check" in res.split()
+        # The bug class: pin-only resolver must NOT have the flag, and invoking
+        # it with --script-check must crash with argparse exit 2 (the silent failure).
+        crashed = False
+        try:
+            subprocess.run(
+                [sys.executable, str(pin_path), "--script-check", "--job-id", "x",
+                 "--jobs-file", "y"],
+                capture_output=True, text=True, check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            crashed = (e.returncode == 2)
+        print(f"[pin-only has --script-check] {pin_has_flag} (expected False)")
+        print(f"[pin-only invoked with --script-check crashes exit 2] {crashed} (expected True)")
+        # The capability assert run against THIS pin-only file must FAIL (exit 2)
+        # and emit MECHANISM-GAP instead of the opaque argparse crash. This is the
+        # actual guard path the governor will use.
+        pin_assert_rc = run_capability_assert("script-check", str(pin_path))
+        pin_assert_ok = (pin_assert_rc == 2)
+        print(f"[pin-only capability-assert exit] {pin_assert_rc} (expected 2)")
+        assert_ok = (not pin_has_flag) and crashed and pin_assert_ok
+        all_ok = all_ok and assert_ok
+        print(f"[pin-only capability-guard catches the rollback with MECHANISM-GAP] {assert_ok} (expected True)")
+
+    print(f"[live resolver advertises --script-check] {live_ok} (expected True)")
+    all_ok = all_ok and live_ok
+    if all_ok:
+        print("GUARD REGRESSION SELF-TEST PASS (exit 0)")
+    else:
+        print("GUARD REGRESSION SELF-TEST FAIL (exit 1)")
+    return 0 if all_ok else 1
 
 
 EXCLUDED_SKILL_DIRS = frozenset((
@@ -458,8 +621,23 @@ def main():
                         help="Run prompt-regression guard for Beat-4 FIRST-RUN PREFLIGHT wording")
     parser.add_argument("--prompt-self-test-negative-fixture", action="store_true",
                         help="Run negative fixture for prompt-regression guard")
+    parser.add_argument("--capability-assert", metavar="FLAG",
+                        help="Assert THIS resolver advertises FLAG via --help before a "
+                             "caller relies on it. Exit 0 if present; exit 2 (with a "
+                             "MECHANISM-GAP routing diagnostic) if missing. Guards the "
+                             "governor FIRST-RUN PREFLIGHT against a per-task branch "
+                             "rotation silently dropping a required flag.")
+    parser.add_argument("--guard-regression-self-test", action="store_true",
+                        help="Run regression guard proving the capability-assert catches "
+                             "the pin-only --script-check rollback (2026-08-01 incident).")
 
     args = parser.parse_args()
+
+    if args.guard_regression_self_test:
+        sys.exit(run_guard_regression_self_test())
+
+    if args.capability_assert:
+        sys.exit(run_capability_assert(args.capability_assert))
 
     if args.prompt_self_test:
         sys.exit(run_prompt_self_test())

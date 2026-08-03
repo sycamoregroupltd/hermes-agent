@@ -1,0 +1,40 @@
+{
+  "jobs": [
+    {
+      "id": "cbc925cb6971",
+      "name": "blocked-card-24h-soak-monitor",
+      "prompt": "Run the blocked-card 24h soak monitor audit script and report findings.\n\nScript: /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n\nThe script audits the production jarvis-os kanban DB for any blocked\u2192running transitions without a legitimate unblock path (unblocked/promoted_manual/promoted events) since the fix deployment. It returns SILENT when clean, or VIOLATION: lines when violations are found.\n\n1. Run the script: python3 /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n2. Capture the full output (stdout + stderr) and exit code.\n3. If exit code is 0 (SILENT/clean): report that the soak check passed with the [INFO] line timestamp.\n4. If exit code is 1 (VIOLATIONS found): THIS IS CRITICAL \u2014 report the full violation list immediately.\n5. If exit code is anything else (script error/DB unavailable): report the error for investigation.\n6. If violations are found, create a new bug card on the jarvis-os board with title \"REGRESSION: blocked card dispatched without unblock in soak\", body containing the violation evidence.\n\nReport the result concisely. This task is part of the 24-hour blocked-card soak verification.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T10:25:49.188478+01:00",
+      "paused_reason": "migrated to jarvis store (t_0814e3b3)",
+      "created_at": "2026-07-29T00:04:22.211774+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null
+    }
+  ]
+}

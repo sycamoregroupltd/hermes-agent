@@ -50,8 +50,7 @@
       },
       "schedule_display": "0 3 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -63,13 +62,7 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-30T03:00:00+01:00",
-      "last_run_at": "2026-07-29T03:00:27.658119+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "cc38d71cb6ca",
@@ -90,8 +83,7 @@
       },
       "schedule_display": "0 */4 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -101,13 +93,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T08:00:00+01:00",
-      "last_run_at": "2026-07-29T04:00:48.443857+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "96b2923d206a",
@@ -128,8 +114,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -139,13 +124,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:00:20.708752+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "3eddc6709f44",
@@ -210,8 +189,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -226,13 +204,7 @@
         "thread_id": null
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:01:27.107965+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "bf4fd963c988",
@@ -253,8 +225,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -264,13 +235,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:00:20.455262+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ae049639f334",
@@ -291,8 +256,7 @@
       },
       "schedule_display": "0 5 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -302,13 +266,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-30T05:00:00+01:00",
-      "last_run_at": "2026-07-29T05:00:06.278662+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "46b4535eb511",
@@ -328,8 +286,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 38
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -345,13 +302,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T06:15:13.165118+01:00",
-      "last_run_at": "2026-07-29T06:10:13.165118+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "e97a2e581fa8",
@@ -372,8 +323,7 @@
       },
       "schedule_display": "every 1m",
       "repeat": {
-        "times": null,
-        "completed": 151
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -383,18 +333,12 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:11:31.827722+01:00",
-      "last_run_at": "2026-07-29T06:10:31.827722+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e51c9e2fa5df",
       "name": "elon-governance-loop",
-      "prompt": "You are Elon, fleet CEO/governor. The watchdog output above tells you your current task status.\n\nRULES:\n\n- OWNER-OPERATOR CEO CONTRACT (2026-07-01): behave as Frank's first-principles owner-operator CEO archetype, not a literal impersonation or extra authority. Every idle/governance/report cycle must identify exactly one concrete CEO output: (a) stalled blocker to clear/route, (b) project-specific opportunity hypothesis, (c) team/process/review/observability upgrade, (d) strategic tradeoff to stop/simplify/accelerate/delay, or (e) explicit no-op with evidence that no safe higher-leverage move exists. Ban empty motivation, generic board summaries, and repeated idle reports. Preserve A3 gates: no credentials/secrets, provider/model/fallback routing, money/live trading, irreversible data ops, broad production deploys, or guardrail weakening. Trading remains paper-only.\n- PROJECT PRESSURE POINTS: Sycode Trading = paper-only strategy/research hypotheses, leak-free/net-of-cost/OOS evidence, stronger edge-discovery/model-training/risk-review loops; Upero/Yorkstone/Sycode AI = concrete product/customer/marketplace/design/data opportunities; Jarvis OS = fleet throughput, routing, review gates, observability, cron/kanban reliability, and self-improvement loops. Delegation cards must include outcome, acceptance, inputs, reuse pointer, gates, and reviewer path. Pressure PMs with evidence and decomposition; do not double-drive day-to-day queues.\n- ABSOLUTE TOOL BAN FOR IDLE/GOVERNANCE REPORTING: never call skill_manage, skill_write, curator write/edit, or patch/write_file against any */skills/*/SKILL.md from this cron. This ban overrides any loaded skill or self-improvement suggestion. Route skill changes as kanban tasks for reviewer-owned implementation instead.\n- IDLE SELF-IMPROVEMENT SKILL-WRITE GUARD: during ELON IDLE/governance/self-improvement cycles, do NOT call skill_manage, skill-write, curator-write, or direct skill editing tools. Do not attempt to patch pinned skills, external skills, skill dirs, provider/model routing, credentials, guardrails, or production/runtime deployment state. If a skill change seems useful, create or route a kanban task for the owning profile/reviewer with evidence and acceptance criteria instead.\n- If watchdog says \"ELON BUSY\" (tasks running): do NOTHING \u2014 just reply \"BUSY: tasks in progress, skipping.\" Don't create new sessions that conflict with work already in progress.\n- If watchdog says \"READY\" with task IDs: pick up the highest-priority task. Use kanban_show(task_id=...) to orient, then execute the work. Create child tasks via kanban_create for specialist profiles as needed.\n- If watchdog says \"ELON IDLE\": run the CEO opportunity loop, not a passive scan. Inspect key boards (jarvis-os, sycode-trading, sycode-ai, upero, yorkstone-supplies), pick the highest-leverage safe bottleneck/opportunity, and take one concrete action: route/unblock a stalled task under delegated authority, create a crisp opportunity/process-upgrade card, write a durable research/governance note, or state an evidence-backed no-op. Never produce only a board summary.\n- If any blocked tasks found: triage them \u2014 fix/unblock what you can, escalate critical ones via kanban_comment to Jarvis.\n\nCONDUCTOR PUSH-PASS CHECKLIST (standing non-BUSY cycle duties; approved push-pass beats from jarvis-os/t_e6a274a8 and t_81d137d7): on every non-BUSY governance cycle, complete these four beats once, using evidence, then append one compact vault cycle note. This is a sane-cadence governance pass, not a minute loop; do not create additional recurring jobs or tight polling loops from this prompt, and do not mutate cron schedules, provider/model/fallback routing, credentials, spend, live-trading, production deploys, DB/schema/data, runtime services, or guardrails from these beats. If a beat has no safe mutation, record the read-only evidence and the no-op reason.\n\nBORROWED CONDUCTOR RUNBOOK SOURCES (education context): these beats teach Elon the conductor duties from `/home/frank/obsidian-fleet-vault/Orchestration/runbooks/goal-orchestrator-operating-runbook.md` lines 72-78 (A0-A3 boundary / batch Frank-only items), 85-86 (self-feeding boards and no minute-loop agent spawning), 92-94 (verdicts need consumers, every idle wake is a push pass, no output black holes), and 97 (scheduled/parked work needs machine-readable gates). The verdict fallback must also follow `/home/frank/obsidian-fleet-vault/Orchestration/kanban-verdict-router/2026-07-03-verdict-router-safety-contract-t_26d74e85.md` lines 20-28 and 41-60.\n\n1. VERDICT SWEEP FALLBACK \u2014 scan the active fleet boards for blocked or review-required cards with an unactioned non-router REVIEW_VERDICT comment older than 1 hour. This is a router-failure catcher, not a replacement for the deterministic verdict router. Follow the verdict-router safety contract: accept only exact `APPROVED`/`APPROVE`/`CHANGES_REQUESTED` values, validate the verdict targets the same card, use an idempotency key tied to board/task/comment/action, fail closed with `NEEDS-PM` or `NEEDS-OPERATOR` for ambiguity, and never auto-complete deploy/live/DB/A3/runtime/payment/credential/spend/operator-gated cards. Safe output is one routed/commented card at most, or an explicit no-op with evidence.\n\n2. WEAKEST-TRACK ADVANCE \u2014 read the latest governor-sweep / dual-axis score artifact when present. Name the weakest track, then route or prioritize one concrete card for that track with outcome, acceptance criteria, inputs, safety gates, and reviewer path. If no score artifact is available, state `dual-axis score source missing` and derive the weakest track from live board counts, blocker age, or review-latency evidence instead. Do not double-drive PM day-to-day queues; act as the CEO router for the highest-leverage bottleneck.\n\n3. NEEDS-FRANK BATCH \u2014 compile or refresh the daily decision batch explicitly. Use the existing fleet status / pending-Frank artifacts and the delegated-authority + approvals-registry rules to separate true Frank-only critical decisions from delegated review work. Frank-only means money/new spend, credentials/secrets, live trading, irreversible data operations, production deploys, broad provider/model/fallback changes, or guardrail weakening. Everything else should be routed to the appropriate PM/guardian/os-reviewer lane, not escalated to Frank. Output the batch artifact path or say why no refresh was safe.\n\n4. FIRST-RUN PREFLIGHT \u2014 inspect enabled scheduled first-runs in the next 24 hours: cron rows whose next run is due within 24h and whose first successful run has not happened (`repeat.completed == 0` or missing/null `last_run_at`). Use a light R2 preflight checklist only: script path exists, workdir exists, `context_from` job ids exist, skill pins are verified via the runtime-faithful resolver: python3 /home/frank/.hermes/scripts/cron_skill_preflight_resolver.py --job-id <id> --jobs-file /home/frank/.hermes/profiles/jarvis/cron/jobs.json \u2014 a pin is MISSING only when that resolver returns exit 1 (never a shallow existence scan), and delivery target pins are not obviously dead. Do not edit schedules, provider/model/fallback routing, credentials, or runtime services from this beat. If a dead pin or missing path would make the first run fail, route one fix card with the failing job id and evidence; otherwise record the clean preflight finding.\n\nCycle note requirement: append one compact bullet to `/home/frank/obsidian-fleet-vault/Governance/YYYY-MM-DD-elon-governance-cycle-log.md` with the four beat results, evidence artifact paths, task ids/comments created, and no-op reasons. No raw board dumps. Include the explicit boundary `no minute-loop/no schedule mutation` in the cycle note when the cycle touches scheduled-work evidence.\n\nEXISTING INNOVATION PROPOSAL DUTY (preserved from jarvis-os/t_99cf3de9, but not a fifth push-pass beat): after the four conductor beats, propose at most one concrete better-way only when evidence justifies it, as a reviewed PROPOSAL CARD with a named decider and closure path under the proposal-lifecycle contract below. Raw idle-churn writes were the bug; reviewed innovation is the feature. If no safe innovation proposal is justified, write the evidence-backed no-op reason in the cycle note; do not file generic proposals.\n\nPROPOSAL-LIFECYCLE CONSUMER CONTRACT (verbatim Frank addendum; every Elon proposal must have a named decider and closure path): an Elon proposal with no decider is tokens into space. Every proposal card Elon files MUST follow this lifecycle:\n(1) FILING: idempotency-keyed (elon-proposal-<cycle-date>-<slug>), assigned to the DECIDER by scope \u2014 board-scoped process/priority proposals \u2192 that board's PM; fleet-process/mechanism proposals \u2192 os-reviewer; anything A3-shaped (spend, credentials, guardrails, org changes) \u2192 flagged into the NEEDS-FRANK daily digest, NOT assigned for execution. Card body must carry the Algorithm evidence (which requirement questioned + owner, what deleted, then optimizations) and an explicit DECISION-REQUESTED-BY date (default +7d).\n(2) DECISION: the decider must ACCEPT (\u2192 decompose into impl/review cards, link them on the proposal, archive proposal as accepted) or REJECT (\u2192 archive with a one-line reason \u2014 rejection reasons feed Elon's calibration) \u2014 'parked' is only valid with a resume-at gate per rule 17.\n(3) AGING GUARD: proposals past DECISION-REQUESTED-BY ride the existing escalation notifier tiers (24h/72h) to #critical-alerts \u2014 an undecided proposal is a blocked card and gets treated as one.\n(4) MEASUREMENT: the maturity ladder's accepted-innovation rate (t_e5ef4d22) counts DECIDED proposals only \u2014 undecided ones count AGAINST the system (decision-latency metric), so the incentive points at closing the loop, not filing more.\nVerification fixture: the first post-addenda cycle's proposal card must show a decision within 7d or a fired escalation; that is the fill-verify fixture.\n\nCycle note requirement: append a compact bullet for the cycle to `/home/frank/obsidian-fleet-vault/Governance/2026-07-03-elon-governance-cycle-log.md` (or today's successor) with the five beat results, task ids/comments created, and any no-op reasons. Keep the note concise; do not spam raw board dumps.\n\nKeep this session focused and brief. Your SOUL.md (in /home/frank/.hermes/profiles/elon/) defines your operating principles \u2014 follow them.\n\nCRON PROBE SAFETY (2026-06-30 hardening): do not call execute_code in this cron. Use terminal with /home/frank/.local/bin/hermes kanban CLI/native kanban tools, or sqlite3 only after first inspecting the live schema with `.schema`/`PRAGMA table_info`. For kanban.db, valid task columns include id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result; valid task_runs timing columns are started_at and ended_at (not updated_at/completed_at/finished_at/last_seq/error_type); valid task_comments text column is body (not comment/comments); board is implied by the DB path, not a tasks column. If you need recent activity, order by COALESCE(task_runs.ended_at, task_runs.started_at, task_events.created_at, tasks.completed_at, tasks.started_at, tasks.created_at).\n\nGOVERNOR COMMENT DEDUPE (2026-06-30): before creating a recovery/classification card or posting/commenting on an already-blocked provider/auth, protocol-violation, or fallback-quota blocker, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --classification <classification> --owner-packet <board/task_id> --ttl-hours 2`. Use the evidence key `task_id + classification + owner_packet + TTL`. If it returns `SUPPRESS`, do not add another task-local classification comment and do not create another duplicate recovery card; update only the central owner packet task if genuinely new evidence exists. If it returns `COMMENT`, a first-time classification, changed owner packet, changed classification, critical-list escalation, or materially new evidence may be commented. Never suppress credential/approval-critical escalations.\n\nABSOLUTE SQL COMMENT-WRITE BAN (2026-07-04 hardening \u2014 proven %s crash): never write kanban comments or mutate task state via direct `sqlite3 INSERT INTO task_comments` or `sqlite3 UPDATE tasks` from the terminal tool. The `kanban_comment` MCP tool and `hermes kanban --board <slug> comment` CLI use proper bound SQLite parameters with int(time.time()) for created_at. Direct SQL inserts with string-formatting placeholders (%s) produce literal '%s' in the INTEGER created_at column, corrupting the database and crashing downstream tools like verdict_router.py. VIOLATION: any terminal call containing sqlite3 INSERT INTO task_comments or sqlite3 UPDATE ... SET ... is a protocol violation. Use the kanban toolset \u2014 it is always available.\n\nCANONICAL LOG WRITE CONTRACT (second-brain 2.2): The pre-run script initializes and validates today's governance log. Append body content only; never replace, duplicate, or remove the opening YAML frontmatter. If the initializer fails or the file is malformed, make no vault write and report the failure. Closed property values are type=task-evidence, status=active, confidence=high; descriptive variants belong in the body, never those three properties.",
+      "prompt": "You are Elon, fleet CEO/governor. The watchdog output above tells you your current task status.\n\nRULES:\n\n- OWNER-OPERATOR CEO CONTRACT (2026-07-01): behave as Frank's first-principles owner-operator CEO archetype, not a literal impersonation or extra authority. Every idle/governance/report cycle must identify exactly one concrete CEO output: (a) stalled blocker to clear/route, (b) project-specific opportunity hypothesis, (c) team/process/review/observability upgrade, (d) strategic tradeoff to stop/simplify/accelerate/delay, or (e) explicit no-op with evidence that no safe higher-leverage move exists. Ban empty motivation, generic board summaries, and repeated idle reports. Preserve A3 gates: no credentials/secrets, provider/model/fallback routing, money/live trading, irreversible data ops, broad production deploys, or guardrail weakening. Trading remains paper-only.\n- PROJECT PRESSURE POINTS: Sycode Trading = paper-only strategy/research hypotheses, leak-free/net-of-cost/OOS evidence, stronger edge-discovery/model-training/risk-review loops; Upero/Yorkstone/Sycode AI = concrete product/customer/marketplace/design/data opportunities; Jarvis OS = fleet throughput, routing, review gates, observability, cron/kanban reliability, and self-improvement loops. Delegation cards must include outcome, acceptance, inputs, reuse pointer, gates, and reviewer path. Pressure PMs with evidence and decomposition; do not double-drive day-to-day queues.\n- ABSOLUTE TOOL BAN FOR IDLE/GOVERNANCE REPORTING: never call skill_manage, skill_write, curator write/edit, or patch/write_file against any */skills/*/SKILL.md from this cron. This ban overrides any loaded skill or self-improvement suggestion. Route skill changes as kanban tasks for reviewer-owned implementation instead.\n- IDLE SELF-IMPROVEMENT SKILL-WRITE GUARD: during ELON IDLE/governance/self-improvement cycles, do NOT call skill_manage, skill-write, curator-write, or direct skill editing tools. Do not attempt to patch pinned skills, external skills, skill dirs, provider/model routing, credentials, guardrails, or production/runtime deployment state. If a skill change seems useful, create or route a kanban task for the owning profile/reviewer with evidence and acceptance criteria instead.\n- If watchdog says \"ELON BUSY\" (tasks running): do NOTHING \u2014 just reply \"BUSY: tasks in progress, skipping.\" Don't create new sessions that conflict with work already in progress.\n- If watchdog says \"READY\" with task IDs: pick up the highest-priority task. Use kanban_show(task_id=...) to orient, then execute the work. Create child tasks via kanban_create for specialist profiles as needed.\n- If watchdog says \"ELON IDLE\": run the CEO opportunity loop, not a passive scan. Inspect key boards (jarvis-os, sycode-trading, sycode-ai, upero, yorkstone-supplies), pick the highest-leverage safe bottleneck/opportunity, and take one concrete action: route/unblock a stalled task under delegated authority, create a crisp opportunity/process-upgrade card, write a durable research/governance note, or state an evidence-backed no-op. Never produce only a board summary.\n- If any blocked tasks found: triage them \u2014 fix/unblock what you can, escalate critical ones via kanban_comment to Jarvis.\n\nCONDUCTOR PUSH-PASS CHECKLIST (standing non-BUSY cycle duties; approved push-pass beats from jarvis-os/t_e6a274a8 and t_81d137d7): on every non-BUSY governance cycle, complete these four beats once, using evidence, then append one compact vault cycle note. This is a sane-cadence governance pass, not a minute loop; do not create additional recurring jobs or tight polling loops from this prompt, and do not mutate cron schedules, provider/model/fallback routing, credentials, spend, live-trading, production deploys, DB/schema/data, runtime services, or guardrails from these beats. If a beat has no safe mutation, record the read-only evidence and the no-op reason.\n\nBORROWED CONDUCTOR RUNBOOK SOURCES (education context): these beats teach Elon the conductor duties from `/home/frank/obsidian-fleet-vault/Orchestration/runbooks/goal-orchestrator-operating-runbook.md` lines 72-78 (A0-A3 boundary / batch Frank-only items), 85-86 (self-feeding boards and no minute-loop agent spawning), 92-94 (verdicts need consumers, every idle wake is a push pass, no output black holes), and 97 (scheduled/parked work needs machine-readable gates). The verdict fallback must also follow `/home/frank/obsidian-fleet-vault/Orchestration/kanban-verdict-router/2026-07-03-verdict-router-safety-contract-t_26d74e85.md` lines 20-28 and 41-60.\n\n1. VERDICT SWEEP FALLBACK \u2014 scan the active fleet boards for blocked or review-required cards with an unactioned non-router REVIEW_VERDICT comment older than 1 hour. This is a router-failure catcher, not a replacement for the deterministic verdict router. Follow the verdict-router safety contract: accept only exact `APPROVED`/`APPROVE`/`CHANGES_REQUESTED` values, validate the verdict targets the same card, use an idempotency key tied to board/task/comment/action, fail closed with `NEEDS-PM` or `NEEDS-OPERATOR` for ambiguity, and never auto-complete deploy/live/DB/A3/runtime/payment/credential/spend/operator-gated cards. Safe output is one routed/commented card at most, or an explicit no-op with evidence. Before any verdict-sweep comment write, run the deterministic dedupe guard (see GOVERNOR COMMENT DEDUPE \u2014 DETERMINISTIC VERDICT-SWEEP KEY) with `--board/--task-id/--target-comment-id/--action`; `SUPPRESS` => no write. Every verdict-sweep comment you write MUST embed the exact deterministic key string `verdict-sweep:v1:<board>:<task_id>:comment:<source_comment_id>:action:<action>`.\n\n2. WEAKEST-TRACK ADVANCE \u2014 read the latest governor-sweep / dual-axis score artifact when present. Name the weakest track, then route or prioritize one concrete card for that track with outcome, acceptance criteria, inputs, safety gates, and reviewer path. If no score artifact is available, state `dual-axis score source missing` and derive the weakest track from live board counts, blocker age, or review-latency evidence instead. Do not double-drive PM day-to-day queues; act as the CEO router for the highest-leverage bottleneck.\n\n3. NEEDS-FRANK BATCH \u2014 compile or refresh the daily decision batch explicitly. Use the existing fleet status / pending-Frank artifacts and the delegated-authority + approvals-registry rules to separate true Frank-only critical decisions from delegated review work. Frank-only means money/new spend, credentials/secrets, live trading, irreversible data operations, production deploys, broad provider/model/fallback changes, or guardrail weakening. Everything else should be routed to the appropriate PM/guardian/os-reviewer lane, not escalated to Frank. Output the batch artifact path or say why no refresh was safe.\n\n4. FIRST-RUN PREFLIGHT \u2014 inspect enabled scheduled first-runs in the next 24 hours: cron rows whose next run is due within 24h and whose first successful run has not happened (`repeat.completed == 0` or missing/null `last_run_at`). Use a light R2 preflight checklist only: script path exists, workdir exists, `context_from` job ids exist, skill pins are verified via the runtime-faithful resolver: python3 /home/frank/.hermes/scripts/cron_skill_preflight_resolver.py --job-id <id> --jobs-file /home/frank/.hermes/profiles/jarvis/cron/jobs.json \u2014 a pin is MISSING only when that resolver returns exit 1 (never a shallow existence scan), and delivery target pins are not obviously dead. Do not edit schedules, provider/model/fallback routing, credentials, or runtime services from this beat. If a dead pin or missing path would make the first run fail, route one fix card with the failing job id and evidence; otherwise record the clean preflight finding.\n\nCycle note requirement: append one compact bullet to `/home/frank/obsidian-fleet-vault/Governance/YYYY-MM-DD-elon-governance-cycle-log.md` with the four beat results, evidence artifact paths, task ids/comments created, and no-op reasons. No raw board dumps. Include the explicit boundary `no minute-loop/no schedule mutation` in the cycle note when the cycle touches scheduled-work evidence.\n\nEXISTING INNOVATION PROPOSAL DUTY (preserved from jarvis-os/t_99cf3de9, but not a fifth push-pass beat): after the four conductor beats, propose at most one concrete better-way only when evidence justifies it, as a reviewed PROPOSAL CARD with a named decider and closure path under the proposal-lifecycle contract below. Raw idle-churn writes were the bug; reviewed innovation is the feature. If no safe innovation proposal is justified, write the evidence-backed no-op reason in the cycle note; do not file generic proposals.\n\nPROPOSAL-LIFECYCLE CONSUMER CONTRACT (verbatim Frank addendum; every Elon proposal must have a named decider and closure path): an Elon proposal with no decider is tokens into space. Every proposal card Elon files MUST follow this lifecycle:\n(1) FILING: idempotency-keyed (elon-proposal-<cycle-date>-<slug>), assigned to the DECIDER by scope \u2014 board-scoped process/priority proposals \u2192 that board's PM; fleet-process/mechanism proposals \u2192 os-reviewer; anything A3-shaped (spend, credentials, guardrails, org changes) \u2192 flagged into the NEEDS-FRANK daily digest, NOT assigned for execution. Card body must carry the Algorithm evidence (which requirement questioned + owner, what deleted, then optimizations) and an explicit DECISION-REQUESTED-BY date (default +7d).\n(2) DECISION: the decider must ACCEPT (\u2192 decompose into impl/review cards, link them on the proposal, archive proposal as accepted) or REJECT (\u2192 archive with a one-line reason \u2014 rejection reasons feed Elon's calibration) \u2014 'parked' is only valid with a resume-at gate per rule 17.\n(3) AGING GUARD: proposals past DECISION-REQUESTED-BY ride the existing escalation notifier tiers (24h/72h) to #critical-alerts \u2014 an undecided proposal is a blocked card and gets treated as one.\n(4) MEASUREMENT: the maturity ladder's accepted-innovation rate (t_e5ef4d22) counts DECIDED proposals only \u2014 undecided ones count AGAINST the system (decision-latency metric), so the incentive points at closing the loop, not filing more.\nVerification fixture: the first post-addenda cycle's proposal card must show a decision within 7d or a fired escalation; that is the fill-verify fixture.\n\nCycle note requirement: append a compact bullet for the cycle to `/home/frank/obsidian-fleet-vault/Governance/2026-07-03-elon-governance-cycle-log.md` (or today's successor) with the five beat results, task ids/comments created, and any no-op reasons. Keep the note concise; do not spam raw board dumps.\n\nKeep this session focused and brief. Your SOUL.md (in /home/frank/.hermes/profiles/elon/) defines your operating principles \u2014 follow them.\n\nCRON PROBE SAFETY (2026-06-30 hardening): do not call execute_code in this cron. Use terminal with /home/frank/.local/bin/hermes kanban CLI/native kanban tools, or sqlite3 only after first inspecting the live schema with `.schema`/`PRAGMA table_info`. For kanban.db, valid task columns include id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result; valid task_runs timing columns are started_at and ended_at (not updated_at/completed_at/finished_at/last_seq/error_type); valid task_comments text column is body (not comment/comments); board is implied by the DB path, not a tasks column. If you need recent activity, order by COALESCE(task_runs.ended_at, task_runs.started_at, task_events.created_at, tasks.completed_at, tasks.started_at, tasks.created_at).\n\nGOVERNOR COMMENT DEDUPE (2026-06-30): before creating a recovery/classification card or posting/commenting on an already-blocked provider/auth, protocol-violation, or fallback-quota blocker, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --classification <classification> --owner-packet <board/task_id> --ttl-hours 2`. Use the evidence key `task_id + classification + owner_packet + TTL`. If it returns `SUPPRESS`, do not add another task-local classification comment and do not create another duplicate recovery card; update only the central owner packet task if genuinely new evidence exists. If it returns `COMMENT`, a first-time classification, changed owner packet, changed classification, critical-list escalation, or materially new evidence may be commented. Never suppress credential/approval-critical escalations. DETERMINISTIC VERDICT-SWEEP KEY (2026-08-03, t_5d0658a7): for verdict-sweep fallback routes, suppression is decided on the stable identity (board, task_id, target_comment_id, action) regardless of classification text. Before any verdict-sweep comment write, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --target-comment-id <source_comment_id> --action <action> --ttl-hours 24`. `SUPPRESS` => do not write (the finding is already routed and waiting on a seat; emit an aging escalation instead of a repeat evidence comment). `COMMENT` => write the comment and embed the exact deterministic key string `verdict-sweep:v1:<board>:<task_id>:comment:<source_comment_id>:action:<action>` in it so the next cycle's scan finds it. Never suppress credential/approval-critical escalations.\n\nABSOLUTE SQL COMMENT-WRITE BAN (2026-07-04 hardening \u2014 proven %s crash): never write kanban comments or mutate task state via direct `sqlite3 INSERT INTO task_comments` or `sqlite3 UPDATE tasks` from the terminal tool. The `kanban_comment` MCP tool and `hermes kanban --board <slug> comment` CLI use proper bound SQLite parameters with int(time.time()) for created_at. Direct SQL inserts with string-formatting placeholders (%s) produce literal '%s' in the INTEGER created_at column, corrupting the database and crashing downstream tools like verdict_router.py. VIOLATION: any terminal call containing sqlite3 INSERT INTO task_comments or sqlite3 UPDATE ... SET ... is a protocol violation. Use the kanban toolset \u2014 it is always available.\n\nCANONICAL LOG WRITE CONTRACT (second-brain 2.2): The pre-run script initializes and validates today's governance log. Append body content only; never replace, duplicate, or remove the opening YAML frontmatter. If the initializer fails or the file is malformed, make no vault write and report the failure. Closed property values are type=task-evidence, status=active, confidence=high; descriptive variants belong in the body, never those three properties.",
       "skills": [
         "fleet-governor",
         "obsidian-knowledge-management"
@@ -415,8 +359,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 26
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -434,13 +377,7 @@
       ],
       "workdir": "/home/frank/.hermes/profiles/elon",
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T06:13:52.953030+01:00",
-      "last_run_at": "2026-07-29T06:08:52.953030+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "e435af190e9e",
@@ -461,8 +398,7 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 30
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -478,13 +414,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T06:16:58.552178+01:00",
-      "last_run_at": "2026-07-29T06:06:58.552178+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "b91117332832",
@@ -519,8 +449,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-08-03T09:00:00+01:00"
+      "model_snapshot": null
     },
     {
       "id": "5e7d12d0a6ec",
@@ -541,8 +470,7 @@
       },
       "schedule_display": "0 4 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -556,13 +484,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-30T04:00:00+01:00",
-      "last_run_at": "2026-07-29T04:01:09.778606+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "3ac9196fe0f0",
@@ -597,8 +519,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-08-03T09:00:00+01:00"
+      "model_snapshot": null
     },
     {
       "id": "11295230d374",
@@ -619,8 +540,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -635,13 +555,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:03:31.850350+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "ea7e8125bfa0",
@@ -676,8 +590,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00"
+      "model_snapshot": null
     },
     {
       "id": "f85a3de37919",
@@ -712,8 +625,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-08-03T08:00:00+01:00"
+      "model_snapshot": null
     },
     {
       "id": "43d386fc9339",
@@ -745,8 +657,7 @@
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": null,
-      "next_run_at": "2026-08-02T05:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "96a24b35be15",
@@ -814,8 +725,7 @@
       ],
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T08:00:00+01:00"
+      "model_snapshot": null
     },
     {
       "id": "a5900fd72486",
@@ -886,8 +796,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-03T09:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "7c802db3ba38",
@@ -908,8 +817,7 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -919,13 +827,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00",
-      "last_run_at": "2026-07-29T06:00:20.908822+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "13c1f9279025",
@@ -959,7 +861,14 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": "/home/frank/.hermes/scripts",
-      "next_run_at": "2026-07-29T06:37:00+01:00"
+      "exec_context": {
+        "mode": "systemd-run-user-service",
+        "unit_prefix": "hermes-cron-heavy-native",
+        "properties": {
+          "TasksMax": "65536",
+          "Slice": "hermes-cron-heavy.slice"
+        }
+      }
     },
     {
       "id": "dac3c580e9bb",
@@ -982,8 +891,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -993,13 +901,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/scripts",
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:00:19.158346+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": "/home/frank/.hermes/scripts"
     },
     {
       "id": "d52dfcc7cbf5",
@@ -1032,8 +934,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-01T01:02:01.211661+01:00"
+      "workdir": null
     },
     {
       "id": "b701186fa79f",
@@ -1056,8 +957,7 @@
       },
       "schedule_display": "every 120m",
       "repeat": {
-        "times": null,
-        "completed": 2
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1067,13 +967,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:03:06.452610+01:00",
-      "last_run_at": "2026-07-29T05:03:06.452610+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ee57faa4538f",
@@ -1096,8 +990,7 @@
       },
       "schedule_display": "every 7m",
       "repeat": {
-        "times": null,
-        "completed": 38
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1107,13 +1000,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:17:47.712490+01:00",
-      "last_run_at": "2026-07-29T06:10:47.712490+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b563577e2300",
@@ -1136,8 +1023,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 20
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1147,13 +1033,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:25:52.861443+01:00",
-      "last_run_at": "2026-07-29T06:10:52.861443+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "d224c5b386b0",
@@ -1176,8 +1056,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 20
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1187,13 +1066,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:25:54.281478+01:00",
-      "last_run_at": "2026-07-29T06:10:54.281478+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "5f71a9e0462f",
@@ -1297,8 +1170,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:02:01.211661+01:00"
+      "workdir": null
     },
     {
       "id": "0ddf67598a8c",
@@ -1442,8 +1314,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T08:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "645eac4c22b5",
@@ -1466,8 +1337,7 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1477,13 +1347,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:06:58.661544+01:00",
-      "last_run_at": "2026-07-29T06:06:58.661544+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "082ceadcc6d6",
@@ -1506,8 +1370,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1517,13 +1380,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:37:00.070475+01:00",
-      "last_run_at": "2026-07-29T06:07:00.070475+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b8d28c8e5f6e",
@@ -1546,8 +1403,7 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null,
-        "completed": 106
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1557,13 +1413,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:54.821831+01:00",
-      "last_run_at": "2026-07-29T06:10:54.821831+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c0a27b1a63c6",
@@ -1584,8 +1434,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1595,13 +1444,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:37:00.587650+01:00",
-      "last_run_at": "2026-07-29T06:07:00.587650+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0335d3de142b",
@@ -1660,8 +1503,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 18
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1674,13 +1516,7 @@
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:36.830136+01:00",
-      "last_run_at": "2026-07-29T06:00:36.830136+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "35fd9cd6d157",
@@ -1703,8 +1539,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1717,13 +1552,7 @@
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:00:37.839487+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "502ce12743c5",
@@ -1746,8 +1575,7 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1757,13 +1585,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:07:06.690184+01:00",
-      "last_run_at": "2026-07-29T06:07:06.690184+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "96ae5ae57f3c",
@@ -1822,8 +1644,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 9
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1833,13 +1654,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:10:21.901204+01:00",
-      "last_run_at": "2026-07-29T05:40:21.901204+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "565a6ee597b9",
@@ -1862,8 +1677,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1873,13 +1687,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:19.834449+01:00",
-      "last_run_at": "2026-07-29T05:57:19.834449+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c79a0939cfe7",
@@ -1902,8 +1710,7 @@
       },
       "schedule_display": "every 240m",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1913,13 +1720,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T09:02:06.085948+01:00",
-      "last_run_at": "2026-07-29T05:02:06.085948+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "7c783af2177f",
@@ -1942,8 +1743,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 50
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -1953,13 +1753,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:10.730641+01:00",
-      "last_run_at": "2026-07-29T06:07:10.730641+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4aecc19efac8",
@@ -2030,8 +1824,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "7885ab69d7cb",
@@ -2054,8 +1847,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 51
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2065,13 +1857,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:57.869112+01:00",
-      "last_run_at": "2026-07-29T06:10:57.869112+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "67a0e9a36047",
@@ -2094,8 +1880,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 50
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2105,13 +1890,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:24.010751+01:00",
-      "last_run_at": "2026-07-29T06:07:24.010751+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "8c0e599c454a",
@@ -2134,8 +1913,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 52
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2145,13 +1923,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:33.989421+01:00",
-      "last_run_at": "2026-07-29T06:07:33.989421+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f2d0c8cfd508",
@@ -2174,8 +1946,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 20
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2185,13 +1956,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:25:55.008468+01:00",
-      "last_run_at": "2026-07-29T06:10:55.008468+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "edb00251077b",
@@ -2214,8 +1979,7 @@
       },
       "schedule_display": "0 2 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2225,13 +1989,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-30T02:00:00+01:00",
-      "last_run_at": "2026-07-29T02:00:13.470554+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4ea0cb3e41a8",
@@ -2252,8 +2010,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2263,13 +2020,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:37:34.132181+01:00",
-      "last_run_at": "2026-07-29T06:07:34.132181+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0d8a9583dfb5",
@@ -2300,8 +2051,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-31T15:30:00+01:00"
+      "workdir": null
     },
     {
       "id": "dd3863533d18",
@@ -2324,8 +2074,7 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2335,13 +2084,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-30T06:00:00+01:00",
-      "last_run_at": "2026-07-29T06:03:13.133492+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "8d034f48dc1a",
@@ -2364,8 +2107,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2375,13 +2117,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:25:51.559579+01:00",
-      "last_run_at": "2026-07-29T06:10:51.559579+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f7107612eb02",
@@ -2404,8 +2140,7 @@
       },
       "schedule_display": "0 3 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2415,13 +2150,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-30T03:00:00+01:00",
-      "last_run_at": "2026-07-29T03:00:28.223988+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0e8097519c6b",
@@ -2444,8 +2173,7 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 29
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2455,13 +2183,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:02.406347+01:00",
-      "last_run_at": "2026-07-29T06:05:02.406347+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "6747b083dce8",
@@ -2487,8 +2209,7 @@
       },
       "schedule_display": "0 4,10,16,22 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2502,13 +2223,7 @@
         "file",
         "kanban"
       ],
-      "workdir": null,
-      "next_run_at": "2026-07-29T10:00:00+01:00",
-      "last_run_at": "2026-07-29T04:02:51.876433+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e44dcfaaed79",
@@ -2541,8 +2256,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "30d85640737e",
@@ -2575,8 +2289,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-03T08:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "1487a685282e",
@@ -2599,8 +2312,7 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2610,13 +2322,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:30:00+01:00",
-      "last_run_at": "2026-07-29T06:01:49.233374+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "a9def8c365df",
@@ -2639,8 +2345,7 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null,
-        "completed": 101
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2650,13 +2355,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:57.516810+01:00",
-      "last_run_at": "2026-07-29T06:10:57.516810+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c13949d88751",
@@ -2717,8 +2416,7 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 29
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2728,13 +2426,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:02.596563+01:00",
-      "last_run_at": "2026-07-29T06:05:02.596563+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "112dbf08692a",
@@ -2757,8 +2449,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 50
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2768,13 +2459,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:24.094240+01:00",
-      "last_run_at": "2026-07-29T06:07:24.094240+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ef64fb885946",
@@ -2807,8 +2492,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T08:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "a1646f47cb29",
@@ -2831,8 +2515,7 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2842,13 +2525,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:07:26.996714+01:00",
-      "last_run_at": "2026-07-29T06:07:26.996714+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "db9010b23a48",
@@ -2881,8 +2558,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T08:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "2a8bd26381d2",
@@ -2903,8 +2579,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -2914,13 +2589,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:22:27.972149+01:00",
-      "last_run_at": "2026-07-29T06:07:27.972149+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "2ef03c710168",
@@ -2953,8 +2622,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-03T06:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "29675cd46541",
@@ -2987,8 +2655,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "00d811ecb8f5",
@@ -3021,8 +2688,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T09:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "474645983254",
@@ -3045,8 +2711,7 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 29
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3056,13 +2721,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:02.684134+01:00",
-      "last_run_at": "2026-07-29T06:05:02.684134+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "bdad1a33cd6c",
@@ -3095,8 +2754,7 @@
       },
       "schedule_display": "45 15 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports",
-      "next_run_at": "2026-07-29T15:45:00+01:00"
+      "deliver": "discord:#fleet-reports"
     },
     {
       "id": "938e55e7b15b",
@@ -3110,8 +2768,7 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "state": "scheduled",
       "paused_at": null,
@@ -3130,13 +2787,7 @@
       },
       "schedule_display": "every 60m",
       "enabled": true,
-      "deliver": "discord:#fleet-reports",
-      "next_run_at": "2026-07-29T07:07:28.038566+01:00",
-      "last_run_at": "2026-07-29T06:07:28.038566+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "deliver": "discord:#fleet-reports"
     },
     {
       "id": "66bb00df0c5d",
@@ -3150,8 +2801,7 @@
       "model_snapshot": null,
       "base_url": null,
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "state": "scheduled",
       "paused_at": null,
@@ -3170,13 +2820,7 @@
       },
       "schedule_display": "17 4 * * *",
       "enabled": true,
-      "deliver": "discord:#fleet-reports",
-      "next_run_at": "2026-07-30T04:17:00+01:00",
-      "last_run_at": "2026-07-29T04:17:54.765070+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "deliver": "discord:#fleet-reports"
     },
     {
       "id": "042823b6d8b7",
@@ -3273,8 +2917,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3286,13 +2929,7 @@
       "enabled_toolsets": null,
       "workdir": null,
       "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617",
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:01:54.660360+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "migration_task": "t_86c82617"
     },
     {
       "id": "e2bcff2ad299",
@@ -3335,8 +2972,7 @@
       ],
       "workdir": null,
       "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617",
-      "next_run_at": "2026-07-29T08:00:00+01:00"
+      "migration_task": "t_86c82617"
     },
     {
       "id": "86c82617fd01",
@@ -3357,8 +2993,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3370,13 +3005,7 @@
       "enabled_toolsets": null,
       "workdir": null,
       "migration_task": "t_86c82617",
-      "updated_by_task": "t_86c82617",
-      "next_run_at": "2026-07-29T06:37:34.542992+01:00",
-      "last_run_at": "2026-07-29T06:07:34.542992+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "updated_by_task": "t_86c82617"
     },
     {
       "id": "93ced04b18bf",
@@ -3399,8 +3028,7 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3414,13 +3042,7 @@
       ],
       "workdir": null,
       "rehomed_from": "/home/frank/.hermes/profiles/devops/cron/jobs.json",
-      "rehomed_by": "t_564bdeab",
-      "next_run_at": "2026-07-29T07:07:28.995090+01:00",
-      "last_run_at": "2026-07-29T06:07:28.995090+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "rehomed_by": "t_564bdeab"
     },
     {
       "id": "2d696b360c2b",
@@ -3441,8 +3063,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3454,13 +3075,7 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T06:37:34.669357+01:00",
-      "last_run_at": "2026-07-29T06:07:34.669357+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "fe49f09f4e53",
@@ -3481,8 +3096,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3494,13 +3108,7 @@
       "enabled_toolsets": null,
       "workdir": null,
       "provider_snapshot": null,
-      "model_snapshot": null,
-      "next_run_at": "2026-07-29T06:40:55.488857+01:00",
-      "last_run_at": "2026-07-29T06:10:55.488857+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "model_snapshot": null
     },
     {
       "id": "d042c6feafa6",
@@ -3523,8 +3131,7 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 29
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3534,13 +3141,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:17:29.313577+01:00",
-      "last_run_at": "2026-07-29T06:07:29.313577+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "0f39598f8210",
@@ -3573,8 +3174,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-03T09:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "e082a67768d6",
@@ -3607,8 +3207,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:15:00+01:00"
+      "workdir": null
     },
     {
       "id": "b0e293bc701c",
@@ -3631,8 +3230,7 @@
       },
       "schedule_display": "*/5 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 62
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3642,13 +3240,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:00+01:00",
-      "last_run_at": "2026-07-29T06:10:57.593163+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "c33973886990",
@@ -3671,8 +3263,7 @@
       },
       "schedule_display": "*/10 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 31
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3682,13 +3273,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:20:00+01:00",
-      "last_run_at": "2026-07-29T06:10:58.093494+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "abc411626232",
@@ -3711,8 +3296,7 @@
       },
       "schedule_display": "*/1 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 278
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -3722,13 +3306,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:11:00+01:00",
-      "last_run_at": "2026-07-29T06:10:50.412898+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "a547b49072e0",
@@ -3761,8 +3339,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "063fe9fb6f87",
@@ -3792,15 +3369,14 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:40:32.740686+01:00",
-      "deliver": "discord:#critical-alerts,whatsapp:Frank",
+      "deliver": "discord:#critical-alerts,telegram",
       "origin": null,
       "enabled_toolsets": [
         "kanban",
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank",
-      "next_run_at": "2026-07-29T09:05:00+01:00"
+      "workdir": "/home/frank"
     },
     {
       "id": "55f23658ce51",
@@ -3833,8 +3409,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-02T04:20:00+01:00"
+      "workdir": null
     },
     {
       "id": "edbfa1c95482",
@@ -3867,8 +3442,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-03T09:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "88c545dffd60",
@@ -3907,8 +3481,7 @@
         "terminal",
         "file"
       ],
-      "workdir": null,
-      "next_run_at": "2026-07-29T08:15:00+01:00"
+      "workdir": null
     },
     {
       "id": "48d81cb5ba90",
@@ -3941,8 +3514,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-01T07:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "ac8f83c93959",
@@ -3978,8 +3550,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/profiles/elon",
-      "next_run_at": "2026-08-01T07:15:00+01:00"
+      "workdir": "/home/frank/.hermes/profiles/elon"
     },
     {
       "name": "channel-liveness-oob",
@@ -4013,8 +3584,7 @@
       "updated_at": "2026-07-04T01:25:14.678592+01:00",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "1f6bac147b1b",
@@ -4113,8 +3683,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-02T04:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "ab17df99a336",
@@ -4137,8 +3706,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4148,13 +3716,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:37:35.028704+01:00",
-      "last_run_at": "2026-07-29T06:07:35.028704+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "9a755435138f",
@@ -4177,8 +3739,7 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 7
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4188,13 +3749,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:07:29.395800+01:00",
-      "last_run_at": "2026-07-29T06:07:29.395800+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "4c80202279d2",
@@ -4217,8 +3772,7 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null,
-        "completed": 7
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4228,13 +3782,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:07:29.473075+01:00",
-      "last_run_at": "2026-07-29T06:07:29.473075+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "cbc07fdf609f",
@@ -4257,8 +3805,7 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4268,13 +3815,7 @@
       "deliver": "discord:#quant-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-30T06:00:00+01:00",
-      "last_run_at": "2026-07-29T06:06:58.477661+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e909e7639aaf",
@@ -4297,8 +3838,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 50
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4308,13 +3848,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:24.199160+01:00",
-      "last_run_at": "2026-07-29T06:07:24.199160+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "ef9126a21c6d",
@@ -4340,8 +3874,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4351,13 +3884,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "last_run_at": "2026-07-29T06:10:31.440143+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null,
-      "next_run_at": "2026-07-29T06:25:31.440143+01:00"
+      "workdir": null
     },
     {
       "id": "79b3e3471877",
@@ -4380,8 +3907,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 19
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4391,13 +3917,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:25:50.639849+01:00",
-      "last_run_at": "2026-07-29T06:10:50.639849+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "14a08855fb8f",
@@ -4430,8 +3950,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T08:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "78a8c2d6b4f9",
@@ -4533,8 +4052,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-30T06:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "c27622ade5fd",
@@ -4557,8 +4075,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 50
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4568,13 +4085,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:24.852444+01:00",
-      "last_run_at": "2026-07-29T06:07:24.852444+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "e53763f47144",
@@ -4680,8 +4191,7 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null,
-        "completed": 16
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4697,13 +4207,7 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:00.112827+01:00",
-      "last_run_at": "2026-07-29T05:57:00.112827+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f05227128ac2",
@@ -4726,8 +4230,7 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4743,13 +4246,7 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T12:00:00+01:00",
-      "last_run_at": "2026-07-29T06:04:54.834257+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f9aac66d5b49",
@@ -4811,8 +4308,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4822,53 +4318,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:40:14.204067+01:00",
-      "last_run_at": "2026-07-29T06:10:14.204067+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
-    },
-    {
-      "id": "c916a7bc343f",
-      "name": "obsidian-wiki-lint",
-      "prompt": "",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "obsidian_wiki_lint.py",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "cron",
-        "expr": "0 6 * * *",
-        "display": "0 6 * * *"
-      },
-      "schedule_display": "0 6 * * *",
-      "repeat": {
-        "times": null,
-        "completed": 1
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-05T20:17:11.664947+01:00",
-      "deliver": "discord:#fleet-reports",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes",
-      "next_run_at": "2026-07-30T06:00:00+01:00",
-      "last_run_at": "2026-07-29T06:00:49.445392+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstdout:\nSECOND_BRAIN_HEALTH_BLOCKED findings=204 severity={\"high\": 3, \"low\": 42, \"medium\": 159} catalogs_current=false retrieval_current=true scheduled_writers_current=false agent_adoption_current=false report=/home/frank/obsidian-fleet-vault/Operations/second-brain-health/latest.md json=/home/frank/obsidian-fleet-vault/Operations/second-brain-health/latest.json",
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "7ad0e11f7790",
@@ -4901,8 +4351,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-01T04:15:00+01:00"
+      "workdir": null
     },
     {
       "id": "1324383c1d61",
@@ -4958,8 +4407,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -4969,13 +4417,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:40:14.295912+01:00",
-      "last_run_at": "2026-07-29T06:10:14.295912+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "f96bc59a9657",
@@ -4998,8 +4440,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null,
-        "completed": 50
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5009,13 +4450,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:39.397866+01:00",
-      "last_run_at": "2026-07-29T06:10:39.397866+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "a70772892543",
@@ -5038,8 +4473,7 @@
       },
       "schedule_display": "2,17,32,47 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 20
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5049,13 +4483,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:17:00+01:00",
-      "last_run_at": "2026-07-29T06:06:05.429746+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "fac46dae8172",
@@ -5088,8 +4516,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-03T10:00:00+01:00"
+      "workdir": null
     },
     {
       "id": "0ac3d8b6af91",
@@ -5112,8 +4539,7 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5123,13 +4549,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00",
-      "last_run_at": "2026-07-29T06:04:55.286942+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "64b9e461b28f",
@@ -5152,8 +4572,7 @@
       },
       "schedule_display": "9,24,39,54 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 21
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5163,13 +4582,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:24:00+01:00",
-      "last_run_at": "2026-07-29T06:10:55.512758+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 1\nstderr:\nALERT r-multiple-labeler: host-reachable DATABASE_URL unavailable (need server/.env.prod with @localhost/@127.0.0.1). Refusing to run.",
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "2e26eefaccf8",
@@ -5192,8 +4605,7 @@
       },
       "schedule_display": "11,26,41,56 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 20
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5203,13 +4615,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:11:00+01:00",
-      "last_run_at": "2026-07-29T05:56:38.416662+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "62140b71270a",
@@ -5234,16 +4640,15 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T07:45:41.963166+00:00",
+      "paused_reason": "Retired duplicate of canonical trading-devops sycode-feature-density-monitor (c0b33fd96daf) - t_f919a5a9 / ownership t_f70e806e",
       "created_at": "2026-07-09T03:25:48.837528+01:00",
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:45:00+01:00"
+      "workdir": null
     },
     {
       "id": "062d182994e0",
@@ -5266,8 +4671,7 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5277,13 +4681,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00",
-      "last_run_at": "2026-07-29T06:05:01.305833+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b89302ef4383",
@@ -5306,8 +4704,7 @@
       },
       "schedule_display": "*/75 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 5
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5317,13 +4714,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T07:00:00+01:00",
-      "last_run_at": "2026-07-29T06:05:01.389418+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "unified-health-probe-39c29d42",
@@ -5346,8 +4737,7 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null,
-        "completed": 28
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5360,13 +4750,7 @@
         "terminal"
       ],
       "workdir": null,
-      "pinned": false,
-      "next_run_at": "2026-07-29T06:20:58.953909+01:00",
-      "last_run_at": "2026-07-29T06:10:58.953909+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "pinned": false
     },
     {
       "id": "2f4dd10c9e23",
@@ -5389,8 +4773,7 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null,
-        "completed": 9
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5400,13 +4783,7 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:11:40.152808+01:00",
-      "last_run_at": "2026-07-29T05:41:40.152808+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "8b84c382cfa8",
@@ -5456,8 +4833,7 @@
         "file",
         "delegation"
       ],
-      "workdir": null,
-      "next_run_at": "2026-07-29T13:02:01.211661+01:00"
+      "workdir": null
     },
     {
       "id": "ed3aedb474d2",
@@ -5480,8 +4856,7 @@
       },
       "schedule_display": "*/30 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 10
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5491,13 +4866,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:30:00+01:00",
-      "last_run_at": "2026-07-29T06:05:01.542656+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "3ddf2469949e",
@@ -5520,8 +4889,7 @@
       },
       "schedule_display": "23 4 * * *",
       "repeat": {
-        "times": null,
-        "completed": 1
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5531,13 +4899,7 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-30T04:23:00+01:00",
-      "last_run_at": "2026-07-29T04:24:02.737468+01:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 2\nstderr:\n/home/frank/.hermes/hermes-agent/venv/bin/python: can't open file '/home/frank/.hermes/scripts/fleet_knowledge_catalog_regen.py': [Errno 2] No such file or directory",
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "06311c0fa116",
@@ -5558,8 +4920,7 @@
       },
       "schedule_display": "every 2m",
       "repeat": {
-        "times": null,
-        "completed": 99
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5569,13 +4930,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:12:51.655766+01:00",
-      "last_run_at": "2026-07-29T06:10:51.655766+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "eff5a150e679",
@@ -5608,42 +4963,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-08-02T05:00:00+01:00"
-    },
-    {
-      "id": "c1c29c17b312",
-      "name": "autopromote-soak-gate-t_jarvis_autopromote_20260728",
-      "prompt": "One-shot soak gate for kanban card t_jarvis_autopromote_20260728 (board: sycode-trading). The P1 blocked-card auto-dispatch fix (commit 5ea77f871 at /home/frank/.hermes/hermes-agent) has been soaking for 24h.\n\nDo this:\n1. Run the soak watchdog manually: /home/frank/.hermes/hermes-agent/venv/bin/python /home/frank/.hermes/profiles/devops/scripts/blocked_to_running_soak_watchdog.py and check exit code (0=clean). Also do a full 24h retro sweep of task_events on /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db: any 'promoted' events in the last 24h whose task's last control event was 'blocked' (kind not in dependency/transient) without an intervening 'unblocked' (allow same-timestamp), 'specified', or 'decomposed' event.\n2. If CLEAN: unblock and complete card t_jarvis_autopromote_20260728 via the kanban tools (kanban_comment with the soak evidence, then the card is currently blocked needs_input \u2014 comment evidence and complete it with summary citing acceptance test #4 passed). Note: use env -u HERMES_DELEGATED_CHILD_CONTEXT if shelling to hermes kanban CLI. Update the incident note /home/frank/obsidian-fleet-vault/Incidents/2026-07-28-t_jarvis_autopromote-dispatch-claims-blocked-cards.md marking acceptance #4 PASSED with the sweep numbers.\n3. If ANY violation: comment the full evidence on the card, keep it blocked, and escalate \u2014 the fix is not holding.\n4. Also delete this one-shot cron job after running (it has repeat=1 so it should not refire, but confirm).",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": "nous",
-      "model_snapshot": "moonshotai/kimi-k3",
-      "base_url": null,
-      "script": null,
-      "no_agent": false,
-      "context_from": null,
-      "schedule": {
-        "kind": "once",
-        "run_at": "2026-07-29T21:45:00+01:00",
-        "display": "once at 2026-07-29 21:45"
-      },
-      "schedule_display": "once at 2026-07-29 21:45",
-      "repeat": {
-        "times": 1
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-28T21:50:16.098406+01:00",
-      "deliver": "origin",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T21:45:00+01:00"
+      "workdir": null
     },
     {
       "id": "cc05e9815067",
@@ -5666,8 +4986,7 @@
       },
       "schedule_display": "*/5 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 61
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5677,13 +4996,7 @@
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:00+01:00",
-      "last_run_at": "2026-07-29T06:10:58.177079+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "70a1c0a8504d",
@@ -5706,8 +5019,7 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null,
-        "completed": 20
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
@@ -5723,13 +5035,7 @@
         "user_id": "566415197649240064"
       },
       "enabled_toolsets": null,
-      "workdir": null,
-      "next_run_at": "2026-07-29T06:15:00+01:00",
-      "last_run_at": "2026-07-29T06:05:02.110133+01:00",
-      "last_status": "ok",
-      "last_error": null,
-      "last_delivery_error": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "319421d9afc4",
@@ -5765,7 +5071,1274 @@
       "workdir": "/home/frank/.hermes/profiles/jarvis/scripts",
       "disabled_by": "t_5b07664c",
       "disabled_reason": "t_5b07664c: staged for review in disabled/paused state. To activate: review, then set enabled=true AND (separately) arm LIVE=true per the staging runbook. Rehomed from devops store (t_c8241b86 GATE B) to jarvis live store."
+    },
+    {
+      "id": "b94a952f8849",
+      "name": "untracked-cron-script-guard",
+      "prompt": "Run cron_untracked_script_guard.py: fail when any ENABLED cron job references an untracked script in the /home/frank/.hermes git repo. Self-resolves git root. Report only on violations or errors; stay SILENT when healthy.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "cron_untracked_script_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "35 6 * * *",
+        "display": "35 6 * * *"
+      },
+      "schedule_display": "35 6 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-01T13:03:06.853643+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "374f25be3afe",
+      "name": "orchestrator-tick",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "orchestrator-tick.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 120,
+        "display": "every 120m"
+      },
+      "schedule_display": "every 120m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-01T20:05:55.006526+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "b6c567e8886b",
+      "name": "orchestrator-heartbeat-watchdog",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "orchestrator-heartbeat-watchdog.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-01T20:05:55.637030+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "9db8f2b64107",
+      "name": "kanban-audit-chain-monitor",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "kanban-audit-chain-monitor.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *",
+        "display": "*/15 * * * *"
+      },
+      "schedule_display": "*/15 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-01T21:18:53.800939+01:00",
+      "deliver": "discord:#critical-alerts",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "6dc16dc999e5",
+      "name": "hl-funding-carry-oos-daily",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "hl_funding_carry_oos_daily.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "35 1 * * *",
+        "display": "35 1 * * *"
+      },
+      "schedule_display": "35 1 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T11:24:28.010046+01:00",
+      "deliver": "discord",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "7a21d5c6d5ee",
+      "name": "grok-work-lane",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "grok-lane-tick.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 120,
+        "display": "every 120m"
+      },
+      "schedule_display": "every 120m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T11:35:06.382355+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "79ca27506c8d",
+      "name": "review-work-lane",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "review-lane-tick.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 90,
+        "display": "every 90m"
+      },
+      "schedule_display": "every 90m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T12:04:16.625997+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "6b944f2cfd19",
+      "name": "candles-venue-recon-daily",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "candles_venue_recon_daily.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "40 2 * * *",
+        "display": "40 2 * * *"
+      },
+      "schedule_display": "40 2 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T12:16:12.119422+01:00",
+      "deliver": "discord",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "eb60d668510b",
+      "name": "kanban-diagnostics-actuator-dryrun",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "kanban_diagnostics_actuator_cron.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T13:24:20.003620+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "4ec3978d5026",
+      "name": "delist-short-oos-daily",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "delist_short_oos_daily.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "20 2 * * *",
+        "display": "20 2 * * *"
+      },
+      "schedule_display": "20 2 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T15:39:19.123390+01:00",
+      "deliver": "discord",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "7b14a5eae3df",
+      "name": "fleet-daily-digest",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "fleet-daily-digest.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 7 * * *",
+        "display": "0 7 * * *"
+      },
+      "schedule_display": "0 7 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T19:31:40.772081+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "f9079c5abecb",
+      "name": "ephemeral-workspace-config-guard",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "ephemeral_workspace_config_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 7 * * *",
+        "display": "0 7 * * *"
+      },
+      "schedule_display": "0 7 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-02T21:26:40.783344+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "run_claim": null
+    },
+    {
+      "id": "ef9ba38f7cb1",
+      "name": "model-deal-scanner",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "model-deal-scanner.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 8 * * 1",
+        "display": "0 8 * * 1"
+      },
+      "schedule_display": "0 8 * * 1",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T08:18:22.819976+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "32121fb396af",
+      "name": "nightly-fleet-backup",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "nightly-backup.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 4 * * *",
+        "display": "30 4 * * *"
+      },
+      "schedule_display": "30 4 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:02:24.125044+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "98b21d271336",
+      "name": "backup-freshness-monitor",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "backup-freshness-monitor.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * *",
+        "display": "0 9 * * *"
+      },
+      "schedule_display": "0 9 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:03:46.838554+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "524e1c15facf",
+      "name": "fleet-monitor",
+      "prompt": "## Fleet Monitor \u2014 auto-dispatch & report\n\nYour context above contains the current board state (injected by fleet-monitor.sh script). Use it to:\n\n1. **Report to Frank**: Produce a concise summary of the board state, any new completions since last check, and any profile capacity changes.\n\n2. **Auto-dispatch ready cards**: For each board, check if any ready task's assignee profile is currently free (no running tasks). If so, dispatch:\n   `hermes kanban --board <slug> dispatch`\n\nReport format:\n```\nFLEET MONITOR\nBoard: sycode-trading \u2014 Ready: N  Running: N  Blocked: N\nBoard: jarvis-os \u2014 Ready: N  Running: N  Blocked: N\nNew completions: ...\nDispatched: ...\n```\n\nSAFETY: Read-only + auto-dispatch only. No card creation, credentials, live trading.",
+      "skills": [],
+      "skill": null,
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "fleet-monitor.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.433566+01:00",
+      "deliver": "all",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/home/frank"
+    },
+    {
+      "id": "269c8e8850b8",
+      "name": "fleet-slo-daily-collector",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "fleet-slo-collector.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 0 * * *",
+        "display": "0 0 * * *"
+      },
+      "schedule_display": "0 0 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.457957+01:00",
+      "deliver": "all",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
+    },
+    {
+      "id": "cf46180e12ee",
+      "name": "data-freshness-kanban-sidecar",
+      "prompt": "You are the data freshness kanban sidecar. Your job is to read the stale-feed marker file from the data freshness probe and create kanban investigation tasks for any newly-stale data feeds.\n\n1. Read the kanban marker file at `/home/frank/.hermes/profiles/jarvis/cron/state/dgx_data_freshness_probe.kanban_pending.json`\n2. If the file doesn't exist or all entries have `task_created=True`, exit silently \u2014 nothing to do.\n3. For each entry where `task_created=False`:\n   a. Create a kanban investigation task on the `jarvis-os` board:\n      - Title: `\"Investigate stale data feed: {table} \u2014 {status} {age_h}h past {budget}h budget\"`\n      - Assignee: `trading-devops`\n      - Body: Include the stale feed details (table, status, age_h, budget, first_seen) and reference the data freshness probe\n      - Skills: `[\"sycode-codebase\"]`\n   b. Update the marker file entry to `task_created=True`\n4. Report a summary of what tasks were created.\n\nIMPORTANT: This is a companion to the `dgx_data_freshness_probe.py` script (no-agent cron 1487a685282e). That script writes the marker file. This cron creates the kanban tasks. The probe handles alert dedup; you handle task creation dedup via the `task_created` flag. Never create duplicate tasks for the same stale feed.",
+      "skills": [],
+      "skill": null,
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.483926+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "7aeae3239bfb",
+      "name": "news-macro-integrity-sentinel",
+      "prompt": "Paper-mode data stream integrity alert for the news + macro context pipelines (market_news_cache, market_news, macro_context_daily VIX/DXY). Emits a discord alert only on the falling edge of a new staleness / low-coverage / NULL-integrity condition; silent while the condition persists (slow re-remind). Writes a unified health-canary JSONL record to /home/frank/.hermes/profiles/jarvis/cron/output/health_canary.jsonl. Read-only \u2014 never mutates trading state.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "dgx_news_macro_integrity_sentinel.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.509495+01:00",
+      "deliver": "all",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "04331480c31b",
+      "name": "gateway-cgroup-guard",
+      "prompt": "Run the gateway cgroup sprawl sentinel. Script exits non-zero (watchdog alert) only when sprawl is found; otherwise stays silent. Do not reason; just run the script and deliver its stdout verbatim only if non-empty.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": "gateway-cgroup-guard.py",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *",
+        "display": "*/15 * * * *"
+      },
+      "schedule_display": "*/15 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.535723+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "eed6f2493707",
+      "name": "skill-cli-drift-guard (paper canary)",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "skill-cli-drift-guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 4 * * 1",
+        "display": "0 4 * * 1"
+      },
+      "schedule_display": "0 4 * * 1",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.640058+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
+    },
+    {
+      "id": "6ac8efba96b6",
+      "name": "deadpid-fleet-diagnostic (read-only, #fleet-reports)",
+      "prompt": "Read-only fleet dead-PID residual sweep. Runs deadpid-fleet-diagnostic.py and emits a compact summary to stdout when mislabeled dead-PID residuals exist. Deliver stdout to #fleet-reports (silent when green). Never mutates any board.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "deadpid-fleet-diagnostic-cron.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.666772+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
+    },
+    {
+      "id": "ae7591c5581b",
+      "name": "deadpid-fleet-alert-guard",
+      "prompt": "Run the dead-PID fleet alert guard: python3 deadpid-fleet-alert-guard.py (HERMES_KANBAN_HOME=/home/frank/.hermes/kanban). The script self-delivers to #fleet-reports via `hermes send` when a task is stuck on 'pid N not alive' with consecutive_failures >= 3 (silent dead-PID accumulation \u2014 the gap from t_1290f179 acceptance #3). deliver=local because the cron-layer discord delivery is broken fleet-wide; the script handles delivery itself.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "deadpid-fleet-alert-guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.697844+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "036f0c8b5720",
+      "name": "arena-insert-liveness-monitor (t_a20174c0)",
+      "prompt": "No-agent Sycode Trading arena insert-liveness watchdog for kanban task t_a20174c0. Run /home/frank/.hermes/profiles/devops/scripts/arena-insert-liveness-monitor.sh every 15 minutes. The wrapper runs /home/frank/.bun/bin/bun run server/scripts/arena-insert-liveness-monitor.ts with --max-age-minutes=30 from /home/frank/sycode-trading/.worktrees/arena-liveness-monitor, using DATABASE_URL host 127.0.0.1:5432/postgres (not supabase-db). Exit code handling: 0 healthy/silent; 1 stale or unreachable alert; 2 config/runtime error alert. SELECT-only monitor; no DDL, no DB writes, no deploy, no live trading.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "arena-insert-liveness-monitor.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *",
+        "display": "*/15 * * * *"
+      },
+      "schedule_display": "*/15 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.724169+01:00",
+      "deliver": "all",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
+    },
+    {
+      "id": "bbc6def62725",
+      "name": "automation-vc-keeper",
+      "prompt": "Script-only keeper for ~/.hermes automation VCS branch fleet/automation-vc. Runs the devops-profile dispatch wrapper automation-vc-keeper.sh (~/.hermes/profiles/devops/scripts/), which delegates to the TRACKED root script automation_vc_keeper.py (~/.hermes/scripts/ \u2014 durable, restored by `rsync scripts/` AND `rsync profiles/devops/scripts/` on DGX rebuild). The root script copies allowlisted automation source into an isolated worktree, redacts/normalizes cron runtime state, scans for secret patterns, commits, and pushes to origin/fleet/automation-vc. Silent on no-op; on any failure (secret hit, push error, exception) it exits non-zero so this job delivers the error to discord:#fleet-reports instead of failing silently.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "automation-vc-keeper.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.758994+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "b62fe279b1d0",
+      "name": "nonspawnable-fleet-alert-guard",
+      "prompt": "Read-only fleet watchdog (t_2b273303): scan all kanban boards for tasks parked on non-existent (non-spawnable) profiles in status='ready' / claim_lock IS NULL / assignee NOT a real profile dir, excluding recognized terminal lanes (fable/codex/grok/orion-*), and emit ONE deduped fleet alert to discord:#fleet-reports via `hermes send` when the parked set grows. Do NOT change dispatch behaviour.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "nonspawnable-fleet-alert-guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.795667+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "6df86112c12c",
+      "name": "profile-toolset-obligation-audit",
+      "prompt": "Daily fleet detector for the t_f2b75a26 defect class: a Hermes profile whose SOUL.md mandates shell execution (verification harnesses, typecheck, tests, git) while its platform_toolsets allowlist omits `terminal`, making the obligation unsatisfiable and silently starving every exec-dependent dispatch. Silent (exit 0, no stdout) when there are no unrouted gaps.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "profile_toolset_obligation_audit.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 7 * * *",
+        "display": "0 7 * * *"
+      },
+      "schedule_display": "0 7 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.854540+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "518e83e5f80a",
+      "name": "local-inference-liveness",
+      "prompt": "DGX local-inference liveness probe (llama.cpp CUDA + ollama end-to-end + GB10 unified-memory headroom). Quiet on green, alerts on red. Filed by kanban t_b0c418cd.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "local_inference_liveness_probe.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.878992+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "905eedc6ea20",
+      "name": "orphan-agent-browser-reaper (DGX swap hygiene)",
+      "prompt": "Reap orphaned headless agent-browser Chromium roots that leak swap on the DGX (kanban t_9b49cd19). Quiet on no-op.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "orphan_agent_browser_reaper.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 * * * *",
+        "display": "0 * * * *"
+      },
+      "schedule_display": "0 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.906315+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "ccc26fdb3472",
+      "name": "DQSH alert-reduction 2-week measurement (t_9cb96d37 window close)",
+      "prompt": "You are the scheduled gate-resolver + measurement runner for the time-gated DQSH alert-reduction follow-up. Today (the earliest fire date) is on/after 2026-08-12, so the 14-day post-fix window (2026-07-28 \u2192 2026-08-11) has elapsed and the real measurement is due.\n\nCONTEXT (read first):\n- Measurement task: kanban t_9cb96d37 (devops). Parent: sycode-trading/t_f020e1a4 (DQSH bounded-status hardening). Gate task: t_e33da949 (dependency parent of t_9cb96d37).\n- Fix-date baseline captured 2026-07-28T14:21Z: attached to t_9cb96d37 AND at /home/frank/.hermes/scripts/dqsh_alert_reduction_baseline_2026-07-28.json. A method note lives in the fleet vault at /home/frank/obsidian-fleet-vault/Operations/DQSH-Alert-Reduction-Measurement-Baseline-t_9cb96d37.md.\n- Method script: /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py\n- Board DB: /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db\n- Registry: project control-plane, tracker jarvis-os, vault fleet. The obsidian-knowledge-management skill is MANDATORY before any durable vault write.\n\nWINDOW TIMESTAMPS (epoch s):\n- start = 1785196800 (2026-07-28T00:00:00Z)\n- end   = 1786492799 (2026-08-11T23:59:59Z)\n\nSTEPS:\n1. Run `date -u` and confirm current UTC date >= 2026-08-12. If NOT, do NOT mutate anything \u2014 kanban_comment t_9cb96d37 \"cron fired early; window not elapsed\" and STOP (should not happen given schedule).\n2. kanban_show t_9cb96d37 and t_e33da949 to re-read baseline context and attached baseline JSON.\n3. Run the measurement over the window AND the full current board:\n   python3 /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py --db /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db --json --window-start 1785196800 --window-end 1786492799\n   python3 /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py --db /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db --json\n   Capture both outputs. The first gives new_in_window per term (cards created in the 14-day window); the second gives current by_status for comparison vs the fix-date baseline.\n4. Compare new_in_window counts against baseline expectations:\n   - Baseline new_in_window@t0: dlq 0, backlog 7, starvation 0, pipeline_sta 0, queue_backlog 0.\n   - GENUINE recurrence cluster = material new set of dlq / starvation / pipeline_sta cards NOT explainable as normal board churn: e.g. new_in_window for dlq OR starvation OR pipeline_sta >= 3, OR a tight temporal cluster of same-term cards, OR open/blocked same-term cards indicating an unresolved incident. backlog/queue_backlog at low counts are likely noise \u2014 judge by inspecting titles + created_at.\n5. CLASSIFY and ACT:\n   a) NO genuine recurrence cluster \u2192 reduction MET. kanban_comment t_9cb96d37 with the full report (new_in_window per term, open-vs-resolved at window close, baseline comparison, recurrence-vs-noise verdict). The spawned devops worker (auto-promoted after gate completion) will finalize kanban_complete. (Optionally, you may also write the durable fleet task-evidence note now per step 6.)\n   b) GENUINE recurrence cluster \u2192 DO NOT auto-mutate. kanban_create a remediation task (assignee devops, parent t_9cb96d37) titled \"Remediate <term> recurrence cluster post DQSH fix (window 2026-07-28..08-11)\" with the evidence (counts, sample card ids/titles, created_at cluster). kanban_comment t_9cb96d37 summarizing the cluster. Then block t_9cb96d37 with kind='needs_input' reason summarizing the cluster (so a human reviews before declaring success). After blocking, proceed to step 7 (complete the gate).\n6. (On no-recurrence path) Persist a durable task-evidence note to the FLEET vault at /home/frank/obsidian-fleet-vault/Operations/ following the obsidian-knowledge-management skill (load it first): type: task-evidence, status: active, created/updated YYYY-MM-DD, confidence: high, tags, sources=[sycode-trading/t_f020e1a4, jarvis-os board, this task], body with measured new_in_window counts, open-vs-resolved, baseline comparison, and recurrence-vs-noise verdict. Link [[Projects/Control-Plane]] and [[Operations/DQSH-Bounded-Status-Hardening-t_f020e1a4]] and the baseline note.\n7. COMPLETE THE GATE: kanban_complete t_e33da949 with summary \"2-week window elapsed 2026-08-11; measurement triggered for t_9cb96d37.\" This auto-promotes t_9cb96d37 to ready so the dispatcher spawns a devops worker to finalize. (Do NOT call kanban_complete on t_9cb96d37 here \u2014 leave the official completion to the spawned worker, except in the recurrence case where you have already blocked it.)\n\nNO live trading, credentials, destructive DB/schema, prod deploy, or spend. Read-only board observation + report only.\n\nHonesty rule: never fabricate a board state. The board is live; measure it now. If the board DB is missing/corrupt, kanban_block t_9cb96d37 with kind='capability' and kanban_complete t_e33da949, then STOP.",
+      "skills": [
+        "obsidian-knowledge-management",
+        "devops"
+      ],
+      "skill": "obsidian-knowledge-management",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-08-12T00:05:00+01:00",
+        "display": "once at 2026-08-12 00:05"
+      },
+      "schedule_display": "once at 2026-08-12 00:05",
+      "repeat": {
+        "times": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.935551+01:00",
+      "deliver": "all",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "7ffa2eb3de30",
+      "name": "harvester-routing-check",
+      "prompt": "Periodic verification of self-improvement harvester routing integrity. Silent when passing, alerts on failure.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "harvester-routing-check.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:48.995901+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "955344ba04e5",
+      "name": "arena-24h-monitor-watchdog",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "arena-24h-monitor-gate.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": 48
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:49.023580+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "8bfa777ea66f",
+      "name": "persistence-health-watch",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "persistence-health-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 5,
+        "display": "every 5m"
+      },
+      "schedule_display": "every 5m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:49.051504+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "8ee449a52f1a",
+      "name": "expire-outage-failures",
+      "prompt": "Expire consecutive_failures accrued inside fleet-wide health outage windows once unified-health-probe verdict history returns PASS (jarvis-os/t_411e72b4 standing handler). Runs the deterministic actuator; silent when clean, reports when it applied expiries/requeues.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "expire-outage-failures-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:49.076724+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "e5e9b7de8e3e",
+      "name": "scan-corrupt-comment-timestamps",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "scan_corrupt_comment_timestamps.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:49.106951+01:00",
+      "deliver": "discord:#critical-alerts",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "e2e1844b66e0",
+      "name": "blocked-card-24h-soak-monitor",
+      "prompt": "Run the blocked-card 24h soak monitor audit script and report findings.\n\nScript: /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n\nThe script audits the production jarvis-os kanban DB for any blocked\u2192running transitions without a legitimate unblock path (unblocked/promoted_manual/promoted events) since the fix deployment. It returns SILENT when clean, or VIOLATION: lines when violations are found.\n\n1. Run the script: python3 /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n2. Capture the full output (stdout + stderr) and exit code.\n3. If exit code is 0 (SILENT/clean): report that the soak check passed with the [INFO] line timestamp.\n4. If exit code is 1 (VIOLATIONS found): THIS IS CRITICAL \u2014 report the full violation list immediately.\n5. If exit code is anything else (script error/DB unavailable): report the error for investigation.\n6. If violations are found, create a new bug card on the jarvis-os board with title \"REGRESSION: blocked card dispatched without unblock in soak\", body containing the violation evidence.\n\nReport the result concisely. This task is part of the 24-hour blocked-card soak verification.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:25:49.132475+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": null
+    },
+    {
+      "id": "b5b352684f45",
+      "name": "cron-ticker-invariant-guard",
+      "prompt": "Cron ticker invariant guard: scan all profile cron stores; alert discord:#critical-alerts + auto-disable any enabled job in a store whose ticker_heartbeat is missing or >900s stale. Silent when clean. Installed per t_0814e3b3.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "cron_ticker_invariant_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:28:07.962249+01:00",
+      "deliver": "discord:#critical-alerts",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "8487bc8aecbf",
+      "name": "strategy-audit-drift-watch",
+      "prompt": "Strategy audit drift watch (no_agent): detect NEW strategy audit drift (strategies.updated_at advanced past latest strategy_audit_log.created_at without an audit row). Installed by cron-ticker-invariant-guard migration of concurrent fill into dead nse store (t_0814e3b3).",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "strategy-audit-drift-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:30:30.570814+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
-  ],
-  "updated_at": "2026-07-29T06:10:58.954209+01:00"
+  ]
 }

@@ -288,7 +288,8 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                     task_id,
                     "BORIS-PATCH: kanban skill — quarantined corrupt-DB circuit-breaker (stop retry storm)",
                     "When a board op fails with `KanbanDbCorruptError` (refusing to open corrupt kanban DB ...). "
-                    "Step 2: confirm via sqlite3/PRAGMA integrity_check on .../kanban.db.",
+                    "Step 2: confirm via sqlite3/PRAGMA integrity_check on .../kanban.db. "
+                    "review-required: source/docs only, no live DB operation.",
                     "devops",
                     "blocked",
                     10,
@@ -330,7 +331,7 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                 (
                     task_id,
                     "Run production DB migration and live runtime deploy",
-                    "Scope includes schema migration, live data write, production deploy, and gateway restart.",
+                    "Scope includes schema migration, live data write, production deploy, and gateway restart. review-required: operator-gated scope.",
                     "devops",
                     "blocked",
                     10,
@@ -372,7 +373,7 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                 (
                     task_id,
                     "Add unit tests for tenant id injection",
-                    "Source/test-only change. Tenant coverage.",
+                    "Source/test-only change. Tenant coverage. review-required: source/test scope.",
                     "devops",
                     "blocked",
                     10,
@@ -423,7 +424,7 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                 (
                     task_id,
                     "FIX: add tenantId-injection middleware to @sycode/database-tenant (unblocks founding-member test)",
-                    "Source change for tenant injection. Adds test coverage.",
+                    "Source change for tenant injection. Adds test coverage. review-required: source scope.",
                     "devops",
                     "blocked",
                     10,
@@ -470,7 +471,7 @@ class VerdictRouterRegressionTests(unittest.TestCase):
                 (
                     task_id,
                     "Run production DB migration and live runtime deploy",
-                    "Scope includes schema migration, live data write, production deploy, and gateway restart.",
+                    "Scope includes schema migration, live data write, production deploy, and gateway restart. review-required: operator-gated scope.",
                     "devops",
                     "blocked",
                     10,
@@ -726,7 +727,9 @@ class VerdictRouterBoardExclusionTests(unittest.TestCase):
     """Regression: excluded boards are never returned by boards()."""
 
     def test_orchestrator_sync_board_is_excluded_from_boards_scan(self) -> None:
-        """orchestrator-sync board is not returned by boards()."""
+        """B3 (t_65a0c080): boards() returns only allowlisted task boards and
+        excludes coordination boards, backup snapshots, and non-allowlisted dirs.
+        """
         with tempfile.TemporaryDirectory(prefix="boards-test-") as tmpdir:
             boards_dir = Path(tmpdir)
 
@@ -751,10 +754,36 @@ class VerdictRouterBoardExclusionTests(unittest.TestCase):
             con.commit()
             con.close()
 
-            # Create a normal board that should still be included
-            normal_db = boards_dir / "normal-board" / "kanban.db"
-            normal_db.parent.mkdir(parents=True)
-            con = sqlite3.connect(str(normal_db))
+            # Create a junk/non-allowlisted board (should be excluded by B3 allowlist)
+            junk_db = boards_dir / "testproj" / "kanban.db"
+            junk_db.parent.mkdir(parents=True)
+            con = sqlite3.connect(str(junk_db))
+            con.executescript(
+                """
+                CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,assignee TEXT,status TEXT NOT NULL,priority INTEGER DEFAULT 0,created_at INTEGER NOT NULL,block_kind TEXT);
+                CREATE TABLE task_comments (id INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL,author TEXT NOT NULL,body TEXT NOT NULL,created_at INTEGER NOT NULL);
+                """
+            )
+            con.commit()
+            con.close()
+
+            # Create a backup snapshot board (should be excluded)
+            bak_db = boards_dir / ".bak_t_c3bd9fec_20260719T102432Z" / "kanban.db"
+            bak_db.parent.mkdir(parents=True)
+            con = sqlite3.connect(str(bak_db))
+            con.executescript(
+                """
+                CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,assignee TEXT,status TEXT NOT NULL,priority INTEGER DEFAULT 0,created_at INTEGER NOT NULL,block_kind TEXT);
+                CREATE TABLE task_comments (id INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL,author TEXT NOT NULL,body TEXT NOT NULL,created_at INTEGER NOT NULL);
+                """
+            )
+            con.commit()
+            con.close()
+
+            # Create an allowlisted board that should still be included (jarvis-os)
+            allowed_db = boards_dir / "jarvis-os" / "kanban.db"
+            allowed_db.parent.mkdir(parents=True)
+            con = sqlite3.connect(str(allowed_db))
             con.executescript(
                 """
                 CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,assignee TEXT,status TEXT NOT NULL,priority INTEGER DEFAULT 0,created_at INTEGER NOT NULL,block_kind TEXT);
@@ -768,8 +797,10 @@ class VerdictRouterBoardExclusionTests(unittest.TestCase):
                 result = vr.boards()
                 slugs = [b.slug for b in result]
                 self.assertNotIn("orchestrator-sync", slugs, "orchestrator-sync board should be excluded from scan")
-                self.assertIn("normal-board", slugs, "normal board should still be included")
-                self.assertEqual(len(slugs), 1, "only normal-board should appear in boards() output")
+                self.assertNotIn("testproj", slugs, "non-allowlisted board should be excluded by B3 allowlist")
+                self.assertNotIn(".bak_t_c3bd9fec_20260719T102432Z", slugs, "backup snapshot boards should be excluded")
+                self.assertIn("jarvis-os", slugs, "allowlisted board should still be included")
+                self.assertEqual(len(slugs), 1, "only the allowlisted board should appear in boards() output")
 
 
 class ScanCorruptTimestampsTests(unittest.TestCase):
@@ -879,6 +910,167 @@ class ScanCorruptTimestampsTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertIsInstance(row[0], int)
         self.assertGreater(row[0], 1700000000)  # plausible Unix timestamp
+
+
+class ResumeGateConsumerTests(unittest.TestCase):
+    """t_9799c507: READY-card resume-gate consumer routes to the owning PM seat
+    as a comment; never auto-completes; fails closed to NEEDS-PM."""
+
+    def make_ready_board(self, slug: str = "sycode-trading"):
+        tmp = tempfile.TemporaryDirectory(prefix="verdict-router-resume-")
+        db = Path(tmp.name) / "kanban.db"
+        con = sqlite3.connect(db)
+        con.executescript(
+            """
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                body TEXT,
+                assignee TEXT,
+                status TEXT NOT NULL,
+                priority INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                block_kind TEXT,
+                result TEXT
+            );
+            CREATE TABLE task_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                author TEXT NOT NULL,
+                body TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE task_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                run_id INTEGER,
+                kind TEXT NOT NULL,
+                payload TEXT,
+                created_at INTEGER
+            );
+            """
+        )
+        con.commit()
+        con.close()
+        return tmp, vr.Board(slug, db)
+
+    def insert_ready(self, board: vr.Board, task_id: str) -> None:
+        con = sqlite3.connect(board.db)
+        con.execute(
+            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at,block_kind) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (task_id, "review-required source code patch", "review-required", "devops", "ready", 10, int(time.time()), None),
+        )
+        con.commit()
+        con.close()
+
+    def add_comment(self, board: vr.Board, task_id: str, author: str, body: str, created_at: int | None = None) -> int:
+        con = sqlite3.connect(board.db)
+        cur = con.execute(
+            "INSERT INTO task_comments(task_id,author,body,created_at) VALUES (?,?,?,?)",
+            (task_id, author, body, created_at if created_at is not None else int(time.time())),
+        )
+        con.commit()
+        assert cur.lastrowid is not None
+        cid = int(cur.lastrowid)
+        con.close()
+        return cid
+
+    def test_resume_gate_routes_to_owning_pm_seat(self) -> None:
+        tmp, board = self.make_ready_board("sycode-trading")
+        with tmp:
+            self.insert_ready(board, "t_resume01")
+            self.add_comment(
+                board,
+                "t_resume01",
+                "elon",
+                "ELON VERDICT-SWEEP FALLBACK: RESUME_GATE SATISFIED. "
+                "Independent exact-head REVIEW_VERDICT=APPROVED by fable-reviewer "
+                "on review card t_99999999; PR #856 merged.",
+            )
+            cands = vr.resume_candidates_for_board(board)
+            self.assertEqual(len(cands), 1)
+            decision = vr.decide_resume(cands[0], dry_run=False)
+            self.assertEqual(decision.action, "resume_route")
+            self.assertIn("sycode-trading-pm", decision.reason)
+            self.assertEqual(decision.result, "would_comment")
+            # The route is comment-only: the card MUST stay ready.
+            con = sqlite3.connect(board.db)
+            status = con.execute("SELECT status FROM tasks WHERE id='t_resume01'").fetchone()[0]
+            con.close()
+            self.assertEqual(status, "ready")
+
+    def test_resume_gate_fails_closed_to_needs_pm_when_seat_unknown(self) -> None:
+        tmp, board = self.make_ready_board("fixture")  # no PM-seat mapping
+        with tmp:
+            self.insert_ready(board, "t_resume02")
+            self.add_comment(
+                board,
+                "t_resume02",
+                "guardian",
+                "RESUME_GATE MET\nREVIEW_VERDICT=APPROVED\nResume this card.",
+            )
+            cands = vr.resume_candidates_for_board(board)
+            self.assertEqual(len(cands), 1)
+            decision = vr.decide_resume(cands[0], dry_run=False)
+            self.assertEqual(decision.action, "needs_pm")
+            self.assertIn("failed closed", decision.reason)
+
+    def test_resume_gate_worker_comment_not_routed(self) -> None:
+        tmp, board = self.make_ready_board("sycode-trading")
+        with tmp:
+            self.insert_ready(board, "t_resume03")
+            self.add_comment(
+                board,
+                "t_resume03",
+                "builder",  # NOT in REVIEWER_ALLOWLIST
+                "RESUME_GATE SATISFIED\nREVIEW_VERDICT=APPROVED",
+            )
+            self.assertEqual(vr.resume_candidates_for_board(board), [])
+
+    def test_resume_gate_changes_requested_not_routed(self) -> None:
+        tmp, board = self.make_ready_board("sycode-trading")
+        with tmp:
+            self.insert_ready(board, "t_resume04")
+            self.add_comment(
+                board,
+                "t_resume04",
+                "elon",
+                "RESUME_GATE SATISFIED\nREVIEW_VERDICT=CHANGES_REQUESTED",
+            )
+            self.assertEqual(vr.resume_candidates_for_board(board), [])
+
+    def test_resume_gate_negated_not_routed(self) -> None:
+        tmp, board = self.make_ready_board("sycode-trading")
+        with tmp:
+            self.insert_ready(board, "t_resume05")
+            self.add_comment(
+                board,
+                "t_resume05",
+                "elon",
+                "RESUME_GATE not satisfied yet\nREVIEW_VERDICT=APPROVED",
+            )
+            self.assertEqual(vr.resume_candidates_for_board(board), [])
+
+    def test_resume_gate_idempotency_marker_skips_second_route(self) -> None:
+        tmp, board = self.make_ready_board("sycode-trading")
+        with tmp:
+            self.insert_ready(board, "t_resume06")
+            cid = self.add_comment(
+                board,
+                "t_resume06",
+                "elon",
+                "RESUME_GATE SATISFIED\nREVIEW_VERDICT=APPROVED",
+            )
+            self.assertEqual(len(vr.resume_candidates_for_board(board)), 1)
+            # Simulate the router having already processed this comment.
+            self.add_comment(
+                board,
+                "t_resume06",
+                vr.AUTHOR,
+                f"verdict-router marker=verdict-router:v1:sycode-trading:t_resume06:comment:{cid}:action:resume_route",
+            )
+            self.assertEqual(vr.resume_candidates_for_board(board), [])
 
 
 if __name__ == "__main__":

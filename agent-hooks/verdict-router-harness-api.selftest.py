@@ -26,6 +26,15 @@ def load_harness():
 
 
 def assert_common_surface(result: dict) -> dict:
+    # Surface diagnostics before asserting so a script/module divergence is
+    # debuggable instead of a bare AssertionError (AC1: the prior assertion
+    # discarded the whole result dict).
+    if not result.get("ok"):
+        print("assert_common_surface FAILED:")
+        print("  ok:", result.get("ok"))
+        print("  errors:", result.get("errors"))
+        print("  implementation:", result.get("implementation"))
+        print("  results[0].errors:", (result.get("results") or [{}])[0].get("errors"))
     assert result["ok"] is True
     assert result["live_side_effects_possible"] is False
     assert result["errors"] == []

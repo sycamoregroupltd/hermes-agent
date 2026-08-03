@@ -1,67 +1,31 @@
-import time
-import logging
-from datetime import timedelta
+#!/usr/bin/env python3
+"""DEPRECATED: DIAR (Data Integrity Active Remediator) — superseded by DQSH.
 
-# Initialize logging
-logging.basicConfig(filename='~/.hermes/logs/diar.log', level=logging.INFO)
+This script was a never-implemented 66-line stub (t_71f7c2f1 falsely claimed
+completion). The fleet's actual self-healing daemon is:
 
-# Safety caps
-MAX_RESTART_ATTEMPTS = 3
-MAX_WORKER_SCALE = 5
-MAX_REINDEX_ATTEMPTS = 2
+    /home/frank/.hermes/scripts/dqsh_daemon.py   (via run_dqsh.sh)
 
-def monitor_queue_lag():
-    # Implement queue lag monitoring logic
-    pass
+This shim exists only to disambiguate for future reviewers and to redirect
+any stray invocation to DQSH in paper-mode. See platform-reviewer verdict:
+obsidian-fleet-vault/Governance/2026-07-29-platform-reviewer-diar-code-review-t_174d30e5.md
+(t_174d30e5, FAIL 4) and rework packet t_7c75ea77.
+"""
+import sys
 
-def check_buffer_directories():
-    # Implement buffer directory checks
-    pass
+DQSH_PATH = "/home/frank/.hermes/scripts/dqsh_daemon.py"
 
-def verify_consumer_liveness():
-    # Implement consumer health checks
-    pass
 
-def measure_database_latency():
-    # Implement database latency measurement
-    pass
+def main():
+    print(
+        "[DIAR-DEPRECATED] data_integrity_remediator.py is a retired stub. "
+        f"Use the DQSH daemon instead: python3 {DQSH_PATH} --run (paper-mode).",
+        file=sys.stderr,
+    )
+    # Do NOT auto-exec DQSH: avoid accidental double-scheduling alongside the
+    # registered DQSH crons. Fail loudly instead.
+    sys.exit(2)
 
-def handle_pipeline_starvation():
-    # Graceful consumer restart logic
-    pass
 
-def scale_workers():
-    # Worker scaling logic
-    pass
-
-def isolate_poison_pill():
-    # Poison pill isolation and offset adjustment
-    pass
-
-def handle_db_entropy():
-    # SQLite reindexing and check
-    pass
-
-def diar_self_healing_loop():
-    while True:
-        # Monitor system metrics
-        queue_lag = monitor_queue_lag()
-        buffer_status = check_buffer_directories()
-        consumer_health = verify_consumer_liveness()
-        db_latency = measure_database_latency()
-
-        # Remediation logic
-        if queue_lag > threshold:
-            scale_workers()
-        if not consumer_health:
-            handle_pipeline_starvation()
-        if buffer_status == 'poison':
-            isolate_poison_pill()
-        if db_latency > threshold:
-            handle_db_entropy()
-
-        # Safety checks
-        time.sleep(60)
-
-if __name__ == '__main__':
-    diar_self_healing_loop()
+if __name__ == "__main__":
+    main()

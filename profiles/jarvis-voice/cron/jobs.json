@@ -92,7 +92,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:05:01.258850+01:00",
-      "deliver": "local",
+      "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
@@ -127,6 +127,41 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T16:23:16.048095+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": null
+    },
+    {
+      "id": "fdd52e62ca63",
+      "name": "kanban-pr-guard-sweep (t_9799c507)",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "kanban-pr-guard-sweep.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-03T10:40:35.068914+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [

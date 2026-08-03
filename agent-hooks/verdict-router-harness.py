@@ -393,7 +393,8 @@ def write_fixture_board(root: Path, fixture: dict[str, Any]) -> Path:
                 assignee TEXT,
                 status TEXT NOT NULL,
                 priority INTEGER DEFAULT 0,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                block_kind TEXT
             );
             """
             + f"""

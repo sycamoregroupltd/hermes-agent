@@ -2,6 +2,13 @@
 # Agent-hooks selftest runner — umbrella test command.
 # Runs deterministic local selftests only; no live kanban board, credential,
 # network, runtime, or profile configuration mutation required.
+#
+# VERIFICATION_MATRIX
+# - store: /home/frank/.hermes/agent-hooks/run-selftests.sh
+# - liveness: bash /home/frank/.hermes/agent-hooks/run-selftests.sh
+# - deliver target: test runner invoked by /home/frank/.hermes/agent-hooks/gate-kanban-complete.selftest.sh and component scripts
+# - named consumer: jarvis-os-pm / os-reviewer deterministic test evidence
+# - satisfied verification: pytest/self-test outputs in task comments/Obsidian Governance note
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,6 +41,8 @@ run_test() {
 }
 
 run_test "gate-critic-readonly" "bash agent-hooks/gate-critic-readonly.selftest.sh"
+run_test "goal-judge-provider-error-handler" "python3 agent-hooks/goal-judge-provider-error-handler.py"
+run_test "gate-kanban-complete" "bash agent-hooks/gate-kanban-complete.selftest.sh"
 run_test "verdict-router" "bash agent-hooks/verdict-router.selftest.sh"
 
 echo "════════════════════════════════════════════════════════════════════════"

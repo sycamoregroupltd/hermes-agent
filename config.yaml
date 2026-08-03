@@ -220,11 +220,11 @@ discord:
   voice_fx:
     ack_enabled: true
     ack_phrases:
-      - Let me look into that.
-      - One moment.
-      - Checking on that now.
-      - Give me a sec.
-      - On it.
+    - Let me look into that.
+    - One moment.
+    - Checking on that now.
+    - Give me a sec.
+    - On it.
     ambient_enabled: true
     ambient_gain: 0.18
     ambient_path: ''
@@ -260,9 +260,9 @@ display:
   runtime_footer:
     enabled: false
     fields:
-      - model
-      - context_pct
-      - cwd
+    - model
+    - context_pct
+    - cwd
   show_cost: true
   show_reasoning: false
   skin: default
@@ -289,37 +289,37 @@ goals:
 honcho: {}
 hooks:
   on_session_end:
-    - command: /home/frank/.hermes/agent-hooks/log-session.sh
-      timeout: 10
+  - command: /home/frank/.hermes/agent-hooks/log-session.sh
+    timeout: 10
   on_session_start:
-    - command: /home/frank/.hermes/agent-hooks/log-session.sh
-      timeout: 10
-    - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
-      timeout: 30
+  - command: /home/frank/.hermes/agent-hooks/log-session.sh
+    timeout: 10
+  - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
+    timeout: 30
   pre_llm_call:
-    - command: /home/frank/.hermes/agent-hooks/inject-second-brain-contract.sh
-      timeout: 10
-    - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
-      timeout: 30
-    - command: /home/frank/.hermes/agent-hooks/inject-call-snapshot.sh
-      timeout: 10
+  - command: /home/frank/.hermes/agent-hooks/inject-second-brain-contract.sh
+    timeout: 10
+  - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
+    timeout: 30
+  - command: /home/frank/.hermes/agent-hooks/inject-call-snapshot.sh
+    timeout: 10
   pre_tool_call:
-    - command: /home/frank/.hermes/agent-hooks/gate-second-brain-writes.sh
-      matcher: ^(write_file|patch|terminal)$
-      timeout: 20
-    - command: /home/frank/.hermes/agent-hooks/gate-config-writes.sh
-      timeout: 15
-    - command: /home/frank/.hermes/agent-hooks/gate-kanban-complete.sh
-      matcher: kanban_complete
-      timeout: 60
-    - command: /home/frank/.hermes/agent-hooks/gate-kanban-dupe-create.sh
-      matcher: kanban_create
-      timeout: 20
+  - command: /home/frank/.hermes/agent-hooks/gate-second-brain-writes.sh
+    matcher: ^(write_file|patch|terminal)$
+    timeout: 20
+  - command: /home/frank/.hermes/agent-hooks/gate-config-writes.sh
+    timeout: 15
+  - command: /home/frank/.hermes/agent-hooks/gate-kanban-complete.sh
+    matcher: kanban_complete
+    timeout: 60
+  - command: /home/frank/.hermes/agent-hooks/gate-kanban-dupe-create.sh
+    matcher: kanban_create
+    timeout: 20
   subagent_stop:
-    - command: /home/frank/.hermes/agent-hooks/catch-silent-exit.sh
-      timeout: 20
-    - command: /home/frank/.hermes/agent-hooks/log-session.sh
-      timeout: 10
+  - command: /home/frank/.hermes/agent-hooks/catch-silent-exit.sh
+    timeout: 20
+  - command: /home/frank/.hermes/agent-hooks/log-session.sh
+    timeout: 10
 hooks_auto_accept: true
 human_delay:
   max_ms: 2500
@@ -372,19 +372,24 @@ memory:
 model:
   api_key: null
   context_length: 262144
-  default: tencent/hy3:free
+  default: deepseek/deepseek-v4-flash-0731
   provider: nous
   base_url: https://inference-api.nousresearch.com/v1
 fallback_providers:
-  - provider: nous
-    model: tencent/hy3:free
-    base_url: https://inference-api.nousresearch.com/v1
-  - provider: nous
-    model: nvidia/nemotron-3-ultra-550b-a55b
-    base_url: https://inference-api.nousresearch.com/v1
-  - provider: nous
-    model: stepfun/step-3.7-flash:free
-    base_url: https://inference-api.nousresearch.com/v1
+- provider: custom
+  model: deepseek-ai/deepseek-v4-pro
+  base_url: https://integrate.api.nvidia.com/v1
+  api_key_env: NVIDIA_API_KEY
+  name: nim-deepseek-v4-pro
+- provider: nous
+  model: tencent/hy3:free
+  base_url: https://inference-api.nousresearch.com/v1
+- provider: nous
+  model: nvidia/nemotron-3-ultra-550b-a55b
+  base_url: https://inference-api.nousresearch.com/v1
+- provider: nous
+  model: stepfun/step-3.7-flash:free
+  base_url: https://inference-api.nousresearch.com/v1
 model_catalog:
   enabled: true
   providers: {}
@@ -530,9 +535,9 @@ tools:
     search_default_limit: 5
     threshold_pct: 10
 toolsets:
-  - hermes-cli
-  - terminal
-  - skills
+- hermes-cli
+- terminal
+- skills
 tts:
   edge:
     voice: en-US-AriaNeural
@@ -585,4 +590,3 @@ x_search:
   model: ''
   retries: 2
   timeout_seconds: 180
-

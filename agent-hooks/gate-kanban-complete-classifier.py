@@ -11,6 +11,13 @@ future non-app allow override must ship with paired frontend/app negative
 fixtures and changed-files-aware tests in gate-kanban-complete.fixtures.json,
 proving the same allow wording still blocks when attached to concrete frontend
 work or app-surface changed_files metadata.
+
+VERIFICATION_MATRIX
+- store: /home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py
+- liveness: python3 /home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py < /dev/null
+- deliver target: task-type classification for gate-kanban-complete.sh pre_tool_call hook
+- named consumer: jarvis-os-pm / os-reviewer deterministic completion-gate evidence
+- satisfied verification: gate-kanban-complete selftest output + py_compile + this task's review
 """
 from __future__ import annotations
 
@@ -260,6 +267,10 @@ EXPLICIT_NO_APP_CHANGE_PATTERNS: PatternList = [
 ]
 
 NEGATED_APP_IMPL_PATTERNS: PatternList = [
+    # Qualified SQL GUC/schema identifier like `app.bypass_append_only` is a
+    # database namespace reference, not a frontend app surface. A bare dotted
+    # app.<snake_ident> reference must not trigger the fix/build ... app impl lane.
+    r"\bapp\.[a-z_][a-z0-9_]*\b",
     r"\bdo not (modify|touch|change) (frontend|web|app)\b",
     r"\bno (frontend|web|app)[^\n.]{0,120}(route|page|component|middleware|layout|ui)[^\n.]{0,120}(touched|changed|modified|code edits?|edits?)\b",
     r"\bno [^\n.]{0,80}(frontend/web/app|frontend|web|app)[^\n.]{0,200}(route|page|component|middleware|layout|ui|trpc|browser)[^\n.]{0,200}(is changed|changed|touched|modified|code edits?|edits?)\b",
@@ -524,6 +535,56 @@ def _source_review_without_web(task_part: str, raw: str) -> bool:
         return False
     if _has_app_impl(task_part):
         return False
+    # A goal-judge provider-error quarantine card is NOT a source-review card
+    # just because it quotes a CHILD review's REVIEW_VERDICT=APPROVED. Bare
+    # REVIEW_VERDICT text must not convert the fail-closed trap into an
+    # allow-lane classification; only the strict verified-review override
+    # (marker + APPROVED verdict + task-evidence) may do that.
+    if _goal_judge_provider_error(task_part, raw) and not _verified_review_with_evidence_override(
+        task_part, raw
+    ):
+        return False
+    return True
+
+
+GOAL_JUDGE_PROVIDER_ERROR_RE = re.compile(
+    r"(goal[-_ ]?judge|goal[-_ ]?mode)[\s\S]{0,400}?(gemini|notfound|provider[-_ ]?error)",
+    flags=re.I,
+)
+
+
+def _goal_judge_provider_error(task_part: str, raw: str) -> bool:
+    """True when this card is a goal-judge/goal-mode provider-error trap card.
+
+    Mirrors the shell hook's fail-closed trap detection so classification and
+    the hook agree on which cards belong to the quarantine lane.
+    """
+    return bool(GOAL_JUDGE_PROVIDER_ERROR_RE.search(f"{task_part}\n{raw}"))
+
+
+def _verified_review_with_evidence_override(task_part: str, raw: str) -> bool:
+    """Only allow goal-judge provider-error completion traps to bypass the
+    normal block path when there is explicit local evidence of terminal review
+    state attached to this completion payload or task comments. Without that,
+    provider-error tasks must fail closed into the operator quar override lane.
+    The marker is intentionally strict to avoid accidental auto-completion.
+    """
+    text = f"{task_part}\n{raw}"
+    if not re.search(r"GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE", text, flags=re.I):
+        return False
+    if not re.search(r"REVIEW_VERDICT\s*[:=]\s*APPROVED", text, flags=re.I):
+        return False
+    if not re.search(r"DIAGNOSTIC_VERDICT|TASK_EVIDENCE|task-evidence|task evidence", text, flags=re.I):
+        return False
+    # Negated/incomplete override prose ("... only; missing REVIEW_VERDICT=APPROVED
+    # and reviewed task evidence markers") must NOT satisfy the override.
+    if re.search(
+        r"\b(missing|without|lacks?|absent|incomplete)\b[^\n]{0,80}"
+        r"(GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE|REVIEW_VERDICT|task[- ]evidence)",
+        text,
+        flags=re.I,
+    ):
+        return False
     return True
 
 
@@ -569,6 +630,11 @@ CONTRACT_TABLE: Sequence[ContractRule] = [
         rationale="source PR review verdict card with REVIEW_VERDICT and source task reference; no app/impl/web surface touched by this review card",
     ),
     ContractRule(
+        name="ALLOW_VERIFIED_REVIEW_WITH_EVIDENCE_OVERRIDE",
+        decision=OPERATIONAL_NONCODE_TASK_CATEGORY.decision,
+        predicate=_verified_review_with_evidence_override,
+        rationale="verified review with explicit evidence override marker may bypass the goal-judge provider-error quarantine lane only when local completion evidence contains REVIEW_VERDICT=APPROVED plus reviewed task evidence",
+    ),    ContractRule(
         name="BLOCK_WEB_SURFACE_NEEDS_VERIFY_PASS",
         decision=FRONTEND_WEB_TASK_CATEGORY.decision,
         predicate=_web_surface,

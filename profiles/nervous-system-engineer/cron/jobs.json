@@ -23,10 +23,10 @@
       "repeat": {
         "times": 48
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T10:25:49.041476+01:00",
+      "paused_reason": "migrated to jarvis store (t_0814e3b3)",
       "created_at": "2026-07-04T15:14:48.587341+01:00",
       "deliver": "local",
       "origin": null,
@@ -59,15 +59,18 @@
       "repeat": {
         "times": 1
       },
-      "enabled": true,
-      "state": "scheduled",
+      "enabled": false,
+      "state": "paused",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T15:15:04.949904+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "disabled_by": "t_8b946730",
+      "disabled_reason": "Expired one-shot: Arena 24h monitoring window closed 2026-07-05; closeout prompt is a point-in-time check that already ran. Paused by t_8b946730 root coordination (os-reviewer approved shard).",
+      "updated_at": "2026-07-29T01:07:40.541272+00:00"
     },
     {
       "id": "42b6cee6e53b",
@@ -92,11 +95,77 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T10:25:49.067213+01:00",
+      "paused_reason": "migrated to jarvis store (t_0814e3b3)",
       "created_at": "2026-07-04T16:03:16.660541+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "b9484183ca0a",
+      "name": "expire-outage-failures",
+      "prompt": "Expire consecutive_failures accrued inside fleet-wide health outage windows once unified-health-probe verdict history returns PASS (jarvis-os/t_411e72b4 standing handler). Runs the deterministic actuator; silent when clean, reports when it applied expiries/requeues.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "expire-outage-failures-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T10:25:49.097559+01:00",
+      "paused_reason": "migrated to jarvis store (t_0814e3b3)",
+      "created_at": "2026-08-03T08:44:56.762635+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "5ddf257feb89",
+      "name": "strategy-audit-drift-watch",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "strategy-audit-drift-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T09:28:53+00:00",
+      "paused_reason": "auto-disabled by cron-ticker-invariant-guard: ticker_heartbeat missing/unreadable (t_0814e3b3)",
+      "created_at": "2026-08-03T10:16:26.077762+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,

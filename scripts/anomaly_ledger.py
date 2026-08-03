@@ -196,7 +196,7 @@ class KanbanHarness:
         if not db.exists():
             return None
         try:
-            con = sqlite3.connect(str(db))
+            con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
             con.row_factory = sqlite3.Row
             row = con.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
             con.close()

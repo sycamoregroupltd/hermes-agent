@@ -23,6 +23,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 KANBAN_DB = Path.home() / ".hermes" / "kanban.db"
 SOAK_MARKER_PREFIX = "soak-test-blocked-"
@@ -35,10 +36,8 @@ now = lambda: int(time.time())
 
 
 def get_conn(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    """Open connection via kanban_db.connect() — handles WAL, row_factory, init."""
+    return kb.connect(db_path=db_path)
 
 
 def find_violations(conn: sqlite3.Connection, since_ts: int) -> list[dict]:

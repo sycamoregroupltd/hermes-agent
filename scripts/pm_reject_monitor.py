@@ -51,7 +51,7 @@ def all_boards() -> list[tuple[str, Path]]:
 def scan_board(slug: str, database: Path) -> list[RejectEntry]:
     if not database.exists():
         return []
-    connection = sqlite3.connect(str(database))
+    connection = sqlite3.connect(f"file:{database}?mode=ro&immutable=1", uri=True)
     connection.row_factory = sqlite3.Row
     try:
         if not connection.execute(

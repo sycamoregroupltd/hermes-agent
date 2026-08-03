@@ -29,7 +29,13 @@ READ_NAME = re.compile(r"(read|get|list|search|find|show|view|cat|grep|status|di
 # remains the separate hard gate for kanban_create payload safety.
 CONTROL_PLANE_ROUTE_TOOLS = {"kanban_create"}
 # Paths a critic MAY write to (review notes, scratch).
-ALLOW_WRITE = re.compile(r"(obsidian-fleet-vault|obsidian/quant-team|/tmp/|/scratch/|REFLECTION\.md|\.hermes/cron/state/)")
+# 2026-07-28 t_29193fa9: allow the canonical Sycode vault (registry.yaml
+# knowledge_vault=sycode, dedicated-domain-vault). obsidian/quant-team is the
+# legacy alias of the same vault; both are kept so either casing/alias a
+# reviewer resolves lands in the whitelist. Bounded to .md review/evidence
+# writes by the write-shape checks below — binary/code mutation outside Obsidian
+# notes is still blocked.
+ALLOW_WRITE = re.compile(r"(obsidian-fleet-vault|obsidian/sycode-trading|obsidian/quant-team|/tmp/|/scratch/|REFLECTION\.md|\.hermes/cron/state/)")
 # VCS state-mutation + in-place source edits via shell.
 MUTATE_CMD = re.compile(
     r"(git\s+(commit|add|push|reset|checkout|switch|merge|rebase|stash|cherry-pick|apply|revert)\b"

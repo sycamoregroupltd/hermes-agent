@@ -130,6 +130,93 @@ print(json.dumps({
 PY
 }
 
+# --- Silent-failure doctrine: stall detection (t_eaab813c) -----------------
+# The 07-30 fleet stall ran unnoticed for hours because `dispatch --json`
+# reported nothing when the block gate refused every ready card
+# (kanban_db._has_sticky_block refused 22,044 dispatches on 07-30). Hermes now
+# serializes `skipped_block_gate` / `blocked_claim_attempts`, so this script
+# can (a) log the refusals and (b) alert when spawned=0 across N consecutive
+# runs while ready work exists. State is per-board in a JSON file because each
+# cron invocation is a fresh process.
+STALL_STATE_FILE="${FLEET_DISPATCH_STALL_STATE:-/home/frank/.hermes/state/fleet-dispatch-stall.json}"
+STALL_ALERT_TICKS="${FLEET_DISPATCH_STALL_TICKS:-3}"
+mkdir -p "$(dirname "$STALL_STATE_FILE")"
+
+# stall_track <board> <dispatch_json> -> prints a one-line summary; exit 0.
+# Emits an "ALERT" line to stderr (and the log) when the consecutive
+# zero-spawn-with-ready-work streak reaches STALL_ALERT_TICKS.
+stall_track(){
+    python3 - "$STALL_STATE_FILE" "$1" "$2" "$STALL_ALERT_TICKS" <<'PY'
+import json, pathlib, sys, time
+
+state_path, board, payload, ticks = (
+    pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], int(sys.argv[4]))
+
+try:
+    res = json.loads(payload)
+    if not isinstance(res, dict):
+        raise ValueError("not an object")
+except Exception:
+    # Unparseable dispatch output is itself a fault — never silent.
+    print(f"  stall_track board={board} status=unparseable_dispatch_json")
+    raise SystemExit(0)
+
+spawned = res.get("spawned") or []
+gate = res.get("skipped_block_gate") or []
+claims = res.get("blocked_claim_attempts") or []
+unassigned = res.get("skipped_unassigned") or []
+capped = res.get("skipped_per_profile_capped") or []
+# "ready work existed but nothing spawned" — block-gate refusals and
+# unassigned cards are ready work; per-profile caps are legitimate idling.
+ready_pending = bool(gate or claims or unassigned)
+
+try:
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    if not isinstance(state, dict):
+        state = {}
+except Exception:
+    state = {}
+
+entry = state.get(board) if isinstance(state.get(board), dict) else {}
+streak = int(entry.get("streak") or 0)
+if ready_pending and not spawned:
+    streak += 1
+else:
+    streak = 0
+state[board] = {"streak": streak, "updated_at": int(time.time())}
+try:
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True))
+except Exception:
+    pass
+
+parts = [f"spawned={len(spawned)}"]
+if gate:
+    parts.append(f"skipped_block_gate={len(gate)}[{','.join(gate[:5])}]")
+if claims:
+    parts.append(f"blocked_claim_attempts={len(claims)}")
+if unassigned:
+    parts.append(f"skipped_unassigned={len(unassigned)}")
+if capped:
+    parts.append(f"per_profile_capped={len(capped)}")
+print(f"  dispatch board={board} {' '.join(parts)} stall_streak={streak}")
+
+if streak >= ticks:
+    ids = (gate or claims or unassigned)[:5]
+    print(
+        f"  ALERT fleet-dispatch STALL board={board}: 0 spawned across "
+        f"{streak} consecutive ticks while ready work exists "
+        f"(block_gate={len(gate)} claims={len(claims)} "
+        f"unassigned={len(unassigned)}). Needs unblock: {','.join(ids) or 'n/a'}",
+        file=sys.stderr,
+    )
+    print(
+        f"  ALERT fleet-dispatch STALL board={board} streak={streak} "
+        f"block_gate={len(gate)} unassigned={len(unassigned)} "
+        f"cards={','.join(ids) or 'n/a'}"
+    )
+PY
+}
+
 json_get_bool(){ python3 -c 'import json,sys; print("true" if json.loads(sys.argv[1]).get(sys.argv[2]) else "false")' "$1" "$2"; }
 json_get_text(){ python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' "$1" "$2"; }
 json_get_count(){ python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], 0))' "$1" "$2"; }
@@ -138,16 +225,17 @@ json_get_csv(){ python3 -c 'import json,sys; print(",".join(json.loads(sys.argv[
 normal_dispatch_board(){
     local board="$1"
     local output dispatched
-    output=$("$HERMES_BIN" kanban --board "$board" dispatch --max "$MAX_PER_BOARD" --json 2>/dev/null || true)
+    output=$(timeout "${DISPATCH_TIMEOUT:-300}" "$HERMES_BIN" kanban --board "$board" dispatch --max "$MAX_PER_BOARD" --json 2>/dev/null || true)
     dispatched=$(echo "$output" | grep -o '"task_id"' | wc -l || echo 0)
     log "  Dispatched: $dispatched"
+    stall_track "$board" "$output" | while IFS= read -r line; do log "$line"; done
 }
 
 selective_dispatch_board(){
     local board="$1"
     local status="$2"
     local dry_output frontier ok count disallowed assignees real_output dispatched
-    dry_output=$("$HERMES_BIN" kanban --board "$board" dispatch --dry-run --max "$MAX_PER_BOARD" --json 2>/dev/null || true)
+    dry_output=$(timeout "${DISPATCH_TIMEOUT:-300}" "$HERMES_BIN" kanban --board "$board" dispatch --dry-run --max "$MAX_PER_BOARD" --json 2>/dev/null || true)
     frontier=$(frontier_json "$dry_output" "$status")
     ok=$(json_get_bool "$frontier" ok)
     if [ "$ok" != "true" ]; then
@@ -169,12 +257,24 @@ selective_dispatch_board(){
     # treats --max as running+spawned concurrency, not a per-tick spawn count;
     # lowering it to the dry-run frontier count can stall boards that already
     # have running tasks. The dry-run frontier remains the allowlist gate.
-    real_output=$("$HERMES_BIN" kanban --board "$board" dispatch --max "$MAX_PER_BOARD" --json 2>/dev/null || true)
+    real_output=$(timeout "${DISPATCH_TIMEOUT:-300}" "$HERMES_BIN" kanban --board "$board" dispatch --max "$MAX_PER_BOARD" --json 2>/dev/null || true)
     dispatched=$(echo "$real_output" | grep -o '"task_id"' | wc -l || echo 0)
     log "  selective_dispatch board=$board frontier=$count assignees=$assignees dispatched=$dispatched cap=$MAX_PER_BOARD"
+    stall_track "$board" "$real_output" | while IFS= read -r line; do log "$line"; done
 }
 
-log "═══ FLEET DISPATCH (boards: upero, sycode-ai, sycode-trading, jarvis-os, yorkstone-supplies) ═══"
+# Board list is DATA, not hardcoded strings: single source is
+# ~/.hermes/kanban/boards-manifest.json read via fleet_boards.py (t_911a916c).
+# Adding a board there with dispatch=true brings it into this loop with no edit here.
+# orchestrator-sync is permanently state=denied and can never appear.
+FLEET_BOARDS_PY="${FLEET_BOARDS_PY:-/home/frank/.hermes/scripts/fleet_boards.py}"
+DISPATCH_BOARDS=$(python3 "$FLEET_BOARDS_PY" dispatch --sep ' ')
+if [ -z "$DISPATCH_BOARDS" ]; then
+    log "FATAL: boards manifest yielded no dispatch boards; refusing to run blind"
+    exit 1
+fi
+
+log "═══ FLEET DISPATCH (boards: $DISPATCH_BOARDS) ═══"
 log "Max per board: $MAX_PER_BOARD"
 
 if [[ "$SELECTIVE_ENABLED" =~ ^(1|true|True|yes|YES)$ ]]; then
@@ -193,7 +293,7 @@ if [ "$selective_active" = "true" ]; then
     fi
 fi
 
-for board in upero sycode-ai sycode-trading jarvis-os yorkstone-supplies; do
+for board in $DISPATCH_BOARDS; do
     log "--- Dispatching board: $board ---"
     if [ "$selective_active" = "true" ]; then
         if [ "$selective_valid" != "true" ]; then

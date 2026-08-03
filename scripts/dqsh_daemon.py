@@ -25,6 +25,7 @@ import unittest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+from hermes_cli import kanban_db as kb
 
 # Absolute Paths
 AUDIT_LOG_PATH = "/home/frank/.hermes/var/dq/audit_log.jsonl"
@@ -41,6 +42,12 @@ MAX_RESTARTS_2H = 3
 MAX_DLQ_REPLAYS_2H = 10
 THRESHOLD_STARVATION_LAG_HOURS = 24.0
 CANDLE_MAX_LOCAL_GAP = 5  # Interpolate locally if gap <= 5, else trigger REST backfill
+
+# Discord routing
+HERMES_BIN = os.environ.get("HERMES_BIN", "/home/frank/.local/bin/hermes")
+CRITICAL_ALERTS_TARGET = "discord:#critical-alerts"
+FLEET_REPORTS_TARGET = "discord:#fleet-reports"
+QUANT_REPORTS_TARGET = "discord:#quant-reports"
 
 
 # ----------------------------------------------------------------------------
@@ -64,6 +71,38 @@ def log_audit_action(action, trigger_condition, duration_ms, status, details):
         print(f"[AUDIT] [{status}] {action}: {details}")
     except Exception as e:
         print(f"[DQSH] ERROR: Failed to write to audit log {AUDIT_LOG_PATH}: {e}", file=sys.stderr)
+
+
+# ----------------------------------------------------------------------------
+# DISCORD ALERT ROUTING
+# ----------------------------------------------------------------------------
+
+def send_discord_alert(message, target, live_mode=False):
+    """Sends a Discord alert via the Jarvis profile integration.
+
+    In paper-mode (live_mode=False), logs [PAPER] prefix instead of sending.
+    In live-mode, dispatches via `hermes send` under the jarvis profile.
+    """
+    if not live_mode:
+        print(f"[PAPER] Would send Discord alert: {message} -> {target}")
+        return
+
+    print(f"[DQSH] Discord Alert Target {target}: {message}")
+    env = os.environ.copy()
+    env["HERMES_HOME"] = "/home/frank/.hermes/profiles/jarvis"
+    env["HERMES_PROFILE"] = "jarvis"
+    try:
+        result = subprocess.run(
+            [HERMES_BIN, "send", "--to", target, "--quiet", message],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        if result.returncode != 0:
+            print(f"[DQSH] WARNING: Discord alert delivery failed: {result.stderr.strip() or result.stdout.strip()}", file=sys.stderr)
+    except Exception as e:
+        print(f"[DQSH] WARNING: Discord alert delivery exception: {e}", file=sys.stderr)
 
 
 # ----------------------------------------------------------------------------
@@ -242,7 +281,11 @@ def check_and_reindex_local_sqlite(db_path):
         return False, "SQLite file does not exist"
     conn = None
     try:
-        conn = sqlite3.connect(db_path, timeout=5)
+        # Use kanban_db.connect() for kanban.db to respect WAL/guards; fallback to bare sqlite3 for state.db
+        if "kanban" in db_path:
+            conn = kb.connect(db_path=Path(db_path))
+        else:
+            conn = sqlite3.connect(db_path, timeout=5)
         cursor = conn.cursor()
         cursor.execute("PRAGMA integrity_check;")
         res = cursor.fetchone()
@@ -731,7 +774,10 @@ def run_dqsh_cycle(live_mode=False):
 
     if stuck_detected:
         trigger = "; ".join(stuck_reason)
-        restore_stuck_consumer(live_mode=live_mode, dry_run_reason=trigger)
+        result, msg = restore_stuck_consumer(live_mode=live_mode, dry_run_reason=trigger)
+        # Alert critical on pipeline starvation / stuck consumer
+        alert_msg = f"🚨 [DQSH] Pipeline starvation detected: {trigger}"
+        send_discord_alert(alert_msg, CRITICAL_ALERTS_TARGET, live_mode=live_mode)
 
     # Check local SQLite database locked entropy checks
     for db in ["/home/frank/.hermes/kanban.db", "/home/frank/.hermes/state.db"]:
@@ -740,12 +786,24 @@ def run_dqsh_cycle(live_mode=False):
             if not success and "locked" in msg.lower():
                 trigger = f"SQLite db {os.path.basename(db)} is locked"
                 restore_stuck_consumer(live_mode=live_mode, dry_run_reason=trigger)
+                alert_msg = f"🔒 [DQSH] Database lock entropy on {os.path.basename(db)}: {msg}"
+                send_discord_alert(alert_msg, QUANT_REPORTS_TARGET, live_mode=live_mode)
 
     # 3. Process time-series Spot-Futures candle gap interpolation
     process_active_candle_interpolation(live_mode=live_mode)
 
     # 4. Process DLQ Poison replay
-    execute_dlq_replay(live_mode=live_mode)
+    dlq_ok, dlq_msg = execute_dlq_replay(live_mode=live_mode)
+    if dlq_ok and "Total items reprocessed: 0" not in dlq_msg:
+        # Items were replayed — poison pill happened
+        alert_msg = f"♻️ [DQSH] DLQ items replayed: {dlq_msg}"
+        send_discord_alert(alert_msg, CRITICAL_ALERTS_TARGET, live_mode=live_mode)
+
+    # 5. Report pipeline health summary to fleet-reports (if quiet backlog exists)
+    if not stuck_detected and pipe_metrics.get("finalizer_backlog", 0) > 10:
+        backlog_msg = (f"[DQSH] Pipeline health: finalizer_backlog={pipe_metrics['finalizer_backlog']}, "
+                      f"binary_backlog={pipe_metrics['binary_backlog']}, max_lag={max_lag:.1f}h")
+        send_discord_alert(backlog_msg, FLEET_REPORTS_TARGET, live_mode=live_mode)
 
     log_audit_action(
         "DAEMON_HEARTBEAT",

@@ -73,7 +73,7 @@ def board_counts(board: str) -> dict[str, Any]:
     if not db.exists():
         return out
     try:
-        con = sqlite3.connect(str(db))
+        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
         con.row_factory = sqlite3.Row
         rows = con.execute(
             "SELECT status, COUNT(*) c FROM tasks GROUP BY status"

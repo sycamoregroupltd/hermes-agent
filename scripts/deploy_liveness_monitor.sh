@@ -54,21 +54,39 @@ send_alert() {
         log "SUPPRESSED key=$key (re-alert window)"
         return 0
     fi
+    local delivered=0
     if hermes send -q -t "$ALERT_TARGET" -s "$subject" "$body"; then
+        delivered=1
         log "ALERT-SENT target=$ALERT_TARGET key=$key subject=$subject"
     else
         local rc=$?
         log "ALERT-FAILED target=$ALERT_TARGET rc=$rc key=$key"
-        local WA_TARGET="${DEPLOY_MON_WA_FALLBACK:-discord:#critical-alerts}"
-        if hermes send -q -t "$WA_TARGET" -s "🔁 FAILOVER: $subject" "$body"; then
-            log "ALERT-FAILOVER-OK target=$WA_TARGET key=$key"
-        else
-            log "ALERT-FAILOVER-FAILED target=$WA_TARGET rc=$? key=$key"
-        fi
+        # 2026-07-29 (opus5): walk a CHAIN of fallbacks, not a single one. WhatsApp
+        # has been 100% dead since 07-26 (session logged out, needs a QR re-scan) and
+        # discord was itself down 07-26..07-28 — with one fallback those windows
+        # overlapped and 14 alerts reached nobody.
+        local fb
+        for fb in ${DEPLOY_MON_FALLBACKS:-discord:#critical-alerts telegram:506972405}; do
+            if hermes send -q -t "$fb" -s "🔁 FAILOVER: $subject" "$body"; then
+                delivered=1
+                log "ALERT-FAILOVER-OK target=$fb key=$key"
+                break
+            fi
+            log "ALERT-FAILOVER-FAILED target=$fb rc=$? key=$key"
+        done
     fi
-    grep -av "^${key}=" "$MON_STATE" 2>/dev/null > "$MON_STATE.tmp" || true
-    echo "${key}=${now_epoch}" >> "$MON_STATE.tmp"
-    mv "$MON_STATE.tmp" "$MON_STATE"
+    # 2026-07-29 (opus5): arm the re-alert throttle ONLY on confirmed delivery.
+    # It used to be armed unconditionally, so an alert that reached NOBODY still
+    # bought 6h of silence on that key — the failure mode turned a transient
+    # two-channel outage into a permanently swallowed alert. Undelivered now means
+    # untracked, so the very next run retries.
+    if [ "$delivered" -eq 1 ]; then
+        grep -av "^${key}=" "$MON_STATE" 2>/dev/null > "$MON_STATE.tmp" || true
+        echo "${key}=${now_epoch}" >> "$MON_STATE.tmp"
+        mv "$MON_STATE.tmp" "$MON_STATE"
+    else
+        log "ALERT-UNDELIVERED key=$key — all channels failed, throttle NOT armed, retrying next run"
+    fi
 }
 
 clear_key() {
@@ -86,8 +104,17 @@ else
     else
         clear_key cron_dead
         # ── 2. CRON-HEALTHY: last completed run must end in a known status ──
-        last_block=$(tail -80 "$DEPLOY_LOG" | awk '/DEPLOY.lock. ACQUIRED/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}')
-        if echo "$last_block" | grep -aqE "SUCCESS:|NOOP:|BUILD_FAILED:|ROLLED_BACK:|PIPELINE_ERROR:|SAFETY_GATE_BLOCKED:|UNKNOWN:|DEPLOY.lock. HELD"; then
+        # Two output contracts are accepted:
+        #   legacy (pre-2026-07-13): a bare "NOOP:/SUCCESS:/..." status line
+        #   current: the pristine-worktree agent's JSON report, "action": "<verb>"
+        # 2026-07-29 (opus5): the 07-13 pristine rewrite replaced status lines with
+        # JSON and this check was never updated — it asserted cron_broken on EVERY
+        # completed run for 16 days, so a real pipeline break was undetectable
+        # (saturated detector). Window widened 80→400: a healthy JSON run block is
+        # ~90 lines, so tail -80 could not even see its own ACQUIRED marker.
+        last_block=$(tail -400 "$DEPLOY_LOG" | awk '/DEPLOY.lock. ACQUIRED/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}')
+        if echo "$last_block" | grep -aqE "SUCCESS:|NOOP:|BUILD_FAILED:|ROLLED_BACK:|PIPELINE_ERROR:|SAFETY_GATE_BLOCKED:|UNKNOWN:|DEPLOY.lock. HELD" \
+           || echo "$last_block" | grep -aqE '"action"[[:space:]]*:[[:space:]]*"(noop|deploy|deployed|build_failed|rolled_back|pipeline_error|safety_gate_blocked|unknown)"'; then
             clear_key cron_broken
         elif echo "$last_block" | grep -aq "DEPLOY.lock. released"; then
             # run completed but printed no contract status → broken pipeline (ENOENT class)
@@ -110,6 +137,10 @@ if [ -z "$deployed_sha" ] || [ -z "$remote_sha" ]; then
     [ "$fails" -ge 3 ] && send_alert probe_dead "⚠️ sycode deploy monitor: probes failing" "Cannot read deployed sha ($STATE_JSON) or origin/main ($BUILD_TREE) for $fails consecutive runs — the monitor itself is blind. Investigate."
 elif [ "$deployed_sha" = "$remote_sha" ]; then
     clear_key probe_fails; clear_key ship_gap
+    # 2026-07-29 (opus5): also drop the per-sha gap tracker. Previously it was only
+    # cleared when a NEW gap opened, so a closed gap left a stale "gap_since_<sha>="
+    # line in the state file that read as an open ship-gap to anyone inspecting it.
+    sed -i '/^gap_since_/d' "$MON_STATE" 2>/dev/null || true
     log "OK deployed=current (${deployed_sha:0:9})"
 else
     clear_key probe_fails
@@ -120,7 +151,7 @@ else
         echo "gap_since_${remote_sha:0:9}=${now_epoch}" >> "$MON_STATE"
         log "GAP-NEW deployed=${deployed_sha:0:9} main=${remote_sha:0:9}"
     elif [ $((now_epoch - seen)) -gt "$GAP_ALERT_SECS" ]; then
-        last_status=$(tail -40 "$DEPLOY_LOG" 2>/dev/null | grep -aoE "SUCCESS:.*|NOOP:.*|BUILD_FAILED:.*|ROLLED_BACK:.*|PIPELINE_ERROR:.*|SAFETY_GATE_BLOCKED:.*" | tail -1)
+        last_status=$(tail -400 "$DEPLOY_LOG" 2>/dev/null | grep -aoE "SUCCESS:.*|NOOP:.*|BUILD_FAILED:.*|ROLLED_BACK:.*|PIPELINE_ERROR:.*|SAFETY_GATE_BLOCKED:.*|\"action\"[[:space:]]*:[[:space:]]*\"[a-z_]+\"" | tail -1)
         send_alert ship_gap "⚠️ sycode: merged work undeployed $(( (now_epoch - seen) / 3600 ))h" "origin/main ${remote_sha:0:9} has not deployed (running ${deployed_sha:0:9}) for over $(( (now_epoch - seen) / 3600 ))h. Last agent status: ${last_status:-none}. Gate deadlock (injector positions?) or pipeline issue. State: $STATE_JSON"
     else
         log "GAP-TRACKING deployed=${deployed_sha:0:9} main=${remote_sha:0:9} age=$((now_epoch - seen))s"

@@ -1,81 +1,33 @@
 #!/usr/bin/env python3
-"""Bounded blocked-task triage pilot (t_00a73790, multi-board since t_6240a616).
+"""Bounded Sycode blocked-task triage pilot (t_00a73790).
 
 This is intentionally narrow:
-- Board scope is an explicit allowlist (sycode-trading, jarvis-os).
+- Board scope is sycode-trading only.
 - It never reassigns, unblocks, archives, edits status, or changes block_kind.
 - Dry-run is the default. With --apply-comments it appends one idempotent
   routing comment per eligible blocked card.
 - Frank/A3/capability cards are classified as frank_gate HOLD and are never
   recommended for delegated auto-routing.
-
-Each board carries its own idempotency marker, so the already-applied
-sycode-trading v1 comments are never re-applied or collided with when the
-same classifier runs against another board.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
-import sqlite3
+import sqlite3  # type-only: sqlite3.Connection / OperationalError
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
+from hermes_cli import kanban_db as kb
 
 BOARDS_DIR = Path("/home/frank/.hermes/kanban/boards")
 BOARD = "sycode-trading"
 AUTHOR = "sycode-blocked-triage-pilot"
 MARKER = "sycode-blocked-triage-pilot:v1:t_00a73790"
 DEFAULT_MIN_AGE_HOURS = 24.0
-
-# Board allowlist. Each entry pins the PM consumer and the idempotency marker.
-# The sycode-trading marker is frozen at its original v1 value so the comments
-# already applied by the pilot are recognised and never duplicated.
-BOARD_POLICY: dict[str, dict[str, str]] = {
-    "sycode-trading": {
-        "pm": "sycode-trading-pm",
-        "marker": "sycode-blocked-triage-pilot:v1:t_00a73790",
-    },
-    "jarvis-os": {
-        "pm": "jarvis-os-pm",
-        "marker": "jarvis-os-blocked-triage:v1:t_9377b6f0",
-    },
-}
-
-
-def marker_for(board: str) -> str:
-    """Idempotency marker for a board. Distinct per board by construction."""
-    policy = BOARD_POLICY.get(board)
-    if policy is None:
-        raise ValueError(
-            f"board {board!r} is not in the triage allowlist {sorted(BOARD_POLICY)}"
-        )
-    return policy["marker"]
-
-
-def pm_consumer_for(board: str) -> str:
-    policy = BOARD_POLICY.get(board)
-    if policy is None:
-        raise ValueError(
-            f"board {board!r} is not in the triage allowlist {sorted(BOARD_POLICY)}"
-        )
-    return policy["pm"]
-
-
-def age_bucket(age_hours: float) -> str:
-    """Coarse age bucket for the machine-readable AGE_BUCKET field."""
-    if age_hours < 24.0:
-        return "<24h"
-    if age_hours < 24.0 * 7:
-        return "1-7d"
-    if age_hours < 24.0 * 30:
-        return "7-30d"
-    return ">30d"
-
 
 REVIEW_RE = re.compile(
     r"\b(REVIEW_VERDICT\s*[:=]\s*(APPROVED|CHANGES_REQUESTED)|review[- ]required|guardian review|independent review|os-reviewer|trading-risk-reviewer)\b",
@@ -127,19 +79,15 @@ class Task:
 
 
 def board_db(boards_dir: Path = BOARDS_DIR, board: str = BOARD) -> Path:
-    if board not in BOARD_POLICY:
-        raise ValueError(
-            f"this pilot is scoped to {sorted(BOARD_POLICY)}, got {board!r}"
-        )
+    if board != BOARD:
+        raise ValueError(f"this pilot is scoped to {BOARD!r}, got {board!r}")
     return boards_dir / board / "kanban.db"
 
 
 def connect(db: Path, *, writable: bool = False) -> sqlite3.Connection:
-    mode = "rw" if writable else "ro"
-    con = sqlite3.connect(f"file:{db}?mode={mode}", uri=True, timeout=5)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA busy_timeout=5000")
-    return con
+    """Open board DB via kanban_db.connect() — handles WAL, init, row_factory.
+    The engine API handles all modes; no manual mode=ro/rw needed."""
+    return kb.connect(db_path=db)
 
 
 def table_exists(con: sqlite3.Connection, name: str) -> bool:
@@ -246,9 +194,7 @@ def _positive_critical_title_hit(title: str) -> str | None:
     return re.sub(r"\s+", " ", title.strip())[:220]
 
 
-def classify(
-    task: Task, *, now_epoch: int, min_age_hours: float, board: str = BOARD
-) -> dict[str, Any] | None:
+def classify(task: Task, *, now_epoch: int, min_age_hours: float) -> dict[str, Any] | None:
     age_hours = max(0.0, (now_epoch - task.since_epoch) / 3600.0) if task.since_epoch else 0.0
     is_untriaged = task.block_kind.strip() == ""
     if age_hours < min_age_hours and not is_untriaged:
@@ -266,73 +212,59 @@ def classify(
         route = "frank_gate"
         consumer = "Frank/Jarvis gate batch"
         action = "HOLD: no auto-reassignment/status mutation; PM may batch evidence for Frank/A3 gate."
-        resume_gate = "frank-approval"
         evidence = frank_evidence
     elif REVIEW_RE.search(blob):
         route = "reviewer"
         consumer = "os-reviewer or trading-risk-reviewer"
         action = "Reviewer route: PM should inspect existing review verdict/handoff and request/confirm reviewer disposition."
-        resume_gate = "reviewer-verdict"
         evidence = re.sub(r"\s+", " ", REVIEW_RE.search(blob).group(0))[:120]  # type: ignore[union-attr]
     else:
         route = "pm"
-        consumer = pm_consumer_for(board)
+        consumer = "sycode-trading-pm"
         action = "PM route: inspect blocker, owner, and next safe delegated action; do not cross A3 gates."
-        resume_gate = "pm-disposition"
         evidence = "default non-critical blocked/stalled card"
 
     return {
         "task_id": task.id,
-        "board": board,
         "title": task.title[:140],
         "assignee": task.assignee,
         "block_kind": task.block_kind,
         "age_hours": round(age_hours, 2),
-        "age_bucket": age_bucket(age_hours),
         "untriaged_block_kind": is_untriaged,
         "recommended_route": route,
         "consumer": consumer,
         "recommended_action": action,
-        "resume_gate": resume_gate,
         "evidence": evidence,
     }
 
 
-def comment_body(plan: dict[str, Any], *, board: str = BOARD) -> str:
+def comment_body(plan: dict[str, Any]) -> str:
     return (
-        f"routing-comment {marker_for(board)}: "
-        f"BLOCK_KIND={plan['block_kind'] or '(empty)'} "
-        f"RESUME_GATE={plan['resume_gate']} "
-        f"AGE_BUCKET={plan['age_bucket']} "
-        f"route={plan['recommended_route']} consumer={plan['consumer']}; "
+        f"routing-comment {MARKER}: route={plan['recommended_route']} consumer={plan['consumer']}; "
         f"action={plan['recommended_action']} evidence={plan['evidence']}; "
         "pilot is comment-only: no reassignment, status mutation, block_kind mutation, or Frank/A3 auto-route."
     )
 
 
-def already_commented(con: sqlite3.Connection, task_id: str, *, board: str = BOARD) -> bool:
+def already_commented(con: sqlite3.Connection, task_id: str) -> bool:
     if not table_exists(con, "task_comments"):
         return False
     return con.execute(
         "SELECT 1 FROM task_comments WHERE task_id=? AND body LIKE ? LIMIT 1",
-        (task_id, f"%{marker_for(board)}%"),
+        (task_id, f"%{MARKER}%"),
     ).fetchone() is not None
 
 
-def apply_comment(
-    con: sqlite3.Connection, plan: dict[str, Any], *, now_epoch: int, board: str = BOARD
-) -> str:
-    if already_commented(con, str(plan["task_id"]), board=board):
+def apply_comment(con: sqlite3.Connection, plan: dict[str, Any], *, now_epoch: int) -> str:
+    if already_commented(con, str(plan["task_id"])):
         return "already-present"
-    body = comment_body(plan, board=board)
+    body = comment_body(plan)
     con.execute(
         "INSERT INTO task_comments(task_id, author, body, created_at) VALUES (?,?,?,?)",
         (plan["task_id"], AUTHOR, body, now_epoch),
     )
     if table_exists(con, "task_events"):
-        payload = json.dumps(
-            {"author": AUTHOR, "marker": marker_for(board), "route": plan["recommended_route"]}
-        )
+        payload = json.dumps({"author": AUTHOR, "marker": MARKER, "route": plan["recommended_route"]})
         con.execute(
             "INSERT INTO task_events(task_id, kind, payload, created_at, run_id) VALUES (?,?,?,?,NULL)",
             (plan["task_id"], "commented", payload, now_epoch),
@@ -341,70 +273,55 @@ def apply_comment(
 
 
 def build_plans(
-    *,
-    boards_dir: Path = BOARDS_DIR,
-    board: str = BOARD,
-    min_age_hours: float = DEFAULT_MIN_AGE_HOURS,
-    limit: int | None = None,
-    now_epoch: int | None = None,
+    *, boards_dir: Path = BOARDS_DIR, min_age_hours: float = DEFAULT_MIN_AGE_HOURS, limit: int | None = None, now_epoch: int | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     now = int(time.time()) if now_epoch is None else now_epoch
-    db = board_db(boards_dir, board)
+    db = board_db(boards_dir, BOARD)
     with connect(db, writable=False) as con:
         tasks = fetch_blocked_tasks(con)
     plans: list[dict[str, Any]] = []
     for task in tasks:
-        plan = classify(task, now_epoch=now, min_age_hours=min_age_hours, board=board)
+        plan = classify(task, now_epoch=now, min_age_hours=min_age_hours)
         if plan is not None:
             plans.append(plan)
             if limit is not None and len(plans) >= limit:
                 break
-    metrics = summarize(plans, total_blocked=len(tasks), board=board)
+    metrics = summarize(plans, total_blocked=len(tasks))
     return plans, metrics
 
 
-def summarize(
-    plans: list[dict[str, Any]], *, total_blocked: int, board: str = BOARD
-) -> dict[str, Any]:
+def summarize(plans: list[dict[str, Any]], *, total_blocked: int) -> dict[str, Any]:
     by_route: dict[str, int] = {}
-    by_age_bucket: dict[str, int] = {}
     untriaged = 0
     for plan in plans:
         route = str(plan["recommended_route"])
         by_route[route] = by_route.get(route, 0) + 1
-        bucket = str(plan.get("age_bucket", "unknown"))
-        by_age_bucket[bucket] = by_age_bucket.get(bucket, 0) + 1
         if plan.get("untriaged_block_kind"):
             untriaged += 1
     return {
-        "board": board,
+        "board": BOARD,
         "total_blocked_seen": total_blocked,
         "eligible_plans": len(plans),
         "untriaged_empty_block_kind_plans": untriaged,
         "by_route": by_route,
-        "by_age_bucket": by_age_bucket,
         "frank_gate_auto_routed": 0,
         "status_mutations": 0,
         "assignee_mutations": 0,
         "block_kind_mutations": 0,
-        "marker": marker_for(board),
+        "marker": MARKER,
     }
 
 
 def apply_comments(
-    plans: list[dict[str, Any]],
-    *,
-    boards_dir: Path = BOARDS_DIR,
-    board: str = BOARD,
-    now_epoch: int | None = None,
+    plans: list[dict[str, Any]], *, boards_dir: Path = BOARDS_DIR, now_epoch: int | None = None
 ) -> dict[str, Any]:
     now = int(time.time()) if now_epoch is None else now_epoch
-    db = board_db(boards_dir, board)
+    db = board_db(boards_dir, BOARD)
     counts: dict[str, int] = {}
     with connect(db, writable=True) as con:
         try:
             for plan in plans:
-                result = apply_comment(con, plan, now_epoch=now, board=board)
+                result = apply_comment(con, plan, now_epoch=now)
                 counts[result] = counts.get(result, 0) + 1
             con.commit()
         except Exception:
@@ -415,12 +332,7 @@ def apply_comments(
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument(
-        "--board",
-        default=BOARD,
-        choices=sorted(BOARD_POLICY),
-        help="board to triage (allowlisted only)",
-    )
+    ap.add_argument("--board", default=BOARD, help="Only sycode-trading is allowed")
     ap.add_argument("--boards-dir", type=Path, default=BOARDS_DIR)
     ap.add_argument("--min-age-hours", type=float, default=DEFAULT_MIN_AGE_HOURS)
     ap.add_argument("--limit", type=int, default=None)
@@ -428,22 +340,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true", help="emit full JSON instead of concise text")
     args = ap.parse_args(argv)
 
-    if args.board not in BOARD_POLICY:
-        print(
-            f"ERROR: this pilot is scoped to {sorted(BOARD_POLICY)}; refusing board={args.board!r}",
-            file=sys.stderr,
-        )
+    if args.board != BOARD:
+        print(f"ERROR: this pilot is scoped to {BOARD!r}; refusing board={args.board!r}", file=sys.stderr)
         return 2
 
     plans, metrics = build_plans(
         boards_dir=args.boards_dir,
-        board=args.board,
         min_age_hours=args.min_age_hours,
         limit=args.limit,
     )
     apply_result = {"dry_run": True}
     if args.apply_comments:
-        apply_result = apply_comments(plans, boards_dir=args.boards_dir, board=args.board)
+        apply_result = apply_comments(plans, boards_dir=args.boards_dir)
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": "apply-comments" if args.apply_comments else "dry-run",
@@ -455,9 +363,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(
-            f"BLOCKED_TRIAGE_PILOT mode={payload['mode']} board={args.board} "
+            f"SYCODE_BLOCKED_TRIAGE_PILOT mode={payload['mode']} board={BOARD} "
             f"eligible={metrics['eligible_plans']} routes={json.dumps(metrics['by_route'], sort_keys=True)} "
-            f"ages={json.dumps(metrics['by_age_bucket'], sort_keys=True)} "
             f"comments={json.dumps(apply_result, sort_keys=True)}"
         )
         for plan in plans[:20]:

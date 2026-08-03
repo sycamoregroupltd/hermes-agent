@@ -11,6 +11,10 @@ Covers:
     - crashed/gave_up run on a still-active (running) task counts as ACTIVE.
     - same run on a resolved (done) task counts as STALE (not active).
     - de-dupes multiple runs of one task to a single active hit.
+  * Ready-backlog observability (t_7c589e9c jarvis, t_bf11a0ce per-board):
+    - per-board scan reports counts + oldest ready task id + age.
+    - oldest_ready > READY_BACKLOG_WARN_DAYS (7d) flags warn=True but NEVER
+      drives a BLOCK verdict (degrades PASS -> WARN only).
 
 No live board is touched; everything uses temp dirs. The canary module is
 imported with its path constant monkeypatched to the temp layout.
@@ -19,7 +23,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import sqlite3
 import sys
 import tempfile
@@ -138,6 +141,39 @@ def _make_ready_backlog_db(db: Path, now: datetime) -> None:
     con.close()
 
 
+def _make_sycode_ready_backlog_db(db: Path, now: datetime) -> None:
+    """Sycode-trading-style ready board: includes a long-stalled old ready task
+    (mimics the 24.4d approved-review awaiting PR merge, t_bf11a0ce)."""
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "CREATE TABLE tasks ("
+        "id TEXT PRIMARY KEY, title TEXT, assignee TEXT, status TEXT, created_at INTEGER)"
+    )
+    rows = [
+        ("t_30c13209", "approved review awaiting merge", "trading-devops",
+         "ready", int((now - timedelta(days=24, hours=10)).timestamp())),
+        ("t_recent1", "recent card A", "researcher-a", "ready",
+         int((now - timedelta(days=3)).timestamp())),
+        ("t_recent2", "recent card B", "researcher-b", "ready",
+         int((now - timedelta(days=1)).timestamp())),
+        ("t_running", "running", "trading-devops", "running",
+         int((now - timedelta(days=40)).timestamp())),
+    ]
+    con.executemany(
+        "INSERT INTO tasks (id, title, assignee, status, created_at) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    con.commit()
+    con.close()
+
+
+def _absent_sycode(tmp: Path) -> Path:
+    """Return a path that does NOT exist, so a test body never reads the live
+    sycode-trading board."""
+    return tmp / "sycode-trading" / "kanban.db"
+
+
 def test_check_kanban_crashes_active_vs_stale():
     tmp = Path(tempfile.mkdtemp())
     boards = tmp / "boards"
@@ -159,6 +195,7 @@ def test_jarvis_ready_backlog_counts_and_ages():
     db = tmp / "jarvis-os" / "kanban.db"
     _make_ready_backlog_db(db, now)
     uhealth.JARVIS_OS_KANBAN_DB = db
+    uhealth.SYCODE_TRADING_KANBAN_DB = _absent_sycode(tmp)
 
     rep = uhealth.check_jarvis_ready_backlog(now)
     assert rep["available"] is True
@@ -177,6 +214,7 @@ def test_jarvis_ready_backlog_observability_does_not_block_main():
     _make_ready_backlog_db(db, now)
 
     uhealth.JARVIS_OS_KANBAN_DB = db
+    uhealth.SYCODE_TRADING_KANBAN_DB = _absent_sycode(tmp)
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
     uhealth.check_hermes_cli = lambda: (True, "ok", False)
@@ -199,7 +237,10 @@ def test_jarvis_ready_backlog_observability_does_not_block_main():
     rc = uhealth.main()
     assert rc == 0
     record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
-    assert record["verdict"] == "PASS"
+    # Observability backlog age must NEVER drive a BLOCK verdict (the original
+    # contract of this test). With a 10d-old ready task present it now degrades
+    # to WARN, which is also acceptable here; it must not be BLOCK.
+    assert record["verdict"] != "BLOCK"
     assert record["jarvis_ready_backlog"]["oldest_ready_age_days"] == 10.0
 
 
@@ -211,6 +252,8 @@ def test_legacy_substrate_bridge_stamps_fresh_health_canary_record():
     tmp = Path(tempfile.mkdtemp())
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
     uhealth.check_hermes_cli = lambda: (True, "ok", False)
     uhealth.check_gateway_unit = lambda: (True, "ok", False)
     uhealth.check_gateway_runtime = lambda: (True, True, "ok")
@@ -239,6 +282,87 @@ def test_legacy_substrate_bridge_stamps_fresh_health_canary_record():
     assert rec.get("hermes_cli") is True
     assert rec.get("gateway_running") is True
     assert rec.get("verdict") == "PASS"
+
+
+def test_sycode_ready_backlog_reports_oldest_and_counts():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, tzinfo=timezone.utc)
+    db = tmp / "sycode-trading" / "kanban.db"
+    _make_sycode_ready_backlog_db(db, now)
+
+    rep = uhealth._scan_board_ready_backlog(db, "sycode-trading", now)
+    assert rep["available"] is True
+    assert rep["board"] == "sycode-trading"
+    assert rep["ready_total"] == 3
+    # oldest ready = t_30c13209 at 24d10h -> ~24.417 days
+    assert rep["oldest_ready_task_id"] == "t_30c13209"
+    assert abs(rep["oldest_ready_age_days"] - 24.417) < 0.01
+    assert rep["warn"] is True
+    assert rep["top_ready_ids"][0] == "t_30c13209"
+
+
+def test_ready_backlog_does_not_warn_below_threshold():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, tzinfo=timezone.utc)
+    db = tmp / "sycode-trading" / "kanban.db"
+    # all ready tasks < 7d old
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "CREATE TABLE tasks ("
+        "id TEXT PRIMARY KEY, title TEXT, assignee TEXT, status TEXT, created_at INTEGER)"
+    )
+    con.execute(
+        "INSERT INTO tasks VALUES ('t_new', 'new', 'r', 'ready', ?)",
+        (int((now - timedelta(days=2)).timestamp()),),
+    )
+    con.commit()
+    con.close()
+    rep = uhealth._scan_board_ready_backlog(db, "sycode-trading", now)
+    assert rep["warn"] is False
+    assert rep["oldest_ready_age_days"] == 2.0
+
+
+def test_ready_backlog_warn_does_not_block_main_verdict():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, tzinfo=timezone.utc)
+    db = tmp / "jarvis-os" / "kanban.db"
+    sdb = tmp / "sycode-trading" / "kanban.db"
+    _make_ready_backlog_db(db, now)
+    _make_sycode_ready_backlog_db(sdb, now)
+
+    uhealth.JARVIS_OS_KANBAN_DB = db
+    uhealth.SYCODE_TRADING_KANBAN_DB = sdb
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.check_hermes_cli = lambda: (True, "ok", False)
+    uhealth.check_gateway_unit = lambda: (True, "ok", False)
+    uhealth.check_gateway_runtime = lambda: (True, True, "ok")
+    uhealth.check_cron_ticker = lambda: (True, "ok", False)
+    uhealth.check_canary_freshness = lambda: (True, "ok")
+    uhealth.check_docker = lambda: (True, "ok", False)
+    uhealth.check_disk = lambda: (True, "ok", False)
+    uhealth.check_mechanism_matrix = lambda: {
+        "available": True,
+        "overall": "GREEN",
+        "dead": 0,
+        "detail": "ok",
+        "fork_resource_pressure": False,
+    }
+    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    # Observability backlog age degrades PASS -> WARN, NEVER BLOCK.
+    assert record["verdict"] == "WARN"
+    assert record["sycode_trading_ready_backlog"]["oldest_ready_task_id"] == "t_30c13209"
+    assert record["sycode_trading_ready_backlog"]["oldest_ready_age_days"] > 7
+    assert any(
+        w["board"] == "sycode-trading" and w["oldest_ready_task_id"] == "t_30c13209"
+        for w in record["ready_backlog_warn_boards"]
+    )
 
 
 def test_check_kanban_crashes_treats_done_parent_active_child_as_stale():

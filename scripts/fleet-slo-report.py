@@ -296,7 +296,7 @@ def board_metrics(db: Path) -> BoardMetrics:
         review_over_threshold=[],
     )
     try:
-        con = sqlite3.connect(str(db))
+        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
         con.row_factory = sqlite3.Row
         m.status_counts = {
             r["status"]: int(r["n"])

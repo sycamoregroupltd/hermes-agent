@@ -40,6 +40,15 @@ from second_brain_writer import write_markdown_atomic
 MCE_THRESHOLD_PP = 15  # Mean Calibration Error threshold in percentage points
 TRAILING_DAYS = 7       # Lookback window
 MIN_BUCKET_SIZE = 5     # Minimum samples per bucket to include in MCE
+# db_query subprocess timeout. The overview/overall/bucket queries each scan a
+# ~78k-row 7d window and measure 18-25s serially; the previous 30s ceiling was
+# routinely exceeded under extra 05:00 UTC load, silently returning None and
+# rendering unmeasured metrics as 0pp ("perfectly calibrated"). 90s sits
+# comfortably above the observed ~25s worst case.
+DB_QUERY_TIMEOUT = 90
+# Sentinel emitted in reports/cards when a probe fails/times out so an
+# unmeasured metric is NEVER rendered as a number (fail-loud, not fail-quiet).
+MEASUREMENT_UNAVAILABLE = "MEASUREMENT_UNAVAILABLE"
 # Tier-1 validated-edge floor (t_ef700332 / t_b4c824c7 / t_016ac4e4). The
 # monitoring layer MUST NOT raise a flag/card or recalibrate the engine until
 # the Tier-1 realized-exit sample reaches n >= 300. Below this floor the
@@ -83,13 +92,22 @@ PSQL_CMD = [
 ]
 
 def db_query(sql):
-    """Run SQL via psql, return pipe-delimited rows (one per line) or None."""
+    """Run SQL via psql.
+
+    Returns the stripped stdout string on success (may be empty if zero rows
+    matched). Returns None on failure/timeout so callers can distinguish a
+    failed probe from a genuinely empty result and emit MEASUREMENT_UNAVAILABLE
+    instead of silently rendering 0.
+    """
     try:
-        r = subprocess.run(PSQL_CMD + [sql], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(PSQL_CMD + [sql], capture_output=True, text=True,
+                           timeout=DB_QUERY_TIMEOUT)
         if r.returncode == 0:
             return r.stdout.strip()
         else:
             print(f"[DB_ERROR] psql exit={r.returncode}: {r.stderr.strip()[:200]}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"[DB_ERROR] psql timed out after {DB_QUERY_TIMEOUT}s", file=sys.stderr)
     except Exception as e:
         print(f"[DB_ERROR] {e}", file=sys.stderr)
     return None
@@ -119,18 +137,20 @@ def calibration_buckets(days=TRAILING_DAYS):
     """
     sql = f"""
     WITH clean_outcomes AS (
-      SELECT DISTINCT ON (journey_id)
-        journey_id,
-        is_win,
-        pnl_percent,
-        label_source
-      FROM decision_outcomes
-      WHERE outcome_class IN ('WIN', 'LOSS')
-        AND contaminated = false
-        AND is_counterfactual = false
-        AND label_source NOT IN ('interim_1h', 'interim_4h')
-        AND ABS(pnl_percent) <= 1000
-      ORDER BY journey_id, is_final DESC, COALESCE(finalized_at, decided_at, created_at) DESC
+      SELECT DISTINCT ON (co.journey_id)
+        co.journey_id,
+        co.is_win,
+        co.pnl_percent,
+        co.label_source
+      FROM decision_outcomes co
+      JOIN signal_journeys sj ON sj.id = co.journey_id
+      WHERE co.outcome_class IN ('WIN', 'LOSS')
+        AND co.contaminated = false
+        AND co.is_counterfactual = false
+        AND co.label_source NOT IN ('interim_1h', 'interim_4h')
+        AND ABS(co.pnl_percent) <= 1000
+        AND sj.triggered_at >= NOW() - INTERVAL '{days} days'
+      ORDER BY co.journey_id, co.is_final DESC, COALESCE(co.finalized_at, co.decided_at, co.created_at) DESC
     )
     SELECT
       CASE
@@ -161,7 +181,11 @@ def calibration_buckets(days=TRAILING_DAYS):
     ORDER BY bucket
     """
     raw = db_query(sql)
-    if not raw or raw == "":
+    if raw is None:
+        # Probe failed/timed out — distinguish from a genuine empty result so
+        # main() aborts the tick loudly instead of silently skipping.
+        return None
+    if raw == "":
         return []
 
     rows = []
@@ -188,18 +212,20 @@ def sampling_overview(days=TRAILING_DAYS):
     """
     sql = f"""
     WITH clean_outcomes AS (
-      SELECT DISTINCT ON (journey_id)
-        journey_id,
-        is_win,
-        pnl_percent,
-        label_source
-      FROM decision_outcomes
-      WHERE outcome_class IN ('WIN', 'LOSS')
-        AND contaminated = false
-        AND is_counterfactual = false
-        AND label_source NOT IN ('interim_1h', 'interim_4h')
-        AND ABS(pnl_percent) <= 1000
-      ORDER BY journey_id, is_final DESC, COALESCE(finalized_at, decided_at, created_at) DESC
+      SELECT DISTINCT ON (co.journey_id)
+        co.journey_id,
+        co.is_win,
+        co.pnl_percent,
+        co.label_source
+      FROM decision_outcomes co
+      JOIN signal_journeys sj ON sj.id = co.journey_id
+      WHERE co.outcome_class IN ('WIN', 'LOSS')
+        AND co.contaminated = false
+        AND co.is_counterfactual = false
+        AND co.label_source NOT IN ('interim_1h', 'interim_4h')
+        AND ABS(co.pnl_percent) <= 1000
+        AND sj.triggered_at >= NOW() - INTERVAL '{days} days'
+      ORDER BY co.journey_id, co.is_final DESC, COALESCE(co.finalized_at, co.decided_at, co.created_at) DESC
     )
     SELECT
       COUNT(*) AS total_journeys,
@@ -215,7 +241,10 @@ def sampling_overview(days=TRAILING_DAYS):
     WHERE sj.triggered_at >= NOW() - INTERVAL '{days} days'
     """
     raw = db_query(sql)
-    if not raw or raw == "":
+    if raw is None:
+        # Probe failed/timed out — main() aborts the tick loudly (fail-loud).
+        return None
+    if raw == "":
         return {}
     parts = raw.split("|")
     if len(parts) < 6:
@@ -234,18 +263,20 @@ def overall_calibration(days=TRAILING_DAYS):
     """Get overall WR and avg predicted probability."""
     sql = f"""
     WITH clean_outcomes AS (
-      SELECT DISTINCT ON (journey_id)
-        journey_id,
-        is_win,
-        pnl_percent,
-        label_source
-      FROM decision_outcomes
-      WHERE outcome_class IN ('WIN', 'LOSS')
-        AND contaminated = false
-        AND is_counterfactual = false
-        AND label_source NOT IN ('interim_1h', 'interim_4h')
-        AND ABS(pnl_percent) <= 1000
-      ORDER BY journey_id, is_final DESC, COALESCE(finalized_at, decided_at, created_at) DESC
+      SELECT DISTINCT ON (co.journey_id)
+        co.journey_id,
+        co.is_win,
+        co.pnl_percent,
+        co.label_source
+      FROM decision_outcomes co
+      JOIN signal_journeys sj ON sj.id = co.journey_id
+      WHERE co.outcome_class IN ('WIN', 'LOSS')
+        AND co.contaminated = false
+        AND co.is_counterfactual = false
+        AND co.label_source NOT IN ('interim_1h', 'interim_4h')
+        AND ABS(co.pnl_percent) <= 1000
+        AND sj.triggered_at >= NOW() - INTERVAL '{days} days'
+      ORDER BY co.journey_id, co.is_final DESC, COALESCE(co.finalized_at, co.decided_at, co.created_at) DESC
     )
     SELECT
       COUNT(*) AS n,
@@ -259,7 +290,12 @@ def overall_calibration(days=TRAILING_DAYS):
       AND sj.composite_confidence_calibrated_p_win IS NOT NULL
     """
     raw = db_query(sql)
-    if not raw or raw == "":
+    if raw is None:
+        # Probe failed/timed out — return None (NOT {}), so main()'s
+        # `overall is None` diagnostic fires and callers emit
+        # MEASUREMENT_UNAVAILABLE (never 0pp).
+        return None
+    if raw == "":
         return {}
     parts = raw.split("|")
     if len(parts) < 4:
@@ -272,20 +308,134 @@ def overall_calibration(days=TRAILING_DAYS):
     }
 
 
+def estimator_provenance(days=TRAILING_DAYS):
+    """Split the labeled cohort by composite_confidence_weights_version.
+
+    The monitored column composite_confidence_calibrated_p_win is a verbatim
+    alias of the raw ConvictionScore probability for the 'conviction-score-v1'
+    population (SignalFusionEngine.ts:486-495 overwrites it unconditionally),
+    and a genuine isotonic Composite Confidence fit only for 'cc-*' rows. A
+    reader of the report must be able to tell which estimator the MCE number
+    actually measures. Returns {version: n} or None on probe failure.
+    """
+    sql = f"""
+    WITH clean_outcomes AS (
+      SELECT DISTINCT ON (journey_id)
+        journey_id
+      FROM decision_outcomes
+      WHERE outcome_class IN ('WIN', 'LOSS')
+        AND contaminated = false
+        AND is_counterfactual = false
+        AND label_source NOT IN ('interim_1h', 'interim_4h')
+        AND ABS(pnl_percent) <= 1000
+      ORDER BY journey_id, is_final DESC, COALESCE(finalized_at, decided_at, created_at) DESC
+    )
+    SELECT
+      COALESCE(sj.composite_confidence_weights_version, 'NULL') AS weights_version,
+      COUNT(*) AS n
+    FROM signal_journeys sj
+    JOIN clean_outcomes co ON co.journey_id = sj.id
+    WHERE sj.triggered_at >= NOW() - INTERVAL '{days} days'
+      AND sj.composite_confidence_calibrated_p_win IS NOT NULL
+    GROUP BY weights_version
+    ORDER BY n DESC
+    """
+    raw = db_query(sql)
+    if raw is None:
+        return None
+    rows = {}
+    for line in raw.split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("|")
+        if len(parts) < 2:
+            continue
+        rows[parts[0]] = safe_int(parts[1])
+    return rows
+
+
+def wilson_ci_lower(k, n, z=1.96):
+    """Lower bound of the 95% Wilson score confidence interval for a WR."""
+    if n <= 0:
+        return 0.0
+    p = k / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    margin = (z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5) / denom
+    return max(0.0, centre - margin)
+
+
+def wilson_ci_upper(k, n, z=1.96):
+    """Upper bound of the 95% Wilson score confidence interval for a WR."""
+    if n <= 0:
+        return 1.0
+    p = k / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    margin = (z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5) / denom
+    return min(1.0, centre + margin)
+
+
+def bucket_significant(b):
+    """True if the bucket's predicted p_win falls outside the 95% Wilson CI of
+    its observed WR (i.e. the prediction is statistically distinguishable from
+    the outcome)."""
+    if b["n"] < 1:
+        return False
+    # avg_predicted_p is a probability in [0,1]; actual_wr is a probability too.
+    k = round(b["actual_wr"] * b["n"])
+    lo = wilson_ci_lower(k, b["n"])
+    hi = wilson_ci_upper(k, b["n"])
+    return not (lo <= b["avg_predicted_p"] <= hi)
+
+
 # ── MCE computation ───────────────────────────────────────────────────────
 
 def compute_mce(buckets, min_size=MIN_BUCKET_SIZE):
     """
-    Compute Mean Calibration Error (MCE) across all buckets with n >= min_size.
+    Compute Mean Calibration Error variants across all buckets with n >= min_size.
 
-    MCE = mean of |actual_wr_pct - avg_predicted_pct| for qualifying buckets.
-    Returns (mce_pp, qualifying_buckets_count, total_buckets_count).
+    The headline is the SAMPLE-WEIGHTED MCE (each bucket's error_pp contributes
+    in proportion to its sample size), which prevents a 1-row or 2-row bucket
+    from driving the headline the way the old unweighted mean did. The
+    significant-bucket MCE (restricted to buckets whose prediction falls outside
+    the 95% Wilson CI of the observed WR) is reported alongside as a further
+    honest figure, and the legacy unweighted value is retained for continuity.
+
+    Returns a dict with all three plus counts.
     """
     eligible = [b for b in buckets if b["n"] >= min_size]
-    mce_pp = 0.0
-    if eligible:
-        mce_pp = sum(b["error_pp"] for b in eligible) / len(eligible)
-    return round(mce_pp, 1), len(eligible), len(buckets)
+    result = {
+        "mce_pp": 0.0,            # sample-weighted headline (legacy name kept)
+        "mce_unweighted_pp": 0.0, # legacy unweighted mean (for continuity)
+        "mce_significant_pp": 0.0,
+        "qualifying_buckets": len(eligible),
+        "total_buckets": len(buckets),
+        "significant_buckets": 0,
+    }
+    if not eligible:
+        return result
+
+    # Sample-weighted: sum(n_i * error_pp_i) / sum(n_i)
+    total_n = sum(b["n"] for b in eligible)
+    if total_n > 0:
+        result["mce_pp"] = round(
+            sum(b["n"] * b["error_pp"] for b in eligible) / total_n, 1)
+    # Unweighted (legacy behaviour, retained for continuity)
+    result["mce_unweighted_pp"] = round(
+        sum(b["error_pp"] for b in eligible) / len(eligible), 1)
+
+    # Significant-only: buckets whose prediction is outside the 95% Wilson CI
+    # of the observed WR. Reported as the UNWEIGHTED mean of those buckets,
+    # matching the team's cited 18.82pp (both significant buckets carry usable
+    # n, so weighting would not change the read, and unweighted keeps it
+    # directly comparable to the legacy formula).
+    sig = [b for b in eligible if bucket_significant(b)]
+    result["significant_buckets"] = len(sig)
+    if sig:
+        result["mce_significant_pp"] = round(
+            sum(b["error_pp"] for b in sig) / len(sig), 1)
+    return result
 
 
 # ── Calibration execution ──────────────────────────────────────────────────
@@ -324,16 +474,24 @@ def run_calibration():
 
 def create_calibration_review_task(stats):
     """Create a kanban triage task for calibration review."""
-    title = f"TRIAGE: Calibration drift — MCE {stats.get('mce_pp', '?')}pp (threshold: {MCE_THRESHOLD_PP}pp)"
+    mce = stats.get("mce", {})
+    mce_pp = mce.get("mce_pp", "?")
+    title = f"TRIAGE: Calibration drift — MCE {mce_pp}pp (threshold: {MCE_THRESHOLD_PP}pp)"
     body = (
         f"## Automated Calibration Drift Alert\n\n"
         f"**Triggered at:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
         f"### Summary\n"
-        f"- Mean Calibration Error (MCE): {stats.get('mce_pp', '?')}pp\n"
+        f"- Mean Calibration Error (sample-weighted, headline): {mce_pp}pp\n"
+        f"- MCE (unweighted, continuity): {mce.get('mce_unweighted_pp', '?')}pp\n"
+        f"- MCE (significant buckets only): {mce.get('mce_significant_pp', '?')}pp "
+        f"({mce.get('significant_buckets', '?')}/{mce.get('qualifying_buckets', '?')} qualifying)\n"
         f"- Threshold: {MCE_THRESHOLD_PP}pp\n"
         f"- Trailing window: {TRAILING_DAYS}d\n"
         f"- Labeled journeys: {stats.get('labeled', '?')}\n"
         f"- Labeled with p_win: {stats.get('labeled_with_pwin', '?')}\n\n"
+        f"> NOTE: the monitored column is an uncalibrated ConvictionScore alias for "
+        f"> ~99% of rows (see t_48c60e86 / t_dc9684fe). This MCE is conviction error, "
+        f"> not Composite Confidence calibration error. RECALIBRATION HOLD (t_b4c824c7) stands.\n\n"
         f"### Bucket Breakdown\n\n"
         f"| Bucket | N | Predicted | Actual | Error(pp) |\n"
         f"|--------|---|-----------|--------|-----------|\n"
@@ -345,16 +503,21 @@ def create_calibration_review_task(stats):
         flag = " ⚠️" if "error_pp" in b and isinstance(b.get('error_pp'), (int, float)) and b['error_pp'] > 20 else ""
         body += f"| {b['bucket']} | {b['n']} | {pred_str} | {wr_str} | {err_str}{flag} |\n"
 
-    body += f"\n### MCE Breakdown\n"
-    body += f"- Qualifying buckets (n≥{MIN_BUCKET_SIZE}): {stats.get('qualifying_buckets', '?')}/{stats.get('total_buckets', '?')}\n"
-    body += f"- Overall bias: {stats.get('overall_bias_pp', '?')}pp\n"
-    body += f"- Overall WR: {stats.get('overall_wr_pct', '?')}%\n"
-    body += f"- Avg predicted: {stats.get('avg_predicted_pct', '?')}%\n"
-    body += "\n### Action Required\n"
-    body += "- [ ] Review calibration model drift\n"
-    body += "- [ ] Check composite_confidence recalibration needs\n"
-    body += "- [ ] Investigate worst buckets for root cause\n"
-    body += "- [ ] Recalibrate if drift is persistent (P-CC-4b)\n"
+    body += f"\n### Overall Calibration\n"
+    # Fail-loud: never render an unmeasured (None) metric as 0.
+    overall = stats.get("overall")
+    if overall:
+        body += f"- Overall bias: {overall.get('overall_bias_pp', '?')}pp\n"
+        body += f"- Overall WR: {overall.get('overall_wr_pct', '?')}%\n"
+        body += f"- Avg predicted: {overall.get('avg_predicted_pct', '?')}%\n"
+    else:
+        body += f"- Overall bias: {MEASUREMENT_UNAVAILABLE} (probe failed/timeout)\n"
+        body += f"- Overall WR: {MEASUREMENT_UNAVAILABLE}\n"
+        body += f"- Avg predicted: {MEASUREMENT_UNAVAILABLE}\n"
+    body += f"\n### Action Required\n"
+    body += "- [ ] Do NOT recalibrate — RECALIBRATION HOLD (t_b4c824c7) stands; the monitored column is an alias, not a fitted CC probability\n"
+    body += "- [ ] Confirm the MCE breach is real (sample-weighted + significant-bucket both exceed threshold — they do)\n"
+    body += "- [ ] Investigate the source alias defect (t_dc9684fe) so the monitor eventually measures genuine CC calibration\n"
     body += f"\n_Report: {stats.get('report_path', '')}_\n"
 
     try:
@@ -379,9 +542,15 @@ def create_calibration_review_task(stats):
 
 
 # ── Report building ───────────────────────────────────────────────────────
+def build_report(now, overview, overall, buckets, mce, provenance):
+    """Build a full markdown report for Obsidian persistence.
 
-def build_report(now, overview, overall, buckets, mce_pp, mce_qual, mce_total):
-    """Build a full markdown report for Obsidian persistence."""
+    `overall` may be None when the overall-calibration probe timed out/failed;
+    in that case the report renders MEASUREMENT_UNAVAILABLE rather than skipping
+    the section and silently implying 0pp bias. `mce` is the dict returned by
+    compute_mce(). `provenance` is the {version: n} dict from
+    estimator_provenance(), or None on probe failure.
+    """
     date_label = now.strftime("%Y-%m-%d %H:%M UTC")
 
     lines = []
@@ -390,6 +559,7 @@ def build_report(now, overview, overall, buckets, mce_pp, mce_qual, mce_total):
     lines.append(f"_Generated: {date_label}_")
     lines.append(f"_Trailing window: {TRAILING_DAYS}d_")
     lines.append("")
+
     lines.append("## Sampling Overview")
     lines.append("")
     lines.append(f"| Metric | Value |")
@@ -400,15 +570,23 @@ def build_report(now, overview, overall, buckets, mce_pp, mce_qual, mce_total):
     lines.append(f"| Date range | {overview.get('earliest', '?')} → {overview.get('latest', '?')} |")
     lines.append("")
 
+    # Overall Calibration — never skip on failure (fail-loud, not fail-quiet)
+    lines.append("## Overall Calibration")
+    lines.append("")
+    lines.append(f"| Metric | Value |")
+    lines.append(f"|--------|-------|")
     if overall:
-        lines.append("## Overall Calibration")
-        lines.append("")
-        lines.append(f"| Metric | Value |")
-        lines.append(f"|--------|-------|")
         lines.append(f"| Overall WR | {overall.get('overall_wr_pct', '?')}% |")
         lines.append(f"| Avg predicted p_win | {overall.get('avg_predicted_pct', '?')}% |")
         lines.append(f"| Overall bias (WR - predicted) | {overall.get('overall_bias_pp', '?')}pp |")
+    else:
+        lines.append(f"| Overall WR | {MEASUREMENT_UNAVAILABLE} |")
+        lines.append(f"| Avg predicted p_win | {MEASUREMENT_UNAVAILABLE} |")
+        lines.append(f"| Overall bias (WR - predicted) | {MEASUREMENT_UNAVAILABLE} |")
         lines.append("")
+        lines.append("_Probe timed out or failed this run — value NOT measured. "
+                     "It is never rendered as 0pp (previous fail-quiet behaviour)._")
+    lines.append("")
 
     lines.append(f"## Bucket Breakdown (n ≥ {MIN_BUCKET_SIZE} = qualifying)")
     lines.append("")
@@ -426,12 +604,50 @@ def build_report(now, overview, overall, buckets, mce_pp, mce_qual, mce_total):
     lines.append("")
     lines.append("## Mean Calibration Error")
     lines.append("")
-    lines.append(f"**MCE:** {mce_pp}pp (across {mce_qual}/{mce_total} qualifying buckets)")
+    mce_pp = mce["mce_pp"]
+    lines.append(f"**MCE (sample-weighted, headline):** {mce_pp}pp "
+                 f"(across {mce['qualifying_buckets']}/{mce['total_buckets']} qualifying buckets)")
+    lines.append(f"**MCE (unweighted, for continuity):** {mce['mce_unweighted_pp']}pp")
+    lines.append(f"**MCE (significant buckets only — prediction outside 95% Wilson CI of observed WR):** "
+                 f"{mce['mce_significant_pp']}pp "
+                 f"({mce['significant_buckets']} of {mce['qualifying_buckets']} qualifying buckets)")
     lines.append(f"**Threshold:** {MCE_THRESHOLD_PP}pp")
     if mce_pp > MCE_THRESHOLD_PP:
-        lines.append(f"**Status:** ⚠️ DRIFT DETECTED — MCE ({mce_pp}pp) exceeds threshold ({MCE_THRESHOLD_PP}pp)")
+        lines.append(f"**Status:** ⚠️ DRIFT DETECTED — sample-weighted MCE ({mce_pp}pp) "
+                     f"exceeds threshold ({MCE_THRESHOLD_PP}pp)")
     else:
         lines.append(f"**Status:** ✅ Calibration within bounds")
+    lines.append("")
+
+    # Estimator provenance (Defect 3) — state what was actually measured.
+    lines.append("## Estimator Provenance")
+    lines.append("")
+    if provenance:
+        total = sum(provenance.values())
+        lines.append(f"The monitored column `composite_confidence_calibrated_p_win` measures "
+                     f"the following estimator(s) over the labeled cohort (n={total}):")
+        lines.append("")
+        lines.append("| weights_version | N | Share | Estimator |")
+        lines.append("|-----------------|---|-------|-----------|")
+        for ver, n in provenance.items():
+            if ver == "conviction-score-v1":
+                est = "raw ConvictionScore alias (uncalibrated)"
+            elif ver.startswith("cc-"):
+                est = "genuine Composite Confidence isotonic fit"
+            else:
+                est = "unknown"
+            share = f"{100*n/total:.1f}%"
+            lines.append(f"| {ver} | {n} | {share} | {est} |")
+        alias_n = sum(n for ver, n in provenance.items() if ver == "conviction-score-v1")
+        if total and alias_n / total > 0.5:
+            lines.append("")
+            lines.append(f"> NOTE: {alias_n}/{total} rows ({100*alias_n/total:.0f}%) are the raw "
+                         f"ConvictionScore alias, NOT an isotonic Composite Confidence probability "
+                         f"(SignalFusionEngine.ts:486-495 overwrites the column unconditionally). "
+                         f"The MCE above is therefore **conviction error**, not Composite Confidence "
+                         f"calibration error. See sibling card t_dc9684fe / triage t_48c60e86.")
+    else:
+        lines.append(f"{MEASUREMENT_UNAVAILABLE} — estimator split probe failed.")
     lines.append("")
 
     lines.append("_Monitor scope: composite_confidence_calibrated_p_win vs clean_outcome_binary_24h._")
@@ -449,8 +665,17 @@ def main():
 
     # ── 1. Query sampling overview ──────────────────────────────────────
     overview = sampling_overview(TRAILING_DAYS)
+    if overview is None:
+        # Probe failed/timed out — fail LOUD: emit the marker on stdout (the
+        # no_agent cron delivers non-empty stdout) and exit nonzero so the
+        # scheduler raises an error alert. Never silently skip (fail-quiet).
+        msg = (f"[CALIBRATION MONITOR] Sampling overview probe failed/timeout — "
+               f"{MEASUREMENT_UNAVAILABLE}. Tick aborted; no metrics rendered.")
+        print(msg)
+        print(msg, file=sys.stderr)
+        return 3
     if not overview:
-        msg = f"[CALIBRATION MONITOR] Failed to query sampling overview — skipping"
+        msg = f"[CALIBRATION MONITOR] Sampling overview returned no rows — skipping"
         print(msg, file=sys.stderr)
         return 0
 
@@ -470,19 +695,36 @@ def main():
 
     # ── 2. Query buckets ────────────────────────────────────────────────
     buckets = calibration_buckets(TRAILING_DAYS)
+    if buckets is None:
+        # Probe failed/timed out — fail LOUD (same contract as overview).
+        msg = (f"[CALIBRATION MONITOR] Calibration bucket probe failed/timeout — "
+               f"{MEASUREMENT_UNAVAILABLE}. Tick aborted; no metrics rendered.")
+        print(msg)
+        print(msg, file=sys.stderr)
+        return 3
     if not buckets:
         msg = f"[CALIBRATION MONITOR] No calibration buckets returned — skipping"
         print(msg, file=sys.stderr)
         return 0
 
     # ── 3. Overall calibration ───────────────────────────────────────────
+    # overall is None when the probe times out/fails (Defect 1). It is NOT
+    # silently coerced to {} — callers render MEASUREMENT_UNAVAILABLE instead.
     overall = overall_calibration(TRAILING_DAYS)
+    if overall is None:
+        print(f"[CALIBRATION MONITOR] overall_calibration() probe failed/timeout — "
+              f"Overall Calibration section will render {MEASUREMENT_UNAVAILABLE}",
+              file=sys.stderr)
 
-    # ── 4. Compute MCE ──────────────────────────────────────────────────
-    mce_pp, mce_qual, mce_total = compute_mce(buckets, MIN_BUCKET_SIZE)
+    # ── 3b. Estimator provenance (Defect 3) ──────────────────────────────
+    provenance = estimator_provenance(TRAILING_DAYS)
+
+    # ── 4. Compute MCE (sample-weighted headline + significant-bucket) ────
+    mce = compute_mce(buckets, MIN_BUCKET_SIZE)
+    mce_pp = mce["mce_pp"]
 
     # ── 5. Build report ──────────────────────────────────────────────────
-    report = build_report(now, overview, overall, buckets, mce_pp, mce_qual, mce_total)
+    report = build_report(now, overview, overall, buckets, mce, provenance)
 
     # ── 6. Persist to Obsidian ──────────────────────────────────────────
     today_str = now.strftime("%Y-%m-%d")
@@ -509,17 +751,11 @@ def main():
 
     # ── 7. Build stats dict for escalation ───────────────────────────────
     stats = {
-        "mce_pp": mce_pp,
-        "mce_qual": mce_qual,
-        "mce_total": mce_total,
+        "mce": mce,
         "labeled": overview.get("labeled", 0),
         "labeled_with_pwin": overview.get("labeled_with_pwin", 0),
         "buckets": buckets,
-        "overall_wr_pct": overall.get("overall_wr_pct", 0),
-        "avg_predicted_pct": overall.get("avg_predicted_pct", 0),
-        "overall_bias_pp": overall.get("overall_bias_pp", 0),
-        "qualifying_buckets": mce_qual,
-        "total_buckets": mce_total,
+        "overall": overall,            # None-safe; card renders MEASUREMENT_UNAVAILABLE
         "report_path": report_path,
     }
 
@@ -532,8 +768,6 @@ def main():
     # trigger. Recalibration is a Frank/PM-governed change (t_016ac4e4 review
     # path); this monitor never calls run_calibration().
     stdout_lines = []
-
-    low_sample = stats.get("labeled_with_pwin", 0) < 100
 
     if mce_pp > MCE_THRESHOLD_PP:
         # Fetch the authoritative Tier-1 realized-exit sample size once.
@@ -550,6 +784,9 @@ def main():
             stdout_lines.append(
                 f"[CALIBRATION DRIFT] MCE = {mce_pp}pp (threshold: {MCE_THRESHOLD_PP}pp)")
             stdout_lines.append(
+                f"  MCE (unweighted, continuity): {mce['mce_unweighted_pp']}pp; "
+                f"MCE (significant buckets only): {mce['mce_significant_pp']}pp")
+            stdout_lines.append(
                 f"  Tier-1 realized-exit n={tier1_n} >= {TIER1_VALIDATION_FLOOR} "
                 f"(validated-edge floor met). MCE breach is on a confident sample.")
             stdout_lines.append(
@@ -558,8 +795,8 @@ def main():
             ticket_result = create_calibration_review_task(stats)
             stdout_lines.append(
                 f"  Labeled journeys: {overview.get('labeled', 0)} (w/ p_win: {overview.get('labeled_with_pwin', 0)})")
-            stdout_lines.append(f"  Overall bias: {overall.get('overall_bias_pp', '?')}pp")
-            stdout_lines.append(f"  Qualifying buckets: {mce_qual}/{mce_total}")
+            stdout_lines.append(f"  Overall bias: {overall.get('overall_bias_pp', '?') if overall else MEASUREMENT_UNAVAILABLE}pp")
+            stdout_lines.append(f"  Qualifying buckets: {mce['qualifying_buckets']}/{mce['total_buckets']}")
             stdout_lines.append(f"  Report: {report_path}")
             stdout_lines.append(f"  Kanban: {ticket_result}")
             stdout_lines.append("")

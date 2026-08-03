@@ -58,10 +58,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-03T10:25:49.208918+01:00",
+      "paused_reason": "migrated to trading-devops store (t_0814e3b3)",
       "created_at": "2026-07-04T22:56:02.352763+01:00",
       "deliver": "local",
       "origin": null,
@@ -160,15 +160,15 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "disabled",
+      "paused_at": "2026-08-02T21:15:00+01:00",
+      "paused_reason": "t_fbc62972: workdir pointed at garbage-collected kanban workspace t_e6639cce (GONE). Prototype monitor_blur_funding.py is superseded by the maintained collect_blur.py at /home/frank/.hermes/profiles/trading-data-oracle/blur-monitor (see jobs 6c084e12014f / 8033879cd039, already pointing at the permanent dir).",
       "created_at": "2026-07-08T03:58:19.250715+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_e6639cce"
+      "workdir": null
     },
     {
       "id": "6c084e12014f",
@@ -176,8 +176,8 @@
       "prompt": "Run the BLUR funding-rate persistence monitor: execute `python3 /home/frank/.hermes/profiles/trading-data-oracle/blur-monitor/collect_blur.py` and report the latest HL/Binance/Bybit BLUR funding rates (annualized) and whether a PERSISTENT EXTREME alert fired (HL annualized < -200% for >=6 consecutive samples). If an ALERT line appears, escalate prominently. Keep the report to 5 lines max. This is read-only monitoring; never place orders, never change credentials.",
       "skills": [],
       "skill": null,
-      "model": null,
-      "provider": null,
+      "model": "tencent/hy3:free",
+      "provider": "nous",
       "provider_snapshot": "nous",
       "model_snapshot": "tencent/hy3:free",
       "base_url": null,
@@ -195,8 +195,8 @@
       },
       "enabled": false,
       "state": "paused",
-      "paused_at": "2026-07-28T12:10:10.977772+01:00",
-      "paused_reason": null,
+      "paused_at": "2026-08-03T10:25:49.229055+01:00",
+      "paused_reason": "migrated to trading-devops store (t_0814e3b3)",
       "created_at": "2026-07-09T10:22:00.281109+01:00",
       "deliver": "local",
       "origin": null,

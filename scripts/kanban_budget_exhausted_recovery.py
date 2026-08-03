@@ -45,10 +45,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
+import sqlite3  # type-only: sqlite3.Connection for type hints
 import sys
 import time
 from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 HERMES_HOME = os.environ.get("HERMES_HOME", "/home/frank/.hermes/profiles/jarvis")
 DEFAULT_BOARD_DIR = Path("/home/frank/.hermes/kanban/boards")
@@ -62,9 +63,7 @@ sys.path.insert(0, "/home/frank/.hermes/hermes-agent")
 def connect(db_path: Path) -> sqlite3.Connection:
     if not db_path.is_file():
         sys.exit(f"kanban.db not found: {db_path}")
-    conn = sqlite3.connect(str(db_path), timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return kb.connect(db_path=db_path)
 
 
 def classify(conn: sqlite3.Connection) -> dict:

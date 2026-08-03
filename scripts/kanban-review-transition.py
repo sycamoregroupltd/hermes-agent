@@ -18,10 +18,10 @@ Logic:
 """
 
 import re
-import sqlite3
 import sys
 import time
 from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 BOARDS = [
     "sycode-trading",
@@ -65,8 +65,7 @@ def sweep_board(board: str) -> list:
     if not db_path.exists():
         return []
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = kb.connect(db_path=db_path)
     
     now = int(time.time())
     transitioned = []

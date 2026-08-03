@@ -46,16 +46,20 @@ DISK_WATCHDOG = HOME / ".hermes" / "scripts" / "dgx_disk_space_watchdog.sh"
 MECH_COLLECT = HOME / ".hermes" / "scripts" / "jarvis_mechanism_liveness_collect.py"
 BOARDS_DIR = HOME / ".hermes" / "kanban" / "boards"
 JARVIS_OS_KANBAN_DB = BOARDS_DIR / "jarvis-os" / "kanban.db"
+SYCODE_TRADING_KANBAN_DB = BOARDS_DIR / "sycode-trading" / "kanban.db"
 DEVOPS_READY_ASSIGNEES = ("devops",)
 READY_BACKLOG_TOP_LIMIT = 5
+# oldest_ready_days above this on ANY tracked board degrades PASS -> WARN
+# (t_bf11a0ce): the probe run 2026-08-03 showed a green fleet verdict while
+# sycode-trading held a 24.4d-old approved review awaiting PR merge — a 24d
+# stalled P0a that the probe's jarvis-only backlog metric never surfaced.
+READY_BACKLOG_WARN_DAYS = 7
 ALERT_TARGET = "discord:#fleet-reports"
 CRON_STALE_MIN = 35          # cron ticker considered stale past this
-CANARY_STALE_MIN = 40        # last health_canary.jsonl write considered stale past this
-# The legacy dgx-jarvis-health-canary job was CONSOLIDATED into this unified
-# probe (t_39c29d42) and is paused, so its health_canary.jsonl is stale by
-# design. Beyond this grace window a stale legacy canary is treated as
-# "consolidated/skipped" rather than an active infra failure (avoids flapping).
-CANARY_CONSOLIDATED_GRACE_MIN = 1440  # 24h
+CANARY_STALE_MIN = 40        # newest INDEPENDENT health_canary.jsonl write
+                             # considered stale past this. The probe's own
+                             # substrate_source bridge records are excluded so
+                             # the check cannot grade its own liveness (t_0050991e).
 CRASH_LOOKBACK_MIN = 60      # kanban crash/gave_up window
 
 # Repeat-BLOCK hard-alert escalation (t_7a97ba51 proposal #3 / t_cafc1119 C3).
@@ -217,26 +221,67 @@ def check_cron_ticker() -> tuple[bool, str, bool]:
 
 
 def check_canary_freshness() -> tuple[bool, str]:
+    """Verify an INDEPENDENT writer is still refreshing health_canary.jsonl.
+
+    The unified probe itself appends a substrate bridge record to this same
+    file every cycle (write_legacy_substrate_record, substrate_source=
+    "unified-health-probe") for legacy downstream consumers. The check must
+    NOT grade the probe's own liveness — that is circular and self-BLOCKs the
+    first run after any probe outage >CANARY_STALE_MIN with no real fleet
+    defect present (incident 2026-08-01, t_0050991e). So we read the file
+    content and consider only records whose writer is NOT this probe, taking
+    the most recent independent timestamp as the freshness signal.
+
+    Independent writers observed in the file: data-freshness-probe,
+    per-entity-freshness, news-macro-integrity-sentinel, and the historical
+    legacy records (no substrate_source / not from this probe). If the file is
+    absent or has no independent records yet, the check is informational-only
+    (returns ok=True) rather than a hard BLOCK, because an empty/independent-
+    only stream is not evidence of an active fleet failure.
+    """
     if not LEGCY_CANARY.exists():
         return True, "legacy health_canary.jsonl absent (probe not yet run historically)"
     try:
-        mtime = dt.datetime.fromtimestamp(
-            LEGCY_CANARY.stat().st_mtime, dt.timezone.utc
-        )
+        last_indep: dt.datetime | None = None
+        indep_sources: set[str] = set()
+        for line in LEGCY_CANARY.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            # Skip the probe's own bridge record — it cannot vouch for itself.
+            if rec.get("substrate_source") == LEGACY_SUBSTRATE_SOURCE:
+                continue
+            ts = rec.get("ts")
+            if not isinstance(ts, str):
+                continue
+            try:
+                t = dt.datetime.fromisoformat(ts)
+            except Exception:
+                continue
+            indep_sources.add(str(rec.get("substrate_source") or rec.get("source") or "<legacy>"))
+            if last_indep is None or t > last_indep:
+                last_indep = t
     except Exception as exc:
-        return False, f"cannot stat legacy canary: {exc}"
-    age_min = (utc_now() - mtime).total_seconds() / 60.0
+        return False, f"cannot read legacy canary: {exc}"
+
+    if last_indep is None:
+        # No independent writer has ever recorded here. That is a monitoring
+        # gap, not an infra outage — do NOT BLOCK the fleet on it.
+        return True, "no independent health_canary writer has recorded yet (informational only)"
+    age_min = (utc_now() - last_indep).total_seconds() / 60.0
     if age_min > CANARY_STALE_MIN:
-        if age_min > CANARY_CONSOLIDATED_GRACE_MIN:
-            # The writer job (dgx-jarvis-health-canary) is paused/consolidated
-            # into this unified probe, so its canary is stale by design — not
-            # an active signal. (t_631685fb: removes chronic false-positive BLOCK.)
-            return True, (
-                f"legacy health_canary writer job paused/consolidated; "
-                f"{age_min:.0f}m stale is expected, not an active signal"
-            )
-        return False, f"last health_canary write {age_min:.1f}m ago (> {CANARY_STALE_MIN}m)"
-    return True, f"last health_canary write {age_min:.1f}m ago"
+        return False, (
+            f"last INDEPENDENT health_canary write {age_min:.1f}m ago "
+            f"(> {CANARY_STALE_MIN}m); independent sources seen: {sorted(indep_sources)}"
+        )
+    return True, (
+        f"last INDEPENDENT health_canary write {age_min:.1f}m ago "
+        f"(sources: {sorted(indep_sources)})"
+    )
 
 
 def check_docker() -> tuple[bool, str, bool]:
@@ -415,31 +460,36 @@ def _age_days(now: dt.datetime, created_at: int | None) -> float | None:
     return round(max(0.0, now.timestamp() - int(created_at)) / 86400.0, 3)
 
 
-def check_jarvis_ready_backlog(now: dt.datetime | None = None) -> dict[str, Any]:
-    """Read-only observability for the jarvis-os ready backlog.
+def _scan_board_ready_backlog(db: Path, board_label: str,
+                               now: dt.datetime | None = None) -> dict[str, Any]:
+    """Read-only observability for a single board's ready backlog.
 
     This is intentionally NON-BLOCKING telemetry: old ready rows are useful for
     PM/devops routing, but backlog age alone must never drive the health probe
     to BLOCK. Missing/unreadable DBs are reported as unavailable telemetry, not
-    infrastructure failures.
+    infrastructure failures. The returned dict carries a ``warn`` flag the
+    aggregator inspects to DEGRADE PASS->WARN (t_bf11a0ce) without ever BLOCKing.
     """
     now = now or utc_now()
     result: dict[str, Any] = {
         "available": False,
-        "db": str(JARVIS_OS_KANBAN_DB),
+        "board": board_label,
+        "db": str(db),
         "ready_total": 0,
         "oldest_ready_age_days": None,
         "devops_ready_count": 0,
         "oldest_devops_ready_age_days": None,
+        "oldest_ready_task_id": None,
         "top_ready_ids": [],
         "top_devops_ready_ids": [],
-        "detail": "jarvis-os kanban DB absent",
+        "warn": False,
+        "detail": f"{board_label} kanban DB absent",
     }
-    if not JARVIS_OS_KANBAN_DB.exists():
+    if not db.exists():
         return result
     try:
         import sqlite3
-        con = sqlite3.connect(f"file:{JARVIS_OS_KANBAN_DB}?mode=ro", uri=True, timeout=3)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
         cur = con.cursor()
         ready_rows = cur.execute(
             "SELECT id, assignee, created_at FROM tasks "
@@ -448,28 +498,41 @@ def check_jarvis_ready_backlog(now: dt.datetime | None = None) -> dict[str, Any]
         ).fetchall()
         con.close()
     except Exception as exc:
-        result["detail"] = f"jarvis-os ready backlog scan failed: {type(exc).__name__}: {exc}"
+        result["detail"] = (
+            f"{board_label} ready backlog scan failed: {type(exc).__name__}: {exc}"
+        )
         return result
 
     devops_rows = [r for r in ready_rows if r[1] in DEVOPS_READY_ASSIGNEES]
     oldest_ready_age = _age_days(now, ready_rows[0][2]) if ready_rows else None
     oldest_devops_age = _age_days(now, devops_rows[0][2]) if devops_rows else None
+    warn = bool(oldest_ready_age is not None and oldest_ready_age > READY_BACKLOG_WARN_DAYS)
+    oldest_task_id = ready_rows[0][0] if ready_rows else None
     result.update({
         "available": True,
         "ready_total": len(ready_rows),
         "oldest_ready_age_days": oldest_ready_age,
+        "oldest_ready_task_id": oldest_task_id,
         "devops_ready_count": len(devops_rows),
         "oldest_devops_ready_age_days": oldest_devops_age,
         "top_ready_ids": [r[0] for r in ready_rows[:READY_BACKLOG_TOP_LIMIT]],
         "top_devops_ready_ids": [r[0] for r in devops_rows[:READY_BACKLOG_TOP_LIMIT]],
+        "warn": warn,
         "detail": (
             f"ready={len(ready_rows)} oldest_ready_days="
-            f"{oldest_ready_age if oldest_ready_age is not None else 'n/a'}; "
+            f"{oldest_ready_age if oldest_ready_age is not None else 'n/a'} "
+            f"oldest_ready_task={oldest_task_id}; "
             f"devops_ready={len(devops_rows)} oldest_devops_ready_days="
             f"{oldest_devops_age if oldest_devops_age is not None else 'n/a'}"
+            f"{' [WARN: oldest_ready>'+str(READY_BACKLOG_WARN_DAYS)+'d]' if warn else ''}"
         ),
     })
     return result
+
+
+def check_jarvis_ready_backlog(now: dt.datetime | None = None) -> dict[str, Any]:
+    """Backward-compatible jarvis-os wrapper around _scan_board_ready_backlog."""
+    return _scan_board_ready_backlog(JARVIS_OS_KANBAN_DB, "jarvis-os", now)
 
 
 # ----------------------------------------------------------------------------
@@ -581,11 +644,33 @@ def main() -> int:
                              f"tasks: {stale_count})",
                    "fork_resource_pressure": False})
 
-    ready_backlog = check_jarvis_ready_backlog(now)
+    ready_backlog = check_jarvis_ready_backlog(now)  # jarvis-os (back-compat)
     checks.append({"name": "jarvis_ready_backlog", "ok": True,
                    "detail": ready_backlog.get("detail", ""),
                    "fork_resource_pressure": False,
-                   "observability_only": True})
+                   "observability_only": True,
+                   "warn": ready_backlog.get("warn", False)})
+
+    # Per-board ready backlog (t_bf11a0ce): extend beyond jarvis-os so a stalled
+    # approval/review on another active board (e.g. sycode-trading) is visible
+    # in the fleet verdict instead of hiding behind a green probe.
+    sycode_ready_backlog = _scan_board_ready_backlog(
+        SYCODE_TRADING_KANBAN_DB, "sycode-trading", now)
+    checks.append({"name": "sycode_trading_ready_backlog", "ok": True,
+                   "detail": sycode_ready_backlog.get("detail", ""),
+                   "fork_resource_pressure": False,
+                   "observability_only": True,
+                   "warn": sycode_ready_backlog.get("warn", False)})
+
+    # Boards whose oldest ready task exceeds READY_BACKLOG_WARN_DAYS (observability
+    # only — never a BLOCK cause). Each entry: (board, oldest_task_id, age_days).
+    warn_boards: list[tuple[str, str | None, float | None]] = []
+    for _bl in (ready_backlog, sycode_ready_backlog):
+        if _bl.get("warn"):
+            _b: str = _bl.get("board") or "unknown"  # type: ignore[assignment]
+            _tid: str | None = _bl.get("oldest_ready_task_id")
+            _age: float | None = _bl.get("oldest_ready_age_days")
+            warn_boards.append((_b, _tid, _age))
 
     # Fork resource pressure: a transient fork()/EAGAIN stall anywhere. This is
     # NOT a real infra failure and must NOT crash the probe or mask a genuine
@@ -606,13 +691,20 @@ def main() -> int:
     record = {
         "ts": now.isoformat(),
         "profile": PROFILE,
-        "verdict": "BLOCK" if blocked else ("DEGRADED" if degraded else "PASS"),
+        "verdict": ("BLOCK" if blocked else
+                    "DEGRADED" if degraded else
+                    "WARN" if warn_boards else "PASS"),
         "infra_failed": [c["name"] for c in infra_failed],
         "mechanism_overall": mech.get("overall"),
         "mechanism_dead": mech.get("dead"),
         "kanban_crash_count": crash_count,
         "kanban_crash_stale": stale_count,
         "jarvis_ready_backlog": ready_backlog,
+        "sycode_trading_ready_backlog": sycode_ready_backlog,
+        "ready_backlog_warn_boards": [
+            {"board": b, "oldest_ready_task_id": t, "oldest_ready_age_days": a}
+            for (b, t, a) in warn_boards
+        ],
         "fork_resource_pressure": fork_pressure,
         "fork_failed": fork_failed,
         "checks": checks,
@@ -667,19 +759,42 @@ def main() -> int:
     # unified_health_alert.last with verdict:PASS + ts. This is the airtight
     # half of RCA t_bd0828fe step #4: after recovery a prior BLOCK can never
     # be replayed, because the .last artifact is overwritten on EVERY run.
-    if not blocked:
-        body = (
-            f"🟢 UNIFIED FLEET HEALTH — {now.isoformat()} — VERDICT: PASS\n"
-            f"\n"
-            f"## Infra checks ({sum(1 for c in checks if c['ok'])}/{len(checks)} ok)\n"
-            + "\n".join(f"  - {c['name']}: {c['detail']}" for c in checks)
-            + f"\n\nmechanism={mech.get('overall','n/a')} "
-              f"active_crashes={crash_count} stale_crashes={stale_count} "
-              f"ready_backlog={ready_backlog.get('ready_total')} "
-              f"devops_ready={ready_backlog.get('devops_ready_count')}"
-        )
-        # GUARANTEED LOCAL ARTIFACT — stamp PASS every run so a prior BLOCK
-        # can never be replayed after recovery (stale-replay fix).
+    if not blocked and not degraded:
+        # Observability-only backlog age may degrade PASS -> WARN without ever
+        # BLOCKing (t_bf11a0ce). WARN names the board + oldest ready task id.
+        verdict = "WARN" if warn_boards else "PASS"
+        emoji = "🟠" if verdict == "WARN" else "🟢"
+        lines = [
+            f"{emoji} UNIFIED FLEET HEALTH — {now.isoformat()} — VERDICT: {verdict}",
+            "",
+            f"## Infra checks ({sum(1 for c in checks if c['ok'])}/{len(checks)} ok)",
+        ]
+        for c in checks:
+            lines.append(f"  - {c['name']}: {c['detail']}")
+        lines.append("")
+        lines.append("## Ready backlog telemetry (observability-only, NOT a BLOCK cause)")
+        for _bl in (ready_backlog, sycode_ready_backlog):
+            if _bl.get("available"):
+                lines.append(f"  - {_bl.get('board')}: {_bl.get('detail')}")
+                lines.append(f"      top_ready_ids={_bl.get('top_ready_ids')} "
+                             f"top_devops_ready_ids={_bl.get('top_devops_ready_ids')}")
+            else:
+                lines.append(f"  - {_bl.get('board')}: {_bl.get('detail')}")
+        if warn_boards:
+            lines.append("")
+            lines.append(f"## Ready-backlog WARN (oldest_ready > {READY_BACKLOG_WARN_DAYS}d)")
+            for (b, t, a) in warn_boards:
+                lines.append(f"  - {b}: oldest_ready={t} age_days={a}")
+            lines.append("      action: route to PM/devops for review-merge; "
+                         "not an infra outage.")
+        lines.append("")
+        lines.append(f"mechanism={mech.get('overall','n/a')} "
+                     f"active_crashes={crash_count} stale_crashes={stale_count} "
+                     f"ready_backlog={ready_backlog.get('ready_total')} "
+                     f"devops_ready={ready_backlog.get('devops_ready_count')}")
+        body = "\n".join(lines)
+        # GUARANTEED LOCAL ARTIFACT — stamp every run so a prior BLOCK can never
+        # be replayed after recovery (stale-replay fix, t_bd0828fe step #4).
         alert_file = CRON_OUTPUT / "unified_health_alert.last"
         try:
             alert_file.write_text(body + "\n", encoding="utf-8")
@@ -717,10 +832,19 @@ def main() -> int:
         lines.append("## fork_resource_pressure (also present, non-fatal): "
                      f"{', '.join(fork_failed)}")
     lines.append("")
-    lines.append("## Jarvis ready backlog telemetry (observability-only, NOT a BLOCK cause)")
-    lines.append(f"  - {ready_backlog.get('detail')}")
-    lines.append(f"  - top_ready_ids={ready_backlog.get('top_ready_ids')} "
-                 f"top_devops_ready_ids={ready_backlog.get('top_devops_ready_ids')}")
+    lines.append("## Ready backlog telemetry (observability-only, NOT a BLOCK cause)")
+    for _bl in (ready_backlog, sycode_ready_backlog):
+        if _bl.get("available"):
+            lines.append(f"  - {_bl.get('board')}: {_bl.get('detail')}")
+            lines.append(f"      top_ready_ids={_bl.get('top_ready_ids')} "
+                         f"top_devops_ready_ids={_bl.get('top_devops_ready_ids')}")
+        else:
+            lines.append(f"  - {_bl.get('board')}: {_bl.get('detail')}")
+    if warn_boards:
+        lines.append("")
+        lines.append(f"## Ready-backlog WARN (oldest_ready > {READY_BACKLOG_WARN_DAYS}d)")
+        for (b, t, a) in warn_boards:
+            lines.append(f"  - {b}: oldest_ready={t} age_days={a}")
     lines.append("")
     lines.append("Single escalation path. Classify + route via devops/os-reviewer. "
                  "Do NOT self-heal from this alert.")
@@ -750,6 +874,11 @@ def main() -> int:
                 "kanban_crash_count": crash_count,
                 "kanban_crash_stale": stale_count,
                 "jarvis_ready_backlog": ready_backlog,
+                "sycode_trading_ready_backlog": sycode_ready_backlog,
+                "ready_backlog_warn_boards": [
+                    {"board": b, "oldest_ready_task_id": t, "oldest_ready_age_days": a}
+                    for (b, t, a) in warn_boards
+                ],
                 "fork_resource_pressure": fork_pressure,
                 "fork_failed": fork_failed,
             }, sort_keys=True) + "\n")

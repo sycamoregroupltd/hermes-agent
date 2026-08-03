@@ -12,9 +12,10 @@ engine behind a live alert (high churn) and a weekly death-rate report.
 import argparse
 import json
 import os
-import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 BOARDS = {
     "upero": "/home/frank/.hermes/kanban/boards/upero/kanban.db",
@@ -28,8 +29,7 @@ WINDOW_DAYS = 14  # measurement window for churn/death rates
 
 
 def q(db, sql, args=()):
-    con = sqlite3.connect(db)
-    con.row_factory = sqlite3.Row
+    con = kb.connect(db_path=Path(db))
     try:
         rows = con.execute(sql, args).fetchall()
     finally:

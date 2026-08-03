@@ -134,7 +134,7 @@ def fetch_blocked_tasks(board: str, now_epoch: int) -> list[dict]:
         return []
     cutoff = now_epoch - MAX_AGE_MINUTES * 60
     try:
-        conn = sqlite3.connect(db)
+        conn = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """

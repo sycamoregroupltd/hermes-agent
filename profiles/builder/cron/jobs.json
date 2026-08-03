@@ -1,3 +1,103 @@
 {
-  "jobs": []
+  "jobs": [
+    {
+      "id": "8caee5cb94fc",
+      "name": "soak-T+6h-blocked-state-reviewer-routing",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "soak-check-t6.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-07-29T06:00:00+01:00",
+        "display": "once at 2026-07-29 06:00"
+      },
+      "schedule_display": "once at 2026-07-29 06:00",
+      "repeat": {
+        "times": 1
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-01T12:00:00.000000+00:00",
+      "paused_reason": "untracked once-shot soak check retired by t_3069585f",
+      "created_at": "2026-07-29T01:06:23.052104+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "fb6e2f12e2ba",
+      "name": "soak-T+12h-blocked-state-reviewer-routing",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "soak-check-t12.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-07-29T12:00:00+01:00",
+        "display": "once at 2026-07-29 12:00"
+      },
+      "schedule_display": "once at 2026-07-29 12:00",
+      "repeat": {
+        "times": 1
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-01T12:00:00.000000+00:00",
+      "paused_reason": "untracked once-shot soak check retired by t_3069585f",
+      "created_at": "2026-07-29T01:06:32.797793+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "1e2688012801",
+      "name": "soak-T+24h-FINAL-blocked-state-reviewer-routing",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "soak-check-t24.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-07-30T00:00:00+01:00",
+        "display": "once at 2026-07-30 00:00"
+      },
+      "schedule_display": "once at 2026-07-30 00:00",
+      "repeat": {
+        "times": 1
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-01T12:00:00.000000+00:00",
+      "paused_reason": "untracked once-shot soak check retired by t_3069585f",
+      "created_at": "2026-07-29T01:06:33.813083+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    }
+  ]
 }

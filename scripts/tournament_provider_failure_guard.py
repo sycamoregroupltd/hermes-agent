@@ -66,7 +66,7 @@ def backup_and_pause_job(jobs_path: Path, raw: Any, target_job_id: str, reason: 
 def task_comments_contain(board: str, task_id: str, pattern: re.Pattern[str]) -> bool:
     db = Path(f"/home/frank/.hermes/kanban/boards/{board}/kanban.db")
     if not db.exists(): return False
-    con = sqlite3.connect(str(db))
+    con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
     try:
         for (body,) in con.execute("SELECT body FROM task_comments WHERE task_id=? ORDER BY created_at DESC LIMIT 80", (task_id,)):
             if pattern.search(body or ""): return True
@@ -87,7 +87,7 @@ def scan_spawn_failures(boards: list[str], since_seconds: int = 86400) -> list[d
     for board in boards:
         db = Path(f"/home/frank/.hermes/kanban/boards/{board}/kanban.db")
         if not db.exists(): continue
-        con = sqlite3.connect(str(db)); con.row_factory = sqlite3.Row
+        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True); con.row_factory = sqlite3.Row
         try:
             sql = """
             SELECT id,title,status,assignee,last_failure_error,consecutive_failures,started_at,created_at

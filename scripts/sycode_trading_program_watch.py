@@ -4,11 +4,9 @@ No-agent cron script: prints only on first baseline, state changes, completions,
 """
 
 import json
-import os
-import sqlite3
 import time
 from pathlib import Path
-
+from hermes_cli import kanban_db as kb
 DB = Path("/home/frank/.hermes/kanban/boards/sycode-trading/kanban.db")
 STATE = Path("/home/frank/.hermes/cron/state/sycode_trading_program_watch.json")
 TASK_IDS = [
@@ -26,8 +24,7 @@ if not DB.exists():
     print(f"SYCODE_PROGRAM_WATCH ERROR: board DB missing at {DB}")
     raise SystemExit(0)
 
-con = sqlite3.connect(DB)
-con.row_factory = sqlite3.Row
+con = kb.connect(db_path=DB)
 rows = con.execute(
     f"select id,title,status,assignee,worker_pid,last_heartbeat_at,last_failure_error,completed_at from tasks where id in ({','.join('?' for _ in TASK_IDS)}) order by priority desc",
     TASK_IDS,

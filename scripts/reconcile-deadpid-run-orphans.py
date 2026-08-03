@@ -35,9 +35,10 @@ Usage:
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 import time
+from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 KANBAN_HOME = os.environ.get("HERMES_KANBAN_HOME", "/home/frank/.hermes/kanban")
 TERMINAL_STATUSES = ("done", "archived", "cancelled")
@@ -134,8 +135,7 @@ def reconcile_board(slug: str, db_path: str, dry_run: bool) -> dict:
     out = {"board": slug, "db": db_path, "to_close": 0, "closed": 0,
            "escalations": 0, "live_skipped": 0}
     try:
-        ro = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
-        ro.row_factory = sqlite3.Row
+        ro = kb.connect(db_path=Path(db_path))
         try:
             terminal_orphans, nonterminal_dead, live_skipped = _find_runs(ro)
         finally:
@@ -161,8 +161,7 @@ def reconcile_board(slug: str, db_path: str, dry_run: bool) -> dict:
         return out
 
     try:
-        w = sqlite3.connect(f"file:{db_path}?mode=rwc", uri=True, timeout=30)
-        w.row_factory = sqlite3.Row
+        w = kb.connect(db_path=Path(db_path))
         w.isolation_level = None
         try:
             w.execute("BEGIN IMMEDIATE")

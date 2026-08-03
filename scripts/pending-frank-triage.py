@@ -12,12 +12,13 @@ import argparse
 import hashlib
 import os
 import re
-import sqlite3
+import sqlite3  # type-only: sqlite3.Connection annotations
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from hermes_cli import kanban_db as kb
 
 BOARDS_DIR = Path(
     os.environ.get("KANBAN_BOARDS_DIR", "/home/frank/.hermes/kanban/boards")
@@ -137,6 +138,90 @@ CRITICAL_POSITIVE_OVERRIDE = re.compile(
     r"\b(unauthorized|secret reference|no matching approval|rotate|copying? secrets?|creating? credentials?)\b",
     re.I,
 )
+# --- Seventh Frank-only shape: authority-reserved decision cards ---------------
+# The six-critical-list keyword set (money / credentials / live-trading /
+# irreversible-data / prod-deploy / new-spend) cannot see a card whose Frank-only
+# character comes from *authority reservation* rather than blast radius: e.g.
+# "unpark authority is reserved to the owning seat or Frank". Those cards aged
+# silently in the delegated/report tail (fixture: sycode-trading/t_d2b2dbbc).
+#
+# The rule is deliberately COMPOUND — a card qualifies only when it BOTH
+#   (a) states that some authority is reserved/restricted to a named principal
+#       (Frank or an owning terminal seat), and
+#   (b) explicitly requests a decision (DECISION title prefix, a
+#       DECISION-REQUESTED-BY marker, or a "Frank to decide / options for Frank"
+#       phrasing).
+# (a) alone would sweep in every terminal-lane parked card whose park comment
+# merely restates the lane rule; (b) alone would sweep in ordinary review cards.
+AUTHORITY_RESERVATION_RE = re.compile(
+    r"\b(?:unpark|un-park|park|release|unblock|remap|reassign|disposition|dispatch|resolution|override|approval)?\s*"
+    r"authority\b[^.\n]{0,90}?\b(?:reserved|restricted|exclusive|belongs solely|rests solely|held solely|sole)\b"
+    r"|\b(?:reserved|restricted|limited)\s+(?:solely\s+|exclusively\s+)?(?:to|by)\b[^.\n]{0,60}?\bauthority\b"
+    r"|\b(?:only|solely)\s+(?:Frank|the owning seat|the seat)\s+(?:may|can|is able to)\b",
+    re.I,
+)
+AUTHORITY_PRINCIPAL_RE = re.compile(
+    r"\bFrank\b|\bowning (?:terminal )?seat\b|\bterminal[- ]lane seat\b|\bthe seat\b|\brepo owner\b",
+    re.I,
+)
+DECISION_REQUEST_TITLE_RE = re.compile(
+    r"^\s*(?:\[[^\]]{0,24}\]\s*)?(?:CEO\s+)?DECISION\s*[(:\-\u2014]",
+    re.I,
+)
+DECISION_REQUEST_BODY_RE = re.compile(
+    r"\bDECISION[-_ ]REQUESTED[-_ ]BY\b"
+    r"|\bOptions? for (?:Frank|the (?:owning )?seat)\b"
+    r"|\bFrank(?:\s*/\s*\w+)?\s+to\s+(?:confirm|decide|choose|call|rule)\b"
+    r"|\bawaiting (?:a )?(?:Frank|seat)(?:'s)?\s+decision\b"
+    r"|\bneeds? (?:a |an )?(?:explicit )?(?:Frank|seat|owner)[- ]?(?:only )?decision\b",
+    re.I,
+)
+# Captures the by-when date so Elon's batch shows the deadline, not just the shape.
+DECISION_DUE_RE = re.compile(
+    r"\bDECISION[-_ ]REQUESTED[-_ ]BY\b\s*[:\-\u2014]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}[^\n)]{0,40})",
+    re.I,
+)
+
+
+AUTHORITY_RULE_ENABLED = os.environ.get("PENDING_FRANK_AUTHORITY_RULE", "1") != "0"
+
+
+def authority_reserved_match(title: str, blob: str) -> tuple[str, str] | None:
+    """Return (label, snippet) when a card is an authority-reserved Frank-only decision.
+
+    Requires an authority-reservation statement whose *own line* also names the
+    reserving principal, PLUS an explicit decision request. Line-scoped principal
+    matching stops an unrelated "Frank" mention elsewhere in a long thread from
+    manufacturing a match.
+
+    Set PENDING_FRANK_AUTHORITY_RULE=0 to disable (A/B comparison + rollback).
+    """
+    if not AUTHORITY_RULE_ENABLED:
+        return None
+    reservation: str | None = None
+    for line in blob.splitlines():
+        if AUTHORITY_RESERVATION_RE.search(line) and AUTHORITY_PRINCIPAL_RE.search(line):
+            reservation = re.sub(r"\s+", " ", line).strip()
+            break
+    if not reservation:
+        return None
+    requested = bool(DECISION_REQUEST_TITLE_RE.search(title or ""))
+    request_ev = "title prefix DECISION(...)" if requested else ""
+    if not requested:
+        m = DECISION_REQUEST_BODY_RE.search(blob)
+        if not m:
+            return None
+        request_ev = re.sub(r"\s+", " ", m.group(0)).strip()
+    due = DECISION_DUE_RE.search(blob)
+    due_ev = ""
+    if due:
+        due_ev = " || DECISION-REQUESTED-BY: " + re.sub(r"\s+", " ", due.group(1)).strip()
+    return (
+        "authority-reserved-decision",
+        f"{reservation[:220]} || decision-request: {request_ev}{due_ev}",
+    )
+
+
 AMBIGUOUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "human-approval-mentioned-but-not-six-critical",
@@ -172,17 +257,11 @@ class TaskEvidence:
 
 
 def safe_connect(db: Path) -> sqlite3.Connection | None:
+    """Open a board DB via kanban_db.connect() — handles WAL, init, integrity checks."""
+    if not db.is_file():
+        return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=rw", uri=True, timeout=2)
-        row = con.execute("PRAGMA integrity_check").fetchone()
-        if not row or row[0] != "ok":
-            print(
-                f"WARN: skipping corrupt board db {db}: integrity_check={row[0] if row else 'missing'}",
-                file=sys.stderr,
-            )
-            con.close()
-            return None
-        return con
+        return kb.connect(db_path=db)
     except Exception as exc:
         print(f"WARN: cannot open {db}: {exc}", file=sys.stderr)
         return None
@@ -338,6 +417,12 @@ def classify(t: TaskEvidence) -> tuple[str, list[str]]:
         return "critical-list", [
             f"{label}: {snippet}" for label, snippet in critical[:3]
         ]
+    # Seventh Frank-only shape: authority reserved to Frank / an owning seat AND an
+    # explicit decision request. Evaluated after the six-critical list (which wins on
+    # blast radius) but before delegated-review, so these stop aging in the tail.
+    authority = authority_reserved_match(t.title, blob)
+    if authority:
+        return "critical-list", [f"{authority[0]}: {authority[1]}"]
     ambiguous = first_matches(AMBIGUOUS_PATTERNS, blob)
     if ambiguous:
         return "ambiguous", [f"{label}: {snippet}" for label, snippet in ambiguous[:3]]

@@ -922,5 +922,106 @@
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; fix marketplace dashboard page component.",
     "metadata": {"changed_files": ["/home/frank/obsidian-fleet-vault/Governance/2026-07-23-review-marketplace.md"]},
     "description": "BLOCK: paired negative. Body uses APP_IMPL_PATTERNS verb+surface, step 2 fires before source-review override."
+  },
+  {
+    "name": "goal-judge-provider-error-no-override-blocks",
+    "task_id": "t_goal_judge_provider_error_fixture",
+    "expected": "block",
+    "expected_class": "not_web",
+    "title": "FIX: goal-judge provider errors trap verified-complete cards",
+    "body": "Reopen verified task sycode-trading/t_ce1aab87 because goal-judge returned GeminiAPIError/NotFoundError during completion. Review child t_f3c8db8b is done with REVIEW_VERDICT=APPROVED, but completion is blocked by the judge. No operator/docs/governance override marker is present in this completion payload.",
+    "summary": "GeminiAPIError/NotFoundError preserved; no override marker; needs terminal evidence/review handoff",
+    "metadata": {
+      "changed_files": []
+    },
+    "description": "BLOCK: exact goal-judge provider-error trap fixture; fail-closed quarantine applies unless explicit verified-review override evidence is present."
+  },
+  {
+    "name": "goal-judge-provider-error-incomplete-override-blocks",
+    "task_id": "t_goal_judge_incomplete_override_fixture",
+    "expected": "block",
+    "expected_class": "not_web",
+    "title": "Close verified goal-judge provider-error trap with incomplete override",
+    "body": "Goal-judge provider-error trap task with GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE only; missing REVIEW_VERDICT=APPROVED and reviewed task evidence markers. Completion should still fail closed.",
+    "summary": "Incomplete override marker; failure lane preserved",
+    "metadata": {
+      "changed_files": []
+    },
+    "description": "BLOCK: override marker without APPROVED verdict/evidence is insufficient; quarantine lane remains."
+  },
+  {
+    "name": "goal-judge-provider-error-verified-review-override-allows",
+    "task_id": "t_goal_judge_verified_override_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "Close verified goal-judge provider-error trap with evidence override",
+    "body": "Goal-judge provider-error trap completion with GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE, REVIEW_VERDICT=APPROVED, and reviewed task evidence path in metadata. Non-terminal state was caused only by external judge/provider error; source/runtime/DB state is terminal-review-ready.",
+    "summary": "GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE + REVIEW_VERDICT=APPROVED + reviewed task evidence present; completion allowed through evidence override",
+    "metadata": {
+      "changed_files": [],
+      "evidence": [
+        "REVIEW_VERDICT=APPROVED",
+        "reviewed task evidence path present",
+        "terminal review state unblocked by provider error only"
+      ]
+    },
+    "description": "ALLOW: complete evidence override for goal-judge provider-error trap; explicit marker + APPROVED verdict + evidence terms satisfy the operator override boundary while preserving default fail-closed behavior."
+  },
+  {
+    "name": "goal-judge-provider-error-paired-frontend-negative-blocks",
+    "task_id": "t_goal_judge_frontend_negative_fixture",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Build frontend goal-judge provider-error status page",
+    "body": "Implement apps/web React route component and page layout for goal-judge provider-error quarantine status. Completion quotes the goal-judge provider-error override lane and GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE wording, but this is concrete frontend UI work and no running-app VERIFY_PASS is supplied.",
+    "summary": "Frontend route/page work using goal-judge override wording; still requires running-app VERIFY_PASS",
+    "metadata": {
+      "changed_files": ["apps/web/src/app/goal-judge-status/page.tsx"]
+    },
+    "description": "BLOCK: paired frontend negative for goal-judge provider-error override wording; concrete apps/web route/page work remains blocked without VERIFY_PASS."
+  },
+  {
+    "name": "goal-judge-provider-error-child-review-verdict-still-blocks",
+    "task_id": "t_goal_judge_child_verdict_fixture",
+    "expected": "block",
+    "expected_class": "not_web",
+    "title": "Reopen goal-judge provider-error trap that quotes a child review verdict",
+    "body": "Goal-judge returned a provider-error during completion of this card. Review source task child t_f3c8db8b is done with REVIEW_VERDICT=APPROVED, and the review source task reference is quoted here for context only. No GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE marker is present, so the fail-closed quarantine lane must still apply.",
+    "summary": "Child review REVIEW_VERDICT=APPROVED quoted; no operator override marker supplied",
+    "metadata": {
+      "changed_files": []
+    },
+    "description": "BLOCK: regression guard for t_f31ab4c4 — a CHILD REVIEW_VERDICT=APPROVED phrase must not reclassify a goal-judge provider-error trap as readonly_nonapp and fail open. Fixture id is deliberately NON-hex to also guard the removed task-id-format prerequisite on the shell trap."
+  },
+  {
+    "name": "t_cdeab9c4-source-pr-review-guc-bypass-allows",
+    "task_id": "t_cdeab9c4_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "Review PR #752 — DataRetentionService append-only bypass fix (exact-SHA review required)",
+    "body": "Review PR #752: fixes trg_signal_pnl_points_append_only raising SQLSTATE 23514 on retention deletes by adding SET LOCAL app.bypass_append_only='true' inside the retention transaction. Also fixes the trigger function to return OLD (not NEW) for DELETE operations. Changes: Migration 0115, DataRetentionService.ts, tests. Review gates: exact-SHA code review, CI evidence, verdict REVIEW_VERDICT=approve or changes_requested. After APPROVED: route to Frank for merge + deploy approval (proof-boundary gate).",
+    "summary": "REVIEW_VERDICT=APPROVED at exact SHA d4a5eda8; PR #752 MERGED 2026-07-28 (acfea2db); migration 0115 NOT applied to live DB (Frank-gated deploy child t_48ea3e4b); paper-only review, no frontend/web/app surface touched.",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/obsidian/sycode-trading/Reviews/task-evidence/2026-08-03-t_cdeab9c4-pr752-review.md"
+      ],
+      "verdict": "APPROVED"
+    },
+    "description": "ALLOW: real t_cdeab9c4 regression — a paper-only source PR review whose body quotes the PostgreSQL GUC app.bypass_append_only must NOT be misclassified as frontend/app implementation; it routes through the source-review readonly_nonapp lane. Paired negative below proves the same GUC wording attached to concrete apps/web work still blocks."
+  },
+  {
+    "name": "t_cdeab9c4-paired-frontend-guc-bypass-negative-blocks",
+    "task_id": "t_cdeab9c4_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Fix frontend app bypass settings page",
+    "body": "Implement apps/web React dashboard route component and page layout for retention bypass settings. The page renders app.bypass_append_only GUC state. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "frontend bypass settings page implemented; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/retention-bypass/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_cdeab9c4 GUC allow terms; concrete apps/web route/page work must still require running-app VERIFY_PASS even when it mentions the app.bypass_append_only GUC."
   }
 ]

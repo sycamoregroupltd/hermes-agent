@@ -14,6 +14,7 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 KANBAN_DIR = Path(os.environ.get("KANBAN_BOARDS_DIR", os.path.expanduser("~/.hermes/kanban/boards")))
 
@@ -30,7 +31,7 @@ def install_guard(db_path: Path, dry_run: bool = False) -> bool:
     """Install the integer-created_at trigger. Returns True if installed/changed."""
     board = db_path.parent.name
     try:
-        conn = sqlite3.connect(str(db_path))
+        conn = kb.connect(db_path=db_path)
         # Check if trigger already exists
         existing = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND name='guard_comment_created_at_integer'"
@@ -76,7 +77,7 @@ def verify_guard_works(db_path: Path) -> bool:
     """Prove the trigger actually blocks text created_at."""
     board = db_path.parent.name
     try:
-        conn = sqlite3.connect(str(db_path))
+        conn = kb.connect(db_path=db_path)
         # Try to insert a row with text created_at — should fail
         try:
             conn.execute(

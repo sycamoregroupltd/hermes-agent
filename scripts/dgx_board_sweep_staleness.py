@@ -45,7 +45,17 @@ from datetime import datetime, timezone
 # Canonical board roots. Each board is a directory under the kanban boards home
 # containing a kanban.db. Board name == directory name == the board the kernel
 # resolves from HERMES_KANBAN_BOARD.
-BOARDS = ["jarvis-os", "upero", "sycode-trading", "sycode-ai", "yorkstone-supplies"]
+# Board list is DATA (t_911a916c): single source is the fleet boards manifest
+# ~/.hermes/kanban/boards-manifest.json, read via fleet_boards.py. The sweep
+# flag includes dormant boards (they still get read-only staleness reporting)
+# but never the denied orchestrator-sync bus.
+sys.path.insert(0, "/home/frank/.hermes/scripts")
+try:
+    from fleet_boards import boards_for as _boards_for  # type: ignore
+
+    BOARDS = _boards_for("sweep")
+except Exception:
+    BOARDS = ["jarvis-os", "upero", "sycode-trading", "sycode-ai", "yorkstone-supplies"]
 
 # Where the board DBs live. Override via HERMES_KANBAN_HOME if needed.
 KANBAN_HOME = os.environ.get(

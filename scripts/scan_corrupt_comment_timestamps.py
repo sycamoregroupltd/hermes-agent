@@ -18,6 +18,7 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 KANBAN_DIR = Path(os.environ.get("KANBAN_BOARDS_DIR", os.path.expanduser("~/.hermes/kanban/boards")))
 
@@ -39,7 +40,7 @@ def scan_board(db_path: Path, fix: bool = False) -> list[dict]:
     corrupt: list[dict] = []
     board = db_path.parent.name
     try:
-        conn = sqlite3.connect(str(db_path))
+        conn = kb.connect(db_path=db_path)
         conn.row_factory = sqlite3.Row
         # SQLite's typeof() returns 'integer' or 'text'
         rows = conn.execute(

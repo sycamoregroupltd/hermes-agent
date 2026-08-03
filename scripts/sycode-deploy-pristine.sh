@@ -84,7 +84,10 @@ fi
 # host `supabase-db`, which does NOT resolve from the host → the advisory-lock psql fails and
 # migrate.sh falsely reports "another migration in progress". Staging .env.prod fixes the lock check.
 # [opus48 seat 2026-07-08: root-caused during first supervised real deploy of #413]
-ENV_FILES=(".env" "server/.env" "server/.env.prod")
+# monitoring/prometheus/.metrics_token: PR #868 made /etc/prometheus a DIRECTORY mount of
+# $TREE/monitoring/prometheus — the gitignored scrape token must live inside that dir or
+# prometheus loses authed scraping of sycodetrading-server. [fable 2026-08-02 t_c51a342c]
+ENV_FILES=(".env" "server/.env" "server/.env.prod" "monitoring/prometheus/.metrics_token")
 
 PASS=()
 while [[ $# -gt 0 ]]; do
@@ -144,6 +147,10 @@ SYCODE_REPO="$TREE" SYCODE_CONFIG_DIR="$CONFIG_DIR" bash "$SEED_SCRIPT" && \
 for f in "${ENV_FILES[@]}"; do
   if [[ -f "$SHARED/$f" ]]; then
     install -D -m 600 "$SHARED/$f" "$TREE/$f"
+    # the prometheus scrape token must stay readable by the container's
+    # non-root user (prometheus runs as nobody) — 600 breaks scraping with
+    # "unable to read authorization credentials file". [fable 2026-08-02]
+    [[ "$f" == "monitoring/prometheus/.metrics_token" ]] && chmod 644 "$TREE/$f"
     echo "[pristine] staged $f"
   else
     echo "[pristine] WARN: $SHARED/$f absent — compose may fail if required" >&2

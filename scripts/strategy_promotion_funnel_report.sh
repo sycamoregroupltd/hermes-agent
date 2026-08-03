@@ -21,7 +21,13 @@ mkdir -p "$PERFORMANCE_DIR"
 cd "$REPO"
 
 # ---- 1. Server health ----
-SERVER_OK=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ready 2>/dev/null || echo "000")
+# curl -w prints 000 itself on connect failure; a || echo fallback would double it
+# into 000000 (leading-zero invalid JSON — broke the 2026-08-01 run).
+SERVER_OK=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://localhost:3001/ready 2>/dev/null || true)
+SERVER_OK=${SERVER_OK:-000}
+
+# Emit a number only if the value is numeric; unknown becomes null, never a fabricated 0.
+num_or_null() { [[ "${1:-}" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] && printf '%s' "$1" || printf 'null'; }
 
 # ---- 2. Signal pipeline (24h) ----
 PG_QUERY="docker exec sycodetrading-supabase-db psql -h localhost -U postgres -d postgres -t -A -F'|'"
@@ -105,12 +111,12 @@ FLEET=$(docker ps --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null)
 cat > "$JSON_REPORT" << JSONEOF
 {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "server_ready": $SERVER_OK,
+  "server_ready": "$SERVER_OK",
   "pipeline": {
-    "new_journeys_24h": ${NEW_JOURNEYS:-0},
-    "open_positions": ${OPEN_POSITIONS:-0},
-    "clean_closes_24h": ${CLEAN_CLOSES:-0},
-    "pnl_24h": ${PNL_24H:-0}
+    "new_journeys_24h": $(num_or_null "${NEW_JOURNEYS:-}"),
+    "open_positions": $(num_or_null "${OPEN_POSITIONS:-}"),
+    "clean_closes_24h": $(num_or_null "${CLEAN_CLOSES:-}"),
+    "pnl_24h": $(num_or_null "${PNL_24H:-}")
   },
   "openclaw_status": $(echo "$OPENCLAW_STATUS" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)))" 2>/dev/null || echo '"unreachable"'),
   "auto_trader": $(echo "$AUTO_TRADER" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)))" 2>/dev/null || echo '"unreachable"'),
@@ -146,7 +152,7 @@ ${CLEAN_COHORT_PROGRESS}
 \`\`\`
 
 ## Named JSON Consumer
-- elon-governor-sweep gate evidence reads `/home/frank/sycode-trading/reports/strategy-promotion-funnel/latest.json` as the paper-only funnel status before claiming readiness.
+- elon-governor-sweep gate evidence reads \`/home/frank/sycode-trading/reports/strategy-promotion-funnel/latest.json\` as the paper-only funnel status before claiming readiness.
 
 ## OpenClaw Status
 \`\`\`json

@@ -38,14 +38,18 @@ send_alert() {
     fi
     rc=$?
     echo "[$now_iso] ALERT-FAILED target=$ALERT_TARGET rc=$rc subject=$subject" >> "$LOG_FILE"
-    # WhatsApp fallback — cross-channel failover for critical alerts
-    WA_TARGET="${OOB_CANARY_WA_FALLBACK:-whatsapp:Frank}"
-    if hermes send -q -t "$WA_TARGET" -s "🔁 FAILOVER: $subject" "$body"; then
-        echo "[$now_iso] ALERT-FAILOVER-OK target=$WA_TARGET subject=$subject" >> "$LOG_FILE"
-    else
-        wa_rc=$?
-        echo "[$now_iso] ALERT-FAILOVER-FAILED target=$WA_TARGET rc=$wa_rc subject=$subject" >> "$LOG_FILE"
-    fi
+    # Cross-channel failover for critical alerts. 2026-07-29 (opus5): this used to
+    # fail over ONLY to whatsapp:Frank, which has been 100% dead since 07-26 (session
+    # logged out) — so a discord outage meant the alert reached nobody. Telegram is
+    # appended as a live last resort; whatsapp stays first so it self-heals on re-pair.
+    for fb in ${OOB_CANARY_FALLBACKS:-whatsapp:Frank telegram:506972405}; do
+        if hermes send -q -t "$fb" -s "🔁 FAILOVER: $subject" "$body"; then
+            echo "[$now_iso] ALERT-FAILOVER-OK target=$fb subject=$subject" >> "$LOG_FILE"
+            return 0
+        fi
+        echo "[$now_iso] ALERT-FAILOVER-FAILED target=$fb rc=$? subject=$subject" >> "$LOG_FILE"
+    done
+    echo "[$now_iso] ALERT-UNDELIVERED subject=$subject — every channel failed" >> "$LOG_FILE"
     return "$rc"
 }
 

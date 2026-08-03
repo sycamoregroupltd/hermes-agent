@@ -1,36 +1,3 @@
 {
-  "jobs": [
-    {
-      "id": "12d794c4d7af",
-      "name": "regime-signal",
-      "prompt": "Run the composite regime signal pipeline: execute /home/frank/sycode-trading/reports/orthogonal-capture/run_composite_signal.sh. This computes the regime signal from orthogonal capture data, logs it, and inserts the result into signal_journeys + signal_journey_events as an Observable event. No user interaction needed. Report any failures.",
-      "skills": [],
-      "skill": null,
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
-      "provider_snapshot": "openai-codex",
-      "model_snapshot": "gpt-5.5",
-      "script": null,
-      "no_agent": false,
-      "context_from": null,
-      "schedule": {
-        "kind": "once",
-        "run_at": "2026-07-04T17:35:27.344758+01:00",
-        "display": "once in 15m"
-      },
-      "schedule_display": "once in 15m",
-      "repeat": {
-        "times": 1
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-04T17:20:20.515384+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-trading/reports/orthogonal-capture"
-    }
-  ]
+  "jobs": []
 }

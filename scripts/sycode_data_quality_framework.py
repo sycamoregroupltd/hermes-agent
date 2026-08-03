@@ -20,7 +20,7 @@ import csv
 import io
 import json
 import os
-import sqlite3
+from hermes_cli import kanban_db as kb
 import subprocess
 import sys
 import tempfile
@@ -622,7 +622,7 @@ def query_last_task(idempotency_key):
         return None
         
     try:
-        conn = sqlite3.connect(db_path)
+        conn = kb.connect(db_path=db_path)
         cursor = conn.cursor()
         cursor.execute(
             """
@@ -1050,7 +1050,7 @@ def query_active_diag_cards(priority=None):
     if not os.path.exists(db_path):
         return []
     try:
-        conn = sqlite3.connect(db_path)
+        conn = kb.connect(db_path=db_path)
         cursor = conn.cursor()
         if priority is None:
             cursor.execute(

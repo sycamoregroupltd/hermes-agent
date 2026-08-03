@@ -28,7 +28,12 @@ tar --use-compress-program='gzip -1' -cf "$DEST/hermes-state.tar.gz" -C "$HOME" 
     --exclude='*/node_modules' --exclude='*/.next/cache' \
     --exclude='*/.vscode-server-extensions' --exclude='*/.turbo' \
     --exclude='*/coverage' --exclude='*/dist' --exclude='*.tsbuildinfo' \
-    --exclude='.hermes/kanban/boards/*/workspaces' \
+    --exclude='.hermes/kanban' \
+    --exclude='.hermes/worktrees' --exclude='.hermes/venvs' --exclude='.hermes/staging' \
+    --exclude='.hermes/audit' --exclude='.hermes/state-snapshots' \
+    --exclude='.hermes/profiles/*/state-snapshots' \
+    --exclude='.hermes/profiles/*/state.db' --exclude='.hermes/profiles/*/state.db-*' \
+    --exclude='.hermes/hermes-agent-wt-*' \
     .hermes 2>/dev/null || true
 
 echo "$TS" > "$HOME/fleet-backups/LATEST"

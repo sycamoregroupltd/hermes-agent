@@ -34,6 +34,39 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "26b52f81cad3",
+      "name": "microstructure-data-monitor",
+      "prompt": "You are the microstructure-data-monitor cron job. You decide whether the microstructure IC test has a testable sample yet, and create the IC re-run kanban task ONLY when it does.\n\nThe attached script (microstructure-data-monitor.sh) has already run and its stdout is in your context. It invokes the tracked measurement script /home/frank/sycode-trading/scripts/microstructure/paired-sample-gate.py and prints a summary line of the form:\n\n  MICROSTRUCTURE_MONITOR: paired_n=<n>/200 | staleness_tol=5m | clean_bars=<n> | overlap=<pct> | cvd_null=<rate> | collector=<alive|dead> | stale=<h>h | action=<wait|run>\n\nTHE GATE (approved by trading-risk-reviewer on t_dc702203, 2026-08-01; implemented under t_18fda1f4):\n\n  Fire the IC re-run task only when paired complete-case n >= 200, measured directly at <= 5 minute join staleness.\n\nRules you must follow exactly:\n\n1. DO NOT compute the gate yourself. Read paired_n and action from the script's summary line. The measurement is the IC test's own row set (clean 1m bars with segment-scoped gap masking, backward join_asof with a hard 5m tolerance, complete-case count over micro features + forward label + baseline scores). Do not re-derive it, do not estimate it, and do not substitute any other quantity.\n\n2. NEVER use a bar-count or calendar-span trigger. The retired heuristic est_bars = hours_span * 60 * 5 * 0.5 with MIN_BARS=1200 / TARGET_BARS=10500 was calendar span, not bars: monotonically non-decreasing and still rising while the collector was dead. It is the reason this gate passed twice (1.98x, 2.25x) while the binding constraint never moved and two IC rounds were wasted. If you ever find yourself reasoning about hours of coverage, row counts, or bar counts as evidence the gate should open, stop: those are not the gate.\n\n3. There is NO partial-test branch and NO softened threshold. The threshold is 200, full stop. The partial-test branch is what produced the two wasted rounds. Never create a \"preliminary\" or \"partial\" IC task.\n\n4. Act on `action`:\n   - action=run: create the IC re-run kanban task on board sycode-trading, title \"P5 - Re-run microstructure IC test (paired n>=200 gate open)\", assignee=research-trading, parents=[]. MUST pass an --idempotency-key (e.g. microstructure-ic-rerun-<YYYYMMDD>) so repeated ticks cannot duplicate the card. In the body, quote the full summary line as the gate evidence. Comment \"SUPERSEDED by <new id>\" on any prior open P5 card; never link them as parents (a parent link makes the new card wait on a terminal old card and deadlocks it).\n   - action=wait: create NO task. Report the state and say when the next check occurs.\n   - action=error: the measurement failed. A failed measurement is NOT a pass; create no task, and report the failure plainly.\n\n5. Report the script's summary line verbatim in your output, then add a one-or-two-sentence read of the two diagnostics that are the actual blocker: signal/tape overlap pct and the cvd_zscore null rate. The standing conclusion for the data problem is CONTINUITY, NOT VOLUME - a low-duty-cycle collector cannot yield a testable sample however long it runs, so elapsed time alone is never progress toward this gate.\n\n6. If collector=dead, note it, but do not treat collector health as the gate and do not open a card because of it. If a collector incident card is already open upstream (e.g. t_525c2cb6), reference it rather than filing a duplicate.\n\nIMPORTANT: This cron runs autonomously every 6h. Do NOT schedule more cron jobs. Do NOT ask questions.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash",
+      "base_url": null,
+      "script": "microstructure-data-monitor.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-29T06:33:11.181958+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }

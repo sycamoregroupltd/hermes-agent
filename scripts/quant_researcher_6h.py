@@ -186,20 +186,41 @@ except Exception:  # pragma: no cover - fallback only when repo is absent
 
 
 def compute_canonical_tier1_edge(con, clean_epoch_start, window_days: int = 30):
-    """Return (status, reason) for the canonical validated-edge verdict.
+    """Return (status, reason) for the GROSS Tier-1 reference verdict.
 
-    Mirrors the fusion-calibration report's AUTHORITATIVE Tier-1 realized-exit
-    inputs exactly (signal_journeys + decision_outcomes, bounded to the clean
-    epoch), so both reports mechanically agree. Read-only; no mutation.
+    METRIC NAME: ``tier1_gross_realized_exit_win_rate`` — REFERENCE-ONLY.
 
-    The shared compute_validated_edge_status(clean_n, clean_wr, 300, 50.0) is
-    the single source of truth for the verdict.
+    IMPORTANT (t_02e40af8 / t_81e8796d): this does NOT mirror the
+    fusion-calibration report's headline. It computes a GROSS win rate from
+    ``decision_outcomes.is_win`` over ALL final clean-epoch (+window) outcomes.
+    The fusion-calibration report publishes
+    ``tier1_net_of_cost_ledger_reconciled_win_rate``: a NET-OF-COST label
+    (``v_ledger_reward.is_win``, net_pnl_usd > 0) over the ledger-matched
+    SUBSET only. Verified live 2026-08-02 on fusion's exact population, the
+    gross->net label change moves the WR from 41.85% to 16.18% — a ~26pp
+    spread driven by the label BASIS, not sampling error. Earlier versions of
+    this docstring falsely claimed the two "mechanically agree"; they do not,
+    and they must never be published under a shared "Tier-1 clean win rate"
+    name.
+
+    Consequently this verdict is REFERENCE-ONLY: the gross number is
+    systematically OPTIMISTIC relative to the net-of-cost surface and MUST NOT
+    be used to clear a promotion/validation gate (Sycode-Trading-Home line 59).
+    Fail-closed posture is preserved by construction (t_81e8796d risk review):
+    this status is consumed ONLY in the CLOSING direction — it can trigger the
+    bounded fail-closed early exit, but it can never OPEN the "Validated
+    Cohorts" emission or the ``validated`` note status. Those are gated on
+    ``compute_net_tier1_edge()`` (the NET-of-cost, ledger-matched verdict).
+
+    Read-only; no mutation.
     """
     floor_iso = clean_epoch_start.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    # Verbatim mirror of fusion_calibration_report_v2 dedup_rows query (clean
-    # sample): one outcome per journey, authoritative final lane first, bounded
-    # to the certified clean epoch + 30d window. Tier-2 synthetic derivations
-    # are intentionally NOT included (t_21e22d8d / t_47fd45ce / t_ec3d651c).
+    # GROSS Tier-1 population: signal_journeys + decision_outcomes, final rows
+    # only, bounded to the certified clean epoch + window. This is NOT the
+    # fusion-calibration population (that one LEFT JOINs v_ledger_reward and
+    # scores only the ledger-matched subset with the NET label). Tier-2
+    # synthetic derivations are intentionally NOT included
+    # (t_21e22d8d / t_47fd45ce / t_ec3d651c).
     sql = f"""
         SELECT d.is_win
         FROM pg.signal_journeys sj
@@ -222,6 +243,61 @@ def compute_canonical_tier1_edge(con, clean_epoch_start, window_days: int = 30):
         wins = sum(1 for (w,) in rows if w)
         clean_wr = 100.0 * wins / clean_n
     return compute_validated_edge_status(clean_n, clean_wr, 300, 50.0)
+
+
+def compute_net_tier1_edge(con, clean_epoch_start, window_days: int = 30):
+    """Return (status, reason) for the NET-OF-COST Tier-1 gate verdict.
+
+    METRIC NAME: ``tier1_net_of_cost_ledger_reconciled_win_rate`` — this is the
+    PROMOTION-ELIGIBLE basis and the ONLY Tier-1 realized-exit number that may
+    open a validated-cohort emission (t_81e8796d risk review, 2026-08-02).
+
+    It mirrors ``fusion_calibration_report_v2.py``'s headline population: the
+    deduplicated (ONE row per journey, final lane first) clean-epoch resolved
+    journeys that RECONCILED onto ``v_ledger_reward`` (measured, net-of-cost,
+    ``net_pnl_usd NOT NULL``), scored with the NET ``v_ledger_reward.is_win``
+    label. Journeys with no ledger match are FAIL-CLOSED (unscored, no gross
+    fallback) exactly as CalibrationTracker.ts / ledgerReward.ts do.
+
+    Fail-closed on any error: a query failure returns INSUFFICIENT_SAMPLE so a
+    broken probe can never open the latch.
+
+    Read-only; no mutation.
+    """
+    floor_iso = clean_epoch_start.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    resolved_at = "COALESCE(d.finalized_at, d.decided_at, d.created_at)"
+    sql = f"""
+        SELECT count(*) AS matched_n,
+               sum(CASE WHEN x.ledger_is_win THEN 1 ELSE 0 END) AS wins
+        FROM (
+            SELECT DISTINCT ON (sj.id)
+                   lr.is_win AS ledger_is_win,
+                   (lr.position_id IS NOT NULL) AS ledger_matched
+            FROM pg.signal_journeys sj
+            JOIN pg.decision_outcomes d ON d.journey_id = sj.id
+            LEFT JOIN pg.v_ledger_reward lr
+                   ON lr.correlation_id = sj.correlation_id
+                   OR lr.signal_id = sj.signal_id
+            WHERE d.outcome_class IN ('WIN', 'LOSS')
+              AND d.contaminated = false
+              AND d.is_counterfactual = false
+              AND d.label_source NOT IN ('interim_1h', 'interim_4h')
+              AND sj.triggered_at >= TIMESTAMPTZ '{floor_iso}+00'
+              AND {resolved_at} >= NOW() - INTERVAL '{int(window_days)} days'
+            ORDER BY sj.id, d.is_final DESC, {resolved_at} DESC
+        ) x
+        WHERE x.ledger_matched AND x.ledger_is_win IS NOT NULL
+    """
+    try:
+        rows = con.execute(sql).fetchall()
+    except Exception as e:  # fail CLOSED, never open the latch on an error
+        sys.stderr.write(f"net-tier1-query-warning: {e}\n")
+        return (INSUFFICIENT_SAMPLE,
+                f"Net-of-cost Tier-1 query failed ({e}); fail-closed, no edge asserted.")
+    matched_n = int(rows[0][0] or 0) if rows else 0
+    wins = int(rows[0][1] or 0) if rows else 0
+    net_wr = (100.0 * wins / matched_n) if matched_n else None
+    return compute_validated_edge_status(matched_n, net_wr, 300, 50.0)
 
 
 def load_epoch_registry(con):
@@ -360,12 +436,13 @@ def canonical_fail_closed_early_exit(run_label, run_date, clean_epoch_start,
     body.append("**Cadence:** every 6 hours (cron `15 */6 * * *`, 4 runs/day) — matches the '6h' contract.")
     body.append(f"**Date:** {run_label}")
     body.append("**Job ID:** 13c1f9279025 (deterministic no_agent script)")
-    body.append(f"**Data window:** clean epoch [{clean_epoch_floor_iso}Z, now] (canonical Tier-1 realized-exit check; synthetic candle sweep skipped by bounded fail-closed early exit)")
+    body.append(f"**Data window:** clean epoch [{clean_epoch_floor_iso}Z, now] (Tier-1 GROSS realized-exit reference check; synthetic candle sweep skipped by bounded fail-closed early exit)")
     body.append("")
-    body.append("## Result: FAIL-CLOSED — canonical Tier-1 sample below validation floor")
+    body.append("## Result: FAIL-CLOSED — Tier-1 GROSS reference sample below validation floor")
     body.append("")
-    body.append(f"- **VALIDATED_EDGE_STATUS: `{canonical_status}`** — {canonical_reason}")
-    body.append("- **Bounded-exit policy:** because the shared fusion-calibration/quant-researcher verdict is not `VALIDATED`, this run exits before the heavy synthetic forward-label candle join. No cohort is cleared for implementation or paper-sleeve routing.")
+    body.append(f"- **TIER1_GROSS_REFERENCE_STATUS: `{canonical_status}`** — {canonical_reason}")
+    body.append("- **Metric:** `tier1_gross_realized_exit_win_rate` — REFERENCE-ONLY (GROSS `decision_outcomes.is_win`, all final clean-epoch outcomes). NOT the fusion-calibration headline `tier1_net_of_cost_ledger_reconciled_win_rate` (NET-of-cost, ledger-matched subset), which is ~26pp lower on the same population (t_02e40af8). The gross number is never used to clear a gate.")
+    body.append("- **Bounded-exit policy:** because the Tier-1 GROSS reference verdict is not `VALIDATED`, this run exits before the heavy synthetic forward-label candle join. No cohort is cleared for implementation or paper-sleeve routing.")
     body.append("- **Runtime guard:** `QR_MAX_RUNTIME_SECONDS` bounds this script before the scheduler hard cap; stage timings are emitted to stderr as `[quant-researcher-stage]` lines.")
     body.append("")
     body.append("## Methodology & Freshness-Gate Invariant")
@@ -492,6 +569,10 @@ def main():
     st = _stage_start("canonical_tier1_edge")
     canonical_status, canonical_reason = compute_canonical_tier1_edge(
         con, clean_epoch_start)
+    # NET-OF-COST gate verdict (t_81e8796d risk review): the ONLY Tier-1
+    # realized-exit status permitted to OPEN a validated-cohort emission. The
+    # gross verdict above is REFERENCE-ONLY and may only further CLOSE.
+    net_status, net_reason = compute_net_tier1_edge(con, clean_epoch_start)
     _stage_done("canonical_tier1_edge", st)
     _check_runtime_budget(run_started, "canonical_tier1_edge")
 
@@ -730,7 +811,13 @@ def main():
 
     any_validated = validated.height > 0
     any_early = early_cohorts.height > 0
-    canonical_allows_validated_output = canonical_status == VALIDATED
+    # GATE LATCH (t_81e8796d risk review, CHANGES_REQUESTED fix): validated
+    # output is gated on the NET-OF-COST verdict, NEVER on the GROSS reference
+    # verdict. The gross number is systematically optimistic (~26pp above net on
+    # the same population, t_02e40af8) and must not clear any fail-closed gate.
+    # The gross verdict still drives the bounded fail-closed EARLY EXIT above —
+    # that direction only further CLOSES, which is safe.
+    net_allows_validated_output = net_status == VALIDATED
 
     # ---- Quiet-mode early-return (proposal t_ca461999) ----
     # The full 250-line cohort dump carries near-zero validated information
@@ -801,7 +888,7 @@ def main():
                    "below and excluded from edge claims. Do not change engine settings or fire MCE/edge alerts from this report.")
         out.append("")
     else:
-        if any_validated and not in_early_epoch and canonical_allows_validated_output:
+        if any_validated and not in_early_epoch and net_allows_validated_output:
             # DEFENSE-IN-DEPTH (t_26cdaf62): the blind-period contract forbids
             # ANY validated cohort before the clean epoch reaches EARLY_EPOCH_DAYS.
             # gate_cohort() already routes every blind-period passing cohort to
@@ -815,8 +902,9 @@ def main():
                        "Cohorts below are validated on a SYNTHETIC-FORWARD label basis "
                        "(`join_asof(strategy='forward')` over all `signal_journeys`), NOT executed/realized-exit pnl. "
                        "Per t_a04368da measurement-integrity guard this is a CANDIDATE, not a confirmed live edge; "
-                       "the authoritative realized-exit basis (fusion-calibration) independently reports "
-                       "VALIDATED_EDGE_STATUS=INSUFFICIENT_SAMPLE.")
+                       "the authoritative realized-exit basis (fusion-calibration, "
+                       "`tier1_net_of_cost_ledger_reconciled_win_rate`) independently reports "
+                       "an insufficient net-of-cost sample.")
             out.append("")
             out.append("| TF | Dir | Vol | Macro | Fav | AllN | AllWR | FreshN | FreshWR | CleanN | CleanWR | Clean_stale | Contam? | Kill? | lag_min | fresh_window_min | fresh_lag | stale_share | label_basis |")
             out.append("|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|")
@@ -935,18 +1023,32 @@ def main():
                    f"Any cohort reaching the gate is subject to the strict VALIDATED criteria.")
     out.append("")
 
-    # ---- CANONICAL VALIDATED-EDGE VERDICT (t_4df5351d / t_460bb546) ----
-    # Mirrors the fusion-calibration report's authoritative Tier-1 verdict so
-    # Frank/PM see ONE canonical validated_edge_status across both reports.
+    # ---- GROSS TIER-1 REFERENCE VERDICT (t_4df5351d / t_460bb546, renamed t_81e8796d) ----
+    # This is `tier1_gross_realized_exit_win_rate` — REFERENCE-ONLY. It is NOT
+    # the fusion-calibration headline (`tier1_net_of_cost_ledger_reconciled_win_rate`)
+    # and the two are not interchangeable (~26pp apart on the same population).
     out.append("")
-    out.append("## Canonical Validated-Edge Verdict (shared with fusion-calibration)")
+    out.append("## Tier-1 GROSS Realized-Exit Reference Verdict (`tier1_gross_realized_exit_win_rate`)")
     out.append("")
-    out.append(f"- **VALIDATED_EDGE_STATUS: `{canonical_status}`** — {canonical_reason}")
+    out.append("> **REFERENCE-ONLY — NOT a promotion/validation gate input.** This win rate uses the "
+               "GROSS `decision_outcomes.is_win` label over ALL final clean-epoch realized-exit outcomes. "
+               "The fusion-calibration report publishes a DIFFERENT metric, "
+               "`tier1_net_of_cost_ledger_reconciled_win_rate` (NET-of-cost `v_ledger_reward.is_win` over the "
+               "ledger-matched subset only), which is materially LOWER (~26pp on the same population, "
+               "verified t_02e40af8). The gross number must never be used to clear a fail-closed gate.")
+    out.append("")
+    out.append(f"- **TIER1_GROSS_REFERENCE_STATUS: `{canonical_status}`** — {canonical_reason}")
+    out.append(f"- **TIER1_NET_OF_COST_GATE_STATUS: `{net_status}`** — {net_reason} "
+               "This NET-of-cost verdict (`tier1_net_of_cost_ledger_reconciled_win_rate`, "
+               "`v_ledger_reward.is_win` over the ledger-matched subset, fail-closed when unmatched) "
+               "is the ONLY Tier-1 realized-exit status that gates the \"Validated Cohorts\" section "
+               "and the `validated` note status. The GROSS status above never opens that latch.")
     if canonical_status == "VALIDATED":
-        out.append("  An edge cohort is independently validated (Tier-1 fresh N >= 300 "
-                   "with Tier-1 WR > 50%). Both reports must agree on this status.")
+        out.append("  The GROSS reference sample clears N >= 300 with WR > 50%. This is NOT a validated "
+                   "edge on its own: promotion requires the net-of-cost fusion metric, which is the "
+                   "authoritative gate input.")
     else:
-        out.append("  No edge cohort is independently validated. This nightly's "
+        out.append("  No edge cohort clears even the optimistic GROSS reference bar. This nightly's "
                    "FAIL-CLOSED-on-all-cohorts result reflects the SAME status; it "
                    "stands until the clean epoch matures to fresh N >= 300.")
 
@@ -974,7 +1076,7 @@ def main():
         write_research_note(
             body,
             run_date,
-            "validated" if (any_validated and canonical_allows_validated_output) else "early-epoch" if any_early else "fail-closed",
+            "validated" if (any_validated and net_allows_validated_output) else "early-epoch" if any_early else "fail-closed",
         )
     except Exception as e:
         sys.stderr.write(f"note-write-warning: {e}\n")
@@ -1108,14 +1210,19 @@ def quiet_starving(run_label, run_date, n_sig, win_label, clean_epoch_start,
     else:
         note.append(f"- **Status:** blind-period {blind_st} — full N >= {N_THRESH} gate now applies (early-epoch ramp no-ops).")
     note.append("")
-    note.append("## Canonical Validated-Edge Verdict (shared with fusion-calibration)")
+    note.append("## Tier-1 GROSS Realized-Exit Reference Verdict (`tier1_gross_realized_exit_win_rate`)")
     note.append("")
-    note.append(f"- **VALIDATED_EDGE_STATUS: `{canonical_status}`** — {canonical_reason}")
+    note.append("> **REFERENCE-ONLY — NOT a promotion/validation gate input.** GROSS "
+                "`decision_outcomes.is_win` over ALL final clean-epoch realized-exit outcomes. Distinct from "
+                "the fusion-calibration headline `tier1_net_of_cost_ledger_reconciled_win_rate` "
+                "(NET-of-cost, ledger-matched subset), which is ~26pp lower on the same population (t_02e40af8).")
+    note.append("")
+    note.append(f"- **TIER1_GROSS_REFERENCE_STATUS: `{canonical_status}`** — {canonical_reason}")
     if canonical_status == "VALIDATED":
-        note.append("  An edge cohort is independently validated (Tier-1 fresh N >= 300 "
-                    "with Tier-1 WR > 50%). Both reports must agree on this status.")
+        note.append("  The GROSS reference sample clears N >= 300 with WR > 50%. NOT a validated edge on "
+                    "its own: promotion requires the net-of-cost fusion metric.")
     else:
-        note.append("  No edge cohort is independently validated. This nightly's "
+        note.append("  No edge cohort clears even the optimistic GROSS reference bar. This nightly's "
                     "FAIL-CLOSED-on-all-cohorts result reflects the SAME status; it "
                     "stands until the clean epoch matures to fresh N >= 300.")
     note.append("")

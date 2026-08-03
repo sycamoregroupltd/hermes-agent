@@ -24,6 +24,12 @@
 !/scripts/*.sh
 !/scripts/*.md
 
+# Regression tests for those scripts are part of the same durable substrate —
+# an untracked test cannot gate a future change (task t_e263797e, 2026-08-02).
+!/scripts/tests/
+!/scripts/tests/*.py
+/scripts/tests/__pycache__/
+
 # Deny scratch / runtime / cache subdirs under scripts/
 /scripts/archive/
 /scripts/backups/
@@ -58,14 +64,26 @@
 /profiles/*/cron/*
 !/profiles/*/cron/jobs.json
 
-# Durable automation-vc keeper dispatcher wrapper (task t_84980841). The devops
-# cron job references this file (cron script paths resolve to the owning profile's
-# scripts/ dir), so it MUST be tracked on the branch or a DGX rebuild would restore
-# the root keeper but not this wrapper, silently disabling the keeper. It holds no
-# secrets and only delegates to the tracked root script.
-!/profiles/devops/scripts/
-/profiles/devops/scripts/*
-!/profiles/devops/scripts/automation-vc-keeper.sh
+# === Profile cron scripts (task t_4b7afeac) ===
+# Generic depth-1 carve-out: cron `script` values resolve to the OWNING profile's
+# scripts/ dir (hermes-agent/cron/scheduler.py:2328-2346 — there is NO global
+# scripts/ fallback), so the automation source that actually runs must be tracked.
+# The per-file `!/...` exceptions below were a false-green treadmill (one file at a
+# time, silently regressing new jobs); this pattern tracks every depth-1 .py/.sh by
+# default and stays self-maintaining. Default-deny is preserved for everything that
+# is not executable automation source (.md, notes, __pycache__, state/, secrets).
+# Re-include chain keeps every ancestor dir non-excluded (git rule).
+!/profiles/*/scripts/
+/profiles/*/scripts/*
+!/profiles/*/scripts/*.py
+!/profiles/*/scripts/*.sh
+# Regression guards for the automation source above are part of the deliverable —
+# an untracked test is an unenforced test (t_fae47050).
+!/profiles/*/scripts/tests/
+!/profiles/*/scripts/tests/*.py
+/profiles/*/scripts/tests/__pycache__/
+/profiles/*/scripts/__pycache__/
+/profiles/*/scripts/state/
 
 # NEVER track (belt-and-suspenders against future allowlist edits):
 auth.json

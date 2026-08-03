@@ -47,7 +47,17 @@ import sqlite3
 import time
 
 BOARDS_ROOT = "/home/frank/.hermes/kanban/boards"
-BOARDS = ["jarvis-os", "sycode-trading", "yorkstone-supplies", "upero"]
+# NOTE: sycode-ai was missing here on 2026-08-02 — the reaper silently never
+# touched sycode-ai cards, so the provider-API-failure recurrence (t_85378990)
+# sat dead in `blocked` forever. upero and sycode-ai are aliases of the same
+# board backing; include BOTH so neither name is skipped.
+BOARDS = ["jarvis-os", "sycode-trading", "yorkstone-supplies", "upero", "sycode-ai"]
+
+# A healthy non-Nous provider to fail over to when a card's silent-exit block
+# is actually a provider/API death. Nous free-tier was the 2026-08-02 outage
+# source; openai-codex has a live key and is used by the engine/spawn fallback.
+FAILOVER_PROVIDER = os.environ.get("SILENT_EXIT_REAPER_FAILOVER_PROVIDER", "openai-codex")
+FAILOVER_HEALTHY_SUBSTR = ("inference-api.nousresearch.com",)
 
 # The exact dispatcher error string (engine: hermes_cli/kanban_db.py:6605)
 SILENT_EXIT_ERR = "worker exited cleanly (rc=0) without calling kanban_complete or kanban_block"
@@ -101,6 +111,55 @@ REAL_GATE = re.compile(
 
 # The auto-classifier comment that betrays a provider-stage death.
 PROVIDER_DEATH = re.compile(r"failure_class=(provider\w+|provider_error|protocol_violation)", re.I)
+
+# The new engine event error emitted for a clean rc=0 whose worker log shows a
+# provider/API failure (429/404/auth/connection/credit-cap). t_85378990 fix.
+PROVIDER_API_FAILURE_ERR = (
+    "worker exited cleanly (rc=0) but the MODEL API CALL FAILED "
+    "(provider/API failure, NOT a protocol violation)"
+)
+
+# Provider/API failure markers in a worker log (reused from the engine regex
+# intent). Used to detect the LEGACY silent-exit auto-block class that is
+# actually a provider death (before the engine fix shipped to live).
+_PROVIDER_API_FAILURE_RE_TAIL = re.compile(
+    r"(rate[_\s-]?limit|429|too many requests|"
+    r"404|model[^\n]{0,60}not found|requires available credits|"
+    r"credit access paused|account balance|"
+    r"\b401\b|\b403\b|unauthorized|forbidden|"
+    r"api call failed|api error|connection error|connecterror|"
+    r"timeout|timed out|exceeded the rate limit|"
+    r"inference-api\.nousresearch\.com|provider:\s*nous|"
+    r"quota|billing|subscription|"
+    r"rate limited after|max retries.*exhausted)",
+    re.IGNORECASE,
+)
+
+
+def _worker_log_tail(tid: str, c: sqlite3.Connection, max_bytes: int = 8192) -> str:
+    """Best-effort tail of a task's worker log (same layout as the engine)."""
+    try:
+        rows = c.execute("PRAGMA database_list").fetchall()
+        db_file = None
+        for r in rows:
+            if r[1] == "main":
+                db_file = r[2]
+                break
+        if not db_file or not str(db_file).endswith("kanban.db"):
+            return ""
+        log_path = os.path.join(
+            os.path.dirname(str(db_file)), "logs", f"{tid}.log"
+        )
+        if not os.path.exists(log_path):
+            return ""
+        size = os.path.getsize(log_path)
+        with open(log_path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+            data = f.read()
+        return data.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 def _conn(board: str) -> sqlite3.Connection:
@@ -159,8 +218,11 @@ def _classify(c: sqlite3.Connection, tid: str) -> str:
     if row is None:
         return "skip_other"
 
-    # Only act on the silent-exit protocol-violation auto-block class.
-    if SILENT_EXIT_ERR not in (row["err"] or ""):
+    err = row["err"] or ""
+    # Act on the silent-exit auto-block class OR the new provider-API-failure
+    # class (t_85378990). The provider-API-failure class is, by construction,
+    # a retryable provider death and must be re-driven (with failover).
+    if SILENT_EXIT_ERR not in err and PROVIDER_API_FAILURE_ERR not in err:
         return "skip_other"
 
     comments = _recent_comments(c, tid)
@@ -181,32 +243,50 @@ def _classify(c: sqlite3.Connection, tid: str) -> str:
     if REAL_GATE.search(blob) or REAL_GATE.search(row["body"] or ""):
         return "relabel_gate"
 
-    # 4) Provider-stage death (or ambiguous) -> re-drive.
+    # 4) Provider-stage death (new provider-API-failure class, or the legacy
+    # silent-exit error whose worker log shows a provider/API failure) -> re-drive.
+    worker_log = _worker_log_tail(tid, c)
+    if PROVIDER_API_FAILURE_ERR in err or (
+        SILENT_EXIT_ERR in err
+        and worker_log
+        and _PROVIDER_API_FAILURE_RE_TAIL.search(worker_log)
+    ):
+        return "redrive_provider"
+    # 5) Ambiguous silent-exit (no provider evidence) -> re-drive (legacy behavior).
     return "redrive"
 
 
 def plan(boards: list[str]) -> dict:
     actions: dict[str, list[tuple[str, str, str]]] = {
-        "done": [], "redrive": [], "relabel_gate": [], "skip_other": []
+        "done": [], "redrive": [], "redrive_provider": [],
+        "relabel_gate": [], "skip_other": [],
     }
+    # A card is in this reaper's scope if its failure error matches the legacy
+    # silent-exit string OR the new provider-API-failure string (t_85378990).
+    like_patterns = [f"%{SILENT_EXIT_ERR}%", f"%{PROVIDER_API_FAILURE_ERR}%"]
     for b in boards:
         try:
             c = _conn(b)
         except FileNotFoundError:
             continue
-        rows = c.execute(
-            "SELECT id, title, assignee FROM tasks WHERE status='blocked' "
-            "AND last_failure_error LIKE ?",
-            (f"%{SILENT_EXIT_ERR}%",),
-        ).fetchall()
-        for r in rows:
-            cls = _classify(c, r["id"])
-            actions[cls].append((b, r["id"], (r["title"] or "")[:60]))
+        seen: set[str] = set()
+        for pat in like_patterns:
+            rows = c.execute(
+                "SELECT id, title, assignee FROM tasks WHERE status='blocked' "
+                "AND last_failure_error LIKE ?",
+                (pat,),
+            ).fetchall()
+            for r in rows:
+                if r["id"] in seen:
+                    continue
+                seen.add(r["id"])
+                cls = _classify(c, r["id"])
+                actions[cls].append((b, r["id"], (r["title"] or "")[:60]))
         c.close()
     return actions
 
 
-def _apply_one(db: str, tid: str, cls: str) -> None:
+def _apply_one(db: str, board: str, tid: str, cls: str) -> None:
     c = sqlite3.connect(db)
     try:
         with c:  # implicit write txn
@@ -227,6 +307,55 @@ def _apply_one(db: str, tid: str, cls: str) -> None:
                     "DISPOSITION silent-exit-reaper: verified-complete evidence "
                     "found; marking done and clearing stale rc=0-without-lifecycle "
                     "mislabel. reaper=t_74c6693e"
+                )
+            elif cls == "redrive_provider":
+                c.execute(
+                    "UPDATE tasks SET status='ready', claim_lock=NULL, "
+                    "claim_expires=NULL, worker_pid=NULL, "
+                    "consecutive_failures=0, last_failure_error=NULL "
+                    "WHERE id=? AND status='blocked'",
+                    (tid,),
+                )
+                # Fail over to a healthy provider so the retry does NOT land on
+                # the same dead Nous free-tier endpoint. We set a task-level
+                # provider_override via the hermes CLI (the same surface the
+                # worker honors at spawn). Best-effort: a failure here does not
+                # block the re-drive — the spawn-time provider fallback chain in
+                # the engine still tries the configured fallbacks next attempt.
+                failover_msg = ""
+                try:
+                    import subprocess
+                    hermes_bin = os.environ.get("HERMES_BIN", "hermes")
+                    res = subprocess.run(
+                        [hermes_bin, "kanban", "set-model", "--provider",
+                         FAILOVER_PROVIDER, tid],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if res.returncode == 0:
+                        failover_msg = (
+                            f" Set task provider_override -> {FAILOVER_PROVIDER}"
+                            f" (healthy provider failover)."
+                        )
+                    else:
+                        failover_msg = (
+                            f" (provider_override set failed rc={res.returncode};"
+                            f" spawn fallback chain still applies: {res.stderr[:120]})"
+                        )
+                except Exception as exc:  # never block the re-drive
+                    failover_msg = f" (provider_override set error: {exc!r})"
+                kind, payload = "reaper_redrive_provider", {
+                    "reason": "clean rc=0 but MODEL API CALL FAILED "
+                              "(provider/API death, not a protocol violation); "
+                              "re-drive on a healthy provider",
+                    "reaper": "t_74c6693e",
+                    "failover_provider": FAILOVER_PROVIDER,
+                }
+                comment = (
+                    "DISPOSITION silent-exit-reaper: worker exited rc=0 with no "
+                    "terminal kanban call, but the worker log shows a provider/API "
+                    "failure (429/404/auth/connection/credit-cap) — a RETRYABLE "
+                    "provider error, not a protocol violation. Re-driving to ready "
+                    f"and clearing the stale mislabel.{failover_msg} reaper=t_74c6693e"
                 )
             elif cls == "redrive":
                 c.execute(
@@ -264,6 +393,42 @@ def _apply_one(db: str, tid: str, cls: str) -> None:
                     "stale rc=0-without-lifecycle last_failure_error so the phantom "
                     "block CI predicate is honest. reaper=t_74c6693e"
                 )
+            if cls in ("redrive", "redrive_provider"):
+                # A blocked→ready re-drive must ALSO emit the
+                # block-lifecycle 'unblocked' event. Without it the
+                # dispatcher's _has_sticky_block() predicate stays True and
+                # the re-driven card is ready-but-unspawnable — the exact
+                # stall class fixed at the writer layer by t_20759186 /
+                # t_e6bb0f1e. Include the original block reference so
+                # auditors can correlate the unblock with the block that
+                # opened it.
+                last_bl = c.execute(
+                    "SELECT id, kind, payload FROM task_events "
+                    "WHERE task_id = ? AND kind IN ('blocked', 'unblocked') "
+                    "ORDER BY id DESC LIMIT 1",
+                    (tid,),
+                ).fetchone()
+                if last_bl is not None and last_bl["kind"] == "blocked":
+                    unblock_payload = {
+                        "reason": "reaper_redrive",
+                        "reaper": "t_74c6693e",
+                        "block_event_id": last_bl["id"],
+                    }
+                    try:
+                        blk_payload = (
+                            json.loads(last_bl["payload"])
+                            if last_bl["payload"] else {}
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        blk_payload = {}
+                    for key in ("reason", "kind", "comment_id"):
+                        if blk_payload.get(key) is not None:
+                            unblock_payload.setdefault(f"block_{key}", blk_payload[key])
+                    c.execute(
+                        "INSERT INTO task_events (task_id, run_id, kind, payload, "
+                        "created_at) VALUES (?, NULL, 'unblocked', ?, ?)",
+                        (tid, json.dumps(unblock_payload), now),
+                    )
             c.execute(
                 "INSERT INTO task_events (task_id, run_id, kind, payload, "
                 "created_at) VALUES (?, NULL, ?, ?, ?)",
@@ -284,10 +449,10 @@ def _apply_one(db: str, tid: str, cls: str) -> None:
 
 
 def apply(actions: dict) -> None:
-    for cls in ("done", "redrive", "relabel_gate"):
+    for cls in ("done", "redrive", "redrive_provider", "relabel_gate"):
         for b, tid, _ in actions[cls]:
             db = os.path.join(BOARDS_ROOT, b, "kanban.db")
-            _apply_one(db, tid, cls)
+            _apply_one(db, b, tid, cls)
 
 
 def main() -> int:

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, os, re, sqlite3, subprocess, tempfile, time
+import json, os, re, subprocess, tempfile, time
 from pathlib import Path
+from hermes_cli import kanban_db as kb
 
 BOARDS_DIR = Path(os.environ.get('BOARDS_DIR', '/home/frank/.hermes/kanban/boards'))
 STATE_DIR = Path(os.environ.get('STATE_DIR', '/home/frank/.hermes/cron/state'))
@@ -224,12 +225,30 @@ def format_message(tier: str, pageable: list[dict], now_epoch: int) -> str:
 
 
 def main():
+    # --- Verdict-vocabulary detector (t_1d6ed4c0): read-only scan for
+    #     out-of-contract REVIEW_VERDICT values that the verdict-router fails
+    #     closed on (the "review black hole"). Reuses this notifier's existing
+    #     discord #critical-alerts escalation path — NO new cron schedule.
+    #     Dedup across runs via the detector's own state file so the same
+    #     malformed card is not re-alerted every 15m. Read-only: never mutates.
+    try:
+        import verdict_vocabulary_detector as vvd  # type: ignore
+
+        count, vvd_failures = vvd.run_with_alerting(
+            send_alert,
+            state_path=os.environ.get('VERDICT_DETECTOR_STATE'),
+        )
+        if vvd_failures:
+            print('VERDICT_VOCAB_DETECTOR_DELIVERY_FAILED ' + ' | '.join(vvd_failures))
+    except Exception as exc:  # detector must never crash the blocked-task notifier
+        print(f'VERDICT_VOCAB_DETECTOR_ERROR {type(exc).__name__}: {str(exc)[:300]}')
+
     now = {}
     for db in sorted(BOARDS_DIR.glob('*/kanban.db')):
         board = db.parent.name
         con = None
         try:
-            con = sqlite3.connect(str(db)); con.row_factory = sqlite3.Row
+            con = kb.connect(db_path=db)
             rows = con.execute("SELECT id, title, body, result, last_failure_error FROM tasks WHERE status='blocked'").fetchall()
             for row in rows:
                 key = f"{board}:{row['id']}"

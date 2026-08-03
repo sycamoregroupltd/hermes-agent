@@ -5,16 +5,28 @@ Read-only: inspects a board's task_comments table and tells governor/recovery
 sweeps whether a classification comment should be suppressed because the same
 (task_id, classification, owner_packet) was already recorded inside a TTL.
 
-Two coverage classes:
+Three coverage classes:
   1. provider/auth classification comments (legacy class) — keyed on a
      (classification, owner_packet) pair with alias normalization.
   2. proposal-aging-guard comments (added 2026-07-13, per 03:46Z governor
      self-correction) — keyed on a (proposal_id, aging_guard_marker) pair so a
      governor never re-posts a redundant escalation nudge on a proposal that is
      already correctly escalated / decider-routed.
+  3. deterministic finding-key comments (added 2026-08-03, t_5d0658a7) — keyed
+     on a stable identity string `verdict-sweep:v1:<board>:<task_id>:comment:
+     <target_comment_id>:action:<action>` (modelled on the verdict router's
+     idempotency key). Classification is caller-chosen and is NOT a stable
+     identity for a finding, so a repeat route of the SAME unactioned verdict
+     must be suppressed even when the caller supplies a new --classification
+     string each cycle. The caller embeds the exact key string in the comment
+     it writes; the next cycle's scan finds it and suppresses.
 
 The CLI stays backward-compatible: the existing --classification / --owner-packet
 path is used for class 1. A new --proposal-aging-guard flag selects class 2.
+The new deterministic path is selected by --finding-key or --target-comment-id
+(plus --action) and takes precedence over the legacy path when present.
+Credential/approval-critical escalations are NEVER suppressed (existing
+carve-out preserved and now enforced in code).
 """
 from __future__ import annotations
 
@@ -40,6 +52,30 @@ AGING_GUARD_MARKERS = [
     "decision deadline reached",         # deadline-reached nudge text
     "aging-guard nudge",                 # explicit nudge label
 ]
+
+# Deterministic finding-key namespace (class 3, t_5d0658a7). Modelled on the
+# verdict router's idempotency key shape `verdict-router:v1:<board>:<task_id>:
+# comment:<comment_id>:action:<action>`. The governor sweep embeds the exact
+# key string in the comment it writes; the next cycle's scan finds it.
+FINDING_KEY_PREFIX = "verdict-sweep:v1:"
+
+
+def build_finding_key(*, board: str, task_id: str, target_comment_id: int, action: str) -> str:
+    return f"{FINDING_KEY_PREFIX}{board}:{task_id}:comment:{target_comment_id}:action:{action}"
+
+
+# Credential/approval-critical carve-out (never suppress). Matches the
+# caller-supplied classification / owner_packet / finding-key text. These
+# escalations are safety-critical: a duplicate-write guard must NEVER silence
+# them, even when a deterministic key match exists. Deliberately narrow and
+# explicit (mirrors the cron prompt's "Never suppress credential/approval-
+# critical escalations" rule); a broad match would let a genuinely-new
+# critical escalation be skipped.
+CRITICAL_MARKER_RE = re.compile(
+    r"(?i)\b(credential|credentials|api[- ]?key|secret|password|token|"
+    r"approval[- ]?critical|frank[- ]?approval|needs[- ]?approval|"
+    r"payment|spend|billing|deploy|production)\b"
+)
 
 
 def normalize(text: str) -> str:
@@ -220,12 +256,91 @@ def find_proposal_aging_guard_duplicate(
     }
 
 
+def is_critical_escalation(*, classification: str, owner_packet: str, finding_key: str) -> bool:
+    """True when the caller-supplied identity text names a credential/approval-
+    critical escalation. Those are NEVER suppressed (safety carve-out)."""
+    haystack = " ".join([classification or "", owner_packet or "", finding_key or ""])
+    return bool(CRITICAL_MARKER_RE.search(haystack))
+
+
+def find_finding_key_duplicate(
+    *, board: str, task_id: str, finding_key: str, ttl_seconds: int, now: int
+) -> dict[str, Any]:
+    """Class 3: suppress a repeat governor route of the SAME finding.
+
+    The caller embeds the exact deterministic key string (built from board,
+    task_id, target comment id, action — NOT from the caller-chosen
+    classification) in the comment it writes. If a comment on the task already
+    carries that key inside the TTL, the finding is already routed and waiting
+    on a seat; a new evidence comment would be manufactured activity, so it is
+    suppressed with a distinct seat-wait / aging reason. The caller emits an
+    aging escalation instead of a repeat comment.
+    """
+    db = board_db(board)
+    if not db.exists():
+        raise FileNotFoundError(str(db))
+
+    since = now - ttl_seconds
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """
+            SELECT id, author, body, created_at
+            FROM task_comments
+            WHERE task_id=? AND created_at>=?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (task_id, since),
+        ).fetchall()
+    finally:
+        con.close()
+
+    for row in rows:
+        if finding_key in (row["body"] or ""):
+            age_seconds = max(0, now - int(row["created_at"]))
+            return {
+                "decision": "SUPPRESS",
+                "reason": "seat_wait_finding_already_routed_within_ttl",
+                "dedupe_key": {
+                    "board": board,
+                    "task_id": task_id,
+                    "finding_key": finding_key,
+                    "classification": None,  # caller-chosen label is NOT identity
+                    "owner_packet": None,
+                    "ttl_seconds": ttl_seconds,
+                },
+                "matched_comment": {
+                    "id": int(row["id"]),
+                    "author": row["author"],
+                    "created_at": int(row["created_at"]),
+                    "age_seconds": age_seconds,
+                    "excerpt": (row["body"] or "")[:300],
+                },
+                "comments_scanned": len(rows),
+            }
+
+    return {
+        "decision": "COMMENT",
+        "reason": "no_matching_finding_key_within_ttl",
+        "dedupe_key": {
+            "board": board,
+            "task_id": task_id,
+            "finding_key": finding_key,
+            "classification": None,
+            "owner_packet": None,
+            "ttl_seconds": ttl_seconds,
+        },
+        "comments_scanned": len(rows),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only governor classification comment dedupe guard")
     parser.add_argument("--board", required=True)
     parser.add_argument("--task-id", required=True)
-    parser.add_argument("--classification", required=True)
-    parser.add_argument("--owner-packet", required=True)
+    parser.add_argument("--classification", default=None)
+    parser.add_argument("--owner-packet", default=None)
     parser.add_argument("--ttl-hours", type=float, default=2.0)
     parser.add_argument("--now", type=int, default=None, help="Unix epoch override for deterministic tests")
     parser.add_argument("--format", choices=["text", "json"], default="text")
@@ -235,6 +350,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Use the proposal-aging-guard dedupe class (suppress redundant escalation nudges on proposals already escalated).",
     )
+    # Class 3 deterministic finding-key inputs (t_5d0658a7)
+    parser.add_argument(
+        "--target-comment-id",
+        type=int,
+        default=None,
+        help="Stable identity: the source verdict comment id this finding is routed from. With --action, builds the deterministic finding key; suppression is then decided on (board, task_id, target_comment_id, action) regardless of --classification text.",
+    )
+    parser.add_argument(
+        "--action",
+        default=None,
+        help="Action label for the deterministic finding key (e.g. needs-pm). Required with --target-comment-id unless --finding-key is supplied.",
+    )
+    parser.add_argument(
+        "--finding-key",
+        default=None,
+        help="Explicit deterministic finding key string (e.g. verdict-sweep:v1:<board>:<task_id>:comment:<comment_id>:action:<action>). Takes precedence over --target-comment-id/--action and over the legacy classification path.",
+    )
+    parser.add_argument(
+        "--critical-escalation",
+        action="store_true",
+        help="Mark this escalation credential/approval-critical. It is NEVER suppressed (safety carve-out); always returns COMMENT.",
+    )
     args = parser.parse_args(argv)
 
     ttl_seconds = int(args.ttl_hours * 3600)
@@ -242,8 +379,49 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--ttl-hours must be positive")
     now = int(args.now if args.now is not None else time.time())
 
+    # Deterministic finding-key path (class 3) takes precedence when present.
+    finding_key = args.finding_key
+    if finding_key is None and args.target_comment_id is not None:
+        if not args.action:
+            parser.error("--target-comment-id requires --action (or pass --finding-key)")
+        finding_key = build_finding_key(
+            board=args.board,
+            task_id=args.task_id,
+            target_comment_id=args.target_comment_id,
+            action=args.action,
+        )
+
+    # Safety carve-out: never suppress credential/approval-critical escalations,
+    # even when a deterministic key match exists. This is enforced BEFORE any
+    # scan so a critical escalation always returns COMMENT.
     try:
-        if args.proposal_aging_guard:
+        if args.critical_escalation or is_critical_escalation(
+            classification=args.classification or "",
+            owner_packet=args.owner_packet or "",
+            finding_key=finding_key or "",
+        ):
+            result = {
+                "decision": "COMMENT",
+                "reason": "critical_escalation_never_suppressed",
+                "dedupe_key": {
+                    "board": args.board,
+                    "task_id": args.task_id,
+                    "classification": args.classification,
+                    "owner_packet": args.owner_packet,
+                    "finding_key": finding_key,
+                    "ttl_seconds": ttl_seconds,
+                },
+                "comments_scanned": 0,
+            }
+        elif finding_key is not None:
+            result = find_finding_key_duplicate(
+                board=args.board,
+                task_id=args.task_id,
+                finding_key=finding_key,
+                ttl_seconds=ttl_seconds,
+                now=now,
+            )
+        elif args.proposal_aging_guard:
             # For class 2, --classification/--owner-packet are ignored; the
             # proposal id is the task id. Keep --classification optional-friendly
             # by allowing a placeholder, but it is not used for matching.
@@ -254,6 +432,8 @@ def main(argv: list[str] | None = None) -> int:
                 now=now,
             )
         else:
+            if not args.classification or not args.owner_packet:
+                parser.error("legacy path requires --classification and --owner-packet (or use --finding-key / --target-comment-id / --proposal-aging-guard)")
             result = find_duplicate(
                 board=args.board,
                 task_id=args.task_id,

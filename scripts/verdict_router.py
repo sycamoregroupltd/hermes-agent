@@ -42,6 +42,104 @@ TASK_ID_RE = re.compile(r"\bt_[0-9a-f]{8,}\b", re.I)
 ROUTER_AUTHORS = {AUTHOR, "cron:deterministic-verdict-router"}
 VALID_VERDICTS = {"APPROVE", "APPROVED", "CHANGES_REQUESTED"}
 
+# B1/B2 (adversarial write-path review 2026-08-02, task t_65a0c080): a REVIEW_VERDICT
+# token may only auto-complete / auto-route when it is *issued* by an authorized
+# reviewer, AND that reviewer is not the card's own assignee.
+#
+# Evidence of the gap:
+#   - t_089b30e1: completed off comment 12295 by `trading-strategy-dev` (a worker,
+#     not the reviewer) that *quoted* trading-risk-reviewer's REVIEW_VERDICT=APPROVED.
+#   - t_6164e58b: completed off comment 14256 by `builder` -- the card's OWN
+#     assignee -- asserting REVIEW_VERDICT=APPROVED (self-certification).
+# Both are genuine B1/B2 failures and were wrongly closed by apply-mode (2026-07-14).
+#
+# REVIEWER_ALLOWLIST: terminal-capable review seats that may issue a verdict the
+# router acts on. Keep this in lockstep with kanban_dedupe_guard.review_assignee_block_reason.
+REVIEWER_ALLOWLIST = frozenset({
+    "os-reviewer",
+    "trading-risk-reviewer",
+    "guardian",
+    "platform-reviewer",
+    "devops",          # terminal-capable reviewer seat per fleet governance
+    "jarvis",
+    "elon",
+    "elon-governor",
+    "jarvis-voice",
+})
+
+# A verdict is *attributed* (quoted) rather than *issued* when the same sentence /
+# phrase names another author as the verdict source (e.g. "by os-reviewer",
+# "trading-risk-reviewer APPROVED", "per reviewer: REVIEW_VERDICT=APPROVED"). An
+# attributed verdict is NOT a verdict this comment author issued, so it must not
+# auto-route (B1). Fail closed: if attribution cannot be excluded, treat as quoted.
+_ATTRIBUTION_RE = re.compile(
+    r"\b(by|per|from|according to|quoting|via|as (?:noted|stated|reported) by)\s+"
+    r"([A-Za-z0-9_\-]+(?:[ .][A-Za-z0-9_\-]+)*)\b",
+    re.I,
+)
+# Short allowlist of author-like tokens that, when followed by a verdict in the
+# SAME clause, indicate the comment author is merely *relaying* another seat's
+# verdict. If the named author is not the comment author, the verdict is quoted.
+_RELAY_HINT_RE = re.compile(
+    r"\b(trading-risk-reviewer|os-reviewer|guardian|platform-reviewer|trading-devops|"
+    r"builder|nervous-system-engineer|sycode-trading-pm|jarvis-os-pm|worker|trading-strategy-dev)\b",
+    re.I,
+)
+
+# t_9799c507: resume-gate consumer. A READY card whose recent comments carry a
+# satisfied resume gate + an approved REVIEW_VERDICT token has no deterministic
+# consumer (the router only scanned `blocked` cards). We route it to its owning
+# PM seat as a COMMENT — NEVER auto-complete, NEVER auto-merge. Missing /
+# ambiguous target fails closed to NEEDS-PM.
+_RESUME_GATE_RE = re.compile(
+    r"\bRESUME_GATE\b[^.!?\n]{0,60}?\b(SATISFIED|MET)\b",
+    re.I,
+)
+# How far back to look for resume-gate markers on READY cards (covers the
+# dispatcher's PR-guard window + verdict-sweep fallback comments).
+RESUME_GATE_LOOKBACK_SECONDS = 86400 * 7
+
+# Board slug -> owning PM seat. Route target for a satisfied resume gate on a
+# READY card (comment-only). Missing mapping fails closed to NEEDS-PM.
+BOARD_PM_SEAT = {
+    "default": "jarvis-os-pm",
+    "jarvis-os": "jarvis-os-pm",
+    "sycode-trading": "sycode-trading-pm",
+    "upero": "upero-pm",
+    "sycode-ai": "upero-pm",
+    "supero": "upero-pm",
+    "yorkstone": "yorkstone-supplies-pm",
+    "yorkstone-supplies": "yorkstone-supplies-pm",
+    "ai-restaurant": "frankspencer",
+    "quicknote": "jarvis",
+    "legacy-yss": "legacy-yss-manager",
+}
+
+
+def verdict_is_attributed(text: str, author: str, start: int, end: int) -> bool:
+    """True if the verdict token [start:end] is *attributed to another author*
+    rather than issued by ``author`` (B1). We look at a bounded window around the
+    verdict for relay phrasing that names a different seat.
+    """
+    window_start = max(0, start - 240)
+    window_end = min(len(text), end + 240)
+    window = text[window_start:window_end]
+    # Direct relay: "by <other>" / "per <other>" where <other> != author.
+    for m in _ATTRIBUTION_RE.finditer(window):
+        named = m.group(2).strip().lower()
+        if named and named != (author or "").lower():
+            return True
+    # Bare mention of another reviewer seat adjacent to the verdict phrasing in the
+    # same window (e.g. "trading-risk-reviewer REVIEW_VERDICT=APPROVED" written by a
+    # third party) without the comment author themselves being that seat.
+    if (author or "").lower() not in _RELAY_HINT_RE.pattern.lower().replace("\\b", ""):
+        # author is not one of the named reviewer seats; if the window names a
+        # reviewer seat that the comment author is NOT, it is an attribution.
+        for m in _RELAY_HINT_RE.finditer(window):
+            if m.group(0).lower() != (author or "").lower():
+                return True
+    return False
+
 # C4 fix (t_c996e275): negation-aware verdict detection so the router does not
 # treat negated / no-verdict prose as an affirmative verdict declaration.
 #
@@ -111,6 +209,25 @@ def verdict_declarations(text: str) -> "list[re.Match[str]]":
 
 EXCLUDED_BOARDS = {"orchestrator-sync"}  # coordination-only boards, not task boards
 
+# B3 (t_65a0c080): restrict scan scope to real task boards. The previous scan
+# enumerated EVERY `*/kanban.db` under BOARDS_DIR, including junk/scratch/backup
+# boards (testproj, skilldedupe, supero, .bak_* restore snapshots, ...). Combined
+# with the dead review-required gate this put every blocked card on every board in
+# router scope. We now scan only the allowlisted task boards plus the canonical
+# default DB. Backup (`_bak_*`) and underscore-prefixed dirs are always excluded.
+BOARD_ALLOWLIST = {
+    "ai-restaurant",
+    "jarvis-os",
+    "legacy-yss",
+    "quicknote",
+    "supero",
+    "sycode-ai",
+    "sycode-trading",
+    "upero",
+    "yorkstone",
+    "yorkstone-supplies",
+}
+
 FORBIDDEN_SCOPE_INNER = (
     r"deploy(?:ment)?|prod(?:uction)?|runtime|go[- ]?live|live[-_ ]?(?:mode|trading|capped)|"
     r"gateway\s+restart|service\s+restart|cron\s+activation|apply\s+sentinel|"
@@ -138,7 +255,15 @@ FORBIDDEN_SCOPE_RE = re.compile(r"\b(" + FORBIDDEN_SCOPE_INNER + r")\b", re.I)
 _GATE_DENIAL_CUES = (
     r"no|not|without|do\s+not|don'?t|free\s+of|den(?:y|ied|ial)|avoid\w*|never|"
     r"unnecessary|exclud\w*|waiv\w*|safe|intact|preserv\w*|unchanged|"
-    r"no[- ]?op|non[- ]?gated|frank[- ]?gated|out[- ]?of[- ]?scope"
+    r"no[- ]?op|non[- ]?gated|out[- ]?of[- ]?scope|"
+    # B-major (t_65a0c080): 'frank-gated' is itself a denial cue -- it means the
+    # action is GATED and requires Frank, i.e. it must NOT auto-complete. The old
+    # cue list treated 'frank-gated' as a safe/non-gated phrase, so a comment like
+    # 'prod deploy - Frank-gated' bypassed the operator gate. 'frank-gated' /
+    # 'frank approval' / 'awaiting frank' are now explicit gate-affirming phrases.
+    r"frank[- ]?gated|frank[- ]?approval|awaiting[- ]?frank|needs[- ]?frank|"
+    r"operator[- ]?gated|operator[- ]?approval|awaiting[- ]?operator|needs[- ]?operator|"
+    r"a3[- ]?gated|a3[- ]?approval"
 )
 GATE_DENIAL_CUE_RE = re.compile(r"\b(?:" + _GATE_DENIAL_CUES + r")\b", re.I)
 # A forbidden noun is a gate-DENIAL (safe to ignore) when a denial cue precedes
@@ -367,6 +492,21 @@ def append_run_log(line: str) -> None:
         f.write(f"[{utc_now()}] {line}\n")
 
 
+def open_db_ro(db: Path) -> sqlite3.Connection:
+    """Open a board DB for read-only scanning WITHOUT the immutable=1 flag.
+
+    B-major (t_65a0c080): immutable=1 makes SQLite ignore the -wal file and read a
+    potentially STALE snapshot of a live board (the kanban kernel writes via WAL).
+    A router scan on an immutable connection could miss the latest comment/event
+    and act on stale state. mode=ro reads the live WAL checkpoint instead. We do
+    not use read-only WAL locking to avoid blocking the live writer; a brief
+    reader is safe and the router is read-mostly.
+    """
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    return con
+
+
 def boards() -> list[Board]:
     found: list[Board] = []
     if DEFAULT_DB.exists():
@@ -376,7 +516,11 @@ def boards() -> list[Board]:
             slug = db.parent.name
             if slug.startswith("_"):
                 continue
-            if slug in EXCLUDED_BOARDS:
+            # B3: exclude backup/restore snapshots and anything not in the
+            # allowlisted set of real task boards.
+            if slug.startswith(".bak") or slug in EXCLUDED_BOARDS:
+                continue
+            if slug not in BOARD_ALLOWLIST:
                 continue
             found.append(Board(slug, db))
     return found
@@ -454,8 +598,7 @@ def router_processed_comment(con: sqlite3.Connection, task_id: str, comment_id: 
 
 
 def candidates_for_board(board: Board) -> list[Candidate]:
-    con = sqlite3.connect(str(board.db))
-    con.row_factory = sqlite3.Row
+    con = open_db_ro(board.db)
     try:
         rows = con.execute(
             """
@@ -489,7 +632,17 @@ def candidates_for_board(board: Board) -> list[Candidate]:
             if router_processed_comment(con, row["id"], comment_id):
                 continue
             task_text = "\n".join([row["title"] or "", row["body"] or ""])
-            if not (REVIEW_REQUIRED_RE.search(task_text) or REVIEW_REQUIRED_RE.search(body) or verdict_declarations(body)):
+            # B3 (t_65a0c080): the review-required gate was dead -- the third
+            # disjunct `verdict_declarations(body)` is always truthy whenever we
+            # reach here, so EVERY blocked card on EVERY board (incl. junk boards)
+            # was in scope. The real gate: a card enters the routing pipeline only
+            # when it is in review-required scope. "Review-required scope" means
+            # the task's own title/body carries the review-required marker (a
+            # genuine code-review handoff), NOT merely that some comment contains a
+            # verdict token (that is already required above). We also restrict the
+            # board list (see BOARD_ALLOWLIST), so junk/coordination boards never
+            # reach this point.
+            if not (REVIEW_REQUIRED_RE.search(task_text) or REVIEW_REQUIRED_RE.search(body)):
                 continue
             # C2 (t_c3bbc27b): surface the task's structured gate signals so the
             # operator-gate detector can gate on them WITHOUT scanning reviewer
@@ -508,6 +661,132 @@ def candidates_for_board(board: Board) -> list[Candidate]:
                     latest_comment_body=body,
                     latest_comment_created_at=comment_created_at or 0,
                     block_reason=block_reason,
+                    block_kind=row["block_kind"],
+                )
+            )
+        return out
+    finally:
+        con.close()
+
+
+def _resume_gate_satisfied(body: str) -> bool:
+    """True if ``body`` carries an AFFIRMATIVE satisfied-resume-gate marker.
+
+    Fail closed: a negated / no-gate declaration (\"RESUME_GATE not satisfied\",
+    \"RESUME_GATE UNSATISFIED\") must NOT count. ``SATISFIED`` / ``MET`` inside a
+    negation scope is a denial and is excluded.
+    """
+    if not body:
+        return False
+    m = _RESUME_GATE_RE.search(body)
+    if not m:
+        return False
+    sent_start = 0
+    for b in _SENTENCE_BOUNDARY_RE.finditer(body, 0, m.start()):
+        sent_start = b.end()
+    sent_end = len(body)
+    nb = _SENTENCE_BOUNDARY_RE.search(body, m.end())
+    if nb:
+        sent_end = nb.start()
+    sentence = body[sent_start:sent_end]
+    if GATE_DENIAL_CUE_RE.search(sentence):
+        # "no RESUME_GATE SATISFIED" / "RESUME_GATE SATISFIED denied" — denial.
+        return False
+    return True
+
+
+def _approved_verdict_present(body: str) -> bool:
+    """True if ``body`` affirmatively declares an APPROVED verdict token.
+
+    t_9799c507: the resume-gate consumer needs a lighter check than the
+    auto-complete path's sentence-scoped negation logic. Governor fallback
+    comments legitimately pair ``REVIEW_VERDICT=APPROVED`` with "ROUTING NOT
+    AUTO-COMPLETION" — the NOT negates auto-completion, not the verdict. A
+    verdict is suppressed only when a negation cue appears BEFORE the token in
+    the same sentence (direct denial: "No REVIEW_VERDICT=APPROVED").
+    """
+    if not body:
+        return False
+    for m in VERDICT_RE.finditer(body):
+        if m.group(1).strip().upper() not in {"APPROVED", "APPROVE"}:
+            continue
+        sent_start = 0
+        for b in _SENTENCE_BOUNDARY_RE.finditer(body, 0, m.start()):
+            sent_start = b.end()
+        before = body[sent_start:m.start()]
+        if VERDICT_NEGATION_CUE_RE.search(before):
+            continue  # direct denial preceding the token — not an approval
+        return True
+    return False
+
+
+def resume_candidates_for_board(board: Board) -> list[Candidate]:
+    """t_9799c507: READY cards whose recent comments carry a satisfied resume
+    gate + an approved REVIEW_VERDICT token (issued by an allowlisted reviewer
+    seat). These cards have no deterministic consumer today — the router only
+    scanned ``blocked`` cards. Returns the marker comment as the candidate's
+    latest comment so the decision/route machinery stays uniform.
+    """
+    con = open_db_ro(board.db)
+    try:
+        rows = con.execute(
+            "SELECT id, title, body, assignee, block_kind "
+            "FROM tasks WHERE status = 'ready' "
+            "ORDER BY priority DESC, created_at ASC"
+        ).fetchall()
+        cutoff = int(time.time()) - RESUME_GATE_LOOKBACK_SECONDS
+        out: list[Candidate] = []
+        placeholders = ",".join("?" for _ in ROUTER_AUTHORS)
+        for row in rows:
+            comments = con.execute(
+                f"""
+                SELECT id, author, body, created_at
+                  FROM task_comments
+                 WHERE task_id=?
+                   AND created_at >= ?
+                   AND COALESCE(author, '') NOT IN ({placeholders})
+                 ORDER BY id DESC
+                """,
+                (row["id"], cutoff, *sorted(ROUTER_AUTHORS)),
+            ).fetchall()
+            marker = None
+            for c in comments:
+                body = c["body"] or ""
+                # Marker + approved verdict must BOTH be present, and the marker
+                # must be posted by an allowlisted reviewer seat (a random
+                # worker cannot trigger PM routing).
+                if not _resume_gate_satisfied(body):
+                    continue
+                if (c["author"] or "").lower() not in REVIEWER_ALLOWLIST:
+                    continue
+                if not _approved_verdict_present(body):
+                    continue
+                marker = c
+                break
+            if marker is None:
+                continue
+            comment_id = safe_int(marker["id"], context=f"{board.slug}/{row['id']}:task_comments.id")
+            if comment_id is None:
+                continue
+            if router_processed_comment(con, row["id"], comment_id):
+                continue
+            comment_created_at = safe_int(
+                marker["created_at"],
+                context=f"{board.slug}/{row['id']}:task_comments.created_at:{comment_id}",
+                default=0,
+            )
+            out.append(
+                Candidate(
+                    board=board,
+                    task_id=row["id"],
+                    title=row["title"] or "",
+                    body=row["body"] or "",
+                    assignee=row["assignee"],
+                    latest_comment_id=comment_id,
+                    latest_comment_author=marker["author"] or "",
+                    latest_comment_body=marker["body"] or "",
+                    latest_comment_created_at=comment_created_at or 0,
+                    block_reason=None,
                     block_kind=row["block_kind"],
                 )
             )
@@ -556,22 +835,55 @@ def latest_block_reason(con: sqlite3.Connection, task_id: str) -> str | None:
     return reason if isinstance(reason, str) else None
 
 
-def parse_verdict(comment_body: str) -> str | None:
+def parse_verdict(comment_body: str, *, author: str | None = None, assignee: str | None = None) -> str | None:
     # C4 fix (t_c996e275): only *affirmative* verdict declarations count. A
     # negated / no-verdict token (e.g. "No REVIEW_VERDICT=APPROVED") is a denial
     # and must not route as a verdict. Fail closed: 0 or >1 affirmative tokens
     # => None (ambiguous / no verdict).
+    #
+    # B1/B2 (t_65a0c080): the verdict must be *issued* by an authorized reviewer
+    # who is not the card's own assignee. When ``author``/``assignee`` are given:
+    #   - the comment author must be in REVIEWER_ALLOWLIST (authorized reviewer),
+    #   - the author must not equal the card assignee (no self-certification),
+    #   - the verdict token must not be *attributed* to a different seat (quoted).
+    # If any of these fail, return None (the router must not act on it). Fail
+    # closed: missing author/assignee => None (cannot establish attribution).
     matches = verdict_declarations(comment_body)
     if len(matches) != 1:
         return None
-    raw = matches[0].group(1).strip().upper()
+    m = matches[0]
+    raw = m.group(1).strip().upper()
+    verdict: str | None
     if raw == "APPROVE":
-        return "APPROVED"
-    if raw in {"REJECT", "REJECTED"}:
-        return "REJECT"
-    if raw in VALID_VERDICTS:
-        return raw
-    return raw[:80] or "AMBIGUOUS"
+        verdict = "APPROVED"
+    elif raw in {"REJECT", "REJECTED"}:
+        verdict = "REJECT"
+    elif raw in VALID_VERDICTS:
+        verdict = raw
+    else:
+        verdict = raw[:80] or "AMBIGUOUS"
+
+    if author is not None or assignee is not None:
+        if not _verdict_issuable_by(comment_body, m.start(), m.end(), author, assignee):
+            return None
+    return verdict
+
+
+def _verdict_issuable_by(text: str, start: int, end: int, author: str | None, assignee: str | None) -> bool:
+    """B1/B2 gate: is this verdict token a verdict *issued* (not quoted) by an
+    authorized reviewer who is not the card's assignee? Fail closed => False.
+    """
+    if author is None:
+        return False
+    if author.lower() not in REVIEWER_ALLOWLIST:
+        return False
+    if assignee is not None and author.lower() == assignee.lower():
+        # self-certification: a worker approving its own card.
+        return False
+    if verdict_is_attributed(text, author, start, end):
+        # quoted verdict from another seat; this comment did not issue it.
+        return False
+    return True
 
 
 def task_ids_in_comment(candidate: Candidate) -> list[str]:
@@ -686,7 +998,11 @@ def mark_idempotent(decision: Decision) -> Decision:
 
 
 def decide(candidate: Candidate, dry_run: bool) -> Decision:
-    verdict = parse_verdict(candidate.latest_comment_body)
+    verdict = parse_verdict(
+        candidate.latest_comment_body,
+        author=candidate.latest_comment_author,
+        assignee=candidate.assignee,
+    )
     validation = target_validation(candidate, verdict)
     scope, scope_reason = classify_scope(candidate, verdict)
 
@@ -717,6 +1033,39 @@ def decide(candidate: Candidate, dry_run: bool) -> Decision:
     return make_decision(candidate, verdict, "needs_pm", "ambiguous or malformed verdict", dry_run, validation, "ambiguous", "would_comment")
 
 
+def decide_resume(candidate: Candidate, dry_run: bool) -> Decision:
+    """t_9799c507: decision for a READY card whose recent comments carry a
+    satisfied resume gate + an approved REVIEW_VERDICT token.
+
+    The deterministic consumer is a COMMENT routed to the owning PM seat —
+    NEVER auto-complete, NEVER auto-merge (the card's own body may carry
+    deploy/live/DB/A3/credential gates that only a human PM may clear). Missing
+    / ambiguous PM-seat mapping fails closed to NEEDS-PM.
+    """
+    pm_seat = BOARD_PM_SEAT.get(candidate.board.slug)
+    if pm_seat:
+        return make_decision(
+            candidate,
+            "APPROVED",
+            "resume_route",
+            f"resume gate satisfied on READY card; routed to owning PM seat {pm_seat}",
+            dry_run,
+            "same-card",
+            "resume_gate",
+            "would_comment",
+        )
+    return make_decision(
+        candidate,
+        "APPROVED",
+        "needs_pm",
+        "resume gate satisfied but owning PM seat unknown; failed closed",
+        dry_run,
+        "missing-target",
+        "ambiguous",
+        "would_comment",
+    )
+
+
 def shell_cmd(args: list[str]) -> str:
     return " ".join(shlex.quote(a) for a in args)
 
@@ -740,8 +1089,7 @@ def perform(decision: Decision, candidate: Candidate) -> tuple[str | None, subpr
     if decision.action == "skip":
         return "idempotent-skip", None
     marker = decision.idempotency_key
-    con = sqlite3.connect(str(candidate.board.db))
-    con.row_factory = sqlite3.Row
+    con = open_db_ro(candidate.board.db)
     try:
         if prior_router_marker(con, candidate.task_id, marker):
             return "already-marked", None
@@ -769,7 +1117,26 @@ def perform(decision: Decision, candidate: Candidate) -> tuple[str | None, subpr
             },
             sort_keys=True,
         )
-        args = board_cli_prefix(decision.board) + ["complete", decision.task_id, "--summary", summary, "--metadata", metadata]
+        # B4 (t_65a0c080): also persist the completion marker as a task_comments
+        # row. The idempotency check (prior_router_marker) already scans comments
+        # for this marker, but apply-mode historically wrote it ONLY to
+        # --summary/--metadata (verified: 0 marker rows vs ~15 apply-era
+        # completes), so a reopened+re-blocked card re-completed off a stale
+        # APPROVE. Writing the comment closes that gap: re-runs see the marker and
+        # skip (see mark_idempotent / prior_router_marker).
+        marker_comment = (
+            f"verdict-router COMPLETE marker={marker}\n"
+            f"verdict_value={decision.verdict}; completed_comment_id={decision.comment_id}; "
+            f"review_comment_author={candidate.latest_comment_author}; reason={decision.reason}\n"
+            "This row is the durable router-completion signal; do not remove."
+        )
+        args = board_cli_prefix(decision.board) + [
+            "complete", decision.task_id,
+            "--summary", summary,
+            "--metadata", metadata,
+            "--comment", marker_comment,
+            "--author", AUTHOR,
+        ]
         return shell_cmd(args), run_cli(args)
     if decision.action == "unblock_rework":
         finding = first_finding_excerpt(candidate.latest_comment_body)
@@ -781,6 +1148,18 @@ def perform(decision: Decision, candidate: Candidate) -> tuple[str | None, subpr
             f"idempotency_key={marker}"
         )
         args = board_cli_prefix(decision.board) + ["unblock", decision.task_id, "--reason", comment]
+        return shell_cmd(args), run_cli(args)
+    if decision.action == "resume_route":
+        pm_seat = BOARD_PM_SEAT.get(decision.board, "UNKNOWN")
+        comment = (
+            "RESUME-GATE ROUTED (deterministic consumer, t_9799c507): this READY card's "
+            "recent comments carry a satisfied resume gate + approved REVIEW_VERDICT.\n"
+            f"{evidence}"
+            f"ROUTE (comment only — verdict-router NEVER auto-completes/merges): owning "
+            f"PM seat `{pm_seat}` to resume/land/disposition this card.\n"
+            "verdict-router took NO complete/merge/deploy/status action."
+        )
+        args = board_cli_prefix(decision.board) + ["comment", decision.task_id, comment, "--author", AUTHOR]
         return shell_cmd(args), run_cli(args)
     if decision.action == "needs_operator":
         comment = (
@@ -808,21 +1187,59 @@ def perform(decision: Decision, candidate: Candidate) -> tuple[str | None, subpr
     return shell_cmd(args), run_cli(args)
 
 
-def acquire_lock() -> int | None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+def _pid_alive(pid: int) -> bool:
+    """Best-effort check that a PID is still running (cross-platform-ish)."""
+    if pid <= 0:
+        return False
     try:
-        fd = os.open(str(LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        os.write(fd, f"{os.getpid()} {utc_now()}\n".encode("utf-8"))
-        return fd
-    except FileExistsError:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # pid exists but we cannot signal it -> still alive
+        return True
+    return True
+
+
+def acquire_lock() -> int | None:
+    """Acquire a single-instance lock.
+
+    B-major (t_65a0c080): the prior stale-lock break was a TOCTOU -- two cron
+    instances could both observe an aged-out lock, both call unlink, both
+    re-create, and then BOTH run concurrently (double-apply). We now:
+      1) re-create atomically with O_EXCL after the unlink (so only one wins),
+      2) only break a stale lock if its recorded PID is NOT still alive,
+      3) bound the retry loop so a live competing holder wins cleanly.
+    """
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    for _ in range(3):
         try:
-            age = time.time() - LOCK_PATH.stat().st_mtime
-        except OSError:
-            age = 0
-        if age > 900:
-            LOCK_PATH.unlink(missing_ok=True)
-            return acquire_lock()
-        return None
+            fd = os.open(str(LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.write(fd, f"{os.getpid()} {utc_now()}\n".encode("utf-8"))
+            return fd
+        except FileExistsError:
+            # Read the recorded owner PID (if any) before deciding to break.
+            try:
+                with open(str(LOCK_PATH), "r", encoding="utf-8") as f:
+                    owner_line = f.readline().split()[0]
+                owner_pid = int(owner_line)
+            except (OSError, ValueError, IndexError):
+                owner_pid = -1
+            try:
+                age = time.time() - LOCK_PATH.stat().st_mtime
+            except OSError:
+                age = 0
+            # Only break when the lock is old AND the recorded owner is no longer
+            # running. A live owner (even an aged lock) means another instance is
+            # still working -- yield to it, do not double-apply.
+            if age > 900 and not _pid_alive(owner_pid):
+                try:
+                    LOCK_PATH.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                continue  # re-loop: the next O_EXCL attempt is atomic
+            return None
+    return None
 
 
 def release_lock(fd: int | None) -> None:
@@ -837,6 +1254,54 @@ def apply_enabled(cli_apply: bool, cli_dry_run: bool) -> bool:
     if cli_apply:
         return True
     return os.environ.get("VERDICT_ROUTER_APPLY") == "1" or ENABLE_SENTINEL.exists()
+
+
+def _process_one(
+    cand: Candidate,
+    decide_fn: Any,
+    dry_run: bool,
+    mode: str,
+    decisions: list[Decision],
+    failures: list[dict],
+) -> None:
+    """Run one candidate through decide -> idempotency -> shadow-log -> perform."""
+    decision = decide_fn(cand, dry_run)
+    con = open_db_ro(cand.board.db)
+    try:
+        if prior_router_marker(con, cand.task_id, decision.idempotency_key):
+            decision = mark_idempotent(decision)
+    finally:
+        con.close()
+    decisions.append(decision)
+    entry = {
+        "timestamp": utc_now(),
+        "mode": mode,
+        "board": decision.board,
+        "task_id": decision.task_id,
+        "action": decision.action,
+        "verdict": decision.verdict,
+        "verdict_value": decision.verdict,
+        "comment_id": decision.comment_id,
+        "source_comment_id": decision.comment_id,
+        "source_author": decision.source_author,
+        "target_validation": decision.target_validation,
+        "scope_class": decision.scope_class,
+        "result": decision.result,
+        "idempotency_key": decision.idempotency_key,
+        "reason": decision.reason,
+    }
+    if dry_run:
+        append_note(entry)
+        return
+    command, proc = perform(decision, cand)
+    entry["command"] = command or "idempotent-skip"
+    if proc is not None:
+        entry["stdout"] = (proc.stdout or "").strip()
+        entry["stderr"] = (proc.stderr or "").strip()
+        if proc.returncode != 0:
+            entry["action"] = f"{decision.action}_failed"
+            failures.append({"board": decision.board, "task_id": decision.task_id, "rc": proc.returncode, "stderr": proc.stderr})
+    append_note(entry)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -875,43 +1340,18 @@ def main(argv: Iterable[str] | None = None) -> int:
                 )
                 continue
             for cand in cands:
-                decision = decide(cand, dry_run)
-                con = sqlite3.connect(str(cand.board.db))
-                try:
-                    if prior_router_marker(con, cand.task_id, decision.idempotency_key):
-                        decision = mark_idempotent(decision)
-                finally:
-                    con.close()
-                decisions.append(decision)
-                entry = {
-                    "timestamp": utc_now(),
-                    "mode": mode,
-                    "board": decision.board,
-                    "task_id": decision.task_id,
-                    "action": decision.action,
-                    "verdict": decision.verdict,
-                    "verdict_value": decision.verdict,
-                    "comment_id": decision.comment_id,
-                    "source_comment_id": decision.comment_id,
-                    "source_author": decision.source_author,
-                    "target_validation": decision.target_validation,
-                    "scope_class": decision.scope_class,
-                    "result": decision.result,
-                    "idempotency_key": decision.idempotency_key,
-                    "reason": decision.reason,
-                }
-                if dry_run:
-                    append_note(entry)
-                    continue
-                command, proc = perform(decision, cand)
-                entry["command"] = command or "idempotent-skip"
-                if proc is not None:
-                    entry["stdout"] = (proc.stdout or "").strip()
-                    entry["stderr"] = (proc.stderr or "").strip()
-                    if proc.returncode != 0:
-                        entry["action"] = f"{decision.action}_failed"
-                        failures.append({"board": decision.board, "task_id": decision.task_id, "rc": proc.returncode, "stderr": proc.stderr})
-                append_note(entry)
+                _process_one(cand, decide, dry_run, mode, decisions, failures)
+            # t_9799c507: READY-card resume-gate consumer. A satisfied resume
+            # gate + approved verdict on a READY card has no other deterministic
+            # consumer; route it to the owning PM seat as a comment (never
+            # auto-complete/merge).
+            try:
+                resume_cands = resume_candidates_for_board(board)
+            except Exception as exc:
+                failures.append({"board": board.slug, "error": f"resume-scan: {exc}"})
+                continue
+            for cand in resume_cands:
+                _process_one(cand, decide_resume, dry_run, mode, decisions, failures)
 
         summary = {
             "mode": mode,
