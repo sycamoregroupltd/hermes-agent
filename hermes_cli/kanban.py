@@ -932,6 +932,10 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
                       help="Delete task_events older than N days for terminal tasks (default: 30)")
     p_gc.add_argument("--log-retention-days", type=int, default=30,
                       help="Delete worker log files older than N days (default: 30)")
+    p_gc.add_argument("--audit-report", action="store_true",
+                      help="Print historical gc_events audit records instead of running GC")
+    p_gc.add_argument("--dry-run", action="store_true",
+                      help="Preview what gc_events would delete WITHOUT deleting")
 
     # --- repair ---
     p_repair = sub.add_parser(
@@ -3092,7 +3096,34 @@ def _cmd_decompose(args: argparse.Namespace) -> int:
 
 def _cmd_gc(args: argparse.Namespace) -> int:
     """Remove scratch workspaces of archived tasks, prune old events, and
-    delete old worker logs."""
+    delete old worker logs.
+
+    t_6baff6ad adds:
+      --audit-report → print historical gc_audit JSONL records
+      --dry-run      → preview what would be deleted without deleting
+    """
+    # --- audit-report mode ---------------------------------------------------
+    if getattr(args, "audit_report", False):
+        lines = kb.load_gc_audit_lines()
+        if not lines:
+            print("No gc_events audit records found.")
+            return 0
+        for entry in lines:
+            print(json.dumps(entry))
+        return 0
+
+    # --- dry-run mode --------------------------------------------------------
+    if getattr(args, "dry_run", False):
+        with kb.connect_closing() as conn:
+            snapshot = kb.gc_events_preview(
+                conn, older_than_seconds=args.event_retention_days * 24 * 3600,
+            )
+        print(json.dumps(snapshot, indent=2))
+        print(f"\nAudit file: {kb.gc_events_audit_file_path()}")
+        print("(No files modified in this run)")
+        return 0
+
+    # --- live GC -------------------------------------------------------------
     import shutil
     scratch_root = kb.workspaces_root()
     removed_ws = 0
@@ -3128,6 +3159,7 @@ def _cmd_gc(args: argparse.Namespace) -> int:
     )
     print(f"GC complete: {removed_ws} workspace(s), "
           f"{removed_events} event row(s), {removed_logs} log file(s) removed")
+    print(f"Audit record written to {kb.gc_events_audit_file_path()}")
     return 0
 
 
