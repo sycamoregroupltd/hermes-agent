@@ -199,16 +199,15 @@ def parse_metrics(output: str) -> dict:
             if _t_txt:
                 metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
 
-    # n = the calibration-sample identity (Tier-1). Fall back to merged_n ONLY
-    # when the Tier-1 line is absent (legacy/pre-Tier-2 reports) so the monitor
-    # never goes silently blind — but the MCE is always measured on
-    # tier1_clean_n, so labelling the alert with merged_n is wrong and is the
-    # root-cause defect fixed by t_016ac4e4.
-    metrics["n"] = (
-        metrics["tier1_clean_n"]
-        if metrics["tier1_clean_n"] is not None
-        else metrics["merged_n"]
-    )
+    # n = the calibration-sample identity (Tier-1 realized-exit), consistent
+    # with the MCE the alert decision keys on. t_49688e05: NEVER fall back to
+    # merged_n — merged_n is the Tier-1+Tier-2 synthetic population, not the
+    # calibration sample; labelling the alert with it mis-reports the sample
+    # the miscalibration was measured on (the t_016ac4e4 root-cause defect).
+    # When tier1_clean_n is absent (legacy/pre-Tier-2 report) n stays None and
+    # main() stays silent rather than emitting the merged count as if it were
+    # the calibration sample.
+    metrics["n"] = metrics["tier1_clean_n"]
 
     # Extract win rate. t_ba7757c8: the pinned v2 report emits
     # `**Tier-1 clean win rate**` (Section 1 table) and
@@ -1367,6 +1366,47 @@ def regression_test() -> int:
               _card_in_cooldown("MCE", _now) is False)
     finally:
         STATE_FILE = _orig_state_file2
+
+    # (S) t_49688e05: the alert emission sample identity is ALWAYS
+    # tier1_clean_n, never merged_n. The parent t_df54ca93 requires the alert
+    # to report n=tier1_clean_n (currently 112) consistent with the MCE; the
+    # merged_n fallback was the t_016ac4e4 root-cause defect (labelling the
+    # alert with the Tier-1+Tier-2 synthetic count mis-reports the sample the
+    # miscalibration was measured on).
+    _parsed = parse_metrics(
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "| **Tier-1 clean unique journeys (realized-exit, authoritative)** | **112** |\n"
+    )
+    check("t_49688e05: n == tier1_clean_n when both populations present",
+          _parsed.get("n") == 112 and _parsed.get("merged_n") == 6842)
+    check("t_49688e05: alert n never falls back to merged_n (112 != 6842)",
+          _parsed.get("n") != _parsed.get("merged_n"))
+    # Legacy pre-Tier-2 report: merged_n present, NO Tier-1 line -> n stays
+    # None (silent), it must NOT be labelled with the merged count.
+    _legacy = parse_metrics(
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+    )
+    check("t_49688e05: merged-only legacy report -> n is None (silent, never merged_n)",
+          _legacy.get("n") is None and _legacy.get("merged_n") == 6842)
+    # Acceptance replay (parent t_df54ca93): weighted_mce 18.86pp >= 15pp on
+    # tier1_clean_n=112 < validated-edge floor -> INVESTIGATE (thin genuine
+    # breach, no card), and every alert line reports n=112, never 6842.
+    d = decide_alert({
+        "n": 112, "tier1_clean_n": 112, "merged_n": 6842,
+        "win_rate": 40.0, "avg_pnl": -0.2, "weighted_mce": 18.86,
+    })
+    _all_s = " ".join(d["stdout_lines"]) if d else ""
+    check("t_49688e05: acceptance replay (n=112, MCE=18.86) -> INVESTIGATE",
+          d is not None and d["kind"] == "INVESTIGATE" and d["card"] is False)
+    check("t_49688e05: alert reports n=112 (tier1_clean_n)",
+          "n=112" in _all_s)
+    # The Tier-1 sample identity must never be labelled with the merged count.
+    # (The merged figure's own n=6842 may still appear inside its explicitly
+    # non-authoritative MCE label — that is the t_0bfed6a8 pairing, not the
+    # alert's sample identity.)
+    check("t_49688e05: alert never claims the Tier-1 sample is merged_n",
+          "Tier-1 clean unique journeys (n): 6842" not in _all_s
+          and "sample (n=6842" not in _all_s)
 
     # Restore the temp state redirect used for the whole harness.
     STATE_FILE, STATE_DIR = _orig_state_file, _orig_state_dir
