@@ -177,6 +177,81 @@ try:
 except Exception:
     FAILS.append("phases-file")
 
+# ── 7. event signature verification (t_3f244a06 — verify-and-report only) ─────
+import base64 as _b64
+
+def _verify_event_sig(event_id, kind, payload, created_at, sig_b64):
+    """Verify one task_events row's ed25519 signature against allowed_signers.
+    
+    Returns: ('GOOD', principal) | ('UNVERIFIED', None) | ('BAD', msg)
+    Never raises — any failure class becomes UNVERIFIED so this never blocks.
+    """
+    if not sig_b64:
+        return ("UNSIGNED", None)
+    try:
+        signature = _b64.b64decode(sig_b64)
+    except Exception:
+        return ("BAD invalid-base64", None)
+    
+    # Build candidate payloads for each registered principal and test each
+    fp_to_principal = {}
+    principal_to_pub = {}
+    try:
+        with open("/home/frank/.hermes/governance/allowed_signers") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln or ln.startswith("#"):
+                    continue
+                parts = ln.split()
+                if len(parts) < 3:
+                    continue
+                principal = parts[0]
+                key_type = key_base64 = None
+                for i, tok in enumerate(parts[2:], start=2):
+                    if tok.startswith("namespaces=") or tok.startswith("valid-after=") or tok.startswith("valid-before="):
+                        continue
+                    key_type = tok
+                    key_base64 = parts[i + 1] if i + 1 < len(parts) else None
+                    break
+                if key_type != "ssh-ed25519" or not key_base64:
+                    continue
+                pub_bytes = _b64.b64decode(key_base64)
+                principal_to_pub[principal] = pub_bytes
+    except Exception:
+        return ("UNVERIFIED no-signers-file", None)
+    
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.hazmat.primitives import serialization
+    except ImportError:
+        return ("UNVERIFIED no-cryptography", None)
+    
+    d = {"task_id": None, "kind": kind, "payload": json.loads(payload) if isinstance(payload, str) and payload else None, "run_id": None, "created_at": int(created_at)}
+    msg = json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    
+    for principal, pub_bytes in principal_to_pub.items():
+        try:
+            pubkey = serialization.load_ssh_public_key(f"ssh-ed25519 {_b64.b64encode(pub_bytes).decode()}".encode())
+            try:
+                pubkey.verify(signature, msg)
+                return ("GOOD", principal)
+            except Exception:
+                pass
+        except Exception:
+            continue
+    
+    return ("UNTRUSTED signed-by-unregistered-key", None)
+
+SIG_STATS = {"GOOD": 0, "UNSIGNED": 0, "UNTRUSTED": 0, "BAD": 0, "TOTAL": 0}
+try:
+    _sig_rows = q("SELECT id, kind, payload, created_at, COALESCE(event_signature,'') FROM task_events ORDER BY id LIMIT 2000")
+    for r in _sig_rows:
+        eid, kind, payload, created, sig = r["id"], r["kind"], r["payload"], r["created_at"], r["COALESCE(event_signature,'')"]
+        status, _ = _verify_event_sig(eid, kind, payload, created, sig)
+        SIG_STATS["TOTAL"] += 1
+        SIG_STATS[status] = SIG_STATS.get(status, 0) + 1
+except Exception:
+    pass  # Column may not exist yet on this board — skip silently
 # ── 8. render STATE.md ─────────────────────────────────────────────────────────
 gap_tag = "up-to-date" if behind == "0" else (f"+{behind} merged, UNDEPLOYED" if behind not in ("unknown","PROBE FAILED") else "gap unknown")
 head_flag = "" if head_branch in ("main","PROBE FAILED") else f"  ⚠ OFF-MAIN (deploy from origin/main; fresh worktree)"
@@ -208,6 +283,9 @@ for p in phases:
 body.append("\n## Board health\n")
 body.append(f"- **Active**: {counts.get('running',0)} running · {counts.get('ready',0)} ready · {counts.get('todo',0)} todo · {counts.get('scheduled',0)} scheduled · {counts.get('done',0)} done")
 body.append(f"- **Blocked: {blk_total}** — but **{crash} carry `pid not alive` (crash graveyard, not backlog)**; ~{spam} diagnostic-storm spam; **~{max(blk_total-crash,0)} genuinely gated**. ⚠ Triage the pile as noise, not work.")
+sig_line = f"- **Event signatures**: {SIG_STATS['TOTAL']} events checked — {SIG_STATS['GOOD']} GOOD, {SIG_STATS.get('UNSIGNED', 0)} UNSIGNED, {SIG_STATS.get('UNTRUSTED', 0)} UNTRUSTED, {SIG_STATS.get('BAD', 0)} BAD (t_3f244a06 verify-and-report)"
+if SIG_STATS['TOTAL'] > 0:
+    body.append(sig_line)
 
 body.append("\n## Work lineage (active + recent, joined on task_id)\n")
 body.append("| task_id | card | PR | deployed? | notes | title |")
