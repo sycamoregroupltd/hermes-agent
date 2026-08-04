@@ -81,6 +81,14 @@ def main() -> int:
         {"task_id": "t_aaa4", "status": "done", "assignee": "devops",
          "diagnostics": [diag("prose_phantom_refs",
                               {"phantom_refs": ["t_bbb1", "wt/t_aaa1", "t_nope"]})]},
+        # inversion: source task id present -> plan comment+pm_route
+        {"task_id": "t_aaa4", "status": "running", "assignee": "devops",
+         "diagnostics": [diag("review_lane_dependency_inversion",
+                              {"source_task_id": "t_bbb1", "source_status": "blocked"})]},
+        # inversion: source task id MISSING -> trigger not satisfied, no plan
+        {"task_id": "t_aaa3", "status": "running", "assignee": "devops",
+         "diagnostics": [diag("review_lane_dependency_inversion",
+                              {"source_status": "blocked"})]},
         # blocked 10h -> below 48h threshold, no plan
         {"task_id": "t_aaa1", "status": "blocked", "assignee": "devops",
          "diagnostics": [diag("stuck_in_blocked", {"age_hours": 10})]},
@@ -104,8 +112,18 @@ def main() -> int:
     phantom = [p for p in plans if p["cls"] == "prose_phantom_refs"]
     check("only unresolvable ref routed",
           len(phantom) == 1 and phantom[0]["refs"] == ["t_nope"], str(phantom))
+    check("phantom refs action is comment+pm_route (matrix §2.3)",
+          len(phantom) == 1 and phantom[0]["action"] == "comment+pm_route", str(phantom))
     check("branch-name ref ignored",
           all("wt/t_aaa1" not in p.get("refs", []) for p in plans), str(plans))
+    inv = [p for p in plans if p["cls"] == "review_lane_dependency_inversion"]
+    check("inversion with source id planned as comment+pm_route",
+          len(inv) == 1 and inv[0]["source_task_id"] == "t_bbb1"
+          and inv[0]["action"] == "comment+pm_route", str(inv))
+    check("inversion without source id suppressed",
+          metrics["by_subclass_planned"].get(
+              "review_lane_dependency_inversion/inverted_parent_edge") == 1,
+          str(metrics["by_subclass_planned"]))
 
     print("== old block routed")
     fx2 = [{"task_id": "t_aaa1", "status": "blocked", "assignee": "devops",
@@ -151,6 +169,69 @@ def main() -> int:
     print("== pm card is dry-run safe")
     out = act.maybe_create_pm_card("alpha", plans, apply=False)
     check("pm card dry-run only prints", out == "" or out.startswith("DRY_RUN"), out)
+
+    print("== dry-run smoke test (full main, seeded sample, zero mutations)")
+    smoke_tmp = Path(tempfile.mkdtemp(prefix="actsmoke-"))
+    act.HERMES_HOME = smoke_tmp
+    act.BOARDS_DIR = smoke_tmp / "kanban" / "boards"
+    sb = act.BOARDS_DIR / "alpha" / "kanban.db"
+    sb.parent.mkdir(parents=True)
+    con = sqlite3.connect(sb)
+    con.execute("CREATE TABLE tasks(id TEXT PRIMARY KEY, title TEXT, status TEXT, assignee TEXT)")
+    con.execute("CREATE TABLE task_comments(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " task_id TEXT, author TEXT, body TEXT, created_at INTEGER)")
+    con.execute("CREATE TABLE task_events(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " task_id TEXT, kind TEXT, payload TEXT, created_at INTEGER)")
+    con.execute("INSERT INTO tasks VALUES(?,?,?,?)",
+                ("t_smoke1", "t", "ready", "ghost"))
+    con.commit()
+    pre_comments = con.execute("SELECT COUNT(*) FROM task_comments").fetchone()[0]
+    pre_events = con.execute("SELECT COUNT(*) FROM task_events").fetchone()[0]
+    pre_tasks = con.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    con.close()
+
+    real_run_diagnostics = act.run_diagnostics
+    smoke_fixture = [
+        {"task_id": "t_smoke1", "status": "ready", "assignee": "ghost",
+         "diagnostics": [diag("stranded_in_ready",
+                              {"age_seconds": 20 * 3600, "assignee": "ghost"},
+                              "critical")]},
+        {"task_id": "t_smoke1", "status": "blocked", "assignee": "devops",
+         "diagnostics": [diag("stuck_in_blocked", {"age_hours": 118})]},
+        {"task_id": "t_smoke1", "status": "done", "assignee": "devops",
+         "diagnostics": [diag("prose_phantom_refs",
+                              {"phantom_refs": ["t_nope2"]})]},
+    ]
+    act.run_diagnostics = lambda board, timeout=300: smoke_fixture
+    smoke_log = smoke_tmp / "actuator.jsonl"
+    try:
+        rc = act.main(["--boards", "alpha", "--json", "--log", str(smoke_log)])
+    finally:
+        act.run_diagnostics = real_run_diagnostics
+    check("smoke main dry-run rc=0", rc == 0, str(rc))
+    con = sqlite3.connect(sb)
+    n_comments = con.execute("SELECT COUNT(*) FROM task_comments").fetchone()[0]
+    n_events = con.execute("SELECT COUNT(*) FROM task_events").fetchone()[0]
+    n_tasks = con.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    con.close()
+    check("smoke dry-run wrote ZERO comments",
+          n_comments == pre_comments == 0, f"{n_comments} vs {pre_comments}")
+    check("smoke dry-run wrote ZERO events",
+          n_events == pre_events == 0, f"{n_events} vs {pre_events}")
+    check("smoke dry-run touched ZERO task rows",
+          n_tasks == pre_tasks == 1, f"{n_tasks} vs {pre_tasks}")
+    lines = smoke_log.read_text().strip().splitlines()
+    check("smoke dry-run wrote log line", len(lines) >= 1, str(len(lines)))
+    if lines:
+        rec = json.loads(lines[-1])
+        check("smoke log mode=dry-run", rec.get("mode") == "dry-run", str(rec.get("mode")))
+        acts = rec.get("actions") or []
+        check("smoke log has per-action entries with id/class/board/action/ts",
+              len(acts) == 3 and all(
+                  {"task_id", "class", "board", "action", "ts"} <= set(a)
+                  for a in acts) and
+              {a["action"] for a in acts} == {"comment+pm_route", "pm_route_only"},
+              json.dumps(acts, sort_keys=True))
 
     print()
     if FAILS:

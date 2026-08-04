@@ -250,6 +250,83 @@ def _stub_checks_pass() -> None:
     uhealth.check_kanban_crashes = lambda: (0, [], 0)
 
 
+def _make_executions_db(db: Path, now: datetime, *,
+                        gaps_min: list[float] | None = None,
+                        claimed_ages_min: list[float] | None = None,
+                        claimed_not_started: int = 0,
+                        claimed_stale_min: float = 2.0,
+                        running_zombies: int = 0) -> None:
+    """Seed a cron executions.db shaped exactly like the jarvis scheduler
+    ledger (schema: id/job_id/source/process_id/pid/process_started_at/
+    status/claimed_at/started_at/finished_at/error).
+
+    - gaps_min: N completed rows, each claimed at base+i min, started
+      base+i+gap min (claim->start gap in minutes).
+    - claimed_ages_min: N claimed-but-not-started rows, each claimed that many
+      minutes before `now` (overrides claimed_not_started/claimed_stale_min).
+    - claimed_not_started + claimed_stale_min: N claimed rows all claimed
+      claimed_stale_min minutes before `now`.
+    - running_zombies: N status=running rows whose started_at is 150 min old.
+    """
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "CREATE TABLE executions ("
+        "id TEXT PRIMARY KEY, job_id TEXT NOT NULL, source TEXT NOT NULL, "
+        "process_id TEXT NOT NULL, pid INTEGER NOT NULL, "
+        "process_started_at INTEGER, "
+        "status TEXT NOT NULL, claimed_at TEXT NOT NULL, "
+        "started_at TEXT, finished_at TEXT, error TEXT)"
+    )
+    base = now - timedelta(minutes=90)
+    for i, gap in enumerate(gaps_min or []):
+        c = base + timedelta(minutes=i)
+        s = c + timedelta(minutes=gap)
+        con.execute(
+            "INSERT INTO executions (id, job_id, source, process_id, pid, "
+            "process_started_at, status, claimed_at, started_at, finished_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (f"g{i}", f"job{i}", "builtin", f"p{i}", 1000 + i, None,
+             "completed", c.isoformat(), s.isoformat(),
+             (s + timedelta(seconds=30)).isoformat()),
+        )
+    if claimed_ages_min is not None:
+        claimed_rows = [(now - timedelta(minutes=age)) for age in claimed_ages_min]
+    else:
+        claimed_rows = [now - timedelta(minutes=claimed_stale_min)
+                        for _ in range(claimed_not_started)]
+    for i, c in enumerate(claimed_rows):
+        con.execute(
+            "INSERT INTO executions (id, job_id, source, process_id, pid, "
+            "process_started_at, status, claimed_at, started_at, finished_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (f"c{i}", f"jobc{i}", "builtin", f"pc{i}", 2000 + i, None,
+             "claimed", c.isoformat(), None, None),
+        )
+    for i in range(running_zombies):
+        s = now - timedelta(minutes=150)  # > QUEUE_BACKLOG_ZOMBIE_STARTED_MIN (2h)
+        con.execute(
+            "INSERT INTO executions (id, job_id, source, process_id, pid, "
+            "process_started_at, status, claimed_at, started_at, finished_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (f"z{i}", f"jobz{i}", "builtin", f"pz{i}", 3000 + i, None,
+             "running", (s - timedelta(minutes=1)).isoformat(), s.isoformat(), None),
+        )
+    con.commit()
+    con.close()
+
+
+def _hermetic_main_paths(tmp: Path) -> None:
+    """Point every probe DB/log path at the temp layout so main() tests never
+    read the live jarvis executions.db or board DBs (hermetic, deterministic)."""
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
+
+
 def test_cron_forced_releases_absent_file_fails_open():
     tmp = Path(tempfile.mkdtemp())
     uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
@@ -296,6 +373,7 @@ def test_single_forced_release_warns_not_blocks():
     now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
     log = tmp / "inflight_forced_releases.jsonl"
     _seed_forced_releases(log, 1, now=now, base_offset_min=5.0)
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
     uhealth.CRON_FORCED_RELEASES_LOG = log
     uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
     uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
@@ -323,6 +401,7 @@ def test_repeated_forced_releases_block():
     log = tmp / "inflight_forced_releases.jsonl"
     _seed_forced_releases(log, uhealth.CRON_FORCED_RELEASE_BLOCK_MIN,
                           now=now, base_offset_min=2.0, gap_min=1.0)
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
     uhealth.CRON_FORCED_RELEASES_LOG = log
     uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
     uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
@@ -355,6 +434,7 @@ def test_repeated_forced_releases_block():
 def test_forced_releases_absent_main_stays_pass():
     tmp = Path(tempfile.mkdtemp())
     now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
     uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
     uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
     uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
@@ -412,6 +492,7 @@ def test_jarvis_ready_backlog_observability_does_not_block_main():
 
     uhealth.JARVIS_OS_KANBAN_DB = db
     uhealth.SYCODE_TRADING_KANBAN_DB = _absent_sycode(tmp)
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
     uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
@@ -448,6 +529,7 @@ def test_legacy_substrate_bridge_stamps_fresh_health_canary_record():
     # (dgx_report_anomaly_detector.py, t_5311fb77 channel, spine-audit) never
     # read the frozen ~24h-stale gateway_running left by the paused canary.
     tmp = Path(tempfile.mkdtemp())
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
     uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
@@ -532,6 +614,7 @@ def test_ready_backlog_warn_does_not_block_main_verdict():
 
     uhealth.JARVIS_OS_KANBAN_DB = db
     uhealth.SYCODE_TRADING_KANBAN_DB = sdb
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
     uhealth.CRON_OUTPUT = tmp / "cron"
     uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
     uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
@@ -607,6 +690,108 @@ def test_check_kanban_crashes_dedupes_same_task():
     uhealth.BOARDS_DIR = boards
     count, hits, stale = uhealth.check_kanban_crashes()
     assert count == 1, f"same-task multi-run should dedup to 1, got {count}: {hits}"
+
+
+def test_queue_backlog_absent_db_fails_open():
+    """C5 telemetry must fail open when executions.db is absent — never a
+    BLOCK cause (t_f6f61faa)."""
+    tmp = Path(tempfile.mkdtemp())
+    uhealth.EXECUTIONS_DB = tmp / "executions.db"  # absent
+    rep = uhealth.check_cron_queue_backlog()
+    assert rep["available"] is False
+    assert rep["claim_start_samples"] == 0
+    assert rep["claim_start_median_min"] is None
+    assert rep["claimed_not_started"] == 0
+    assert rep["claimed_stale_gt_10min"] == 0
+    assert rep["zombies_running_gt_2h"] == 0
+    assert rep["warn"] is False
+
+
+def test_queue_backlog_reports_gaps_depth_zombies():
+    """C5 telemetry computes median+max claim->start gap, claimed-but-not-
+    started depth with stale (>10m) count, and zombie (running >2h) count."""
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    db = tmp / "executions.db"
+    _make_executions_db(
+        db, now,
+        gaps_min=[1, 2, 3, 4, 5],           # completed rows with 1-5m gaps
+        claimed_ages_min=[2, 12, 40],       # 1 fresh, 2 stale (>10m)
+        running_zombies=2,                  # running started 2.5h ago (claimed 1m before)
+    )
+    uhealth.EXECUTIONS_DB = db
+    rep = uhealth.check_cron_queue_backlog(now)
+    assert rep["available"] is True
+    # Zombie rows also carry claim+start timestamps, so they legitimately join
+    # the gap window: sample set [1,2,3,4,5,1,1] -> median 2.0, max 5.0, n=7.
+    assert rep["claim_start_samples"] == 7
+    assert rep["claim_start_median_min"] == 2.0
+    assert rep["claim_start_max_min"] == 5.0
+    assert rep["claimed_not_started"] == 3
+    assert rep["claimed_stale_gt_10min"] == 2
+    assert rep["zombies_running_gt_2h"] == 2
+    assert rep["warn"] is False
+    assert "claim_start_median=2.0m" in rep["detail"]
+    assert "claimed_not_started=3" in rep["detail"]
+    assert "zombies_running_gt_2h=2" in rep["detail"]
+
+
+def test_queue_backlog_warn_degrades_pass_to_warn_not_block():
+    """Median claim->start > 15m degrades PASS -> WARN but NEVER BLOCKs."""
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    db = tmp / "executions.db"
+    _make_executions_db(db, now, gaps_min=[16, 16, 16])  # median 16 > 15
+    uhealth.EXECUTIONS_DB = db
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
+    _stub_checks_pass()
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] == "WARN", \
+        f"claim->start median > 15m must WARN, not {record['verdict']}"
+    assert record["cron_queue_backlog"]["warn"] is True
+    assert record["queue_backlog_warn"] is True
+    assert "cron_queue_backlog" not in record["infra_failed"], \
+        "queue-backlog telemetry must never be an infra failure"
+
+
+def test_queue_backlog_depth_never_blocks_main():
+    """A deep claimed-but-not-started backlog + zombies with a LOW median
+    must NOT BLOCK the fleet verdict (informational telemetry only)."""
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+    db = tmp / "executions.db"
+    _make_executions_db(
+        db, now,
+        gaps_min=[0.5, 1, 1.5, 2, 3],       # median 1.5 -> no warn
+        claimed_ages_min=[11, 12, 40],      # 3 stale claimed
+        running_zombies=2,
+    )
+    uhealth.EXECUTIONS_DB = db
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
+    _stub_checks_pass()
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] != "BLOCK", \
+        f"queue backlog must never BLOCK: {record['verdict']}"
+    assert record["cron_queue_backlog"]["claimed_not_started"] == 3
+    assert record["cron_queue_backlog"]["claimed_stale_gt_10min"] == 3
+    assert record["cron_queue_backlog"]["zombies_running_gt_2h"] == 2
+    assert record["cron_queue_backlog"]["warn"] is False
 
 
 if __name__ == "__main__":

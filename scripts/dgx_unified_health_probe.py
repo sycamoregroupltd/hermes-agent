@@ -25,6 +25,7 @@ import errno
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 import time
@@ -61,6 +62,23 @@ CANARY_STALE_MIN = 40        # newest INDEPENDENT health_canary.jsonl write
                              # substrate_source bridge records are excluded so
                              # the check cannot grade its own liveness (t_0050991e).
 CRASH_LOOKBACK_MIN = 60      # kanban crash/gave_up window
+
+# Cron queue-backlog observability (t_f6f61faa / C5 of t_592db3b5): read-only
+# telemetry from the jarvis cron executions.db — the scheduler's
+# claim/start/finish ledger. The 2026-08-03 mechanism-matrix BLOCK (dead=11)
+# was caused by a claim->start queue backlog (median 23.3m, max 26.8m; 40+
+# claimed-not-started rows at 12:35-12:58 BST) the probe had NO visibility
+# into: it only saw the downstream metadata staleness. This telemetry is
+# informational, NEVER a BLOCK cause; only a WARN (PASS -> WARN) is raised
+# when the claim->start median exceeds QUEUE_BACKLOG_WARN_MEDIAN_MIN over the
+# recent window.
+EXECUTIONS_DB = (
+    HOME / ".hermes" / "profiles" / "jarvis" / "cron" / "executions.db"
+)
+QUEUE_BACKLOG_WINDOW_EXECUTIONS = 60   # recent builtin executions for gap stats
+QUEUE_BACKLOG_CLAIMED_STALE_MIN = 10   # claimed-but-not-started older than this
+QUEUE_BACKLOG_ZOMBIE_STARTED_MIN = 120  # status=running started_at older than this
+QUEUE_BACKLOG_WARN_MEDIAN_MIN = 15     # median claim->start gap degrades PASS->WARN
 
 # Cron forced-release observability (t_615aa245): the scheduler mirrors every
 # stale in-flight claim it force-releases to <hermes_home>/cron/
@@ -649,6 +667,125 @@ def check_jarvis_ready_backlog(now: dt.datetime | None = None) -> dict[str, Any]
     return _scan_board_ready_backlog(JARVIS_OS_KANBAN_DB, "jarvis-os", now)
 
 
+def _parse_exec_ts(value: str | None) -> dt.datetime | None:
+    """Parse an executions.db ISO timestamp (scheduler writes tz-aware ISO)."""
+    if not value:
+        return None
+    try:
+        t = dt.datetime.fromisoformat(value)
+    except Exception:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=dt.timezone.utc)
+    return t
+
+
+def check_cron_queue_backlog(now: dt.datetime | None = None) -> dict[str, Any]:
+    """Read-only queue-backlog telemetry from the jarvis cron executions.db.
+
+    Reads the scheduler's claim/start ledger (cron/executions.db) to surface a
+    claim->start queue backlog before it mis-grades mechanism liveness (C5 of
+    t_592db3b5). All stats are restricted to source='builtin' executions.
+
+    Metrics (task t_f6f61faa):
+      1. median + max claim->start gap (minutes) over the last
+         QUEUE_BACKLOG_WINDOW_EXECUTIONS started builtin executions.
+      2. current claimed-but-not-started queue depth + count of executions
+         claimed > QUEUE_BACKLOG_CLAIMED_STALE_MIN (10m) without start.
+      3. count of executions status='running' whose started_at is >
+         QUEUE_BACKLOG_ZOMBIE_STARTED_MIN (2h) old (zombie signal).
+
+    Fail-open contract (same as ready-backlog telemetry): an absent/unreadable
+    DB is reported as unavailable telemetry, never a BLOCK cause. Only a WARN
+    (PASS -> WARN) is raised when the median claim->start gap exceeds
+    QUEUE_BACKLOG_WARN_MEDIAN_MIN over the window.
+    """
+    now = now or utc_now()
+    result: dict[str, Any] = {
+        "available": False,
+        "db": str(EXECUTIONS_DB),
+        "window_executions": QUEUE_BACKLOG_WINDOW_EXECUTIONS,
+        "claim_start_samples": 0,
+        "claim_start_median_min": None,
+        "claim_start_max_min": None,
+        "claimed_not_started": 0,
+        "claimed_stale_gt_10min": 0,
+        "zombies_running_gt_2h": 0,
+        "warn": False,
+        "detail": f"jarvis executions.db absent ({EXECUTIONS_DB})",
+    }
+    if not EXECUTIONS_DB.exists():
+        return result
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{EXECUTIONS_DB}?mode=ro", uri=True, timeout=3)
+        cur = con.cursor()
+        # 1. claim->start gap over the last N started builtin executions.
+        rows = cur.execute(
+            "SELECT claimed_at, started_at FROM executions "
+            "WHERE source = 'builtin' AND claimed_at IS NOT NULL "
+            "AND started_at IS NOT NULL "
+            "ORDER BY claimed_at DESC LIMIT ?",
+            (QUEUE_BACKLOG_WINDOW_EXECUTIONS,),
+        ).fetchall()
+        gaps: list[float] = []
+        for claimed_at, started_at in rows:
+            tc = _parse_exec_ts(claimed_at)
+            ts = _parse_exec_ts(started_at)
+            if tc is not None and ts is not None:
+                gaps.append(max(0.0, (ts - tc).total_seconds() / 60.0))
+        if gaps:
+            result["claim_start_samples"] = len(gaps)
+            result["claim_start_median_min"] = round(statistics.median(gaps), 2)
+            result["claim_start_max_min"] = round(max(gaps), 2)
+        # 2. claimed-but-not-started depth + stale (>10m) count.
+        claimed_rows = cur.execute(
+            "SELECT claimed_at FROM executions "
+            "WHERE source = 'builtin' AND status = 'claimed' "
+            "AND started_at IS NULL"
+        ).fetchall()
+        result["claimed_not_started"] = len(claimed_rows)
+        stale_cutoff = now - dt.timedelta(minutes=QUEUE_BACKLOG_CLAIMED_STALE_MIN)
+        result["claimed_stale_gt_10min"] = sum(
+            1 for (c,) in claimed_rows
+            if (tc := _parse_exec_ts(c)) is not None and tc < stale_cutoff
+        )
+        # 3. zombie signal: status=running started > 2h ago.
+        running_rows = cur.execute(
+            "SELECT started_at FROM executions "
+            "WHERE source = 'builtin' AND status = 'running'"
+        ).fetchall()
+        zombie_cutoff = now - dt.timedelta(minutes=QUEUE_BACKLOG_ZOMBIE_STARTED_MIN)
+        result["zombies_running_gt_2h"] = sum(
+            1 for (s,) in running_rows
+            if (ts := _parse_exec_ts(s)) is not None and ts < zombie_cutoff
+        )
+        con.close()
+    except Exception as exc:
+        result["detail"] = (
+            f"jarvis executions.db queue scan failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return result
+
+    median = result["claim_start_median_min"]
+    warn = bool(median is not None and median > QUEUE_BACKLOG_WARN_MEDIAN_MIN)
+    result["warn"] = warn
+    result["available"] = True
+    result["detail"] = (
+        f"claim_start_median={median if median is not None else 'n/a'}m "
+        f"max={result['claim_start_max_min'] if result['claim_start_max_min'] is not None else 'n/a'}m "
+        f"(n={result['claim_start_samples']}); "
+        f"claimed_not_started={result['claimed_not_started']} "
+        f"(claimed>{QUEUE_BACKLOG_CLAIMED_STALE_MIN}m: "
+        f"{result['claimed_stale_gt_10min']}); "
+        f"zombies_running_gt_{QUEUE_BACKLOG_ZOMBIE_STARTED_MIN // 60}h="
+        f"{result['zombies_running_gt_2h']}"
+        f"{' [WARN: median>' + str(QUEUE_BACKLOG_WARN_MEDIAN_MIN) + 'm]' if warn else ''}"
+    )
+    return result
+
+
 # ----------------------------------------------------------------------------
 # Legacy substrate-signal bridge (t_39c29d42 residual / t_bd9d284e)
 # ----------------------------------------------------------------------------
@@ -776,6 +913,20 @@ def main() -> int:
                    "observability_only": True,
                    "warn": sycode_ready_backlog.get("warn", False)})
 
+    # Cron queue-backlog observability (t_f6f61faa / C5 of t_592db3b5): read
+    # the jarvis cron executions.db claim/start ledger so a claim->start queue
+    # backlog (the 2026-08-03 BLOCK root cause) is visible in-cycle instead of
+    # only as downstream metadata staleness. Informational telemetry only —
+    # a backlog may degrade PASS -> WARN but must NEVER drive BLOCK (real
+    # infra failures are covered by the checks above).
+    queue_backlog = check_cron_queue_backlog(now)
+    checks.append({"name": "cron_queue_backlog", "ok": True,
+                   "detail": queue_backlog.get("detail", ""),
+                   "fork_resource_pressure": False,
+                   "observability_only": True,
+                   "warn": queue_backlog.get("warn", False)})
+    queue_warn = bool(queue_backlog.get("warn"))
+
     # Cron forced-release observability (t_615aa245): read the scheduler's
     # forced-release mirror. Repeated wedges (>= CRON_FORCED_RELEASE_BLOCK_MIN
     # releases in the window) drive BLOCK; a single/rare release degrades
@@ -823,7 +974,7 @@ def main() -> int:
         "profile": PROFILE,
         "verdict": ("BLOCK" if blocked else
                     "DEGRADED" if degraded else
-                    "WARN" if (bool(warn_boards) or forced_warn) else "PASS"),
+                    "WARN" if (bool(warn_boards) or forced_warn or queue_warn) else "PASS"),
         "infra_failed": [c["name"] for c in infra_failed],
         "mechanism_overall": mech.get("overall"),
         "mechanism_dead": mech.get("dead"),
@@ -844,6 +995,8 @@ def main() -> int:
             {"board": b, "oldest_ready_task_id": t, "oldest_ready_age_days": a}
             for (b, t, a) in warn_boards
         ],
+        "cron_queue_backlog": queue_backlog,
+        "queue_backlog_warn": queue_warn,
         "fork_resource_pressure": fork_pressure,
         "fork_failed": fork_failed,
         "checks": checks,
@@ -885,7 +1038,8 @@ def main() -> int:
               f"active_crashes={crash_count} stale_crashes={stale_count} "
               f"forced_releases={forced_releases.get('count', 0)} "
               f"ready_backlog={ready_backlog.get('ready_total')} "
-              f"devops_ready={ready_backlog.get('devops_ready_count')}"
+              f"devops_ready={ready_backlog.get('devops_ready_count')} "
+              f"queue_backlog_warn={queue_warn}"
         )
         alert_file = CRON_OUTPUT / "unified_health_alert.last"
         try:
@@ -902,9 +1056,10 @@ def main() -> int:
     if not blocked and not degraded:
         # Observability-only backlog age may degrade PASS -> WARN without ever
         # BLOCKing (t_bf11a0ce); a single/rare cron forced release degrades
-        # PASS -> WARN too (t_615aa245). WARN names the board + oldest ready
-        # task id and/or the forced-release count.
-        verdict = "WARN" if (bool(warn_boards) or forced_warn) else "PASS"
+        # PASS -> WARN too (t_615aa245); a claim->start queue backlog degrades
+        # PASS -> WARN too (t_f6f61faa, informational only). WARN names the
+        # board + oldest ready task id and/or the forced-release count.
+        verdict = "WARN" if (bool(warn_boards) or forced_warn or queue_warn) else "PASS"
         emoji = "🟠" if verdict == "WARN" else "🟢"
         lines = [
             f"{emoji} UNIFIED FLEET HEALTH — {now.isoformat()} — VERDICT: {verdict}",
@@ -922,6 +1077,16 @@ def main() -> int:
                              f"top_devops_ready_ids={_bl.get('top_devops_ready_ids')}")
             else:
                 lines.append(f"  - {_bl.get('board')}: {_bl.get('detail')}")
+        lines.append("")
+        lines.append("## Cron queue-backlog telemetry (observability-only, NOT a BLOCK cause)")
+        lines.append(f"  - {queue_backlog.get('detail')}")
+        if queue_warn:
+            lines.append("")
+            lines.append(f"## Cron queue-backlog WARN (claim->start median > "
+                         f"{QUEUE_BACKLOG_WARN_MEDIAN_MIN}m)")
+            lines.append(f"  - {queue_backlog.get('detail')}")
+            lines.append("      action: check provider 429/400 starvation + "
+                         "cron.max_parallel_jobs; informational, not an outage.")
         if warn_boards:
             lines.append("")
             lines.append(f"## Ready-backlog WARN (oldest_ready > {READY_BACKLOG_WARN_DAYS}d)")
@@ -944,7 +1109,8 @@ def main() -> int:
                      f"active_crashes={crash_count} stale_crashes={stale_count} "
                      f"forced_releases={forced_releases.get('count', 0)} "
                      f"ready_backlog={ready_backlog.get('ready_total')} "
-                     f"devops_ready={ready_backlog.get('devops_ready_count')}")
+                     f"devops_ready={ready_backlog.get('devops_ready_count')} "
+                     f"queue_backlog_warn={queue_warn}")
         body = "\n".join(lines)
         # GUARANTEED LOCAL ARTIFACT — stamp every run so a prior BLOCK can never
         # be replayed after recovery (stale-replay fix, t_bd0828fe step #4).
@@ -1004,6 +1170,13 @@ def main() -> int:
                          f"top_devops_ready_ids={_bl.get('top_devops_ready_ids')}")
         else:
             lines.append(f"  - {_bl.get('board')}: {_bl.get('detail')}")
+    lines.append("")
+    lines.append("## Cron queue-backlog telemetry (observability-only, NOT a BLOCK cause)")
+    lines.append(f"  - {queue_backlog.get('detail')}")
+    if queue_warn:
+        lines.append(f"      queue_warn=True (claim->start median > "
+                     f"{QUEUE_BACKLOG_WARN_MEDIAN_MIN}m): check provider "
+                     f"starvation / single-worker pool — informational.")
     if warn_boards:
         lines.append("")
         lines.append(f"## Ready-backlog WARN (oldest_ready > {READY_BACKLOG_WARN_DAYS}d)")
@@ -1044,6 +1217,8 @@ def main() -> int:
                     {"board": b, "oldest_ready_task_id": t, "oldest_ready_age_days": a}
                     for (b, t, a) in warn_boards
                 ],
+                "cron_queue_backlog": queue_backlog,
+                "queue_backlog_warn": queue_warn,
                 "fork_resource_pressure": fork_pressure,
                 "fork_failed": fork_failed,
             }, sort_keys=True) + "\n")
