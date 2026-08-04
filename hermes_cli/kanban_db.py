@@ -7911,6 +7911,39 @@ def _record_task_failure(
             _append_event(
                 conn, task_id, "gave_up", payload, run_id=run_id,
             )
+            # Write an inline comment so the next investigator sees WHY
+            # this card was auto-blocked — without it block_kind=NULL and
+            # no comment, investigators wrongly blame the card spec (t_60bfabb1).
+            err_fingerprint = _error_fingerprint(error[:500])
+            blk = "auto-blocked-by-dispatcher"
+            if release_claim:
+                conn.execute(
+                    "UPDATE tasks SET block_kind = ? WHERE id = ?",
+                    (blk, task_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE tasks SET block_kind = ? WHERE id = ? AND (block_kind IS NULL OR block_kind = '')",
+                    (blk, task_id),
+                )
+            conn.execute(
+                "INSERT INTO task_comments (task_id, author, body, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    task_id,
+                    "dispatcher-auto-blocked",
+                    (
+                        f"**Auto-blocked by dispatcher** ({failures} failures, "
+                        f"limit={effective_limit}, source={limit_source}, "
+                        f"fingerprint={err_fingerprint}).\n\n"
+                        f"Error: {error[:400]}\n\n"
+                        f"The worker process reaped with '{outcome}'. This is NOT "
+                        f"a card-spec issue — check the error line for provider/"
+                        f"infrastructure/root-cause details."
+                    ),
+                    int(time.time()),
+                ),
+            )
             blocked = True
         else:
             # Below threshold.
