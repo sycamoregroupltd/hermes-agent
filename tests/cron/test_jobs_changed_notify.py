@@ -57,7 +57,7 @@ def test_tool_create_notifies_provider(temp_home, monkeypatch):
     from tools.cronjob_tools import cronjob
     import json
 
-    out = json.loads(cronjob(action="create", prompt="echo hi", schedule="every 5m", name="w"))
+    out = json.loads(cronjob(action="create", prompt="echo hi", schedule="every 5m", name="notify-fixture-w"))
     assert out["success"] is True
     assert calls == ["changed"]
 

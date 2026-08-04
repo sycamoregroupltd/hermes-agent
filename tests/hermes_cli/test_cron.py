@@ -234,3 +234,54 @@ def test_cron_create_failure_returns_nonzero(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert "Failed to create job: boom" in out
+
+
+class TestJobNameValidation:
+    """Single-char / empty job names are rejected at create AND rename (t_163a570f)."""
+
+    @pytest.mark.parametrize("bad_name", ["w", "t", "o", "s", "c", "x"])
+    def test_create_rejects_single_char_name(self, tmp_cron_dir, bad_name):
+        with pytest.raises(ValueError, match="single-character names are rejected"):
+            create_job(prompt="test", schedule="every 1h", name=bad_name)
+
+    def test_create_rejects_empty_name(self, tmp_cron_dir):
+        with pytest.raises(ValueError, match="must not be empty"):
+            create_job(prompt="test", schedule="every 1h", name="   ")
+
+    def test_create_rejects_derived_single_char_name(self, tmp_cron_dir):
+        # prompt='x' with no explicit name derives name='x' — the exact
+        # malformed filler-job defect class; must be rejected.
+        with pytest.raises(ValueError, match="single-character names are rejected"):
+            create_job(prompt="x", schedule="every 1h")
+
+    def test_create_accepts_descriptive_names(self, tmp_cron_dir):
+        # Fleet convention legitimately uses spaces/colons/parens in names.
+        job = create_job(
+            prompt="test",
+            schedule="every 1h",
+            name="Qwen3-Coder download watchdog",
+        )
+        assert job["name"] == "Qwen3-Coder download watchdog"
+
+        job2 = create_job(
+            prompt="test",
+            schedule="every 1h",
+            name="Fusion MCE Weekly Monitor (t_b2abbb7b) [sycode-trading-pm]",
+        )
+        assert job2["name"] == "Fusion MCE Weekly Monitor (t_b2abbb7b) [sycode-trading-pm]"
+
+    def test_update_rejects_single_char_rename(self, tmp_cron_dir):
+        from cron.jobs import update_job
+
+        job = create_job(prompt="test", schedule="every 1h", name="legit-name")
+        with pytest.raises(ValueError, match="single-character names are rejected"):
+            update_job(job["id"], {"name": "z"})
+
+    def test_update_accepts_legit_rename(self, tmp_cron_dir):
+        from cron.jobs import update_job
+
+        job = create_job(prompt="test", schedule="every 1h", name="legit-name")
+        updated = update_job(job["id"], {"name": "renamed-legit"})
+        assert updated is not None
+        assert updated["name"] == "renamed-legit"
+

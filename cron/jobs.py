@@ -413,6 +413,34 @@ def _apply_skill_fields(job: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def _validate_job_name(name: str) -> str:
+    """Validate a cron job name at creation/rename time; returns the stripped name.
+
+    Rejects empty/whitespace-only and single-character names — the malformed
+    filler jobs (name='w'/'t'/'o'/'s'/'c', prompt='x'/'echo hi') produced by an
+    unquoted shell loop that split a string into characters (t_163a570f).
+
+    Intent note: the strict charset rule ^[A-Za-z0-9_-]{2,}$ was considered, but
+    the fleet legitimately uses descriptive multi-word names containing spaces,
+    colons, and parentheses (e.g. 'Qwen3-Coder download watchdog', 'One-shot:
+    restart X gateway', 'Fusion MCE Weekly Monitor (t_b2abbb7b)') — 38 of 387
+    live jobs would fail the strict charset, and the project's own tests use
+    names like 'Edited Job'/'Daily 1130'. The defect class is specifically
+    empty/single-char names, so this enforces the card's parenthetical intent
+    (single-char and empty rejected) rather than the over-broad charset.
+    """
+    stripped = (name or "").strip()
+    if not stripped:
+        raise ValueError("Cron job name must not be empty.")
+    if len(stripped) < 2:
+        raise ValueError(
+            f"Cron job name {stripped!r} is invalid: single-character names are "
+            "rejected (malformed filler-job defect class). Use a descriptive "
+            "name of at least 2 characters."
+        )
+    return stripped
+
+
 def _coerce_job_text(value: Any, fallback: str = "") -> str:
     """Coerce legacy/hand-edited nullable cron fields to strings for readers."""
     if value is None:
@@ -1388,9 +1416,15 @@ def create_job(
             f"{ONESHOT_GRACE_SECONDS}s in the past and cannot be scheduled."
         )
 
+    # Reject empty/single-char job names before anything is persisted. The
+    # final name is the explicit name when given, else a derived label from
+    # prompt/skills/script — both must pass the same guard so malformed
+    # filler jobs (name='w', prompt='x') can never be re-created (t_163a570f).
+    job_name = _validate_job_name(name or label_source[:50].strip())
+
     job = {
         "id": job_id,
-        "name": name or label_source[:50].strip(),
+        "name": job_name,
         "prompt": prompt_text,
         "skills": normalized_skills,
         "skill": normalized_skills[0] if normalized_skills else None,
@@ -1520,6 +1554,14 @@ def update_job(job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
         for i, job in enumerate(jobs):
             if job["id"] != job_id:
                 continue
+
+            # Renames go through the same name guard as creation so a
+            # single-char or empty name cannot be introduced via
+            # `hermes cron edit --name` either (same defect class as
+            # t_163a570f). Only validated once the job is found, so
+            # updating a nonexistent id still returns None.
+            if updates and "name" in updates and updates["name"] is not None:
+                updates = {**updates, "name": _validate_job_name(updates["name"])}
 
             # Validate / normalize workdir if present in updates.  Empty string
             # or None both mean "clear the field" (restore old behaviour).

@@ -99,14 +99,14 @@ class TestCreateJobWorkdir:
 class TestUpdateJobWorkdir:
     def test_set_workdir_via_update(self, tmp_cron_dir):
         from cron.jobs import create_job, get_job, update_job
-        job = create_job(prompt="x", schedule="every 1h")
+        job = create_job(prompt="hello", schedule="every 1h")
         update_job(job["id"], {"workdir": str(tmp_cron_dir)})
         assert get_job(job["id"])["workdir"] == str(tmp_cron_dir.resolve())
 
     def test_clear_workdir_with_none(self, tmp_cron_dir):
         from cron.jobs import create_job, get_job, update_job
         job = create_job(
-            prompt="x", schedule="every 1h", workdir=str(tmp_cron_dir)
+            prompt="hello", schedule="every 1h", workdir=str(tmp_cron_dir)
         )
         update_job(job["id"], {"workdir": None})
         assert get_job(job["id"])["workdir"] is None
@@ -114,7 +114,7 @@ class TestUpdateJobWorkdir:
 
     def test_update_rejects_invalid_workdir(self, tmp_cron_dir):
         from cron.jobs import create_job, update_job
-        job = create_job(prompt="x", schedule="every 1h")
+        job = create_job(prompt="hello", schedule="every 1h")
         with pytest.raises(ValueError):
             update_job(job["id"], {"workdir": "nope/relative"})
 
