@@ -102,6 +102,23 @@
 /profiles/jarvis/scripts/__pycache__/
 /profiles/jarvis/scripts/tests/__pycache__/
 
+# Profile cron scripts for the PM-triage visibility bridges (t_4b7afeac,
+# t_ee35d091). Hermes cron resolves `script` values under the RUNNING profile's
+# scripts/ dir (hermes-agent/cron/scheduler.py — there is NO global fallback), so
+# the per-board shims that actually run must be tracked on the branch or a DGX
+# rebuild would silently drop the jobs. Only depth-1 .py/.sh are re-included;
+# everything else under the dirs stays default-denied. Re-include chain keeps
+# every ancestor dir non-excluded (git rule).
+!/profiles/jarvis/scripts/
+/profiles/jarvis/scripts/*
+!/profiles/jarvis/scripts/*.sh
+!/profiles/jarvis/scripts/*.py
+!/profiles/jarvis/scripts/tests/
+/profiles/jarvis/scripts/tests/*
+!/profiles/jarvis/scripts/tests/*.py
+/profiles/jarvis/scripts/__pycache__/
+/profiles/jarvis/scripts/tests/__pycache__/
+
 # NEVER track (belt-and-suspenders against future allowlist edits):
 auth.json
 auth.json.*
