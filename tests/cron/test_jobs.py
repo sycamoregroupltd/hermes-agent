@@ -508,7 +508,7 @@ class TestResolveJobRef:
         """If a job's name happens to equal another job's ID, ID match wins."""
         from cron.jobs import resolve_job_ref
 
-        j1 = create_job(prompt="A", schedule="1h")
+        j1 = create_job(prompt="alpha job", schedule="1h")
         # Create a second job whose name is j1's ID
         j2 = create_job(prompt="B", schedule="1h", name=j1["id"])
         # Looking up j1["id"] must return j1, not the colliding-name job j2

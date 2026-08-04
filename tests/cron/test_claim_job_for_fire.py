@@ -23,7 +23,7 @@ def test_claim_succeeds_once_then_blocks(temp_home):
     next_run_at is advanced (a re-delivery for the old time can't re-fire)."""
     from cron.jobs import create_job, claim_job_for_fire, get_job
 
-    job = create_job(prompt="x", schedule="every 5m", name="t")
+    job = create_job(prompt="test job", schedule="every 5m", name="claim-fixture-t")
     jid = job["id"]
     before = get_job(jid)["next_run_at"]
 
@@ -36,7 +36,7 @@ def test_claim_oneshot_cannot_be_double_claimed(temp_home):
     """A one-shot can't be double-claimed (the fresh claim blocks the retry)."""
     from cron.jobs import create_job, claim_job_for_fire
 
-    job = create_job(prompt="x", schedule="30m", name="o")
+    job = create_job(prompt="test job", schedule="30m", name="claim-fixture-o")
     assert claim_job_for_fire(job["id"]) is True
     assert claim_job_for_fire(job["id"]) is False
 
@@ -51,7 +51,7 @@ def test_claim_paused_job_returns_false(temp_home):
     """A paused job can't be claimed."""
     from cron.jobs import create_job, claim_job_for_fire, pause_job
 
-    job = create_job(prompt="x", schedule="every 5m", name="p")
+    job = create_job(prompt="test job", schedule="every 5m", name="claim-fixture-p")
     pause_job(job["id"])
     assert claim_job_for_fire(job["id"]) is False
 
@@ -61,7 +61,7 @@ def test_stale_claim_is_reclaimable(temp_home, monkeypatch):
     if the winning machine crashed before mark_job_run cleared the claim."""
     from cron.jobs import create_job, claim_job_for_fire
 
-    job = create_job(prompt="x", schedule="every 5m", name="s")
+    job = create_job(prompt="test job", schedule="every 5m", name="claim-fixture-s")
     jid = job["id"]
     assert claim_job_for_fire(jid) is True
     # With a 0s TTL, the existing claim is always considered stale.
@@ -73,7 +73,7 @@ def test_mark_job_run_clears_claim(temp_home):
     can be claimed again."""
     from cron.jobs import create_job, claim_job_for_fire, mark_job_run, get_job
 
-    job = create_job(prompt="x", schedule="every 5m", name="c")
+    job = create_job(prompt="test job", schedule="every 5m", name="claim-fixture-c")
     jid = job["id"]
     assert claim_job_for_fire(jid) is True
     assert get_job(jid).get("fire_claim") is not None
