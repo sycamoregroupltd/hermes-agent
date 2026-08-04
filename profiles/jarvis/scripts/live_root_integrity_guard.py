@@ -144,13 +144,19 @@ def main() -> int:
     # A HEAD move in the trading repo is not itself a fault (workers legitimately switch
     # branches), so it never alone triggers an alert — it is reported as context when
     # something IS wrong, and separately when the deploy-critical compose binding is lost.
+    # Check origin/main, NOT the working tree. Deploys are cut from origin/main in a
+    # fresh worktree; the shared checkout sits on whatever branch a worker last switched
+    # to, so reading the working-tree file reports a stale branch as a security
+    # regression and cries wolf. What matters is whether the binding is on main.
     compose_unbound = False
-    cf = TRADING / "docker-compose.yml"
-    if cf.is_file():
-        try:
-            compose_unbound = "100.96.208.26" not in cf.read_text(errors="replace")
-        except OSError:
-            compose_unbound = False
+    try:
+        cp = subprocess.run(
+            ["git", "-C", str(TRADING), "show", "origin/main:docker-compose.yml"],
+            capture_output=True, text=True, timeout=60)
+        if cp.returncode == 0:
+            compose_unbound = "100.96.208.26" not in cp.stdout
+    except subprocess.SubprocessError:
+        compose_unbound = False   # cannot read main -> do not fabricate an alert
 
     if not missing_scripts and not missing_crons and not inactive_crons and not compose_unbound:
         return 0  # healthy -> silent
@@ -169,9 +175,9 @@ def main() -> int:
         for c in inactive_crons:
             print(f"    - {c}   (fix: hermes cron resume <job-id>)")
     if compose_unbound:
-        print("  SECURITY REGRESSION: sycode-trading/docker-compose.yml no longer binds to")
+        print("  SECURITY REGRESSION: origin/main docker-compose.yml no longer binds to")
         print("    100.96.208.26 — published ports would return to 0.0.0.0 on the next")
-        print("    recreate, re-exposing the DB to the LAN. Reapply from PR #947.")
+        print("    deploy, re-exposing the trading DB to the LAN. Landed originally as PR #947.")
     print(f"  trading HEAD: {trading_head}" + ("  (MOVED)" if trading_moved else ""))
     print(f"  git HEAD now: {head}" + (f"  (MOVED from {prev.get('head')})" if moved else ""))
     print(f"  registered crons: {len(crons)}" +
