@@ -75,12 +75,15 @@ def inject_stress_load() -> str | None:
 
 
 def namespace_pid_alive(pid: str) -> bool:
-    """True if the given namespace PID still exists inside the container."""
+    """True if the given namespace PID still exists AND is not a zombie in the container."""
     rc, out = _run_quiet([
         "docker", "exec", TEST_CONTAINER_NAME,
-        "sh", "-c", f"kill -0 {pid} 2>/dev/null; echo rc=$?",
+        "sh", "-c",
+        f"awk '{{print $3}}' /proc/{pid}/stat 2>/dev/null || echo GONE",
     ])
-    return "rc=0" in out
+    state = out.strip()
+    # GONE or Z (zombie) = dead (0% CPU). R/S/D = alive.
+    return state not in ("GONE", "Z")
 
 
 def run_reaper_once() -> str:
@@ -150,7 +153,7 @@ def main():
             output = run_reaper_once()
             tail = output[-900:]
             print(tail)
-            if "exited gracefully" in output or "SIGKILL" in output:
+            if "exited gracefully" in output or "SIGKILL" in output or "state Z" in output or "state GONE" in output:
                 killed = True
                 for ln in output.splitlines():
                     if "→ killed" in ln:

@@ -206,12 +206,33 @@ def get_container_processes(container: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Kill logic — namespace-aware via docker exec --user root
 # ---------------------------------------------------------------------------
+def _ns_pid_state(container: str, ns_pid: int) -> str:
+    """
+    Return the process state char inside the container: R/S/D/Z/T or 'GONE'.
+    Reads /proc/<ns_pid>/stat field 3 inside the container namespace.
+    """
+    res = _docker_run(
+        [
+            "exec", "--user", "root", container, "sh", "-c",
+            f"awk '{{print $3}}' /proc/{ns_pid}/stat 2>/dev/null || echo GONE",
+        ],
+        timeout=10,
+    )
+    if res is None or res.returncode != 0:
+        return "GONE"
+    out = (res.stdout or "").strip()
+    return out if out else "GONE"
+
+
 def kill_pid_in_container(container: str, ns_pid: int) -> tuple[bool, str]:
     """
     Kill a PID inside the container's PID namespace. Returns (success, detail).
 
     `ns_pid` is the PID as seen inside the container (from NSpid mapping).
-    Sequence: SIGTERM → brief wait → verify alive via `kill -0` → SIGKILL.
+    Sequence: SIGTERM → brief wait → verify state → SIGKILL if still live.
+    A process is considered killed when it is GONE or a zombie (Z) — both
+    consume zero CPU, which is the reaper's actual goal. R/S/D means still live.
+
     Operates via `docker exec --user root` because host-side `kill` is
     ineffective for container-namespace processes (EPERM when uid differs,
     and the host PID does not exist inside the namespace).
@@ -229,21 +250,10 @@ def kill_pid_in_container(container: str, ns_pid: int) -> tuple[bool, str]:
     term_rc = (res.stdout or "").strip().replace("rc=", "") or "?"
     time.sleep(3)
 
-    # Step 2: check if still alive (kill -0 returns 0 if the pid exists in namespace)
-    alive_res = _docker_run(
-        [
-            "exec", "--user", "root", container, "sh", "-c",
-            f"kill -0 {ns_pid} 2>/dev/null; echo rc=$?",
-        ],
-        timeout=10,
-    )
-    still_alive = True
-    if alive_res and alive_res.returncode == 0:
-        # "rc=0" means the process exists (kill -0 succeeded)
-        still_alive = "rc=0" in (alive_res.stdout or "")
-
-    if not still_alive:
-        return True, f"SIGTERM (rc={term_rc}) — exited gracefully"
+    # Step 2: check state — GONE or Z (zombie) both mean it stopped consuming CPU
+    state = _ns_pid_state(container, ns_pid)
+    if state in ("GONE", "Z"):
+        return True, f"SIGTERM (rc={term_rc}) — state {state} (dead, 0% CPU)"
 
     # Step 3: force SIGKILL
     res2 = _docker_run(
@@ -257,16 +267,10 @@ def kill_pid_in_container(container: str, ns_pid: int) -> tuple[bool, str]:
         return False, "docker exec unavailable for SIGKILL"
     kill_rc = (res2.stdout or "").strip().replace("rc=", "") or "?"
 
-    # Verify it is really gone
-    alive2 = _docker_run(
-        [
-            "exec", "--user", "root", container, "sh", "-c",
-            f"kill -0 {ns_pid} 2>/dev/null; echo rc=$?",
-        ],
-        timeout=10,
-    )
-    gone = bool(alive2 and "rc=0" not in (alive2.stdout or ""))
-    return gone, f"SIGTERM({term_rc}) → SIGKILL({kill_rc}) → {'gone' if gone else 'STILL ALIVE' if not DRY_RUN else 'DRY-RUN'}"
+    # Verify it is really gone (or zombie)
+    state2 = _ns_pid_state(container, ns_pid)
+    dead = state2 in ("GONE", "Z")
+    return dead, f"SIGTERM({term_rc}) → SIGKILL({kill_rc}) → state {state2} ({'dead' if dead else 'STILL ALIVE'})"
 
 
 # ---------------------------------------------------------------------------
