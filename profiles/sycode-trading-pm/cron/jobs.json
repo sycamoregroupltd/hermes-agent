@@ -91,10 +91,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-02T22:45:00+01:00",
+      "paused_reason": "retired as sycode-trading PM-triage authority in favour of the no-agent bridge board-pm-triage-sycode-trading (jarvis profile, id eaf7ec9955df) - t_2ee87d1b Option B adoption, reviewer F2 single-triage-authority. Live pause is executed via `hermes -p sycode-trading-pm cron pause 5eea5079ff74` at adoption time; this file records the intended end-state.",
       "created_at": "2026-07-03T20:31:51.805288+01:00",
       "deliver": "local",
       "origin": null,

@@ -291,7 +291,7 @@ EXPECTED = [
     Expected("verdict-router", "verdict-router last_run + shadow/apply state", "jarvis", name="deterministic-verdict-router", max_age_minutes=30),
     Expected("wake-scanner", "wake scanner last_run + last wake action", "jarvis", name="kanban-scheduled-wake-scanner", max_age_minutes=30),
     Expected("pm-triage-jarvis-os", "PM triage cron: jarvis-os", "jarvis", name="elon-governance-loop", max_age_minutes=90),
-    Expected("pm-triage-sycode-trading", "PM triage cron: sycode-trading", "sycode-trading-pm", name="sycode-trading-board-triage", max_age_minutes=90),
+    Expected("pm-triage-sycode-trading", "PM triage visibility bridge: sycode-trading", "jarvis", name="board-pm-triage-sycode-trading", max_age_minutes=90),
     Expected("pm-triage-sycode-ai", "PM triage visibility bridge: sycode-ai", "jarvis", name="board-pm-triage-sycode-ai", max_age_minutes=90),
     Expected("pm-triage-yorkstone-supplies", "PM triage visibility bridge: yorkstone-supplies", "jarvis", name="board-pm-triage-yorkstone-supplies", max_age_minutes=90),
     Expected("pm-triage-upero", "PM triage cron: upero", "jarvis", name="upero-pm-governance", max_age_minutes=90),
