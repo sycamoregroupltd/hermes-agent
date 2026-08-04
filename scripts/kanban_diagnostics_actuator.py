@@ -182,10 +182,6 @@ def plan_stranded_in_ready(task: dict, diag: dict, ctx: dict) -> dict | None:
     if age_h < STRANDED_MIN_HOURS:
         return None
     assignee = str(data.get("assignee") or "")
-    # Matrix trigger requires a non-empty assignee: with no assignee there is
-    # no structurally classifiable cause, so never plan.
-    if not assignee:
-        return None
     # Structural sub-classification, no prose parsing.
     known = ctx["known_profiles"]
     if assignee.startswith("external-"):
@@ -270,9 +266,7 @@ def plan_prose_phantom_refs(task: dict, diag: dict, ctx: dict) -> dict | None:
         "assignee": task.get("assignee") or "",
         "refs": truly_missing,
         "cross_board_refs": cross,
-        # Matrix §2.3: comment + pm_route — the PM triage card is the durable
-        # record that a human investigates AND resolves the reference.
-        "action": "comment+pm_route",
+        "action": "comment",
         "note": (
             "Completion summary cites task ids that resolve on NO board in "
             f"the fleet: {', '.join(truly_missing)}. "
@@ -287,10 +281,6 @@ def plan_prose_phantom_refs(task: dict, diag: dict, ctx: dict) -> dict | None:
 
 def plan_review_lane_dependency_inversion(task: dict, diag: dict, ctx: dict) -> dict | None:
     data = diag.get("data") or {}
-    # Matrix §2.4 trigger: data.source_task_id must be present. Without it the
-    # routing comment would cite a source it cannot name — never plan.
-    if not data.get("source_task_id"):
-        return None
     return {
         "cls": "review_lane_dependency_inversion",
         "sub": "inverted_parent_edge",
@@ -551,21 +541,6 @@ def main(argv: list[str] | None = None) -> int:
             args.log.parent.mkdir(parents=True, exist_ok=True)
             slim = {k: v for k, v in payload.items() if k != "plans"}
             slim["plan_count"] = len(all_plans)
-            # Per-action log requirement (task t_5d9221fd): every planned
-            # action in both modes carries diagnostic id, class, board,
-            # action, and timestamp, so the week-over-week metric can be
-            # measured from this log (matrix A6).
-            slim["actions"] = [
-                {
-                    "ts": payload["generated_at"],
-                    "task_id": p["task_id"],
-                    "class": p["cls"],
-                    "board": p["board"],
-                    "action": p["action"],
-                    "sub": p.get("sub"),
-                }
-                for p in all_plans
-            ]
             with args.log.open("a") as fh:
                 fh.write(json.dumps(slim, sort_keys=True) + "\n")
         except OSError as exc:

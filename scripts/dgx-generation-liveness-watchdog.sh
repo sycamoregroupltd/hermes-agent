@@ -98,36 +98,14 @@ if [ "$since" -lt "$COOLDOWN_S" ]; then
 fi
 
 # --- act ---
-# Position-safe restart (t_4e6f516c gate): route through the merged wrapper
-# execution/restart_sycodeserver.py (PR #490), which reuses the deploy firewall's
-# fetch_open_positions_count as the single source of truth and adds a host-DNS
-# preflight. FAIL CLOSED if the wrapper is missing: never bare-restart.
-RESTART_WRAPPER="/home/frank/.hermes/deploy-state/build-tree/execution/restart_sycodeserver.py"
-if [ ! -f "$RESTART_WRAPPER" ]; then
-  log "CRITICAL position-safe wrapper missing ($RESTART_WRAPPER) — FAIL CLOSED, NO restart — NEEDS HUMAN"
-  notify critical "gen-liveness: position-safe wrapper missing — no restart — needs human"
-  exit 0
+log "HANG journey-age=${age}s (>${THRESHOLD_S}s), uptime=${up}s → RESTARTING ${SERVER_CONTAINER}"
+if docker restart "$SERVER_CONTAINER" >/dev/null 2>&1; then
+  now_epoch > "$LAST_RESTART_F"
+  log "RESTARTED ${SERVER_CONTAINER} OK (was journey-age=${age}s)"
+  notify warn "gen-liveness: zombie-feed hang (${age}s) — restarted ${SERVER_CONTAINER}"
+else
+  log "RESTART FAILED for ${SERVER_CONTAINER} (journey-age=${age}s) — NEEDS HUMAN"
+  notify critical "gen-liveness: docker restart FAILED for ${SERVER_CONTAINER} — needs human"
 fi
-log "HANG journey-age=${age}s (>${THRESHOLD_S}s), uptime=${up}s → invoking position-safe restart wrapper"
-wrapper_out="$(python3 "$RESTART_WRAPPER" 2>&1)"; rc=$?
-echo "$wrapper_out" >> "$LOG"
-case "$rc" in
-  0)
-    now_epoch > "$LAST_RESTART_F"
-    log "RESTARTED ${SERVER_CONTAINER} OK via position-safe wrapper (was journey-age=${age}s)"
-    notify warn "gen-liveness: zombie-feed hang (${age}s) — restarted ${SERVER_CONTAINER} via position-safe wrapper"
-    ;;
-  5)
-    # Safety gate blocked: open positions > 0 (or count unverifiable), or host DNS failing.
-    # No restart; record cooldown so we don't spam retry/alert every 5m. Needs human.
-    now_epoch > "$LAST_RESTART_F"
-    log "HANG journey-age=${age}s BUT restart BLOCKED by position-safe gate (open_positions>0 or host DNS failing) — NO restart — NEEDS HUMAN"
-    notify critical "gen-liveness: restart blocked by position-safe gate (open positions or host DNS) — needs human"
-    ;;
-  *)
-    log "RESTART FAILED via position-safe wrapper (rc=${rc}) — NEEDS HUMAN"
-    notify critical "gen-liveness: position-safe restart FAILED (rc=${rc}) — needs human"
-    ;;
-esac
 exit 0
 

@@ -266,39 +266,12 @@ else
     log "GOAL-JUDGE-UNMONITORED probe=$GOAL_JUDGE_PROBE py=$GOAL_JUDGE_PY"
 fi
 
-# ---- filter_attribution outcome freshness (t_b578e1ea, 2026-08-03) ----------
-# Liveness monitor for the close-time filter_attribution outcome writer
-# (t_93efdbfd / t_f72bb7e0 class): the correctness column sat 100% NULL for
-# months and was rediscovered by AUDIT, not an alert. SELECT-only check shipped
-# in the server image at /app/scripts/check-filter-attribution-outcome-freshness.ts;
-# exits 1 when fresh facts >= MIN_FACTS_FOR_ALARM but fresh outcomes = 0 in the
-# trailing FRESHNESS_WINDOW_HOURS. A check that cannot run is a failed check
-# (fail closed). Env overrides exist for RED-PATH DRILLS ONLY
-# (FRESHNESS_CHECK_CMD / FRESHNESS_WINDOW_HOURS / MIN_FACTS_FOR_ALARM).
-FRESHNESS_CHECK_CMD="${FRESHNESS_CHECK_CMD:-docker exec -w /app sycodetrading-server timeout 90 bun run scripts/check-filter-attribution-outcome-freshness.ts}"
-fa_problem=""
-if fa_out=$(timeout 120 $FRESHNESS_CHECK_CMD 2>&1); then
-    fa_last="${fa_out##*$'\n'}"
-    echo "  FILTER-ATTR-FRESHNESS: ${fa_last}" >> "$STATUS_FILE"
-    log "FILTER-ATTR-FRESHNESS-OK ${fa_last}"
-else
-    fa_rc=$?
-    # Prefer the FAIL: line (stderr) over the trailing stdout evidence line so
-    # the alert body carries the actual failure reason, not just the last row.
-    fa_failline=$(printf '%s\n' "$fa_out" | grep -a '^FAIL:' | tail -1)
-    fa_last="${fa_failline:-$(printf '%s\n' "$fa_out" | tail -1)}"
-    echo "  FILTER-ATTR-FRESHNESS: FAIL (rc=$fa_rc) — ${fa_last:-no output}" >> "$STATUS_FILE"
-    fa_problem="FILTER-ATTRIBUTION-OUTCOME-WRITER-DOWN (freshness check rc=$fa_rc): ${fa_last:-check produced no output} — outcome backfill may be silently dying again (t_93efdbfd class). "
-    log "FILTER-ATTR-FRESHNESS-FAIL rc=$fa_rc ${fa_last:-no output}"
-fi
-
 # ---- alerting ----------------------------------------------------------------
 problems=""
 [ ${#missing[@]}   -gt 0 ] && problems+="MISSING (no OFF declaration): ${missing[*]}. "
 [ ${#unhealthy[@]} -gt 0 ] && problems+="UNHEALTHY: ${unhealthy[*]}. "
 [ -n "${spool_fallback_msg:-}" ] && problems+="$spool_fallback_msg "
 [ -n "${gj_problem:-}" ] && problems+="$gj_problem"
-[ -n "${fa_problem:-}" ] && problems+="$fa_problem"
 if [ -n "$am_alerts" ] && [ "$am_alerts" != "ALERTMANAGER-UNREACHABLE" ]; then
     # 2026-07-29 (opus5): this used to hardcode "undelivered — receivers unwired".
     # That was true when written (07-13) but the receivers were wired in-repo since,

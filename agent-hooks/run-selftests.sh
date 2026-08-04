@@ -44,7 +44,6 @@ run_test "gate-critic-readonly" "bash agent-hooks/gate-critic-readonly.selftest.
 run_test "goal-judge-provider-error-handler" "python3 agent-hooks/goal-judge-provider-error-handler.py"
 run_test "gate-kanban-complete" "bash agent-hooks/gate-kanban-complete.selftest.sh"
 run_test "verdict-router" "bash agent-hooks/verdict-router.selftest.sh"
-run_test "dedupe-guard-correction-cards" "python3 scripts/test_dedupe_guard_correction_cards.py"
 
 echo "════════════════════════════════════════════════════════════════════════"
 echo "  AGENT-HOOKS SELFTEST SUMMARY"

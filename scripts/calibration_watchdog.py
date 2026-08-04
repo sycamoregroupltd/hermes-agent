@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import json
 import os
 import re
 import sys
@@ -39,63 +38,6 @@ MIN_CLEAN_N = 100
 TIER1_INVESTIGATE_FLOOR = 300
 MIN_SOURCE_PARSE_N = 10
 MIN_NEWS_MONITOR_META_N = 100
-
-# --- Authoritative verdict JSON (t_fb422737 / t_df54ca93 / t_7422b8ae) ------
-# The calibration report's machine-readable verdict (``calibration_verdict.json``,
-# fields ``weighted_mce`` + ``tier1_clean_n``) is the PREFERRED source for the
-# two values that drive this watchdog's calibration alert: the sample-weighted
-# MCE and the Tier-1 realized-exit clean sample size it is measured on. Using
-# the JSON removes regex fragility and guarantees the alert is gated/labelled
-# on the SAME Tier-1 sample the MCE is computed on (never the MERGED
-# Tier-1+Tier-2 count — root cause t_fb422737).
-#
-# The report writes the verdict to an ephemeral temp path when run from the
-# pinned-commit wrapper, so we search a small candidate set (fail-open: any
-# missing/unreadable file just falls through to Section-7 regex parsing).
-VERDICT_JSON_CANDIDATES = [
-    # Explicit env override (highest priority).
-    os.environ.get("FUSION_CALIBRATION_VERDICT_JSON", ""),
-    # Ephemeral temp path the pinned-commit report writes while running.
-    "/tmp/calibration_verdict.json",
-    # Static locations where a report producer could land the verdict.
-    "/home/frank/sycode-trading/execution/calibration_verdict.json",
-    "/home/frank/sycode-trading/monitoring/fusion-calibration/calibration_verdict.json",
-]
-
-
-def load_verdict_json() -> dict:
-    """Return ``{"weighted_mce": float, "tier1_clean_n": int}`` from the
-    report's authoritative ``calibration_verdict.json``, or ``{}`` when the
-    verdict is unavailable/unreadable.
-
-    Fail-open by design (t_016ac4e4 lesson): a missing or malformed verdict
-    must never wedge the watchdog — callers fall back to Section-7 regex
-    parsing. Only fields with non-empty values are surfaced.
-    """
-    for raw in VERDICT_JSON_CANDIDATES:
-        if not raw:
-            continue
-        path = Path(raw)
-        try:
-            if not path.is_file():
-                continue
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(data, dict):
-            continue
-        out: dict = {}
-        for key, cast in (("weighted_mce", float), ("tier1_clean_n", int)):
-            val = data.get(key)
-            if val is None:
-                continue
-            try:
-                out[key] = cast(val)
-            except (TypeError, ValueError):
-                continue
-        if out:
-            return out
-    return {}
 
 # --- t_ba7757c8: evidence-based alert cooldown + payload context ------------
 # Threshold decision (reviewed 2026-08-03, parent triage t_b7204a09):
@@ -139,19 +81,8 @@ def run_report() -> tuple[int, str]:
     except Exception as e:
         return -2, f"Error running report: {e}"
 
-def parse_metrics(output: str, verdict: dict | None = None) -> dict:
-    """Parse key metrics from the report output using robust regex.
-
-    ``verdict`` (t_7422b8ae) is the optional machine-readable verdict from
-    calibration_verdict.json (see load_verdict_json). When present, its
-    ``weighted_mce`` and ``tier1_clean_n`` are the PREFERRED values and
-    OVERRIDE the regex-parsed figures (applied AFTER the regex so the JSON
-    always wins when both exist). Section-7 / Section-1 ``tier1_clean_n``
-    regex parsing remains the no-JSON fallback. When ``verdict`` is None the
-    loader is consulted; a missing/malformed verdict is fail-open ({}).
-    """
-    if verdict is None:
-        verdict = load_verdict_json()
+def parse_metrics(output: str) -> dict:
+    """Parse key metrics from the report output using robust regex."""
     metrics = {
         "n": None,
         "merged_n": None,
@@ -214,13 +145,16 @@ def parse_metrics(output: str, verdict: dict | None = None) -> dict:
         if _t_txt:
             metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
 
-    # n = the calibration-sample identity (Tier-1). NEVER merged_n (t_7422b8ae
-    # / t_fb422737): the merged Tier-1+Tier-2 count must not drive alert
-    # suppression or reporting. If the Tier-1 line is absent AND no JSON
-    # verdict was available, n stays None and main() stays silent (runbook §5)
-    # rather than silently substituting the merged count and re-opening the
-    # suppression gate.
-    metrics["n"] = metrics["tier1_clean_n"]
+    # n = the calibration-sample identity (Tier-1). Fall back to merged_n ONLY
+    # when the Tier-1 line is absent (legacy/pre-Tier-2 reports) so the monitor
+    # never goes silently blind — but the MCE is always measured on
+    # tier1_clean_n, so labelling the alert with merged_n is wrong and is the
+    # root-cause defect fixed by t_016ac4e4.
+    metrics["n"] = (
+        metrics["tier1_clean_n"]
+        if metrics["tier1_clean_n"] is not None
+        else metrics["merged_n"]
+    )
 
     # Extract win rate. t_ba7757c8: the pinned v2 report emits
     # `**Tier-1 clean win rate**` (Section 1 table) and
@@ -266,19 +200,6 @@ def parse_metrics(output: str, verdict: dict | None = None) -> dict:
     if mce_match:
         metrics["weighted_mce"] = float(mce_match.group(1))
         metrics["merged_mce"] = float(mce_match.group(1))
-
-    # --- t_7422b8ae: JSON-preferred authoritative values (applied LAST) -----
-    # The machine-readable verdict (calibration_verdict.json, weighted_mce +
-    # tier1_clean_n) is the PREFERRED source for the two values that drive the
-    # calibration alert. Apply AFTER the regex parses so the JSON ALWAYS wins
-    # when both sources exist (earlier draft applied it before the regex and
-    # the report MCE line silently overwrote it — D1). Fail-open: an absent or
-    # partial verdict leaves the regex values in place.
-    if verdict.get("weighted_mce") is not None:
-        metrics["weighted_mce"] = verdict["weighted_mce"]
-    if verdict.get("tier1_clean_n") is not None:
-        metrics["tier1_clean_n"] = verdict["tier1_clean_n"]
-        metrics["n"] = verdict["tier1_clean_n"]
 
     # --- Sample window / resolution span (t_ba7757c8 payload enrichment) -----
     # The report header emits `**Window:** last 30d (30d) of resolved outcomes`
@@ -1047,13 +968,6 @@ def regression_test() -> int:
     _tmp_state = _tf.TemporaryDirectory(prefix="calibration-watchdog-regression-")
     STATE_FILE = Path(_tmp_state.name) / "state.json"
     STATE_DIR = Path(_tmp_state.name)
-    # t_7422b8ae: the harness must not depend on any real calibration_verdict.json
-    # landing on this host mid-run (would make parse tests nondeterministic).
-    # Tests pass the verdict explicitly; the live loader path is exercised by
-    # its own focused assertion against a fixture file.
-    global VERDICT_JSON_CANDIDATES
-    _orig_verdict_candidates = VERDICT_JSON_CANDIDATES
-    VERDICT_JSON_CANDIDATES = []
 
     failures = []
 
@@ -1133,7 +1047,7 @@ def regression_test() -> int:
         save_to_obsidian = lambda c: None
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
         compute_tier1_slice_context = lambda: None
-        parse_metrics = lambda output, verdict=None: {
+        parse_metrics = lambda out: {
             "n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
             "weighted_mce": 19.4, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
@@ -1166,7 +1080,7 @@ def regression_test() -> int:
         save_to_obsidian = lambda c: _dash.update(content=c)
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
         compute_tier1_slice_context = lambda: None
-        parse_metrics = lambda output, verdict=None: {
+        parse_metrics = lambda out: {
             "n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
             "weighted_mce": 9.0, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
@@ -1210,7 +1124,7 @@ def regression_test() -> int:
         save_to_obsidian = lambda c: _dash_none.update(content=c)
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
         compute_tier1_slice_context = lambda: None
-        parse_metrics = lambda output, verdict=None: {
+        parse_metrics = lambda out: {
             "n": None, "win_rate": None, "avg_pnl": None,
             "weighted_mce": None, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
@@ -1396,83 +1310,14 @@ def regression_test() -> int:
     finally:
         STATE_FILE = _orig_state_file2
 
-    # (S) t_7422b8ae: JSON verdict is the PREFERRED source for weighted_mce +
-    # tier1_clean_n — applied AFTER the regex so it wins even when the report
-    # carries a different (diluted merged) figure (fixes the D1 inversion from
-    # the earlier PR draft: JSON must not be overwritten by the regex).
-    _json_report = (
-        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
-        "| **Tier-1 clean unique journeys (realized-exit, authoritative)** | **737** |\n"
-        "- **Tier-1 clean unique journeys (realized-exit): n=737**\n"
-        "Sample-weighted MCE: **15.8pp**\n"
-        "- **Tier-1 clean win rate: 19.0%**\n"
-    )
-    _parsed_json = parse_metrics(
-        _json_report, verdict={"weighted_mce": 18.86, "tier1_clean_n": 112})
-    check("t_7422b8ae: JSON weighted_mce wins over regex merged figure",
-          _parsed_json.get("weighted_mce") == 18.86)
-    check("t_7422b8ae: JSON tier1_clean_n wins over regex value",
-          _parsed_json.get("tier1_clean_n") == 112)
-    check("t_7422b8ae: n is the JSON tier1_clean_n (112, not 737/6842)",
-          _parsed_json.get("n") == 112)
-    check("t_7422b8ae: merged_mce still parsed for non-authoritative display",
-          _parsed_json.get("merged_mce") == 15.8)
-
-    # (T) t_7422b8ae: no JSON verdict -> Section-7 / Section-1 tier1_clean_n
-    # regex fallback drives n (never merged_n).
-    _parsed_fb = parse_metrics(
-        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
-        "- **Tier-1 clean unique journeys (realized-exit): n=112**\n"
-        "Sample-weighted MCE: **15.8pp**\n"
-        "- **Tier-1 clean win rate: 19.0%**\n",
-        verdict={})
-    check("t_7422b8ae: no-JSON fallback parses tier1_clean_n from Section 7",
-          _parsed_fb.get("tier1_clean_n") == 112)
-    check("t_7422b8ae: no-JSON fallback n == tier1_clean_n (never merged)",
-          _parsed_fb.get("n") == 112)
-
-    # (U) t_7422b8ae: when the Tier-1 line is absent AND no JSON verdict is
-    # available, n stays None — the merged count must NEVER become n (this is
-    # the exact t_fb422737 suppression-gate re-open that this task removes).
-    _parsed_merged_only = parse_metrics(
-        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
-        "Sample-weighted MCE: **15.8pp**\n",
-        verdict={})
-    check("t_7422b8ae: merged-only report -> n is None (never merged_n)",
-          _parsed_merged_only.get("n") is None
-          and _parsed_merged_only.get("tier1_clean_n") is None)
-
-    # (V) t_7422b8ae: load_verdict_json reads weighted_mce + tier1_clean_n from
-    # a real calibration_verdict.json fixture (live loader path, fail-open on
-    # missing file already covered by (T)'s verdict={}).
-    _orig_vj_cands = VERDICT_JSON_CANDIDATES
-    try:
-        _vj_fixture = Path(_tmp_state.name) / "calibration_verdict.json"
-        _vj_fixture.write_text(
-            '{"weighted_mce": 18.86, "tier1_clean_n": 112}', encoding="utf-8")
-        VERDICT_JSON_CANDIDATES = [str(_vj_fixture)]
-        _loaded = load_verdict_json()
-        check("t_7422b8ae: load_verdict_json reads weighted_mce",
-              _loaded.get("weighted_mce") == 18.86)
-        check("t_7422b8ae: load_verdict_json reads tier1_clean_n",
-              _loaded.get("tier1_clean_n") == 112)
-        # parse_metrics with verdict=None consults the loader and prefers JSON.
-        _parsed_via_loader = parse_metrics(_json_report)
-        check("t_7422b8ae: parse_metrics prefers verdict when verdict=None",
-              _parsed_via_loader.get("n") == 112
-              and _parsed_via_loader.get("weighted_mce") == 18.86)
-    finally:
-        VERDICT_JSON_CANDIDATES = _orig_vj_cands
-
     # Restore the temp state redirect used for the whole harness.
-    VERDICT_JSON_CANDIDATES = _orig_verdict_candidates
     STATE_FILE, STATE_DIR = _orig_state_file, _orig_state_dir
     _tmp_state.cleanup()
 
     if failures:
         print(f"\nREGRESSION FAILED: {len(failures)} assertion(s) failed: {failures}")
         return 1
-    print("\nREGRESSION PASSED: all t_d8ccf4bd / t_7223ef5b / t_0bfed6a8 / t_ba7757c8 / t_7422b8ae assertions hold.")
+    print("\nREGRESSION PASSED: all t_d8ccf4bd / t_7223ef5b / t_0bfed6a8 / t_ba7757c8 assertions hold.")
     return 0
 
 

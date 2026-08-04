@@ -37,7 +37,7 @@ PIPELINES = {
     "signal_journeys":        ("created_at",  3),
     "signal_pnl_points":      ("ts",          3),
     "oi_snapshots":           ("created_at",  3),
-    "signal_trajectory_bars": ("captured_at", 8),
+    "signal_trajectory_bars": ("captured_at", 2),
     "funding_rate_history":   ("created_at",  6),
     "signal_fingerprints":    ("created_at", 36),
     "signal_journey_events":  ("recorded_at",  6),  # emission fixed 2026-07-02 (was frozen 15d); recorded_at = DB write time (best "is data landing" signal). No created_at column exists on this table.

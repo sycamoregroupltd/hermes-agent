@@ -44,7 +44,11 @@ CLI_CHECK_COMMANDS: Dict[str, list] = {
 # Full test query would require provider SDK + credentials; this is connectivity + basic health proxy
 API_CHECK_ENDPOINTS: Dict[str, str] = {
     "xai-oauth": "https://api.x.ai/v1/models",
-    "nous": "https://api.nousresearch.com/v1/models",  # approximate; adjust if needed
+    # MUST match model.base_url in config.yaml. Was api.nousresearch.com ("approximate;
+    # adjust if needed") which does not resolve -- http=000 -- so nous reported DOWN
+    # unconditionally while inference was healthy. A probe of the wrong host is not a
+    # health check, it is a constant. Verified 2026-08-04: this host returns 200.
+    "nous": "https://inference-api.nousresearch.com/v1/models",
     "openai-codex": "https://api.openai.com/v1/models",
 }
 
@@ -64,14 +68,26 @@ def run_cli_check(cmd: list) -> bool:
 
 
 def run_api_check(url: str) -> bool:
-    """Basic HEAD request to check if endpoint is reachable (proxy for API health)."""
+    """Check endpoint reachability (proxy for API health).
+
+    Uses GET, not HEAD: inference-api.nousresearch.com answers HEAD with 403 while
+    GET returns 200, so a HEAD probe reported a healthy provider as DOWN.
+
+    HTTPError is handled SEPARATELY on purpose. It is raised for every 4xx, so the
+    old blanket `except (..., HTTPError, ...)` swallowed them before the
+    `200 <= status < 500` tolerance could apply -- the "4xx may be auth, still
+    reachable" intent was dead code, and any auth-gated endpoint read as DOWN.
+    Reachable-but-unauthorized is UP for this check's purpose; only 5xx and
+    transport failures are DOWN.
+    """
     try:
-        req = urllib.request.Request(url, method="HEAD")
-        # Short timeout to avoid blocking
+        req = urllib.request.Request(url, headers={"User-Agent": "hermes-health/1"})
         with urllib.request.urlopen(req, timeout=5) as response:
-            return 200 <= response.status < 500  # 4xx may be auth, still reachable
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
-        return False
+            return 200 <= response.status < 500
+    except urllib.error.HTTPError as e:
+        return e.code < 500          # 4xx = reachable (auth/permission), not down
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False                 # DNS/TLS/connection/timeout = genuinely down
 
 
 def update_priority(
