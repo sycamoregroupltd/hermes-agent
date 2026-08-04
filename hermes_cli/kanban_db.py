@@ -91,6 +91,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from hermes_cli.sqlite_util import add_column_if_missing as _add_column_if_missing
 from toolsets import get_toolset_names
+import hermes_cli.kanban_event_signing as _event_signing  # t_3f244a06: advisory ed25519 event signatures
 
 _log = logging.getLogger(__name__)
 
@@ -1175,6 +1176,7 @@ class Event:
     payload: Optional[dict]
     created_at: int
     run_id: Optional[int] = None
+    event_signature: Optional[str] = None  # t_3f244a06: advisory ed25519 sig of canonical event columns
 
 
 # ---------------------------------------------------------------------------
@@ -3938,6 +3940,7 @@ def list_events(conn: sqlite3.Connection, task_id: str) -> list[Event]:
             payload = json.loads(r["payload"]) if r["payload"] else None
         except Exception:
             payload = None
+        sig = r.get("event_signature") or None
         out.append(
             Event(
                 id=r["id"],
@@ -3946,6 +3949,7 @@ def list_events(conn: sqlite3.Connection, task_id: str) -> list[Event]:
                 payload=payload,
                 created_at=r["created_at"],
                 run_id=(int(r["run_id"]) if "run_id" in r.keys() and r["run_id"] is not None else None),
+                event_signature=sig,  # t_3f244a06: advisory ed25519 signature
             )
         )
     return out
@@ -3965,6 +3969,11 @@ def _append_event(
     events by attempt. For events that aren't scoped to a single run
     (task created/edited/archived, dependency promotion) leave it None
     and the row carries NULL.
+
+    t_3f244a06: best-effort ed25519 signature attached after INSERT.
+    Signing is advisory — never raises, never blocks. If crypto fails,
+    reconcile-state.py reports "UNVERIFIED" for the unsigned/bad event.
+    The database column migration runs silently if needed.
     """
     now = int(time.time())
     pl = json.dumps(payload, ensure_ascii=False) if payload else None
@@ -3973,6 +3982,19 @@ def _append_event(
         "VALUES (?, ?, ?, ?, ?)",
         (task_id, run_id, kind, pl, now),
     )
+    event_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    # Advisory signature — fail-safe: any exception is swallowed
+    try:
+        _event_signing.register_advisory_schema(conn)
+        sig, status = _event_signing.sign_event_payload(task_id, kind, pl, run_id, now)
+        if status == "GOOD" and sig is not None:
+            conn.execute(
+                "UPDATE task_events SET event_signature = ? WHERE id = ?",
+                (sig, event_id),
+            )
+    except Exception:
+        # Never block board writes on crypto failures
+        pass
 
 
 def _end_run(
