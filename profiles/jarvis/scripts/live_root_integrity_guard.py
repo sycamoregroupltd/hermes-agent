@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 HERMES = Path("/home/frank/.hermes")
+TRADING = Path("/home/frank/sycode-trading")
 STATE = HERMES / "var" / "live-root-integrity.json"
 
 # Scripts whose disappearance is silent and consequential.
@@ -119,6 +120,14 @@ def main() -> int:
     inactive_crons = [c for c in CRITICAL_CRONS if c in disabled_crons and c not in crons]
 
     head = git_head(HERMES)
+    # The trading repo is the OTHER live root: it is simultaneously the deploy source
+    # and a branch-switching workspace for every worker. On 2026-08-04 a worker
+    # checkout reverted an uncommitted docker-compose.yml twice, silently undoing a
+    # network security fix. Watch its HEAD too — a move there is the same mechanism.
+    try:
+        trading_head = git_head(TRADING)
+    except ProbeError:
+        trading_head = "(unavailable)"
     prev = {}
     if STATE.exists():
         try:
@@ -128,9 +137,22 @@ def main() -> int:
     moved = prev.get("head") and prev["head"] != head
 
     STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps({"head": head, "cron_count": len(crons)}, indent=2))
+    trading_moved = prev.get("trading_head") and prev["trading_head"] != trading_head
+    STATE.write_text(json.dumps({"head": head, "trading_head": trading_head,
+                                 "cron_count": len(crons)}, indent=2))
 
-    if not missing_scripts and not missing_crons and not inactive_crons:
+    # A HEAD move in the trading repo is not itself a fault (workers legitimately switch
+    # branches), so it never alone triggers an alert — it is reported as context when
+    # something IS wrong, and separately when the deploy-critical compose binding is lost.
+    compose_unbound = False
+    cf = TRADING / "docker-compose.yml"
+    if cf.is_file():
+        try:
+            compose_unbound = "100.96.208.26" not in cf.read_text(errors="replace")
+        except OSError:
+            compose_unbound = False
+
+    if not missing_scripts and not missing_crons and not inactive_crons and not compose_unbound:
         return 0  # healthy -> silent
 
     print(f"LIVE ROOT INTEGRITY — {HERMES}")
@@ -146,6 +168,11 @@ def main() -> int:
         print(f"  DISABLED CRON JOBS — present but will never fire ({len(inactive_crons)}):")
         for c in inactive_crons:
             print(f"    - {c}   (fix: hermes cron resume <job-id>)")
+    if compose_unbound:
+        print("  SECURITY REGRESSION: sycode-trading/docker-compose.yml no longer binds to")
+        print("    100.96.208.26 — published ports would return to 0.0.0.0 on the next")
+        print("    recreate, re-exposing the DB to the LAN. Reapply from PR #947.")
+    print(f"  trading HEAD: {trading_head}" + ("  (MOVED)" if trading_moved else ""))
     print(f"  git HEAD now: {head}" + (f"  (MOVED from {prev.get('head')})" if moved else ""))
     print(f"  registered crons: {len(crons)}" +
           (f"  (was {prev['cron_count']})" if prev.get("cron_count") else ""))
