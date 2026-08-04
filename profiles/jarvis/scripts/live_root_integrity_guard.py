@@ -49,6 +49,10 @@ CRITICAL_SCRIPTS = [
 ]
 
 CRITICAL_CRONS = [
+    "codex-exhaustion-circuit-breaker",
+    "board-unroutable-assignee-sweep",
+    "capability-routing-guard",
+    "live-root-integrity-guard",
     "nous-storm-recovery",
     "pr-review-health-monitor",
     "pr-review-lane",
@@ -74,22 +78,45 @@ def git_head(repo: Path) -> str:
         raise ProbeError(f"git probe failed in {repo}: {e}")
 
 
-def registered_crons() -> set[str]:
+def registered_crons() -> tuple[set[str], set[str]]:
+    """Return (enabled_names, present_but_disabled_names).
+
+    `hermes cron list` prints ONLY enabled jobs — 106 of 194 on this host. Treating
+    its output as "exists" reports a merely-DISABLED job as MISSING, which is a
+    false alarm that trains the reader to ignore the guard. Read the store directly
+    so absence and disablement are distinguishable; they need different fixes
+    (recreate vs `hermes cron resume <id>`).
+    """
+    store = HERMES / "profiles" / "jarvis" / "cron" / "jobs.json"
+    if not store.is_file():
+        raise ProbeError(f"cron store missing: {store}")
     try:
-        cp = subprocess.run(["hermes", "cron", "list"], capture_output=True, text=True, timeout=120)
-    except subprocess.SubprocessError as e:
-        raise ProbeError(f"hermes cron list failed: {e}")
-    if cp.returncode != 0:
-        raise ProbeError(f"hermes cron list rc={cp.returncode}")
-    return {ln.split("Name:", 1)[1].strip() for ln in cp.stdout.splitlines() if "Name:" in ln}
+        raw = json.loads(store.read_text(errors="replace"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise ProbeError(f"cron store unreadable: {e}")
+    jobs = raw if isinstance(raw, list) else raw.get("jobs", raw)
+    jobs = jobs if isinstance(jobs, list) else list(jobs.values())
+    enabled, disabled = set(), set()
+    for j in jobs:
+        if not isinstance(j, dict):
+            continue
+        name = j.get("name") or ""
+        if not name:
+            continue
+        (enabled if j.get("enabled", True) else disabled).add(name)
+    return enabled, disabled
 
 
 def main() -> int:
     missing_scripts = [s for s in CRITICAL_SCRIPTS
                        if not (HERMES / s).is_file() or (HERMES / s).stat().st_size == 0]
 
-    crons = registered_crons()
-    missing_crons = [c for c in CRITICAL_CRONS if c not in crons]
+    crons, disabled_crons = registered_crons()
+    missing_crons = [c for c in CRITICAL_CRONS if c not in crons and c not in disabled_crons]
+    # Duplicate job entries are common (re-registration leaves the old row behind), so a
+    # name can appear in BOTH sets. One enabled entry is enough for the job to fire —
+    # only flag names with no enabled entry at all, or the guard cries wolf on every dupe.
+    inactive_crons = [c for c in CRITICAL_CRONS if c in disabled_crons and c not in crons]
 
     head = git_head(HERMES)
     prev = {}
@@ -103,7 +130,7 @@ def main() -> int:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps({"head": head, "cron_count": len(crons)}, indent=2))
 
-    if not missing_scripts and not missing_crons:
+    if not missing_scripts and not missing_crons and not inactive_crons:
         return 0  # healthy -> silent
 
     print(f"LIVE ROOT INTEGRITY — {HERMES}")
@@ -112,9 +139,13 @@ def main() -> int:
         for s in missing_scripts:
             print(f"    - {s}")
     if missing_crons:
-        print(f"  MISSING CRON JOBS ({len(missing_crons)}):")
+        print(f"  MISSING CRON JOBS — absent from the store, must be recreated ({len(missing_crons)}):")
         for c in missing_crons:
             print(f"    - {c}")
+    if inactive_crons:
+        print(f"  DISABLED CRON JOBS — present but will never fire ({len(inactive_crons)}):")
+        for c in inactive_crons:
+            print(f"    - {c}   (fix: hermes cron resume <job-id>)")
     print(f"  git HEAD now: {head}" + (f"  (MOVED from {prev.get('head')})" if moved else ""))
     print(f"  registered crons: {len(crons)}" +
           (f"  (was {prev['cron_count']})" if prev.get("cron_count") else ""))
