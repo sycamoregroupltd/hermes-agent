@@ -55,6 +55,37 @@ BREACH_CARD_COOLDOWN_HOURS = 24
 STATE_DIR = Path(__file__).resolve().parent / "state"
 STATE_FILE = STATE_DIR / "calibration_watchdog_state.json"
 
+# --- t_ece49d50: canonical calibration_verdict.json source -------------------
+# Weighted MCE and Tier-1 clean n are read from a machine-readable verdict
+# v1 produced by the fusion_calibration_report_v2 pipeline. The watchdog uses
+# these two fields as the PRIMARY source; when the JSON is absent or corrupt
+# it falls back to Section-7 regex parsing (tier1_clean_n only — weighted_mce
+# stays None and the DB-computed Tier-1 scored-only MCE in main() carries
+# the alert decision). The path is environment-overridable so staging can
+# point at an ephemeral /tmp copy without changing production behaviour.
+VERDICT_PATH_ENV = os.environ.get(
+    "CALIBRATION_VERDICT_PATH",
+    "/home/frank/.hermes/var/sycode/calibration_verdict.json"
+)
+VERDICT_PATH = Path(VERDICT_PATH_ENV)
+
+
+def load_verdict() -> dict:
+    """Read the canonical calibration_verdict.json (best-effort).
+
+    Returns a dict with keys ``weighted_mce`` and ``tier1_clean_n`` when the
+    file exists and is valid JSON; otherwise returns ``{}`` (fail-open).
+    Never raises — a missing or corrupt verdict simply disables the JSON
+    shortcut and lets the caller fall back to regex.
+    """
+    try:
+        if VERDICT_PATH.exists():
+            import json
+            return json.loads(VERDICT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
 def run_report() -> tuple[int, str]:
     """Run the report wrapper and capture its output."""
     env = os.environ.copy()
@@ -82,7 +113,14 @@ def run_report() -> tuple[int, str]:
         return -2, f"Error running report: {e}"
 
 def parse_metrics(output: str) -> dict:
-    """Parse key metrics from the report output using robust regex."""
+    """Parse key metrics from the report output using robust regex.
+
+    JSON-first path (t_ece49d50): ``weighted_mce`` and ``tier1_clean_n`` are
+    read from the canonical ``calibration_verdict.json`` produced by the
+    fusion-calibration-report pipeline.  When the file is absent or corrupt
+    the watchdog falls back to the existing Section-7 regex parsers so the
+    monitor never goes silent during pipeline transition or temporary failure.
+    """
     metrics = {
         "n": None,
         "merged_n": None,
@@ -106,7 +144,21 @@ def parse_metrics(output: str) -> dict:
         "news_items_48h": None,
         "news_metadata_rows": None,
         "news_nonnull_sentiment": None,
+        "verdict_source": None,  # "json" | "regex" | None
     }
+
+    # --- (t_ece49d50) JSON-first: read canonical calibration_verdict.json ----
+    verdict = load_verdict()
+    if verdict:
+        json_tier1 = verdict.get("tier1_clean_n")
+        if isinstance(json_tier1, (int, float)):
+            metrics["tier1_clean_n"] = int(json_tier1)
+        json_mce = verdict.get("weighted_mce")
+        if isinstance(json_mce, (int, float)):
+            metrics["weighted_mce"] = float(json_mce)
+            metrics["merged_mce"] = float(json_mce)
+        if metrics["tier1_clean_n"] is not None or metrics["weighted_mce"] is not None:
+            metrics["verdict_source"] = "json"
 
     # --- Sample size: TWO distinct populations (t_fb422737 / t_016ac4e4) -----
     # merged_n      = Tier-1 realized-exit + Tier-2 synthetic candle-replay.
@@ -118,6 +170,8 @@ def parse_metrics(output: str) -> dict:
     #                 merged_n). The confidence gate and the alert label MUST
     #                 use this value, or the alert silently mis-reports the
     #                 sample the miscalibration was measured on.
+    # Regex is kept as the FALLBACK when JSON is absent (Section-1 table or
+    # Section-7 text form).
     merged_n_match = re.search(
         r'\|\s*\*\*MERGED clean unique journeys \(n\)\*\*\s*\|\s*\*\*([\d,]+)\*\*\s*\|', output
     )
@@ -131,19 +185,19 @@ def parse_metrics(output: str) -> dict:
             metrics["merged_n"] = int(_m_txt.group(1).replace(",", ""))
 
     # Tier-1 realized-exit clean unique journeys (authoritative calibration n).
-    # Match both the Section-1 summary-table form and the Section-7 observation
-    # text form (identical underlying tier1_clean_n value).
-    tier1_match = re.search(
-        r'\|\s*\*\*Tier-1 clean unique journeys \(realized-exit, authoritative\)\*\*\s*\|\s*\*\*([\d,]+)\*\*\s*\|', output
-    )
-    if tier1_match:
-        metrics["tier1_clean_n"] = int(tier1_match.group(1).replace(",", ""))
-    else:
-        _t_txt = re.search(
-            r'-\s*\*\*Tier-1 clean unique journeys \(realized-exit\): n=([\d,]+)\*\*', output
+    # Only regex-fallback when JSON did not supply tier1_clean_n above.
+    if metrics["tier1_clean_n"] is None:
+        tier1_match = re.search(
+            r'\|\s*\*\*Tier-1 clean unique journeys \(realized-exit, authoritative\)\*\*\s*\|\s*\*\*([\d,]+)\*\*\s*\|', output
         )
-        if _t_txt:
-            metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
+        if tier1_match:
+            metrics["tier1_clean_n"] = int(tier1_match.group(1).replace(",", ""))
+        else:
+            _t_txt = re.search(
+                r'-\s*\*\*Tier-1 clean unique journeys \(realized-exit\): n=([\d,]+)\*\*', output
+            )
+            if _t_txt:
+                metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
 
     # n = the calibration-sample identity (Tier-1). Fall back to merged_n ONLY
     # when the Tier-1 line is absent (legacy/pre-Tier-2 reports) so the monitor
