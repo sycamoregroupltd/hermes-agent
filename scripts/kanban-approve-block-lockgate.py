@@ -40,6 +40,7 @@ No secrets, no credentials, no DB writes, no deploys. Read-only sqlite + stdout 
 import argparse
 import glob
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass, asdict
@@ -62,6 +63,39 @@ REGRESSABLE_STATUSES = {
     'in_progress',
 }
 APPROVAL_MARKERS = ('REVIEW_VERDICT=APPROVED', 'REVIEW_VERDICT: APPROVED', 'verdict-router marked approved')
+
+# Anchored approval verdict (t_5e874719 — lockgate detector alignment).
+# Mirrors the core fix in hermes_cli/kanban_db.py (_APPROVAL_APPROVED_RE).
+# We require the marker at a line start (optionally after list/quote punctuation),
+# and we ignore markers that sit inside a fenced code block.
+# A bare ``REVIEW_VERDICT=APPROVED`` only matches when it is the comment author's
+# own deliberate verdict line — not a citation, not prose, not code.
+_APPROVAL_APPROVED_RE = re.compile(
+    r'^\s*(?:[-*>]\s*)?REVIEW_VERDICT\s*[:=]\s*APPROVED\b',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_fenced_code(text):
+    """Drop fenced code blocks (``` or ~~~) so a verdict cited inside a code span
+    cannot be mistaken for the comment author's own approval verdict."""
+    out_lines = []
+    in_fence = False
+    fence_marker = None
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not in_fence:
+            if stripped.startswith('```') or stripped.startswith('~~~'):
+                in_fence = True
+                fence_marker = stripped[:3]
+                continue
+            out_lines.append(line)
+        else:
+            if fence_marker and stripped.startswith(fence_marker):
+                in_fence = False
+                fence_marker = None
+                continue
+    return '\n'.join(out_lines)
 
 TIER_LABEL = {
     1: 'T1-SILENT-RELAPSE (landed then re-blocked, no reviewer re-open)',
@@ -174,11 +208,15 @@ def _find_approval_marker(conn=None, task_id=None):
         return None
     for author, body, ts in rows:
         bl = (body or '').lower()
-        if 'REVIEW_VERDICT=APPROVED' in body or 'REVIEW_VERDICT: APPROVED' in body:
+        # Anchored check (t_5e874719): mirror the core fix — strip fenced code,
+        # then use anchored regex instead of bare substring match. A quoted/cited
+        # occurrence in prose does NOT mark the card approved.
+        stripped_body = _strip_fenced_code(body)
+        if _APPROVAL_APPROVED_RE.search(stripped_body):
             out['marker_type'] = 'review_verdict'
             out['marker_author'] = author
             out['marker_at'] = ts
-            out['evidence'] = 'comment contains REVIEW_VERDICT=APPROVED'
+            out['evidence'] = 'anchored regex match on comment body'
         elif author == 'verdict-router' and 'needs-operator' in bl:
             # verdict-router marked approved but gated on operator; keep any stronger marker
             if out['marker_type'] is None:

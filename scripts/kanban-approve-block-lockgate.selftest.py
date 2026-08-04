@@ -1,4 +1,4 @@
-'''Self-test for kanban-approve-block-lockgate.py — verifies tier logic without touching
+'''Self-test for kanban-approve-block-lockgate.py -- verifies tier logic without touching
 live boards. Builds an in-memory sqlite DB exercising all three tiers + the simulate gate.'''
 import os
 import sys
@@ -16,6 +16,9 @@ _spec.loader.exec_module(L)
 def make_db(path, rows):
     '''rows: list of (tid, title, status, comments[(author,body,ts)], landed_event_ts|0)'''
     conn = sqlite3.connect(path)
+    # Drop old tables so make_db can be called multiple times on the same file.
+    for t in ('task_runs', 'task_events', 'task_comments', 'tasks'):
+        conn.execute('DROP TABLE IF EXISTS %s' % t)
     conn.execute('CREATE TABLE tasks(id TEXT PRIMARY KEY, title TEXT, status TEXT)')
     conn.execute('CREATE TABLE task_comments(id INTEGER PRIMARY KEY, task_id TEXT, author TEXT, body TEXT, created_at INTEGER)')
     conn.execute('CREATE TABLE task_events(id INTEGER PRIMARY KEY, task_id TEXT, run_id INTEGER, kind TEXT, payload TEXT, created_at INTEGER)')
@@ -95,8 +98,82 @@ def test_zero_board_sentinel():
     print('test_zero_board_sentinel: OK')
 
 
+def test_anchored_no_false_positives():
+    """T_5e874719 regression: quoted/cited verdict tokens in prose or fenced code must NOT
+    be treated as approval markers by the lockgate detector."""
+    tmp = tempfile.mkdtemp()
+    db = os.path.join(tmp, 't.db')
+
+    def check_no_match(comment_body, description):
+        make_db(db, [('t_quoted', 'quoted test', 'blocked', [
+            ('reviewer', comment_body, 1000)], 0)])
+        conn = L._open_ro(db)
+        marker = L._find_approval_marker(conn, 't_quoted')
+        conn.close()
+        assert marker is None, (
+            '%s falsely detected approval -- got marker=%s' % (description, marker)
+        )
+
+    # Mid-line / quoted occurrence inside prose
+    check_no_match(
+        'Per prior discussion: "REVIEW_VERDICT=APPROVED" was mentioned but never issued.',
+        'mid-line quoted REVIEW_VERDICT=APPROVED in prose',
+    )
+    check_no_match(
+        'The template says REVIEW_VERDICT: APPROVED on line 3.',
+        'colon-form mid-line citation in prose',
+    )
+    # Inside a fenced code block
+    check_no_match(
+        'Here is an example:\n```\nREVIEW_VERDICT=APPROVED\n```',
+        'fenced code block containing REVIEW_VERDICT=APPROVED',
+    )
+    check_no_match(
+        '---\nSome text\n~~~\nREVIEW_VERDICT=APPROVED\n~~~\nEnd.',
+        'tilde-fence code block containing REVIEW_VERDICT=APPROVED',
+    )
+
+    # --- genuine anchored verdict SHOULD still match ---
+    make_db(db, [('t_real', 'real verdict', 'blocked', [
+        ('os-reviewer', 'REVIEW_VERDICT=APPROVED', 1000)], 0)])
+    conn = L._open_ro(db)
+    marker = L._find_approval_marker(conn, 't_real')
+    conn.close()
+    assert marker is not None and marker['marker_type'] == 'review_verdict', \
+        'genuine anchored REVIEW_VERDICT=APPROVED must still detect'
+
+    print('test_anchored_no_false_positives: OK')
+
+
+def test_list_prefix_verdict():
+    """VERDICT lines preceded by list markers (-, *, >) should still match
+    (this matches what _APPROVAL_APPROVED_RE allows via (?:[-*>]\s*)? )."""
+    tmp = tempfile.mkdtemp()
+    db = os.path.join(tmp, 't.db')
+
+    make_db(db, [('t_list', 'list item verdict', 'blocked', [
+        ('os-reviewer', '- REVIEW_VERDICT=APPROVED', 1000)], 0)])
+    conn = L._open_ro(db)
+    marker = L._find_approval_marker(conn, 't_list')
+    conn.close()
+    assert marker is not None and marker['marker_type'] == 'review_verdict', \
+        '- prefixed REVIEW_VERDICT=APPROVED should still match'
+
+    make_db(db, [('t_quote', 'quote verdict', 'blocked', [
+        ('guardian', '> REVIEW_VERDICT=APPROVED', 1000)], 0)])
+    conn = L._open_ro(db)
+    marker = L._find_approval_marker(conn, 't_quote')
+    conn.close()
+    assert marker is not None and marker['marker_type'] == 'review_verdict', \
+        '> prefixed REVIEW_VERDICT=APPROVED should still match'
+
+    print('test_list_prefix_verdict: OK')
+
+
 if __name__ == '__main__':
     test_tiers()
     test_simulate_gate()
     test_zero_board_sentinel()
+    test_anchored_no_false_positives()
+    test_list_prefix_verdict()
     print('ALL SELFTESTS PASS')
