@@ -838,11 +838,15 @@ def decide_alert(metrics: dict) -> dict | None:
             lines.append(f"- {rolling}")
         return lines
 
+    # t_9353bc26: Use tier1_clean_n (NOT n which falls back to merged_n) as the
+    # suppression gate. This ensures suppressed alerts only fire when the Tier-1
+    # realized-exit sample itself exceeds MIN_CLEAN_N.
+    _tcn = metrics.get("tier1_clean_n")
     # Sample too small for any confident statistic — log metrics, never alert.
-    if n is None or n < MIN_CLEAN_N:
+    if _tcn is None or _tcn < MIN_CLEAN_N:
         lines = [
             "🔎 FUSION CALIBRATION — THIN SAMPLE (below MIN_CLEAN_N) 🔎",
-            f"Tier-1 realized-exit sample (n={n}) is too thin to gauge calibration health.",
+            f"Tier-1 realized-exit sample (tier1_clean_n={_tcn}) is too thin to gauge calibration health.",
             "No breach claim is made. Metrics are logged for accumulation tracking only.\n",
             "[Monitored Metrics]",
         ] + monitored_block()
@@ -1034,7 +1038,7 @@ def regression_test() -> int:
 
     # (A) Healthy thin sample must NOT claim a breach / open a card; it emits
     #     the SAMPLE_ACCUMULATING tracker (t_e79f6568) with no card.
-    d = decide_alert({"n": 150, "win_rate": 52.0, "avg_pnl": 0.4, "weighted_mce": 10.0})
+    d = decide_alert({"n": 150, "tier1_clean_n": 150, "win_rate": 52.0, "avg_pnl": 0.4, "weighted_mce": 10.0})
     check("n=150, MCE=10pp -> SAMPLE_ACCUMULATING (no false breach)",
           d is not None and d["kind"] == "SAMPLE_ACCUMULATING")
     check("n=150 -> SAMPLE_ACCUMULATING opens NO card", d is not None and d["card"] is False)
@@ -1044,7 +1048,7 @@ def regression_test() -> int:
 
     # (B) Real thin-sample MCE breach -> INVESTIGATE, NO card (t_ef700332: no
     #     alert/flag below the validated-edge floor). Honest INSUFFICIENT_SAMPLE.
-    d = decide_alert({"n": 124, "win_rate": 50.0, "avg_pnl": 0.1, "weighted_mce": 20.07})
+    d = decide_alert({"n": 124, "tier1_clean_n": 124, "win_rate": 50.0, "avg_pnl": 0.1, "weighted_mce": 20.07})
     check("n=124, MCE=20.07pp -> INVESTIGATE", d is not None and d["kind"] == "INVESTIGATE")
     check("n=124, MCE=20.07pp -> NO card raised (t_ef700332: floor not reached)",
           d is not None and d["card"] is False)
@@ -1055,7 +1059,7 @@ def regression_test() -> int:
           or "not a validated" in " ".join(d["stdout_lines"]).lower())
 
     # (C) n<100 silent gap closed: metrics logged, no card, no breach claim.
-    d = decide_alert({"n": 42, "win_rate": 51.0, "avg_pnl": 0.2, "weighted_mce": 9.0})
+    d = decide_alert({"n": 42, "tier1_clean_n": 42, "win_rate": 51.0, "avg_pnl": 0.2, "weighted_mce": 9.0})
     check("n=42 -> THIN_SAMPLE (logs metrics, no card)", d is not None and d["kind"] == "THIN_SAMPLE" and d["card"] is False)
     check("n=42 -> logs Tier-1 n", "n=42" in " ".join(d["stdout_lines"]))
     check("n=42 -> logs MCE metric", "Sample-weighted MCE" in " ".join(d["stdout_lines"]))
@@ -1063,22 +1067,22 @@ def regression_test() -> int:
     # (D) Confident healthy sample -> SAMPLE_ACCUMULATING (floor reached), no card,
     #     no recalibration side-effect. This is the t_e79f6568 accumulation status
     #     emitted once the validated-edge floor is met.
-    d = decide_alert({"n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 8.0})
+    d = decide_alert({"n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 8.0})
     check("n=400, healthy -> SAMPLE_ACCUMULATING (floor reached, no breach card)",
           d is not None and d["kind"] == "SAMPLE_ACCUMULATING" and d["card"] is False)
 
     # (E) Confident MCE breach -> BREACH + card.
-    d = decide_alert({"n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 18.0})
+    d = decide_alert({"n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 18.0})
     check("n=400, MCE=18pp -> BREACH", d is not None and d["kind"] == "BREACH" and d["card"] is True)
 
     # (F) Thin win-rate breach -> INVESTIGATE (not BREACH), honest.
-    d = decide_alert({"n": 200, "win_rate": 35.0, "avg_pnl": -0.5, "weighted_mce": 9.0})
+    d = decide_alert({"n": 200, "tier1_clean_n": 200, "win_rate": 35.0, "avg_pnl": -0.5, "weighted_mce": 9.0})
     check("n=200, WR=35% -> INVESTIGATE (thin genuine breach)", d is not None and d["kind"] == "INVESTIGATE")
     check("n=200, WR=35% -> no false MCE-breach claim", "mce breach" not in " ".join(d["stdout_lines"]).lower())
 
     # (G) SAMPLE_ACCUMULATING guarantees: explicitly no recalibration wording and
     #     that the status string is present exactly once in stdout.
-    d = decide_alert({"n": 260, "win_rate": 54.0, "avg_pnl": 0.6, "weighted_mce": 11.0})
+    d = decide_alert({"n": 260, "tier1_clean_n": 260, "win_rate": 54.0, "avg_pnl": 0.6, "weighted_mce": 11.0})
     check("n=260 -> SAMPLE_ACCUMULATING status present",
           d is not None and d["kind"] == "SAMPLE_ACCUMULATING"
           and any("SAMPLE_ACCUMULATING" in ln for ln in d["stdout_lines"]))
@@ -1102,7 +1106,7 @@ def regression_test() -> int:
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
         compute_tier1_slice_context = lambda: None
         parse_metrics = lambda out: {
-            "n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
+            "n": 127, "tier1_clean_n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
             "weighted_mce": 19.4, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
         }
@@ -1135,7 +1139,7 @@ def regression_test() -> int:
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
         compute_tier1_slice_context = lambda: None
         parse_metrics = lambda out: {
-            "n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
+            "n": 42, "tier1_clean_n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
             "weighted_mce": 9.0, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
         }
@@ -1201,7 +1205,7 @@ def regression_test() -> int:
     # scored-only MCE is available, the breach/headline keys on it and the
     # merged figure is labeled non-authoritative with its own n.
     d = decide_alert({
-        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
         "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
         "tier1_scored_mce": 32.72, "tier1_scored_n": 381,
     })
@@ -1225,7 +1229,7 @@ def regression_test() -> int:
     # figure is used but explicitly labeled non-authoritative (never misread
     # as Tier-1).
     d = decide_alert({
-        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
         "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
     })
     check("t_0bfed6a8: merged fallback returns a BREACH decision", d is not None)
@@ -1297,7 +1301,7 @@ def regression_test() -> int:
 
     # (P) t_ba7757c8: BREACH payload includes evidence context + report links.
     d = decide_alert({
-        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
         "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
         "tier1_scored_mce": 32.72, "tier1_scored_n": 381,
         "sample_window": "last 30d (30d)",
