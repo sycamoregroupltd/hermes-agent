@@ -180,8 +180,12 @@ except Exception:
 # ── 7. event signature verification (t_3f244a06 — verify-and-report only) ─────
 import base64 as _b64
 
-def _verify_event_sig(event_id, kind, payload, created_at, sig_b64):
+def _verify_event_sig(event_id, kind, payload, created_at, sig_b64, task_id=None, run_id=None):
     """Verify one task_events row's ed25519 signature against allowed_signers.
+    
+    Uses the SAME canonical form as the signer (kanban_db.py): actual
+    task_id/run_id values, NOT hard-coded None. Mismatched forms cause
+    every verified event to fail even when perfectly signed.
     
     Returns: ('GOOD', principal) | ('UNVERIFIED', None) | ('BAD', msg)
     Never raises — any failure class becomes UNVERIFIED so this never blocks.
@@ -226,7 +230,11 @@ def _verify_event_sig(event_id, kind, payload, created_at, sig_b64):
     except ImportError:
         return ("UNVERIFIED no-cryptography", None)
     
-    d = {"task_id": None, "kind": kind, "payload": json.loads(payload) if isinstance(payload, str) and payload else None, "run_id": None, "created_at": int(created_at)}
+    # CRITICAL FIX: use actual task_id/run_id, matching the signer's form.
+    # The signer (hermes_cli/kanban_event_signing.py sign_event_payload)
+    # includes actual values; a verifier that hardcodes None will always
+    # report every signed event as UNTRUSTED despite perfect signatures.
+    d = {"task_id": task_id, "kind": kind, "payload": json.loads(payload) if isinstance(payload, str) and payload else None, "run_id": run_id, "created_at": int(created_at)}
     msg = json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     
     for principal, pub_bytes in principal_to_pub.items():
@@ -244,11 +252,22 @@ def _verify_event_sig(event_id, kind, payload, created_at, sig_b64):
 
 SIG_STATS = {"GOOD": 0, "UNSIGNED": 0, "UNTRUSTED": 0, "BAD": 0, "TOTAL": 0}
 try:
-    _sig_rows = q("SELECT id, kind, payload, created_at, COALESCE(event_signature,'') FROM task_events ORDER BY id LIMIT 2000")
-    for r in _sig_rows:
-        eid, kind, payload, created, sig = r["id"], r["kind"], r["payload"], r["created_at"], r["COALESCE(event_signature,'')"]
-        status, _ = _verify_event_sig(eid, kind, payload, created, sig)
-        SIG_STATS["TOTAL"] += 1
+    # Full-table scan: verify every SIGNED event (crypto), count the rest.
+    # Older events predate signing (column added 2026-08-04) and are
+    # legitimately UNSIGNED — that is the verify-and-report baseline.
+    _total_n = q("SELECT COUNT(*) FROM task_events")
+    _total_n = int(_total_n[0][0]) if _total_n else 0
+    SIG_STATS["TOTAL"] = _total_n
+    _sig_rows = q("SELECT id, task_id, run_id, kind, payload, created_at, event_signature "
+                  "FROM task_events WHERE event_signature IS NOT NULL AND event_signature != '' "
+                  "ORDER BY id")
+    _signed_n = len(_sig_rows)
+    SIG_STATS["UNSIGNED"] = _total_n - _signed_n
+    for _r in _sig_rows:
+        # q() returns plain tuples (no row_factory) — index positionally
+        eid, tid, kind, payload, created, sig = int(_r[0]), _r[1], _r[3], _r[4], _r[5], _r[6]
+        rid = _r[2] if _r[2] is not None else None
+        status, _ = _verify_event_sig(eid, kind, payload, created, sig, task_id=tid, run_id=rid)
         SIG_STATS[status] = SIG_STATS.get(status, 0) + 1
 except Exception:
     pass  # Column may not exist yet on this board — skip silently

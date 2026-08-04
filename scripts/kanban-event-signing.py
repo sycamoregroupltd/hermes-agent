@@ -171,18 +171,25 @@ def _load_allowed_signers_map():
 
 def _canonical_event_payload(task_id, kind, payload, run_id, created_at, sig=None):
     """Create a deterministic byte-string for hashing/signing.
-    
+
     Includes ALL standard columns plus an optional signature field (so you can
     chain signatures but a single-sig mode is default).
-    
+
     This function takes raw arguments, NOT a database row, because the caller
     has these values at write time before id allocation. The id field is filled
     post-insert.
+
+    Canonical form MUST mirror the in-process signer
+    (hermes_cli/kanban_event_signing.py sign_event_payload): an empty/None
+    payload serializes to None, NOT to the empty string — a mismatch here
+    makes every real event fail verification even when perfectly signed.
     """
+    if isinstance(payload, str):
+        payload = json.loads(payload) if payload else None
     d = {
         "task_id": task_id,
         "kind": kind,
-        "payload": json.loads(payload) if isinstance(payload, str) and payload else payload,
+        "payload": payload,
         "run_id": run_id,
         "created_at": created_at,
     }
@@ -230,6 +237,11 @@ def cmd_verify(args):
     """Verify a previously-signed event.
     
     Returns status text: GOOD, UNTRUSTED, BAD, UNSIGNED
+    
+    CRITICAL: --task-id and --run-id MUST match the values the signer used
+    (the actual DB row's task_id/run_id). Passing the event id instead of
+    the task id, or omitting run_id, produces a different canonical message
+    and every real event will fail verification even when perfectly signed.
     """
     event_id = args.event_id
     kind = args.kind
@@ -237,13 +249,15 @@ def cmd_verify(args):
     created_at = args.created_at
     sig_b64 = args.signature if hasattr(args, 'signature') else None
     db_path = args.db
+    task_id = getattr(args, 'task_id', None) or event_id
+    run_id = getattr(args, 'run_id', None)
     
-    result = _do_verify(event_id, kind, payload_json, created_at, sig_b64, db_path)
+    result = _do_verify(event_id, task_id, run_id, kind, payload_json, created_at, sig_b64, db_path)
     print(result)
     return 0 if result.startswith("GOOD") else 1
 
 
-def _do_verify(event_id, kind, payload_json, created_at, sig_b64, db_path):
+def _do_verify(event_id, task_id, run_id, kind, payload_json, created_at, sig_b64, db_path):
     """Internal verify routine. Returns status string."""
     if not sig_b64:
         return "UNSIGNED"
@@ -265,8 +279,8 @@ def _do_verify(event_id, kind, payload_json, created_at, sig_b64, db_path):
             pubkey = serialization.load_ssh_public_key(
                 f"ssh-ed25519 {base64.b64encode(pub_bytes).decode()}".encode()
             )
-            # Verify
-            msg = _canonical_event_payload(event_id, kind, payload_json, None, created_at)
+            # Verify — canonical form MUST match the signer: actual task_id/run_id
+            msg = _canonical_event_payload(task_id, kind, payload_json, run_id, created_at)
             try:
                 pubkey.verify(signature, msg.encode("utf-8"))
                 return f"GOOD {principal}"
@@ -435,6 +449,8 @@ def main():
     p_ver.add_argument("payload", nargs="?", default="{}", help="JSON payload")
     p_ver.add_argument("created_at", type=int, help="Unix timestamp from DB row")
     p_ver.add_argument("signature", nargs="?", default=None, help="Base64 signature blob")
+    p_ver.add_argument("--task-id", default=None, help="Task id from DB row (MUST match signer)")
+    p_ver.add_argument("--run-id", type=int, default=None, help="Run id from DB row (MUST match signer)")
     p_ver.add_argument("--db", default=None, help="Board DB path (unused, reserved)")
     
     # list-profiles
