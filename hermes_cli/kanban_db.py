@@ -10000,14 +10000,142 @@ def rewind_notify_cursor(
 # Retention + garbage collection
 # ---------------------------------------------------------------------------
 
+
+_GCAUDIT_ENV = "HERMES_KANBAN_GC_AUDIT_DIR"
+
+
+def _resolve_gc_audit_dir() -> Path:
+    """Return the gc_audit output directory, reading env var at call time."""
+    val = os.environ.get(_GCAUDIT_ENV)
+    if val:
+        return Path(val)
+    return Path.home() / ".hermes" / "audit"
+
+
+def _gc_audit_file_path() -> Path:
+    return _resolve_gc_audit_dir() / "gc_events.jsonl"
+
+
+def gc_events_audit_file_path() -> Path:
+    """Return the path where ``gc_events`` appends its JSONL audit records."""
+    return _gc_audit_file_path()
+
+
+def load_gc_audit_lines() -> list[dict]:
+    """Return parsed JSON lines from the gc audit file, newest-first.
+
+    Each line is an object with keys: run_at, retention_seconds, cutoff,
+    min_event_id, max_event_id, count, task_ids.
+    """
+    path = gc_events_audit_file_path()
+    if not path.exists():
+        return []
+    lines: list[dict] = []
+    try:
+        for ln in path.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if ln:
+                lines.append(json.loads(ln))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return lines[::-1]
+
+
+def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
+                   retention_seconds: int, cutoff: int) -> None:
+    """Append a single JSON-line summarising one ``gc_events`` invocation.
+
+    Writes to ``~/.hermes/audit/gc_events.jsonl`` (overridable via
+    :envvar:`HERMES_KANBAN_GC_AUDIT_DIR`). Silently ignores write failures
+    so audit logging never blocks the GC itself.
+    """
+    if not events_meta:
+        return
+    _resolve_gc_audit_dir().mkdir(parents=True, exist_ok=True)
+    min_id = min(eid for eid, _ in events_meta)
+    max_id = max(eid for eid, _ in events_meta)
+    task_ids = sorted({tid for _, tid in events_meta})
+    line = json.dumps({
+        "run_at": run_at,
+        "retention_seconds": retention_seconds,
+        "cutoff": cutoff,
+        "min_event_id": min_id,
+        "max_event_id": max_id,
+        "count": len(events_meta),
+        "task_ids": task_ids,
+    })
+    fd = os.open(str(_gc_audit_file_path()),
+                 os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        with os.fdopen(fd, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def gc_events_preview(
+    conn: sqlite3.Connection, *, older_than_seconds: int = 30 * 24 * 3600,
+) -> dict:
+    """Dry-run preview of what ``gc_events`` would delete, WITHOUT deleting.
+
+    Returns a summary dict with count, min/max event IDs, retention period,
+    and the full list of affected (event_id, task_id) pairs under ``details``.
+    """
+    cutoff = int(time.time()) - int(older_than_seconds)
+    meta_rows = conn.execute(
+        "SELECT id, task_id, created_at FROM task_events "
+        "WHERE created_at < ? AND task_id IN "
+        "(SELECT id FROM tasks WHERE status IN ('done', 'archived')) "
+        "ORDER BY id",
+        (cutoff,),
+    ).fetchall()
+    events = [
+        {"event_id": r["id"], "task_id": r["task_id"], "created_at": r["created_at"]}
+        for r in meta_rows
+    ]
+    task_ids = {e["task_id"] for e in events}
+    return {
+        "cutoff": cutoff,
+        "retention_seconds": older_than_seconds,
+        "count": len(events),
+        "task_ids": sorted(task_ids),
+        "min_event_id": events[0]["event_id"] if events else None,
+        "max_event_id": events[-1]["event_id"] if events else None,
+        "details": events,
+    }
+
+
 def gc_events(
     conn: sqlite3.Connection, *, older_than_seconds: int = 30 * 24 * 3600,
 ) -> int:
     """Delete task_events rows older than ``older_than_seconds`` for tasks
     in a terminal state (``done`` or ``archived``). Returns the number of
     rows deleted. Running / ready / blocked tasks keep their full event
-    history."""
+    history.
+
+    AUDIT (t_6baff6ad): before deleting, queries matching rows and writes
+    their summary as a JSON line into ``~/.hermes/audit/gc_events.jsonl``
+    so downstream reconcilers can cite first-party evidence instead of
+    inferring from a pre-GC backup snapshot.
+    """
     cutoff = int(time.time()) - int(older_than_seconds)
+    now = int(time.time())
+
+    # 1. Capture metadata of rows that will be deleted (before DELETE).
+    meta_rows = conn.execute(
+        "SELECT id, task_id FROM task_events "
+        "WHERE created_at < ? AND task_id IN "
+        "(SELECT id FROM tasks WHERE status IN ('done', 'archived')) "
+        "ORDER BY id",
+        (cutoff,),
+    ).fetchall()
+    events_meta = [(int(r["id"]), str(r["task_id"])) for r in meta_rows]
+
+    # 2. Write audit record *before* the DELETE so we always have evidence
+    #    even if the deletion later fails.
+    _emit_gc_audit(events_meta, now, older_than_seconds, cutoff)
+
+    # 3. Execute the deletion.
     with write_txn(conn):
         cur = conn.execute(
             "DELETE FROM task_events WHERE created_at < ? AND task_id IN "
