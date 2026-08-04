@@ -546,6 +546,70 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
         help="Emit JSON (structured) instead of the default human table",
     )
 
+    # --- classify-failure (read-only crash triage) ---
+    p_classify = sub.add_parser(
+        "classify-failure",
+        aliases=["failure-classify"],
+        help="Classify a kanban worker failure from supplied artifacts (read-only)",
+        description=(
+            "Run the pure kanban failure classifier against either a live task "
+            "snapshot or caller-supplied JSON/log artifacts. This command prints "
+            "diagnostic guidance only; it does not recover, mark, unblock, "
+            "restart, or mutate queue state."
+        ),
+    )
+    p_classify.add_argument(
+        "--task",
+        dest="task_id",
+        default=None,
+        help="Read task/events/runs for this task id from the current board",
+    )
+    p_classify.add_argument(
+        "--task-json",
+        default=None,
+        metavar="PATH|-",
+        help="Task artifact as a JSON object (use '-' for stdin)",
+    )
+    p_classify.add_argument(
+        "--events-json",
+        default=None,
+        metavar="PATH|-",
+        help="Task events artifact as a JSON list (use '-' for stdin)",
+    )
+    p_classify.add_argument(
+        "--runs-json",
+        default=None,
+        metavar="PATH|-",
+        help="Task runs artifact as a JSON list (use '-' for stdin)",
+    )
+    p_classify.add_argument(
+        "--dispatch-json",
+        default=None,
+        metavar="PATH|-",
+        help="Optional dispatcher context artifact as a JSON object",
+    )
+    p_classify.add_argument(
+        "--log-file",
+        default=None,
+        metavar="PATH",
+        help="Optional worker log excerpt file to inspect read-only",
+    )
+    p_classify.add_argument(
+        "--log-excerpt",
+        default=None,
+        help="Inline worker log excerpt (combined after --log-file if both are set)",
+    )
+    p_classify.add_argument(
+        "--workspace",
+        default=None,
+        metavar="PATH",
+        help="Optional workspace path marker to include in supplied task evidence",
+    )
+    p_classify.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON (structured) instead of the default human summary",
+    )
+
     # --- link / unlink ---
     p_link = sub.add_parser("link", help="Add a parent->child dependency")
     p_link.add_argument("parent_id")
@@ -1054,6 +1118,8 @@ def kanban_command(args: argparse.Namespace) -> int:
             "reassign": _cmd_reassign,
             "diagnostics": _cmd_diagnostics,
             "diag":     _cmd_diagnostics,
+            "classify-failure": _cmd_classify_failure,
+            "failure-classify": _cmd_classify_failure,
             "link":     _cmd_link,
             "unlink":   _cmd_unlink,
             "claim":    _cmd_claim,
@@ -1870,6 +1936,7 @@ def _cmd_diagnostics(args: argparse.Namespace) -> int:
     from hermes_cli.config import load_config
 
     diag_config = kd.config_from_runtime_config(load_config())
+    diag_config["enable_failure_classifier"] = True
 
     with kb.connect_closing() as conn:
         # Either one-task mode or fleet mode.
@@ -1883,7 +1950,10 @@ def _cmd_diagnostics(args: argparse.Namespace) -> int:
                     task,
                     kb.list_events(conn, args.task),
                     kb.list_runs(conn, args.task),
-                    config=diag_config,
+                    config={
+                        **diag_config,
+                        "log_excerpt": kb.read_worker_log(args.task, tail_bytes=20_000) or "",
+                    },
                 )
             }
         else:
@@ -1915,7 +1985,10 @@ def _cmd_diagnostics(args: argparse.Namespace) -> int:
                         r,
                         ev_by.get(tid, []),
                         run_by.get(tid, []),
-                        config=diag_config,
+                        config={
+                            **diag_config,
+                            "log_excerpt": kb.read_worker_log(tid, tail_bytes=20_000) or "",
+                        },
                     )
                     if dl:
                         diags_by_task[tid] = dl
@@ -1990,6 +2063,121 @@ def _cmd_diagnostics(args: argparse.Namespace) -> int:
                 if a.suggested:
                     print(f"       → {a.label}")
         print()
+    return 0
+
+
+def _load_json_artifact(path: str, *, expected: type, label: str) -> Any:
+    """Read a JSON artifact from ``path`` or stdin and validate its shape."""
+    if path == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(path).read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is not valid JSON: {exc}") from exc
+    if not isinstance(data, expected):
+        expected_name = "object" if expected is dict else "array"
+        raise ValueError(f"{label} must be a JSON {expected_name}")
+    return data
+
+
+def _read_log_artifacts(
+    args: argparse.Namespace,
+    *,
+    fallback_task_id: Optional[str] = None,
+) -> str:
+    """Return the combined read-only log excerpt requested by the caller."""
+    excerpts: list[str] = []
+    if getattr(args, "log_file", None):
+        excerpts.append(Path(args.log_file).read_text(encoding="utf-8", errors="replace"))
+    elif fallback_task_id:
+        excerpts.append(kb.read_worker_log(fallback_task_id, tail_bytes=20_000) or "")
+    if getattr(args, "log_excerpt", None):
+        excerpts.append(str(args.log_excerpt))
+    return "\n".join(part for part in excerpts if part)
+
+
+def _cmd_classify_failure(args: argparse.Namespace) -> int:
+    """Run the pure crash classifier from supplied artifacts without recovery.
+
+    This read-only diagnostic surface loads task/event/run snapshots from either
+    the board or caller-provided JSON files, passes them to
+    ``kanban_diagnostics.classify_kanban_failure``, and prints the result. It
+    never calls queue mutation helpers such as block/reclaim/promote/complete.
+    """
+    from hermes_cli import kanban_diagnostics as kd
+
+    has_task_id = bool(getattr(args, "task_id", None))
+    has_task_json = bool(getattr(args, "task_json", None))
+    if has_task_id and has_task_json:
+        print("kanban classify-failure: pass either --task or --task-json, not both", file=sys.stderr)
+        return 2
+    if not has_task_id and not has_task_json:
+        print("kanban classify-failure: --task or --task-json is required", file=sys.stderr)
+        return 2
+
+    dispatch_context: dict[str, Any] = {}
+    if getattr(args, "dispatch_json", None):
+        dispatch_context = _load_json_artifact(
+            args.dispatch_json, expected=dict, label="--dispatch-json",
+        )
+
+    if has_task_id:
+        with kb.connect_closing() as conn:
+            task = kb.get_task(conn, args.task_id)
+            if task is None:
+                print(f"no such task: {args.task_id}", file=sys.stderr)
+                return 1
+            events = kb.list_events(conn, args.task_id)
+            runs = kb.list_runs(conn, args.task_id)
+        log_excerpt = _read_log_artifacts(args, fallback_task_id=args.task_id)
+    else:
+        task = _load_json_artifact(args.task_json, expected=dict, label="--task-json")
+        events = (
+            _load_json_artifact(args.events_json, expected=list, label="--events-json")
+            if getattr(args, "events_json", None)
+            else []
+        )
+        runs = (
+            _load_json_artifact(args.runs_json, expected=list, label="--runs-json")
+            if getattr(args, "runs_json", None)
+            else []
+        )
+        log_excerpt = _read_log_artifacts(args)
+
+    if getattr(args, "workspace", None):
+        if isinstance(task, dict):
+            task = {**task, "workspace_path": args.workspace}
+        else:
+            dispatch_context = {**dispatch_context, "workspace_path": args.workspace}
+
+    result = kd.classify_kanban_failure(
+        task,
+        events,
+        runs,
+        log_excerpt=log_excerpt,
+        dispatch_context=dispatch_context,
+    )
+    payload = result.to_dict()
+    payload["classifier_version"] = kd.FAILURE_CLASSIFIER_VERSION
+    payload["read_only"] = True
+
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+
+    print(f"failure_class: {payload['failure_class']}")
+    print(f"confidence: {payload['confidence']}")
+    print("evidence_markers:")
+    markers = payload.get("evidence_markers") or []
+    if markers:
+        for marker in markers:
+            print(f"  - {marker}")
+    else:
+        print("  - (none)")
+    print(f"safe_recovery_hint: {payload['safe_recovery_hint']}")
+    print("read_only: true")
     return 0
 
 

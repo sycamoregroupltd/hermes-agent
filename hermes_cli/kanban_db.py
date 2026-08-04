@@ -70,6 +70,12 @@ new locking.
 
 from __future__ import annotations
 
+# Sentinel for ``write_board_metadata`` kwargs: distinguishes "not provided
+# (leave whatever is on disk)" from "explicitly cleared" (None/""). Without
+# it, a caller passing None could not clear a previously-set field because
+# read_board_metadata() pre-populates ``meta`` from the on-disk file.
+_MISSING: "Any" = object()
+
 import contextlib
 import hashlib
 import json
@@ -727,6 +733,7 @@ def read_board_metadata(board: Optional[str] = None) -> dict:
         "icon": "",
         "color": "",
         "default_workdir": None,
+        "worktree_root": None,
         "created_at": None,
         "archived": False,
     }
@@ -753,7 +760,8 @@ def write_board_metadata(
     icon: Optional[str] = None,
     color: Optional[str] = None,
     archived: Optional[bool] = None,
-    default_workdir: Optional[str] = None,
+    default_workdir: "Any" = _MISSING,
+    worktree_root: "Any" = _MISSING,
 ) -> dict:
     """Create / update ``board.json`` for ``board``.
 
@@ -776,8 +784,14 @@ def write_board_metadata(
         meta["color"] = str(color)
     if archived is not None:
         meta["archived"] = bool(archived)
-    if default_workdir is not None:
+    if default_workdir is not _MISSING:
+        # _MISSING = not provided (leave whatever is on disk); None/"" = clear;
+        # any other value sets it.
         meta["default_workdir"] = str(default_workdir) if default_workdir else None
+    if worktree_root is not _MISSING:
+        # _MISSING = not provided (leave whatever is on disk); None/"" = clear;
+        # any other value sets it.
+        meta["worktree_root"] = str(worktree_root) if worktree_root else None
     if not meta.get("created_at"):
         meta["created_at"] = int(time.time())
     path = board_metadata_path(slug)
@@ -798,6 +812,7 @@ def create_board(
     icon: Optional[str] = None,
     color: Optional[str] = None,
     default_workdir: Optional[str] = None,
+    worktree_root: Optional[str] = None,
 ) -> dict:
     """Create a new board directory + DB + metadata. Idempotent.
 
@@ -814,7 +829,8 @@ def create_board(
         description=description,
         icon=icon,
         color=color,
-        default_workdir=default_workdir,
+        default_workdir=default_workdir if default_workdir is not None else _MISSING,
+        worktree_root=worktree_root if worktree_root is not None else _MISSING,
     )
     # Touch the DB so list_boards() sees it immediately.
     init_db(board=normed)
@@ -6871,8 +6887,39 @@ def _resolve_worktree_workspace(
     working directory (which is whatever directory the gateway happened to be
     launched from, e.g. the Hermes checkout). If no anchor is configured
     anywhere, we fail loudly rather than guess.
+
+    Isolation guard (GAP1): if the board opts in with ``worktree_root`` and a
+    worktree would otherwise be materialized *inside* the production checkout
+    (the ``<repo>/.worktrees/<id>`` position), the worktree is instead placed
+    **outside** the repo at ``<worktree_root>/<repo-basename>/.worktrees/<id>``.
+    The worktree is still a *linked* checkout of the same git object store, so
+    branch commits and WIP live in the real repo and ``HEAD`` of the production
+    checkout is never touched. This prevents worker/reviewer git ops from
+    clobbering untracked WIP that lives in a shared production checkout
+    (see sycode-trading GAP1 incident: a reviewer's ``git checkout -- .`` in the
+    shared checkout discarded 3 files of peer WIP).
     """
     branch_name = (task.branch_name or "").strip() or f"wt/{task.id}"
+
+    def _anchor_target(board_slug: str, repo_root: Path) -> Path:
+        """Pick the worktree target for a repo-anchored worktree.
+
+        Returns a path *outside* ``repo_root`` when the board has opted into
+        ``worktree_root`` isolation, otherwise the historical in-repo position.
+        """
+        board_meta = read_board_metadata(board_slug)
+        iso = (board_meta.get("worktree_root") or "").strip()
+        if iso:
+            iso_root = Path(iso).expanduser()
+            if not iso_root.is_absolute():
+                raise ValueError(
+                    f"board {board_slug!r} worktree_root {iso!r} is not absolute; "
+                    "use an absolute path outside the git repo"
+                )
+            # <worktree_root>/<repo-basename>/.worktrees/<id>
+            return iso_root / repo_root.name / ".worktrees" / task.id
+        return repo_root / ".worktrees" / task.id
+
     if not task.workspace_path:
         # Anchor on the board's configured default_workdir, not Path.cwd().
         # The dispatcher's CWD is incidental (gateway launch dir) and using it
@@ -6898,7 +6945,7 @@ def _resolve_worktree_workspace(
                 f"task {task.id} has workspace_kind=worktree but board "
                 f"{board_slug!r} default_workdir {board_default!r} is not inside a git repo"
             )
-        target = repo_root / ".worktrees" / task.id
+        target = _anchor_target(board_slug, repo_root)
         _ensure_git_worktree(repo_root, target, branch_name)
         return target, branch_name
 
@@ -6934,7 +6981,7 @@ def _resolve_worktree_workspace(
 
     repo_root = _git_toplevel(requested)
     if repo_root is not None and requested_resolved == repo_root:
-        target = repo_root / ".worktrees" / task.id
+        target = _anchor_target(board if board else get_current_board(), repo_root)
         _ensure_git_worktree(repo_root, target, branch_name)
         return target, branch_name
 
@@ -8235,6 +8282,87 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     return crashed
 
 
+def _auto_block_kind_for(
+    conn: sqlite3.Connection,
+    task_id: str,
+    error: str,
+) -> str:
+    """Typed block kind for a circuit-breaker auto-block.
+
+    The breaker trip is an *inferred* technical-failure recurrence — it is
+    NOT an explicit human decision. So this MUST return only an
+    auto-recoverable kind (``transient`` or ``dependency``) and never
+    ``needs_input``. ``needs_input`` is reserved for an explicit worker
+    ``kanban_block(kind="needs_input")`` call (Frank gate / credential /
+    deploy / irreversible DDL).
+
+    Routing:
+    * ``block_loop_detected`` recurrences (consecutive unblock↔re-block)
+      become ``dependency`` — they wait in ``todo`` and do NOT look like a
+      generic human-input gate.
+    * Otherwise we ask the failure classifier what kind it suggests; if that
+      import/classify fails we fall back to ``transient`` (retryable).
+
+    Defense in depth: anything outside {transient, dependency} is coerced to
+    ``transient`` so an untyped/legacy auto-block can never collapse to a
+    human-input gate downstream.
+    """
+    AUTO_KINDS = ("transient", "dependency")
+    # Loop-detected: breaker fired on a re-block recurrence rather than a fresh
+    # crash. Auto-promote to dependency so it routes as a wait, not a gate.
+    try:
+        row = conn.execute(
+            "SELECT block_recurrences FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        recurrences = int(row["block_recurrences"]) if row and row["block_recurrences"] is not None else 0
+    except Exception:
+        recurrences = 0
+    if recurrences >= BLOCK_RECURRENCE_LIMIT:
+        return "dependency"
+    # Otherwise derive from the failure classifier (lazy import to avoid a
+    # load-time cycle between kanban_db and kanban_diagnostics).
+    try:
+        from hermes_cli.kanban_diagnostics import suggested_block_kind_for
+        fc = _failure_class_for_error(error)
+        kind = suggested_block_kind_for(fc) if fc else "transient"
+    except Exception:
+        kind = "transient"
+    return kind if kind in AUTO_KINDS else "transient"
+
+
+def _failure_class_for_error(error: str) -> str:
+    """Best-effort failure-class guess from an auto-block error string.
+
+    Mirrors the classifier's evidence patterns so the breaker stamp uses the
+    same transient/dependency routing. Returns '' if nothing matches (caller
+    then defaults to ``transient``).
+    """
+    if not error:
+        return ""
+    text = error or ""
+    provider_pat = re.compile(
+        r"(RateLimitError|PermissionDeniedError|AuthenticationError|"
+        r"HTTP\s+(?:401|402|403|429|5\d\d)|insufficient_quota|quota|"
+        r"billing|rate[- ]?limit|not logged|invalid api key|unauthorized|forbidden)",
+        re.IGNORECASE,
+    )
+    pid_pat = re.compile(
+        r"(pid\s+\d+\s+not alive|exited with code\s+\d+|nonzero_exit|"
+        r"killed by signal\s+\d+|signaled)",
+        re.IGNORECASE,
+    )
+    if provider_pat.search(text):
+        return "provider_error"
+    if pid_pat.search(text):
+        return "pid_not_alive_or_nonzero_crash"
+    if "protocol violation" in text.lower():
+        return "protocol_violation"
+    if "time" in text.lower() and ("gate" in text.lower() or "not due" in text.lower() or "parent" in text.lower()):
+        return "dependency_time_gate"
+    return ""
+
+
 def _record_task_failure(
     conn: sqlite3.Connection,
     task_id: str,
@@ -8315,16 +8443,24 @@ def _record_task_failure(
             effective_limit = int(failure_limit)
             limit_source = "dispatcher"
 
-        if force_trip or failures >= effective_limit:
-            # Trip the breaker.
+        if failures >= effective_limit:
+            # Trip the breaker. The breaker trip is an *inferred* technical
+            # failure recurrence, never an explicit human decision, so it must
+            # stamp a typed, auto-recoverable ``block_kind`` (transient /
+            # dependency) and NEVER ``needs_input``. This is the root-cause fix
+            # for the false-positive ``needs_input`` pile: an un-typed
+            # ``status='blocked'`` (no block_kind) was previously collapsed by
+            # routing/escalation into a generic human-input gate.
+            auto_block_kind = _auto_block_kind_for(conn, task_id, error)
             if release_claim:
                 # Spawn path: still running, also clear claim state.
                 conn.execute(
                     "UPDATE tasks SET status = 'blocked', claim_lock = NULL, "
                     "claim_expires = NULL, worker_pid = NULL, "
+                    "block_kind = ?, "
                     "consecutive_failures = ?, last_failure_error = ? "
                     "WHERE id = ? AND status IN ('running', 'ready')",
-                    (failures, error[:500], task_id),
+                    (auto_block_kind, failures, error[:500], task_id),
                 )
             else:
                 # Timeout/crash path: task is already at ``ready``
@@ -8332,9 +8468,10 @@ def _record_task_failure(
                 # counter fields.
                 conn.execute(
                     "UPDATE tasks SET status = 'blocked', "
+                    "block_kind = ?, "
                     "consecutive_failures = ?, last_failure_error = ? "
                     "WHERE id = ? AND status IN ('ready', 'running')",
-                    (failures, error[:500], task_id),
+                    (auto_block_kind, failures, error[:500], task_id),
                 )
             run_id = None
             if end_run:

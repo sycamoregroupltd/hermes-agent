@@ -24,6 +24,15 @@ import pytest
 from hermes_cli import kanban_db as kb
 
 
+def _exited_status(code: int) -> int:
+    """Raw wait-status for a WIFEXITED child with the given exit code.
+
+    Mirrors the helper in test_kanban_db.py so crash fixtures can simulate a
+    worker subprocess exiting non-zero without spawning a real process.
+    """
+    return code << 8
+
+
 @pytest.fixture
 def kanban_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / ".hermes"
@@ -110,3 +119,143 @@ def test_dependency_then_parent_done_promotes(kanban_home: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+
+
+# ---------------------------------------------------------------------------
+# Validation + back-compat
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_kind_rejected(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+        with pytest.raises(ValueError):
+            kb.block_task(conn, tid, reason="x", kind="bogus")
+
+
+def test_block_without_kind_is_backward_compatible(kanban_home: Path) -> None:
+    """Existing callers that pass no kind keep the old single-block behaviour."""
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+        assert kb.block_task(conn, tid, reason="legacy")
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked"
+        assert t.block_kind is None
+
+
+# ---------------------------------------------------------------------------
+# Regression: circuit-breaker auto-block must NEVER emit needs_input
+# (t_ee20a992). Technical-failure recurrences (provider/pid/loop crashes) are
+# retryable and must be typed ``transient`` (or ``dependency``), so routing/
+# escalation cannot collapse them into a human-input gate. ``needs_input`` is
+# reserved for an explicit worker ``kanban_block(kind="needs_input")`` call.
+# ---------------------------------------------------------------------------
+
+
+def _drive_crash_through_breaker(conn, monkeypatch, error_substring: str) -> str:
+    """Reap a dead-pid worker whose exit error contains ``error_substring``.
+
+    Mirrors the real ``detect_crashed_workers`` funnel: the worker exits with
+    a generic non-zero code (NOT the rate-limit sentinel, NOT a clean rc=0
+    protocol violation), so the breaker increments the failure counter; after
+    ``DEFAULT_FAILURE_LIMIT`` (== 2) trips, ``_record_task_failure`` stamps a
+    typed ``block_kind`` via ``_auto_block_kind_for``. Returns the task id.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    host = _kb._claimer_id().split(":", 1)[0]
+    tid = kb.create_task(conn, title=f"crash-{error_substring[:12]}", assignee="a")
+    for i in range(_kb.DEFAULT_FAILURE_LIMIT):
+        pid = 51000 + i
+        conn.execute(
+            "UPDATE tasks SET status='running', worker_pid=?, claim_lock=? "
+            "WHERE id=?",
+            (pid, f"{host}:w{i}", tid),
+        )
+        conn.commit()
+        # Generic non-zero exit; the error text is what carries the failure
+        # class. The classifier (lazy-imported inside _auto_block_kind_for)
+        # reads it via _failure_class_for_error.
+        _kb._record_worker_exit(pid, _exited_status(1))
+        # Stamp the error the breaker will see (simulates the reap registry
+        # surfacing the crash text on the next trip).
+        conn.execute(
+            "UPDATE tasks SET last_failure_error=? WHERE id=?",
+            (f"pid {pid} not alive — {error_substring}", tid),
+        )
+        conn.commit()
+        kb.detect_crashed_workers(conn)
+    return tid
+
+
+def test_provider_error_auto_block_is_transient_not_needs_input(
+    kanban_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider/API failure recurrence must auto-block as ``transient``."""
+    with kb.connect_closing() as conn:
+        tid = _drive_crash_through_breaker(conn, monkeypatch, "RateLimitError")
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked", f"breaker should trip, got {t.status}"
+        assert t.block_kind == "transient", (
+            f"provider_error recurrence must be transient, got {t.block_kind!r}"
+        )
+        assert t.block_kind != "needs_input", (
+            "REGRESSION: breaker must never auto-emit needs_input"
+        )
+
+
+def test_pid_crash_auto_block_is_transient_not_needs_input(
+    kanban_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker pid crash recurrence must auto-block as ``transient``."""
+    with kb.connect_closing() as conn:
+        tid = _drive_crash_through_breaker(conn, monkeypatch, "killed by signal")
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked", f"breaker should trip, got {t.status}"
+        assert t.block_kind == "transient", (
+            f"pid crash recurrence must be transient, got {t.block_kind!r}"
+        )
+        assert t.block_kind != "needs_input", (
+            "REGRESSION: breaker must never auto-emit needs_input"
+        )
+
+
+def test_block_loop_detected_auto_block_is_dependency_not_needs_input(
+    kanban_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A re-block recurrence (block_loop_detected) routes to ``dependency``."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    with kb.connect_closing() as conn:
+        tid = kb.create_task(conn, title="loop", assignee="a")
+        host = _kb._claimer_id().split(":", 1)[0]
+        # Pre-set a block recurrence >= BLOCK_RECURRENCE_LIMIT so that, once
+        # the breaker trips, _auto_block_kind_for classifies the trip as a
+        # loop-detected re-block and routes it to ``dependency``.
+        conn.execute(
+            "UPDATE tasks SET status='running', worker_pid=?, claim_lock=?, "
+            "block_recurrences=?, last_failure_error=? WHERE id=?",
+            (52000, f"{host}:w", _kb.BLOCK_RECURRENCE_LIMIT,
+             "pid 52000 not alive — transient crash", tid),
+        )
+        conn.commit()
+        # Drive the breaker to trip: each crash increments consecutive_failures
+        # until DEFAULT_FAILURE_LIMIT is reached.
+        for i in range(_kb.DEFAULT_FAILURE_LIMIT):
+            pid = 52000 + i
+            conn.execute(
+                "UPDATE tasks SET status='running', worker_pid=?, claim_lock=? "
+                "WHERE id=?",
+                (pid, f"{host}:w{i}", tid),
+            )
+            conn.commit()
+            _kb._record_worker_exit(pid, _exited_status(1))
+            kb.detect_crashed_workers(conn)
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked", f"breaker should trip, got {t.status}"
+        assert t.block_kind == "dependency", (
+            f"loop-detected recurrence must be dependency, got {t.block_kind!r}"
+        )
+        assert t.block_kind != "needs_input"
