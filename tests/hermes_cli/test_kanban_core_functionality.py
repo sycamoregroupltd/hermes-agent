@@ -1320,43 +1320,42 @@ def _drive_nonzero_crash(conn, tid, fake_pid):
     return _drive_worker_exit(conn, tid, fake_pid, 256)
 
 
-def test_protocol_violation_budget_not_consumed_by_other_failures(kanban_home):
-    """Mixed failure kinds must not consume the violation retry budget.
+def test_protocol_violation_increments_consecutive_failures(kanban_home):
+    """Protocol_violation must tick consecutive_failures so the circuit
+    breaker eventually trips (t_0aa5b1f5 regression test).
 
-    Regression for the #61233 review finding: expressed as a plain
-    ``failure_limit`` over the unified ``consecutive_failures`` counter, the
-    violation budget was consumed by earlier timeouts / nonzero exits. As a
-    violation-only streak, a prior real crash must not eat violation
-    retries, and below-budget violations must leave the unified counter
-    untouched (so the two budgets stay independent).
+    Before the fix: below-budget P-Vs skipped _record_task_failure,
+    leaving consecutive_failures permanently at 0.  Cards respawned
+    forever.
+
+    After the fix: each P-V bumps consecutive_failures via
+    _record_task_failure(force_trip=False).  When cf reaches the
+    dispatcher failure_limit (3 for P-V), the breaker trips
+    (ready → blocked) on that iteration — identical semantics to
+    any other crash family.
     """
     import hermes_cli.kanban_db as _kb
     conn = kb.connect()
     try:
-        tid = kb.create_task(conn, title="mixed", assignee="worker")
+        tid = kb.create_task(conn, title="pv-storm", assignee="worker")
 
-        # One real crash: unified counter ticks to 1 (below
-        # DEFAULT_FAILURE_LIMIT=2 — task stays ready).
-        _drive_nonzero_crash(conn, tid, 991000)
+        # Violation 1: streak=1, below violation_limit=3.
+        # _record_task_failure called → consecutive_failures bumps to 1.
+        _drive_protocol_violation(conn, tid, 991001)
         task = kb.get_task(conn, tid)
         assert task.status == "ready"
         assert task.consecutive_failures == 1
 
-        # Two violations after it: streak 1 and 2 — both retry, unified
-        # counter untouched. (Pre-fix: the crash consumed the budget and the
-        # violations blocked well before three of them happened.)
-        for i, pid in enumerate((991001, 991002)):
-            _drive_protocol_violation(conn, tid, pid)
-            task = kb.get_task(conn, tid)
-            assert task.status == "ready", (
-                f"violation {i + 1} after a crash must still retry, "
-                f"got {task.status}"
-            )
-            assert task.consecutive_failures == 1, (
-                "below-budget violations must not tick the unified counter"
-            )
+        # Violation 2: streak=2, still below violation_limit.
+        # consecutive_failures bumps to 2.
+        _drive_protocol_violation(conn, tid, 991002)
+        task = kb.get_task(conn, tid)
+        assert task.status == "ready"
+        assert task.consecutive_failures == 2
 
-        # Third consecutive violation: streak hits the bound — blocked.
+        # Violation 3: streak=3, meets violation_limit → trips.
+        # _record_task_failure bumps cf from 2 to 3; 3 >= effective_limit=3
+        # → sets status=blocked, emits gave_up.
         _drive_protocol_violation(conn, tid, 991003)
         task = kb.get_task(conn, tid)
         assert task.status == "blocked"

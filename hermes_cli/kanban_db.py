@@ -7731,12 +7731,27 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     else _PROTOCOL_VIOLATION_FAILURE_LIMIT
                 )
                 if streak < violation_limit:
-                    # Below budget: the task is already back at ``ready``
-                    # (respawn allowed) with ``last_failure_error`` stamped.
-                    # Deliberately no ``_record_task_failure`` call — a
-                    # below-budget violation must not consume the unified
-                    # failure budget, just as other failure kinds don't
-                    # consume this one.
+                    # Below budget: still increment ``consecutive_failures``
+                    # so the unified circuit breaker eventually catches
+                    # protocol-violation storms (t_0aa5b1f5). Previously
+                    # skipped _record_task_failure entirely → consecutive_
+                    # failures stayed at 0 → breaker never tripped.
+                    _record_task_failure(
+                        conn, tid,
+                        error=error_text,
+                        outcome="crashed",
+                        failure_limit=violation_limit,
+                        force_trip=False,
+                        release_claim=False,
+                        end_run=False,
+                        event_payload_extra={
+                            "pid": pid,
+                            "claimer": claimer,
+                            "protocol_violations": streak,
+                            "protocol_violation_limit": violation_limit,
+                            "below_budget_retry": True,
+                        },
+                    )
                     continue
                 # Streak reached the bound: trip the breaker. ``force_trip``
                 # skips the threshold resolution inside
