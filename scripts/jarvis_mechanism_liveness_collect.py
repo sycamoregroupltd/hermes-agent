@@ -16,7 +16,7 @@ import re
 import sqlite3
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +100,65 @@ def latest_output(job_id: str) -> dict[str, Any] | None:
     except Exception as exc:
         text = f"<read-error {type(exc).__name__}: {exc}>"
     return {"path": str(newest), "mtime": datetime.fromtimestamp(newest.stat().st_mtime, timezone.utc).isoformat(), "tail": text}
+
+
+def fresh_claimed_execution_age_minutes(profile: str, job_id: str | None, now: datetime) -> float | None:
+    """Age (minutes) of the newest claimed/running execution row, or None.
+
+    C1 (t_2d87b476): executions.db claimed/running state is liveness truth
+    independent of jobs.json ``last_run_at``. The single-worker cron pool
+    (max_parallel_jobs:1) holds claims for 25-30 min behind provider-starved
+    LLM jobs, so ``last_run_at`` lags while the job is demonstrably alive in
+    the scheduler queue. Read-only; returns None when no claimed/running row
+    exists (or the DB is unreadable), so classification falls through to the
+    other signals.
+    """
+    if not job_id:
+        return None
+    db = PROFILES / profile / "cron" / "executions.db"
+    if not db.exists():
+        return None
+    con: sqlite3.Connection | None = None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+        row = con.execute(
+            "SELECT claimed_at FROM executions "
+            "WHERE job_id=? AND status IN ('claimed','running') "
+            "ORDER BY claimed_at DESC, id DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    except Exception:
+        return None
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+    if not row or not row[0]:
+        return None
+    claimed = parse_dt(row[0])
+    return age_minutes(claimed, now)
+
+
+def output_artifact_age_minutes(job_id: str, now: datetime) -> float | None:
+    """Age (minutes) of the newest output artifact, or None for missing/empty dir.
+
+    C1 (t_2d87b476): artifact mtime is the second liveness signal independent of
+    jobs.json metadata. The probe's OWN job writes fresh output files every
+    cycle even while its ``last_run_at`` sits frozen (observed 2026-08-03), so a
+    fresh artifact proves the mechanism rotated even when the metadata write
+    path lagged. Returns None (not 0.0) for a missing or empty dir so an absent
+    artifact can never masquerade as a fresh one.
+    """
+    directory = OUTPUT_ROOT / job_id
+    if not directory.exists():
+        return None
+    files = [p for p in directory.iterdir() if p.is_file()]
+    if not files:
+        return None
+    newest = max(files, key=lambda p: p.stat().st_mtime)
+    return max(0.0, (now - datetime.fromtimestamp(newest.stat().st_mtime, timezone.utc)).total_seconds() / 60.0)
 
 
 def recent_comment_by_author(author: str, since_minutes: int = 1440) -> dict[str, Any] | None:
@@ -213,6 +272,8 @@ def classify_job(
     max_age_minutes: int | None,
     allow_not_due: bool = True,
     consecutive_failures: int | None = None,
+    claimed_execution_age: float | None = None,
+    output_artifact_age: float | None = None,
 ) -> tuple[str, str, float | None]:
     enabled = bool(job.get("enabled", True)) and job.get("state") != "paused"
     if not enabled:
@@ -257,6 +318,11 @@ def classify_job(
             # detector DEAD just because it was created before local midnight.
             if cadence == "cron" or created is None or created > now.replace(hour=0, minute=0, second=0, microsecond=0):
                 return "OK", f"registered and not due yet; next scheduled {next_run.isoformat()}", None
+        # C1: a never-run job may still be alive if it is claimed/running right
+        # now (first execution in flight) or already produced a fresh artifact.
+        rescue = _liveness_rescue(profile, job, now, max_age_minutes, claimed_execution_age, output_artifact_age)
+        if rescue is not None:
+            return rescue
         return "DEAD", "never run", None
     if max_age_minutes is not None and age is not None and age > max_age_minutes:
         if allow_not_due and next_run and next_run > now and job.get("schedule", {}).get("kind") == "cron":
@@ -272,8 +338,53 @@ def classify_job(
                 f"{LIVENESS_GRACE_MIN}m one-strike grace (transient ticker stall); "
                 f"next scheduled {next_run.isoformat()}"
             ), age
+        # C1: stale last_run_at is NOT dead when executions.db proves the job is
+        # claimed/running (single-worker queue backlog) or the newest output
+        # artifact is fresh. Only when all three signals are stale is it DEAD.
+        rescue = _liveness_rescue(profile, job, now, max_age_minutes, claimed_execution_age, output_artifact_age)
+        if rescue is not None:
+            return rescue
         return "DEAD", f"stale last_run age {age:.1f}m > {max_age_minutes}m", age
     return "OK", "enabled, last_status ok, last_run fresh/enough", age
+
+
+def _liveness_rescue(
+    profile: str,
+    job: dict[str, Any],
+    now: datetime,
+    max_age_minutes: int | None,
+    claimed_execution_age: float | None,
+    output_artifact_age: float | None,
+) -> tuple[str, str, float | None] | None:
+    """C1 (t_2d87b476): rescue a job whose jobs.json metadata is stale when the
+    executions.db claimed/running row or the newest output artifact is fresh.
+
+    Liveness rule from the root-cause note: jobs.json last_run_at is completion
+    truth; executions.db claimed/running rows + artifact mtime are liveness
+    truth. A job is DEAD only when ALL THREE signals are stale. The threshold is
+    max_age_minutes + LIVENESS_GRACE_MIN (unchanged grace; never weakened).
+    Returns (OK, reason, age) when any secondary signal is fresh, else None.
+    """
+    if max_age_minutes is None:
+        return None
+    threshold = max_age_minutes + LIVENESS_GRACE_MIN
+    job_id = str(job.get("id") or "")
+    if claimed_execution_age is None:
+        claimed_execution_age = fresh_claimed_execution_age_minutes(profile, job_id, now)
+    if claimed_execution_age is not None and claimed_execution_age <= threshold:
+        return "OK", (
+            f"last_run metadata stale but executions.db shows claimed/running row "
+            f"age {claimed_execution_age:.1f}m <= {max_age_minutes}m+{LIVENESS_GRACE_MIN}m grace; "
+            f"job alive in scheduler queue (C1 executions liveness)"
+        ), age_minutes(parse_dt(job.get("last_run_at")), now)
+    if output_artifact_age is None:
+        output_artifact_age = output_artifact_age_minutes(job_id, now)
+    if output_artifact_age is not None and output_artifact_age <= threshold:
+        return "OK", (
+            f"last_run metadata stale but output-artifact liveness: newest artifact "
+            f"age {output_artifact_age:.1f}m <= {max_age_minutes}m+{LIVENESS_GRACE_MIN}m grace (C1)"
+        ), age_minutes(parse_dt(job.get("last_run_at")), now)
+    return None
 
 
 @dataclass(frozen=True)
@@ -321,7 +432,14 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
             "expected": exp.__dict__,
         }
     profile, job = match
-    status, reason, age = classify_job(profile, job, now, exp.max_age_minutes)
+    job_id = str(job.get("id") or "")
+    claim_age = fresh_claimed_execution_age_minutes(profile, job_id, now)
+    artifact_age = output_artifact_age_minutes(job_id, now)
+    status, reason, age = classify_job(
+        profile, job, now, exp.max_age_minutes,
+        claimed_execution_age=claim_age,
+        output_artifact_age=artifact_age,
+    )
     extra: dict[str, Any] = {}
     if exp.key == "verdict-router":
         extra["apply_state"] = "apply" if (STATE_DIR / "verdict-router.apply-enabled").exists() else "shadow"

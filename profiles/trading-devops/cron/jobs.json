@@ -21,17 +21,24 @@
       },
       "schedule_display": "every 4h",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-02T23:05:00+01:00",
-      "deliver": "local",
+      "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-05T12:39:13.461383+01:00",
+      "last_run_at": "2026-08-05T08:39:13.461383+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": "platform 'discord' not configured/enabled",
+      "fire_claim": null
     },
     {
       "id": "750d282883dc",
@@ -169,7 +176,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-10T07:00:00+01:00"
     },
     {
       "id": "d5125fbab45e",
@@ -192,17 +200,24 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:00:47.745106+01:00",
+      "paused_reason": "dead-pin: script not found: hyperliquid_watchdog.sh",
       "created_at": "2026-07-04T13:04:54.063399+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:05:48.125142+01:00",
+      "last_run_at": "2026-08-04T22:00:48.125142+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/hyperliquid_watchdog.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "604ab7a9b09a",
@@ -225,17 +240,24 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:55:53.101777+01:00",
+      "paused_reason": "dead-pin: script not found: self-improvement-harvester.sh",
       "created_at": "2026-07-04T18:13:16.337733+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-trading/.worktrees/t_9a2cdb2d"
+      "workdir": "/home/frank/sycode-trading/.worktrees/t_9a2cdb2d",
+      "next_run_at": "2026-08-04T23:55:53.135554+01:00",
+      "last_run_at": "2026-08-04T22:55:53.135554+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/self-improvement-harvester.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e84e0005ec3a",
@@ -258,17 +280,24 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:00:47.736600+01:00",
+      "paused_reason": "dead-pin: script not found: sla_freshness_monitor.py",
       "created_at": "2026-07-04T22:02:13.152974+01:00",
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:05:49.075966+01:00",
+      "last_run_at": "2026-08-04T22:00:49.075966+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/sla_freshness_monitor.py",
+      "last_delivery_error": "platform 'telegram' not configured/enabled; delivery error: WhatsApp bridge error (404): {}",
+      "fire_claim": null
     },
     {
       "id": "965b5d5d4cb4",
@@ -291,17 +320,24 @@
       },
       "schedule_display": "0 7 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T07:00:09.100791+01:00",
+      "paused_reason": "dead-pin: script not found: pit-context-join.sh",
       "created_at": "2026-07-04T22:29:27.067047+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-06T07:00:00+01:00",
+      "last_run_at": "2026-08-05T07:00:09.136835+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/pit-context-join.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "705324a6972e",
@@ -324,17 +360,24 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:55:53.210808+01:00",
+      "paused_reason": "dead-pin: script not found: cross-exchange-funding-collector.sh",
       "created_at": "2026-07-04T22:59:27.002325+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T23:55:53.233732+01:00",
+      "last_run_at": "2026-08-04T22:55:53.233732+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/cross-exchange-funding-collector.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "53d45f13ff65",
@@ -357,22 +400,29 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:55:53.321893+01:00",
+      "paused_reason": "dead-pin: script not found: sycode-drift-monitor.sh",
       "created_at": "2026-07-05T09:28:33.934195+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T23:55:53.349984+01:00",
+      "last_run_at": "2026-08-04T22:55:53.349984+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/sycode-drift-monitor.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "889710df1de7",
       "name": "data-lake-daily-export",
-      "prompt": "PAUSED \u2014 WAITING PM + RISK-REVIEWER APPROVAL. Daily Parquet data lake export: signal_journeys + signal_fingerprints. Run the export script and verify via DuckDB. On failure, alert #critical-alerts.",
+      "prompt": "PAUSED — WAITING PM + RISK-REVIEWER APPROVAL. Daily Parquet data lake export: signal_journeys + signal_fingerprints. Run the export script and verify via DuckDB. On failure, alert #critical-alerts.",
       "skills": [],
       "skill": null,
       "model": "tencent/hy3:free",
@@ -405,7 +455,7 @@
     {
       "id": "9b8825810987",
       "name": "data-lake-weekly-candles",
-      "prompt": "PAUSED \u2014 WAITING PM + RISK-REVIEWER APPROVAL. Weekly Parquet data lake export: candles table. Run the export script with --table candles and verify via DuckDB. On failure, alert #critical-alerts.",
+      "prompt": "PAUSED — WAITING PM + RISK-REVIEWER APPROVAL. Weekly Parquet data lake export: candles table. Run the export script with --table candles and verify via DuckDB. On failure, alert #critical-alerts.",
       "skills": [],
       "skill": null,
       "model": "tencent/hy3:free",
@@ -471,7 +521,7 @@
     {
       "id": "7f7e0828d728",
       "name": "promotion-pipeline-metrics",
-      "prompt": "Promotion pipeline health dashboard \u2014 writes metrics to Obsidian vault every 6h. Silent on success.",
+      "prompt": "Promotion pipeline health dashboard — writes metrics to Obsidian vault every 6h. Silent on success.",
       "skills": [],
       "skill": null,
       "model": null,
@@ -489,17 +539,24 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T03:56:04.596754+01:00",
+      "paused_reason": "dead-pin: script not found: promotion-pipeline-metrics.py",
       "created_at": "2026-07-05T13:50:01.695892+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-05T09:56:04.619176+01:00",
+      "last_run_at": "2026-08-05T03:56:04.619176+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/promotion-pipeline-metrics.py",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "8b8e865234cb",
@@ -532,7 +589,8 @@
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-09T09:00:00+01:00"
     },
     {
       "id": "e068c152c72a",
@@ -555,22 +613,29 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T06:00:07.245575+01:00",
+      "paused_reason": "dead-pin: script not found: macro-regime-change-monitor.py",
       "created_at": "2026-07-05T15:19:22.757083+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-06T06:00:00+01:00",
+      "last_run_at": "2026-08-05T06:00:07.262698+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/macro-regime-change-monitor.py",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e1485759597b",
       "name": "calibration-drift-monitor",
-      "prompt": "Calibration drift monitor \u2014 daily at 06:00 UTC. Queries trailing 7d signal_journeys, computes MCE across composite_confidence_calibrated_p_win buckets vs clean_outcome_binary_24h outcomes. Silent if MCE \u2264 15pp; alerts with full report + kanban triage task if MCE > 15pp. Persists report to Obsidian governance folder each run.",
+      "prompt": "Calibration drift monitor — daily at 06:00 UTC. Queries trailing 7d signal_journeys, computes MCE across composite_confidence_calibrated_p_win buckets vs clean_outcome_binary_24h outcomes. Silent if MCE ≤ 15pp; alerts with full report + kanban triage task if MCE > 15pp. Persists report to Obsidian governance folder each run.",
       "skills": [],
       "skill": null,
       "model": null,
@@ -588,17 +653,24 @@
       },
       "schedule_display": "0 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T06:00:07.309561+01:00",
+      "paused_reason": "dead-pin: script not found: calibration-drift-monitor.py",
       "created_at": "2026-07-05T15:32:16.991681+01:00",
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-06T06:00:00+01:00",
+      "last_run_at": "2026-08-05T06:00:07.424314+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/calibration-drift-monitor.py",
+      "last_delivery_error": "platform 'telegram' not configured/enabled; delivery error: WhatsApp bridge error (404): {}",
+      "fire_claim": null
     },
     {
       "id": "7d677756f4b1",
@@ -621,17 +693,24 @@
       },
       "schedule_display": "0 */6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T00:00:57.742643+01:00",
+      "paused_reason": "dead-pin: script not found: calibration-cron-liveness.py",
       "created_at": "2026-07-05T15:45:03.448878+01:00",
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-05T06:00:00+01:00",
+      "last_run_at": "2026-08-05T00:00:57.820520+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/calibration-cron-liveness.py",
+      "last_delivery_error": "platform 'telegram' not configured/enabled; delivery error: WhatsApp bridge error (404): {}",
+      "fire_claim": null
     },
     {
       "id": "f20615ecc5ef",
@@ -687,17 +766,24 @@
       },
       "schedule_display": "45 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T06:45:08.414743+01:00",
+      "paused_reason": "dead-pin: script not found: sycode_feature_density_monitor.py",
       "created_at": "2026-07-06T08:25:20.921742+01:00",
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-06T06:45:00+01:00",
+      "last_run_at": "2026-08-05T06:45:08.449141+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/sycode_feature_density_monitor.py",
+      "last_delivery_error": "platform 'discord' not configured/enabled",
+      "fire_claim": null
     },
     {
       "id": "b8d57ab749af",
@@ -720,7 +806,8 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -730,7 +817,13 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-05T09:00:00+01:00",
+      "last_run_at": "2026-08-05T08:00:16.317846+01:00",
+      "last_status": "error",
+      "last_error": "Script exited with code 1\nstderr:\nERROR surface-freshness monitor: psql failed on funding_rate_history rc=1: ERROR:  canceling statement due to statement timeout",
+      "last_delivery_error": "platform 'discord' not configured/enabled",
+      "fire_claim": null
     },
     {
       "id": "edb436fe336a",
@@ -753,17 +846,24 @@
       },
       "schedule_display": "50 6 * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T06:50:08.600022+01:00",
+      "paused_reason": "dead-pin: script not found: sycode_clean_cohort_accrual.py",
       "created_at": "2026-07-06T08:27:39.966587+01:00",
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-06T06:50:00+01:00",
+      "last_run_at": "2026-08-05T06:50:08.653204+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/sycode_clean_cohort_accrual.py",
+      "last_delivery_error": "platform 'discord' not configured/enabled",
+      "fire_claim": null
     },
     {
       "id": "322e234ea2ec",
@@ -786,17 +886,24 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:25:51.550747+01:00",
+      "paused_reason": "dead-pin: script not found: sycode-data-quality-framework.sh",
       "created_at": "2026-07-06T23:16:48.212419+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:55:51.670405+01:00",
+      "last_run_at": "2026-08-04T22:25:51.670405+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/sycode-data-quality-framework.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "e27809ad90a0",
@@ -819,17 +926,24 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:00:47.801386+01:00",
+      "paused_reason": "dead-pin: script not found: r_multiple_labeler.sh",
       "created_at": "2026-07-07T02:45:40.409582+01:00",
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:15:00+01:00",
+      "last_run_at": "2026-08-04T22:00:48.569259+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/r_multiple_labeler.sh",
+      "last_delivery_error": "platform 'discord' not configured/enabled",
+      "fire_claim": null
     },
     {
       "id": "f75b375b6522",
@@ -852,17 +966,24 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:25:51.557518+01:00",
+      "paused_reason": "dead-pin: script not found: data_profiler_sentinel.py",
       "created_at": "2026-07-07T10:16:40.731751+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:55:51.689814+01:00",
+      "last_run_at": "2026-08-04T22:25:51.689814+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/data_profiler_sentinel.py",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ed6f7d2d4472",
@@ -918,17 +1039,24 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:55:53.448945+01:00",
+      "paused_reason": "dead-pin: script not found: persist_news_data.py",
       "created_at": "2026-07-08T03:05:35.847024+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-trading"
+      "workdir": "/home/frank/sycode-trading",
+      "next_run_at": "2026-08-04T23:55:53.483608+01:00",
+      "last_run_at": "2026-08-04T22:55:53.483608+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/persist_news_data.py",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "1da295a449a1",
@@ -951,17 +1079,22 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 83
       },
       "enabled": true,
       "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
       "created_at": "2026-07-10T21:43:17.177565+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-05T08:47:20.775900+01:00",
+      "last_run_at": "2026-08-05T08:42:20.775900+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "1e5c8cbaa397",
@@ -984,12 +1117,13 @@
       },
       "schedule_display": "every 360m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T03:56:04.681408+01:00",
+      "paused_reason": "dead-pin: script not found: dlq_redrive_audited.py",
       "created_at": "2026-07-10T23:59:39.835952+01:00",
       "deliver": "local",
       "origin": null,
@@ -997,7 +1131,13 @@
         "terminal",
         "file"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-05T09:56:04.702202+01:00",
+      "last_run_at": "2026-08-05T03:56:04.702202+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/dlq_redrive_audited.py",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "6c7d9976ffc3",
@@ -1020,17 +1160,24 @@
       },
       "schedule_display": "every 30m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:25:51.604020+01:00",
+      "paused_reason": "dead-pin: script not found: tier1_sample_gate.py",
       "created_at": "2026-07-17T05:24:04.433188+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:55:51.709393+01:00",
+      "last_run_at": "2026-08-04T22:25:51.709393+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/tier1_sample_gate.py",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c4394e822f83",
@@ -1053,17 +1200,24 @@
       },
       "schedule_display": "*/15 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:00:48.128604+01:00",
+      "paused_reason": "dead-pin: script not found: sycode_r_multiple_label_freshness_route.py",
       "created_at": "2026-07-26T11:15:50.041400+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:15:00+01:00",
+      "last_run_at": "2026-08-04T22:00:48.766616+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/sycode_r_multiple_label_freshness_route.py",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "c67dfed143c8",
@@ -1086,19 +1240,26 @@
       },
       "schedule_display": "0 * * * *",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:00:48.763615+01:00",
+      "paused_reason": "dead-pin: script not found: predictive-calibration-monitor.sh",
       "created_at": "2026-07-28T11:29:07.842458+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T23:00:00+01:00",
+      "last_run_at": "2026-08-04T22:00:48.872762+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/predictive-calibration-monitor.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "fe0f51835b7f",
@@ -1121,17 +1282,24 @@
       },
       "schedule_display": "every 10m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 62
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T07:42:33.705212+00:00",
+      "paused_reason": "obsolete: PR #486 merged 2026-07-29; monitor purpose complete (t_9b954224)",
       "created_at": "2026-07-29T01:53:34.766504+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-05T08:42:13.229098+01:00",
+      "last_run_at": "2026-08-05T08:32:13.229098+01:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (model 'deepseek/deepseek-v4-flash' -> 'deepseek/deepseek-v4-flash-0731'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=fe0f51835b7f provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "b2e3024fd032",
@@ -1154,17 +1322,24 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:00:48.721768+01:00",
+      "paused_reason": "dead-pin: script not found: run_dqsh.sh",
       "created_at": "2026-08-03T10:25:48.828977+01:00",
       "deliver": "all",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:05:49.065429+01:00",
+      "last_run_at": "2026-08-04T22:00:49.065429+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/run_dqsh.sh",
+      "last_delivery_error": "platform 'telegram' not configured/enabled; delivery error: WhatsApp bridge error (404): {}",
+      "fire_claim": null
     },
     {
       "id": "b25c0f76fa54",
@@ -1187,12 +1362,13 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:55:53.587769+01:00",
+      "paused_reason": "dead-pin: script not found: catalyst-feed-gate-monitor.py",
       "created_at": "2026-08-03T10:25:49.198441+01:00",
       "deliver": "local",
       "origin": null,
@@ -1200,7 +1376,13 @@
         "terminal",
         "file"
       ],
-      "workdir": "/home/frank/sycode-trading/reports/catalyst-feed"
+      "workdir": "/home/frank/sycode-trading/reports/catalyst-feed",
+      "next_run_at": "2026-08-04T23:57:11.012866+01:00",
+      "last_run_at": "2026-08-04T22:57:11.012866+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "eac954974044",
@@ -1223,19 +1405,26 @@
       },
       "schedule_display": "every 60m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-03T10:25:49.219166+01:00",
-      "deliver": "local",
+      "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor"
+      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor",
+      "next_run_at": "2026-08-05T09:11:18.246001+01:00",
+      "last_run_at": "2026-08-05T08:11:18.246001+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "7b40c9cc689f",
@@ -1258,22 +1447,29 @@
       },
       "schedule_display": "every 15m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-04T22:10:49.878670+01:00",
+      "paused_reason": "dead-pin: script not found: run_eth_term_inversion_monitor.sh",
       "created_at": "2026-08-03T10:25:49.238839+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-08-04T22:25:49.910091+01:00",
+      "last_run_at": "2026-08-04T22:10:49.910091+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/run_eth_term_inversion_monitor.sh",
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ec867da29f66",
       "name": "q3q4-promotion-review-2026",
-      "prompt": "You are trading-risk-reviewer running the Q3\u2192Q4 promotion review.\n\n## Task\nEvaluate whether Weekend Short 1m (strategy 29) and US Session Open Short 1h (strategy 34) pass the >57% WR gate for paper-arena promotion.\n\nThe script's stdout (below the --- DATA --- marker) contains live DB queries for both strategies covering Q3 2026 (Jul 1 - Sep 30).\n\n## Gate Requirements (from task t_5a1fbb5e)\nBoth strategies must pass ALL conditions for promotion:\n\n### Weekend Short 1m (strategy 29)\n1. Q3 win rate >57%, net-of-fee (clean_outcome_binary_24h ~ 12bps baked in)\n2. Temporal stability across Q3 months (no single month <45% WR)\n3. Sufficient sample: >=500 labeled SHORT signals, and at least some 1m signals (the 1m pipeline was fixed in July, verify it produced data)\n4. Leak-free, signal-time-only (already verified at registration)\n\n### US Session Open Short 1h (strategy 34)\n1. Q3 win rate >57%, net-of-fee\n2. Temporal stability across Q3 months (no single month <45% WR)\n3. Sufficient sample: >=200 labeled Q3 signals\n\n## Decision matrix\n- **BOTH pass**: Create a kanban child task for paper-trader to prepare paper-arena promotion packet. Do NOT enable live trading, do NOT insert trade_intents. Recommend paper-arena onboarding.\n- **Either fails**: Document no-promotion rationale. Create a monitoring/research follow-up task for the failing strategy.\n- **Insufficient data** (e.g. 1m pipeline still dead for strategy 29): Return INCONCLUSIVE with explanation.\n\n## Safety gates\n- Paper mode only. No live trading, no production deploy, no secrets, no irreversible ops.\n- If promotion recommended, child task goes to `paper-trader` profile.\n- If monitor/research needed, child task goes to `trading-data-oracle` profile.\n\n## Output format\nFirst line: VERDICT=PROMOTE | VERDICT=NO_PROMOTION | VERDICT=INCONCLUSIVE\nThen 1-3 paragraphs of evidence and reasoning.\nIf promoting, include: \"CHILD_TASK_NEEDED: paper-trader \u2014 paper-arena promotion packet for strategies [list ids]\".\nIf not promoting: describe what follow-up task is needed and its assignee.\n",
+      "prompt": "You are trading-risk-reviewer running the Q3→Q4 promotion review.\n\n## Task\nEvaluate whether Weekend Short 1m (strategy 29) and US Session Open Short 1h (strategy 34) pass the >57% WR gate for paper-arena promotion.\n\nThe script's stdout (below the --- DATA --- marker) contains live DB queries for both strategies covering Q3 2026 (Jul 1 - Sep 30).\n\n## Gate Requirements (from task t_5a1fbb5e)\nBoth strategies must pass ALL conditions for promotion:\n\n### Weekend Short 1m (strategy 29)\n1. Q3 win rate >57%, net-of-fee (clean_outcome_binary_24h ~ 12bps baked in)\n2. Temporal stability across Q3 months (no single month <45% WR)\n3. Sufficient sample: >=500 labeled SHORT signals, and at least some 1m signals (the 1m pipeline was fixed in July, verify it produced data)\n4. Leak-free, signal-time-only (already verified at registration)\n\n### US Session Open Short 1h (strategy 34)\n1. Q3 win rate >57%, net-of-fee\n2. Temporal stability across Q3 months (no single month <45% WR)\n3. Sufficient sample: >=200 labeled Q3 signals\n\n## Decision matrix\n- **BOTH pass**: Create a kanban child task for paper-trader to prepare paper-arena promotion packet. Do NOT enable live trading, do NOT insert trade_intents. Recommend paper-arena onboarding.\n- **Either fails**: Document no-promotion rationale. Create a monitoring/research follow-up task for the failing strategy.\n- **Insufficient data** (e.g. 1m pipeline still dead for strategy 29): Return INCONCLUSIVE with explanation.\n\n## Safety gates\n- Paper mode only. No live trading, no production deploy, no secrets, no irreversible ops.\n- If promotion recommended, child task goes to `paper-trader` profile.\n- If monitor/research needed, child task goes to `trading-data-oracle` profile.\n\n## Output format\nFirst line: VERDICT=PROMOTE | VERDICT=NO_PROMOTION | VERDICT=INCONCLUSIVE\nThen 1-3 paragraphs of evidence and reasoning.\nIf promoting, include: \"CHILD_TASK_NEEDED: paper-trader — paper-arena promotion packet for strategies [list ids]\".\nIf not promoting: describe what follow-up task is needed and its assignee.\n",
       "skills": [
         "trading-data-analysis"
       ],
@@ -1303,7 +1499,49 @@
       "deliver": "origin",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "next_run_at": "2026-10-03T00:00:00+01:00"
+    },
+    {
+      "id": "e9b9848510b6",
+      "name": "signal-journey-completed-pnl-watch",
+      "prompt": "Signal-journey defect monitor: COMPLETED journeys missing realized net PnL (t_dc26c0ef). Read-only count over signal_journeys where final_status LIKE COMPLETED% AND realized_pnl_percent IS NULL AND updated_at > now() - interval 1 day. Expected 0; on >0 POST Alertmanager alert type=trading -> #critical-alerts. Fail-open on DB error. No schema/backfill/app-code change.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "signal-journey-completed-pnl-watch.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null,
+        "completed": 2
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T00:14:58.177839+01:00",
+      "paused_reason": "dead-pin: script not found: signal-journey-completed-pnl-watch.sh",
+      "created_at": "2026-08-04T23:32:11.045864+01:00",
+      "next_run_at": "2026-08-05T00:44:58.192955+01:00",
+      "last_run_at": "2026-08-05T00:14:58.192955+01:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/frank/.hermes/profiles/trading-devops/scripts/signal-journey-completed-pnl-watch.sh",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
     }
-  ]
+  ],
+  "updated_at": "2026-08-05T08:42:20.776627+01:00"
 }
