@@ -161,6 +161,225 @@ KNOWN_TOOLSET_NAMES = frozenset(name.casefold() for name in get_toolset_names())
 _IS_WINDOWS = sys.platform == "win32"
 KANBAN_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
 
+# ---------------------------------------------------------------------------
+# Approval auto-clear guards (t_552cc9e1, t_jarvis_autopromote_20260728)
+# ---------------------------------------------------------------------------
+
+# Human-authority block kinds that must NEVER be auto-cleared by a code-review
+# verdict. These represent decisions only a human (Frank/operator) or an
+# explicit approvals-registry grant can waive — never a peer's DONE report
+# quoting the literal approve-verdict token.
+_HUMAN_AUTHORITY_BLOCK_KINDS = ("needs_input", "capability")
+
+# Reviewer-role profiles whose APPROVED comment counts as authoritative.
+# A worker may NOT approve its OWN block; separation-of-duties requires a
+# designated reviewer role or an explicit human-authority override.
+_APPROVAL_REVIEWER_ROLES = (
+    "reviewer",
+    "guardian",
+    "os-reviewer",
+    "guardian-merge",
+)
+
+
+def _is_approval_reviewer(author: Optional[str]) -> bool:
+    """Return True when ``author`` is on the reviewer-role allowlist."""
+    if not author:
+        return False
+    a = author.strip().casefold()
+    if not a:
+        return False
+    for role in _APPROVAL_REVIEWER_ROLES:
+        r = role.casefold()
+        if a == r or a.endswith(":" + r) or a.startswith(r + ":") or a.endswith("@" + r):
+            return True
+    return False
+
+
+def _strip_fenced_code(text: str) -> str:
+    """Remove fenced code blocks from text so quoted verdicts inside are ignored.
+
+    Verdicts inside ```-fenced blocks are quotations, not actionable directives.
+    We strip the fence content before matching so ``REVIEW_VERDICT=APPROVED``
+    appearing only inside a code fence cannot unblock a card.
+    """
+    result = []
+    lines = text.split("\n")
+    in_fence = False
+    fence_marker = None
+    for line in lines:
+        stripped = line.strip()
+        if not in_fence and stripped.startswith("```"):
+            in_fence = True
+            fence_marker = stripped[3:]  # e.g., 'python' or ''
+            continue
+        if in_fence:
+            if fence_marker is None:
+                # Unlabelled fence --- closing line must be exactly '```'
+                if stripped == "```":
+                    in_fence = False
+                    fence_marker = None
+            else:
+                # Labelled fence --- closing line must start with '```' + marker
+                if stripped.startswith("```") and len(stripped) >= 3 + len(fence_marker):
+                    in_fence = False
+                    fence_marker = None
+            continue
+        result.append(line)
+    return "\n".join(result)
+
+
+# Anchored positive match: REVIEW_VERDICT=APPROVED or REVIEW_VERDICT: APPROVED
+# must appear AT LINE START (after optional list bullets).  Not anchored → any
+# prose occurrence matches, which caused the false-clear incident.
+_APPROVAL_APPROVED_RE = re.compile(
+    r"""^(\s*[-*>]?\s*)?REVIEW_VERDICT\s*[=:]\s*APPROVED\b""",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+# Negation: explicitly denies the verdict — overrides a positive match.
+_APPROVAL_NEGATED_RE = re.compile(
+    r"""(?:NO\s+)?REVIEW_VERDICT\s*[=:]?\s*(?:NOT\s+|NONE)\b""",
+    re.IGNORECASE,
+)
+
+# Reopen/changes-requested patterns that veto a prior approval.
+_APPROVAL_REOPEN_RE = re.compile(
+    r"""REVIEW_VERDICT\s*[=:]\s*(?:CHANGES_REQUESTED|REJECT|BLOCK)\b""",
+    re.IGNORECASE,
+)
+
+
+def apply_approvals(conn: sqlite3.Connection) -> list:
+    """Auto-clear approved-but-stuck cards (t_6009ccaa, hardened t_552cc9e1).
+
+    Scans tasks in (blocked, review, scheduled). A card auto-clears to todo
+    (recompute_ready then promotes it to ready once parents are done) when ALL hold:
+
+    * A non-negated approval marker comment exists, ANCHORED at a line start
+      (REVIEW_VERDICT=APPROVED / REVIEW_VERDICT: APPROVED) and NOT inside a
+      fenced code block. A marker that is only quoted, cited, or mentioned in
+      prose about another card does NOT count (t_552cc9e1);
+
+    * No reviewer re-open (CHANGES_REQUESTED / REJECT / block) comment was posted
+      AFTER that approval;
+
+    * The approval comment has not already auto-cleared this card once (idempotence —
+      see below);
+
+    * The approval comment author is NOT the task's own assignee, unless the author
+      is on the reviewer-role allowlist (separation of duties, t_cb5a275a / t_552cc9e1).
+      A worker may not approve its own block;
+
+    * The block is a REVIEW-class hold — needs_input / capability human-decision kinds
+      are never auto-cleared by an approval comment (t_552cc9e1). A legacy un-typed
+      (None) block is the normal review-required handoff and STAYS auto-clearable;
+
+    * No open parent dependency.
+
+    Idempotence (t_jarvis_autopromote_20260728): an approval verdict addresses the
+    thing it reviewed (usually code correctness). A card that re-blocks afterwards
+    for a DIFFERENT reason (e.g. a 24h soak gate, a needs_input/capability park)
+    must NOT be re-cleared by the same stale approval comment — otherwise every
+    post-approval block is defeated ~instantly on the next dispatch tick. We skip
+    an approval comment_id that has already produced an ``approval-auto-clear``
+    unblocked event on this card. A NEW approval comment posted after the re-block
+    (fresh verdict on the new state) has a new comment_id and clears normally.
+
+    Returns cleared task ids.
+    """
+    cleared = []
+    with write_txn(conn):
+        rows = conn.execute(
+            "SELECT id, status, assignee FROM tasks "
+            "WHERE status IN ('blocked', 'review', 'scheduled')"
+        ).fetchall()
+        for row in rows:
+            task_id = row["id"]
+            task_assignee = row["assignee"]
+
+            # HUMAN-AUTHORITY GATE (t_552cc9e1): check the real block_kind.
+            # If the card was blocked with needs_input/capability, it's a human
+            # decision hold that no code-review verdict can waive.
+            blk_row = conn.execute(
+                "SELECT block_kind FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            task_block_kind = blk_row["block_kind"] if blk_row else None
+            if task_block_kind in _HUMAN_AUTHORITY_BLOCK_KINDS:
+                continue
+
+            # Fetch approval-shaped comments and pick the anchored verdict.
+            candidates = conn.execute(
+                "SELECT id, author, body FROM task_comments WHERE task_id = ? "
+                "AND (body LIKE '%REVIEW_VERDICT=%' OR body LIKE '%REVIEW_VERDICT:%') "
+                "ORDER BY id ASC",
+                (task_id,),
+            ).fetchall()
+            approval = None
+            for cand in candidates:
+                body = cand["body"] or ""
+                # Strip fenced code blocks — quoted verdicts are not actionable.
+                stripped_body = _strip_fenced_code(body)
+                if not _APPROVAL_APPROVED_RE.search(stripped_body):
+                    continue
+                # Negation veto: "No REVIEW_VERDICT..." denies the positive match.
+                if _APPROVAL_NEGATED_RE.search(body):
+                    continue
+                # Separation of duties (t_cb5a275a): approver != assignee unless
+                # they're on the reviewer-role allowlist.
+                if cand["author"] == task_assignee and not _is_approval_reviewer(
+                    cand["author"]
+                ):
+                    continue
+                approval = cand
+                break  # oldest qualifying verdict wins
+
+            if approval is None:
+                continue
+
+            # Idempotence: same approval already cleared this card once.
+            already_fired = conn.execute(
+                "SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'unblocked' "
+                "AND json_extract(payload, '$.reason') = 'approval-auto-clear' "
+                "AND json_extract(payload, '$.comment_id') = ? LIMIT 1",
+                (task_id, approval["id"]),
+            ).fetchone()
+            if already_fired is not None:
+                continue
+
+            # Veto: reviewer re-opened after the approval.
+            reopen_rows = conn.execute(
+                "SELECT body FROM task_comments WHERE task_id = ? AND id > ?",
+                (task_id, approval["id"]),
+            ).fetchall()
+            if any(_APPROVAL_REOPEN_RE.search(r["body"] or "") for r in reopen_rows):
+                continue
+
+            # No open parent dependency — leave for parent gating.
+            undone = conn.execute(
+                "SELECT 1 FROM task_links l JOIN tasks p ON p.id = l.parent_id "
+                "WHERE l.child_id = ? "
+                "AND p.status NOT IN ('done', 'archived') LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if undone is not None:
+                continue
+
+            # Clear!
+            conn.execute(
+                "UPDATE tasks SET status = 'todo', current_run_id = NULL, "
+                "consecutive_failures = 0, last_failure_error = NULL, "
+                "claim_lock = NULL, claim_expires = NULL, worker_pid = NULL "
+                "WHERE id = ? AND status IN ('blocked', 'review', 'scheduled')",
+                (task_id,),
+            )
+            _append_event(
+                conn, task_id, "unblocked",
+                {"reason": "approval-auto-clear", "comment_id": approval["id"]},
+            )
+            cleared.append(task_id)
+    return cleared
+
 
 def _assert_not_delegated_child_mutation() -> None:
     """Reject Kanban state mutations from ``delegate_task`` child contexts.
@@ -8340,6 +8559,12 @@ def _dispatch_once_locked(
     if _crash_rate_limited:
         result.rate_limited.extend(_crash_rate_limited)
     result.timed_out = enforce_max_runtime(conn)
+    # Approval auto-clear (t_6009ccaa, hardened t_552cc9e1): promote approved-but-stuck
+    # cards out of blocked/review/scheduled BEFORE dependency promotion, so a card
+    # carrying REVIEW_VERDICT=APPROVED can never strand in ``blocked`` while the fleet
+    # lock-gate flags it as a relapse every tick. Applies anchoring + separation-of-duties
+    # + human-authority block_kind guards (no needs_input/capability false-cleared).
+    apply_approvals(conn)
     result.promoted = recompute_ready(conn, failure_limit=failure_limit)
 
     # Count tasks already running so max_spawn enforces concurrency rather
