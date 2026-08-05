@@ -465,6 +465,8 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
         "last_error": job.get("last_error"),
         "last_delivery_error": job.get("last_delivery_error"),
         "script": job.get("script"),
+        "claim_age_minutes": None if claim_age is None else round(claim_age, 1),
+        "artifact_age_minutes": None if artifact_age is None else round(artifact_age, 1),
         "output_artifact": output,
         "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
         "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}",
