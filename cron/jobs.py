@@ -11,12 +11,13 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 import json
 import logging
+import re
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
 import os
-import re
 import uuid
 
 # Cross-process advisory file locking for jobs.json critical sections.
@@ -1346,6 +1347,49 @@ def create_job(
             "no_agent=True requires a script — with no agent and no script "
             "there is nothing for the job to run."
         )
+
+    # --- Author-time script-tracking validation (t_89e30994) ---------------
+    from .script_tracking import resolve_script_path, is_tracked
+
+    def _resolve_repo() -> Optional[Path]:
+        """Return the git repo containing the Hermes home by walking up."""
+        p = HERMES_DIR
+        while len(p.parts) > 2:
+            if (p / ".git").exists():
+                try:
+                    r = subprocess.run(
+                        ["git", "-C", str(p), "rev-parse", "--show-toplevel"],
+                        text=True, capture_output=True, timeout=15,
+                    )
+                    if r.returncode == 0 and r.stdout.strip():
+                        return Path(r.stdout.strip()).expanduser().resolve()
+                except Exception:
+                    pass
+            p = p.parent
+        return None
+
+    _AUTH_REPO = _resolve_repo()
+
+    if normalized_script and _AUTH_REPO is not None:
+        resolved, _reason = resolve_script_path(HERMES_DIR, normalized_script)
+        if resolved is not None:
+            try:
+                rel = str(resolved.relative_to(_AUTH_REPO))
+                if not is_tracked(rel, _AUTH_REPO):
+                    suggestion = str(Path(normalized_script).relative_to(HERMES_DIR))
+                    msg = (
+                        f"Cron job script '{normalized_script}' is NOT tracked by git.\n"
+                        f"Run:\n"
+                        f"  cd {_AUTH_REPO} && git add {suggestion}\n"
+                        f"and verify:\n"
+                        f"  git ls-files --error-unmatch -- {rel}"
+                    )
+                    logger.warning(msg)
+                    if normalized_no_agent:
+                        raise ValueError(msg)
+            except ValueError:
+                pass  # outside repo — silently accepted
+    # ---------------------------------------------------------------------------
 
     # Normalize context_from: accept str or list of str, store as list or None
     if isinstance(context_from, str):
