@@ -5156,8 +5156,7 @@ def release_stale_claims(
             and (now - int(hb)) > DEFAULT_CLAIM_HEARTBEAT_MAX_STALE_SECONDS
         )
         if (
-            host_local
-            and row["worker_pid"]
+            row["worker_pid"]
             and _pid_alive(row["worker_pid"])
             and not heartbeat_stale
         ):
@@ -14229,11 +14228,9 @@ def parse_claude_stream_output(
         if not isinstance(kind, str) or not kind.strip():
             raise ProviderOutputInvalid(f"event {index} has no usable 'type'")
         kind = kind.strip()
-        if kind not in {"system", "assistant", "result", "rate_limit_event"}:
-            raise ProviderOutputInvalid(
-                f"event {index} has unsupported Claude stream type {kind!r}"
-            )
-        if kind == "rate_limit_event":
+        if kind in {"system", "assistant", "result"}:
+            pass  # fall through to content-event handling below
+        elif kind == "rate_limit_event":
             # Claude Code emits this normal lifecycle event between assistant
             # output and the terminal result.  It is informational, never a
             # completion signal, but it still has to be bound to the persisted

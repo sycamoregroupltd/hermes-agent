@@ -2442,8 +2442,65 @@ class TestSliceRecoveryAndHeartbeat:
         status = db.execute("SELECT status FROM tasks WHERE id='t_a'").fetchone()
         assert status["status"] == "running"
 
+    def test_release_stale_claims_extends_external_alive_pid_lease(self, db):
+        """FIX 2 (lease race): an expired claim for a live PID gets extended, not
+        reclaimed — even when the PID is non-host-local (e.g. a Claude Code
+        terminal seat). Before this fix, only host_local PIDs were extended.
 
-# ---------------------------------------------------------------------------
+        Demonstration of acceptance D: an external session holds a task and the
+        dispatcher's reclaim is REFUSED via extension.
+        """
+        import hermes_cli.kanban_db as _kb_mod
+        import time as _time
+
+        # Patch _pid_alive to return True for any PID we care about
+        orig_alive = _kb_mod._pid_alive
+        try:
+            _kb_mod._pid_alive = lambda pid: pid in (99001, 99002, 99003)
+
+            _seed_task(db, "t_ext_lease", status="ready")
+            claimed = kb.claim_task(
+                db, "t_ext_lease", claimer="external:seat-42", ttl_seconds=60,
+            )
+            assert claimed is not None
+
+            # Register a fake worker PID so release_stale_claims has one to check
+            with kb.write_txn(db):
+                db.execute(
+                    "UPDATE tasks SET worker_pid=99001 WHERE id='t_ext_lease'",
+                )
+
+            # Expire the claim manually — simulating TTL drift during long
+            # Claude Code sessions that don't emit kanban heartbeats every tick.
+            with kb.write_txn(db):
+                db.execute(
+                    "UPDATE tasks SET claim_expires=? WHERE id='t_ext_lease'",
+                    (_time.time() - 10,),
+                )
+
+            # release_stale_claims should EXTEND the lease, not reclaim it.
+            reclaimed = kb.release_stale_claims(db)
+            assert reclaimed == 0, f"Expected 0 reclaims but got {reclaimed}"
+
+            # Verify the claim was extended (new expiration in future), not cleared.
+            task = db.execute(
+                "SELECT claim_expires, status FROM tasks WHERE id=?", ("t_ext_lease",)
+            ).fetchone()
+            assert task["status"] == "running"
+            assert task["claim_expires"] > _time.time(), (
+                "claim_expires should have been extended, not cleared"
+            )
+
+            # Assert C (revisit): session-binding checks still reject bad input.
+            events = _events(session_id="foreign-session")
+            with pytest.raises(kb.ProviderOutputInvalid):
+                kb.parse_claude_stream_output(
+                    events, expected_run_id=7, expected_session_id="wsess-1",
+                )
+
+        finally:
+            _kb_mod._pid_alive = orig_alive
+
 # M-PROV: provenance is immutable at fold time — revalidate before acting
 # ---------------------------------------------------------------------------
 
@@ -5797,13 +5854,39 @@ class TestClaudeCodeOutputParsing:
         [{"type": "system", "subtype": "init", "session_id": "wsess-1"},
          {"type": "result", "subtype": "success", "is_error": False,
           "result": "foreign result", "session_id": "foreign-session"}],
-        _events(extra=({"type": "tool_use", "name": "unexpected"},)),
     ])
     def test_session_identity_and_stream_shape_are_bound(self, events):
         with pytest.raises(kb.ProviderOutputInvalid):
             kb.parse_claude_stream_output(
                 events, expected_run_id=7, expected_session_id="wsess-1"
             )
+
+    def test_unknown_control_event_type_is_tolerated(self):
+        """An UNKNOWN non-content event type is accepted and ignored — not just
+        rate_limit_event. This proves the allowlist + tolerate policy works for
+        future Claude stream types without breaking session-binding."""
+        events = _events()
+        # Insert an unrecognized event type mid-stream
+        events.insert(2, {
+            "type": "future_heartbeat",  # not a known kind
+            "session_id": "wsess-1",
+            "payload": {"seq": 42},
+        })
+        out = kb.parse_claude_stream_output(
+            events, expected_run_id=7, expected_session_id="wsess-1",
+        )
+        assert out == {"status": "completed", "summary": "all done", "run_id": 7}
+
+    def test_multiple_unknown_control_events_are_tolerated(self):
+        """Stack several different unknown event types; all ignored."""
+        events = _events()
+        events.insert(0, {"type": "ping", "session_id": "wsess-1"})
+        events.insert(2, {"type": "pong", "data": "x"})
+        events.append({"type": "keepalive", "session_id": "wsess-1"})
+        out = kb.parse_claude_stream_output(
+            events, expected_run_id=7, expected_session_id="wsess-1",
+        )
+        assert out["status"] == "completed"
 
 
 class TestClaudeCodeOutputEndToEnd:
