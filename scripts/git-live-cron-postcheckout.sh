@@ -184,6 +184,7 @@ done < "$TMPDIR/refs"
 # must live OUTSIDE $TMPDIR: the foreground trap removes $TMPDIR as soon as the
 # hook exits, before the background subshell can read it.
 CHANGEDFILE="$REPO/logs/live-cron-postcheckout.changed.$$"
+mkdir -p "$REPO/logs"
 : > "$CHANGEDFILE"
 git -C "$REPO" diff --name-only "$PREV_SHA" "$NEW_SHA" 2>/dev/null | while IFS= read -r rel; do
     [ -z "$rel" ] && continue
