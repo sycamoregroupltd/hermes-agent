@@ -48,8 +48,13 @@ REPO="${HERMES_LIVE_REPO:-/home/frank/.hermes}"
 GUARD="$REPO/scripts/cron_untracked_script_guard.py"
 LOGFILE="${HERMES_LIVE_POSTCHECKOUT_LOG:-$REPO/logs/live-cron-postcheckout.log}"
 
-NEW_SHA="${1:-}"
-PREV_SHA="${2:-}"
+# githooks(5): post-checkout gets $1 = PREVIOUS head, $2 = NEW head, $3 = flag.
+# (Fixed 2026-08-05: these were swapped since installation, which made every
+# restore a no-op — the hook "restored" content from the DESTINATION commit,
+# i.e. what checkout had just written. That is why the log showed restored=0
+# during the 2026-08-05 outage, changed=30 notwithstanding.)
+PREV_SHA="${1:-}"
+NEW_SHA="${2:-}"
 FLAG="${3:-}"
 GIT_PID="$PPID"
 
