@@ -240,4 +240,26 @@ fi
     echo "post-checkout $(date -Is) refs=$(wc -l < "$TMPDIR/refs") restored=$RESTORED match=$N_MATCH showfail=$N_SHOW_FAIL cpfail=$N_CP_FAIL prev=$PREV_SHA new=$NEW_SHA flag=$FLAG"
 } >> "$LOGFILE"
 
+# --- live cron-store git-tracking guard (t_6c32b13c completion) --------------
+# NOTE: this hook's restore loop above covers only SCRIPTS referenced by cron
+# jobs — the jobs.json stores themselves are untracked runtime state with no
+# prev-HEAD blob to restore from (that is why historical log lines show
+# restored=0 for store clobbers; it was never in scope here).
+# Live stores must NEVER be tracked. A checkout to a pre-untracking commit
+# re-tracks them — and because they are gitignored, git treats them as
+# expendable and silently OVERWRITES the live files with sanitized copies.
+# Repair the git state immediately (untrack index + commit the untracking on
+# HEAD) so the NEXT git operation cannot clobber again; the 2m
+# fleet_cron_store_clobber_canary is the scheduled backstop for reset --hard,
+# which fires no hook. Background + always-exit-0: must never wedge a checkout.
+(
+    STORE_OUT="$(python3 "$REPO/scripts/cron_store_git_clobber_guard.py" --apply --json --quiet 2>/dev/null)"
+    if [ -n "$STORE_OUT" ]; then
+        {
+            echo "post-checkout store-guard $(date -Is) prev=$PREV_SHA new=$NEW_SHA:"
+            printf '%s\n' "$STORE_OUT" | sed 's/^/  /'
+        } >> "$LOGFILE"
+    fi
+) &
+
 exit 0

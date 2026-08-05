@@ -194,10 +194,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T17:54:55.370973+01:00",
+      "paused_reason": "dead-pin: script not found: calibration_cron.sh",
       "created_at": "2026-07-05T17:42:44.805827+01:00",
       "deliver": "discord:#critical-alerts",
       "origin": null,
@@ -293,10 +293,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T17:54:55.463365+01:00",
+      "paused_reason": "dead-pin: script not found: sync-pattern-win-rate-registry.sh",
       "created_at": "2026-07-06T10:38:31.731457+01:00",
       "deliver": "local",
       "origin": null,
@@ -359,10 +359,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T12:09:49.791276+01:00",
+      "paused_reason": "dead-pin: script not found: arena-insert-liveness-cron-runner.sh",
       "created_at": "2026-07-11T13:40:47.293690+01:00",
       "deliver": "local",
       "origin": null,
@@ -428,10 +428,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T12:00:49.592096+01:00",
+      "paused_reason": "dead-pin: script not found: sycode_candle_per_symbol_freshness.py",
       "created_at": "2026-07-14T10:26:05.602781+01:00",
       "deliver": "local",
       "origin": null,
@@ -499,10 +499,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T12:00:49.698282+01:00",
+      "paused_reason": "dead-pin: script not found: tournament_provider_failure_guard.py",
       "created_at": "2026-07-23T13:25:25.381080+01:00",
       "deliver": "local",
       "origin": null,

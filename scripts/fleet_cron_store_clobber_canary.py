@@ -16,11 +16,19 @@ This canary runs every 2 minutes, silent when healthy. It:
      $HERMES_HOME/scripts; if missing -> WATCHDOG_SCRIPT_VANISHED alert. Also
      asserts the 1m watchdog job's ``script`` file resolves (global or
      profile-local).
+  3. Git-tracking guard (t_6c32b13c completion, 2026-08-05 outage): live cron
+     stores must NEVER be tracked by git — a tracked sanitized copy clobbers
+     next_run_at on every checkout/reset and silently defers every job. Runs
+     cron_store_git_clobber_guard.py --apply (untrack index + commit the
+     untracking on HEAD) and alerts on any repair. This is the scheduled
+     backstop for ``git reset --hard <historical-commit>``, which fires no
+     git hook.
 
 Reuses dgx_cron_health_canary.py scanning conventions and
 blocked_task_notifier.send_alert() for delivery. No hermes-core changes.
-A2 / A3-safe: bounded file ops + alert only; never mutates schedules,
-provider/model routing, credentials, or live-trading.
+A2 / A3-safe: bounded file ops + git index/ref repair + alert only; never
+mutates schedules, store content, provider/model routing, credentials, or
+live-trading.
 """
 
 from __future__ import annotations
@@ -217,6 +225,44 @@ def check_watchdog_job_resolution() -> Optional[str]:
     return None
 
 
+def check_store_git_tracking(dry_run: bool) -> Optional[str]:
+    """Live stores must never be tracked by git (t_6c32b13c completion).
+
+    Delegates to the canonical cron_store_git_clobber_guard.py so there is one
+    implementation of the untrack/commit repair. Silent when healthy."""
+    guard = SCRIPTS_DIR / "cron_store_git_clobber_guard.py"
+    if not guard.exists():
+        msg = ("CRON_STORE_GIT_GUARD_MISSING: scripts/cron_store_git_clobber_guard.py "
+               "is gone — the tracked-store invariant is unenforced.")
+        ok, detail = send_alert(msg)
+        return f"{msg} [alert={ok}:{detail}]"
+    cmd = [sys.executable, str(guard), "--json"]
+    if not dry_run:
+        cmd.append("--apply")
+    try:
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        state = json.loads(cp.stdout)
+    except Exception as exc:
+        return f"CRON_STORE_GIT_GUARD_ERROR: {type(exc).__name__}: {str(exc)[:200]}"
+    changed = state.get("changed", [])
+    failed = state.get("failed", [])
+    if state.get("healthy") and not changed and not failed:
+        return None
+    msg = (
+        f"CRON_STORE_GIT_TRACKING {'DETECTED (dry-run)' if dry_run else 'REPAIRED'}: "
+        f"live cron store(s) were tracked by git in {state.get('repo')} — a "
+        f"checkout/reset re-introduced them (index={len(state.get('index_tracked', []))}, "
+        f"HEAD={len(state.get('head_tracked', []))} remaining). "
+        f"Repairs: {changed or 'none'}. Failures: {failed or 'none'}. "
+        "NOTE: if git just clobbered store content, gateways self-heal by "
+        "deferring one interval ('had no next_run_at' in agent.log); check "
+        "profiles/*/logs/agent.log and the reflog for the triggering operation "
+        "(t_6c32b13c / 2026-08-05 outage class)."
+    )
+    ok, detail = send_alert(msg)
+    return f"{msg} [alert={ok}:{detail}]"
+
+
 def main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description="fleet cron-store clobber guard")
@@ -238,6 +284,11 @@ def main() -> int:
     if f:
         findings.append(f)
     f = check_watchdog_job_resolution()
+    if f:
+        findings.append(f)
+
+    # 3. live stores must never be tracked by git (untrack + commit repair)
+    f = check_store_git_tracking(args.dry_run)
     if f:
         findings.append(f)
 

@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""Regression test for cron_store_skip_worktree_reapply_guard (t_5e23f950).
+"""Regression test for cron_store_git_clobber_guard (t_5e23f950, t_6c32b13c).
 
-Proves the residual t_3c33bc49 durability gap is closed:
-  - a newly tracked scheduler store (new profile) with protection unset is
-    detected as UNPROTECTED, re-protected by --apply, and the next audit is
-    HEALTHY;
-  - a re-clone / index-rebuild that drops the skip-worktree bit is detected as
-    unprotected and re-protected back to healthy.
+Proves the STRUCTURAL untracking model closes the 2026-08-05 outage class:
+  - tracked live cron stores (index + HEAD) are detected as unhealthy;
+  - --apply untracks them from the index AND commits the untracking on top of
+    HEAD via a temporary index, without touching store content on disk or the
+    caller's staged/unstaged state;
+  - a `git reset --hard <historical-commit>` that re-tracks the stores is
+    detected and repaired back to healthy by the same path;
+  - the auto-commit is skipped-detection works while a merge is in progress.
 
 Runs entirely against a throwaway git repo (monkeypatches the guard's REPO
 global); NEVER touches /home/frank/.hermes. Exit 0 = all checks pass.
+
+(Filename kept from the retired skip-worktree era so existing references keep
+resolving; skip-worktree was abandoned because reset/rebase cleared the bits —
+all 27 stores were observed back at 'H' on 2026-08-05.)
 """
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,103 +30,101 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import cron_store_git_clobber_guard as guard  # noqa: E402
 
 
-def git(cwd: Path, *args: str) -> None:
+def git(cwd: Path, *args: str) -> str:
     cp = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
     if cp.returncode != 0:
-        raise RuntimeError(f"git {args} failed: {cp.stderr.strip()}")
+        raise AssertionError(f"git {' '.join(args)} failed: {cp.stderr.strip()}")
+    return cp.stdout
 
 
-def make_store(repo: Path, rel: str) -> None:
+def make_store(repo: Path, rel: str, live: bool = False) -> Path:
     p = repo / rel
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"jobs": [{"id": "x", "name": "dummy", "schedule": "every 60m"}]}, indent=2))
-
-
-def audit(repo: Path) -> dict:
-    saved = guard.REPO
-    guard.REPO = repo
-    try:
-        return guard.audit()
-    finally:
-        guard.REPO = saved
-
-
-def apply_protect(repo: Path, paths: list[str]) -> None:
-    saved = guard.REPO
-    guard.REPO = repo
-    try:
-        failed = guard.apply_flag(paths, on=True)
-        assert not failed, f"apply failed: {failed}"
-    finally:
-        guard.REPO = saved
-
-
-def drop_bit(repo: Path, paths: list[str]) -> None:
-    saved = guard.REPO
-    guard.REPO = repo
-    try:
-        failed = guard.apply_flag(paths, on=False)
-        assert not failed, f"drop failed: {failed}"
-    finally:
-        guard.REPO = saved
+    job = {"id": "j1", "name": "demo", "enabled": True}
+    if live:
+        job["next_run_at"] = "2026-08-05T12:00:00+01:00"
+    p.write_text(json.dumps({"jobs": [job]}, indent=2) + "\n")
+    return p
 
 
 def main() -> int:
-    tmp = Path(tempfile.mkdtemp(prefix="cron-clobber-selftest-"))
+    saved_repo = guard.REPO
     try:
-        git(tmp, "init", "-q")
-        git(tmp, "config", "user.email", "selftest@local")
-        git(tmp, "config", "user.name", "selftest")
-        # Seed two stores already protected (the "already-applied" baseline).
-        make_store(tmp, "cron/jobs.json")
-        make_store(tmp, "profiles/alice/cron/jobs.json")
-        git(tmp, "add", "-A")
-        git(tmp, "commit", "-qm", "seed")
+        with tempfile.TemporaryDirectory(prefix="clobber-guard-selftest-") as td:
+            tmp = Path(td)
+            git(tmp, "init", "-q", "-b", "main")
+            git(tmp, "config", "user.email", "selftest@local")
+            git(tmp, "config", "user.name", "selftest")
 
-        # --- Scenario A: NEW PROFILE store added after the one-shot apply ran ---
-        make_store(tmp, "profiles/bob/cron/jobs.json")  # new profile, unprotected
-        git(tmp, "add", "-A")
-        git(tmp, "commit", "-qm", "add bob")
+            # Historical state: sanitized stores TRACKED (pre-t_6c32b13c world).
+            make_store(tmp, "cron/jobs.json")
+            make_store(tmp, "profiles/alice/cron/jobs.json")
+            (tmp / "README.md").write_text("fixture\n")
+            git(tmp, "add", "-A")
+            git(tmp, "commit", "-q", "-m", "historical: stores tracked (sanitized)")
+            historical = git(tmp, "rev-parse", "HEAD").strip()
+            git(tmp, "commit", "-q", "--allow-empty", "-m", "tip")
 
-        st = audit(tmp)
-        assert not st["healthy"], "bootstrap: expected some unprotected store"
-        assert "profiles/bob/cron/jobs.json" in st["unprotected"], \
-            "NEW profile store must be detected as unprotected"
-        # Re-apply (what the periodic guard does on every tick).
-        apply_protect(tmp, st["unprotected"])
-        st2 = audit(tmp)
-        assert st2["healthy"], f"after apply: expected healthy, got {st2}"
-        assert "profiles/bob/cron/jobs.json" in st2["protected"], \
-            "new profile store must now be protected"
-        print("PASS A: new-profile store detected-unprotected -> re-protected -> healthy")
+            guard.REPO = tmp
 
-        # --- Scenario B: re-clone / index rebuild drops the bit (simulate) ---
-        # Everything healthy; now simulate a fresh clone by clearing the bit.
-        before = audit(tmp)
-        assert before["healthy"], "precondition: baseline healthy"
-        drop_bit(tmp, before["protected"].copy())
-        after_drop = audit(tmp)
-        assert not after_drop["healthy"], "re-clone sim: expected unprotected stores"
-        apply_protect(tmp, after_drop["unprotected"])
-        recovered = audit(tmp)
-        assert recovered["healthy"], f"re-clone sim: expected healthy after re-apply, got {recovered}"
-        print("PASS B: skip-worktree bit loss (re-clone/index rebuild) detected -> re-protected -> healthy")
+            # 1. Tracked stores detected as unhealthy (index + HEAD).
+            st = guard.audit()
+            assert not st["healthy"], "tracked stores must be unhealthy"
+            assert "profiles/alice/cron/jobs.json" in st["index_tracked"], st
+            assert "cron/jobs.json" in st["head_tracked"], st
+            print("PASS 1: tracked stores detected in index + HEAD")
 
-        # --- Scenario C: bare guard default audit must NOT modify anything ---
-        # (the wrapper's audit-only path is a no-op on healthy state)
-        c3 = audit(tmp)
-        assert c3["healthy"], "baseline still healthy after audit-only"
-        print("PASS C: audit-only path is non-mutating and silent when healthy")
+            # Simulate live runtime state + an unrelated staged change that
+            # --apply must preserve.
+            live = make_store(tmp, "profiles/alice/cron/jobs.json", live=True)
+            (tmp / "README.md").write_text("staged change\n")
+            git(tmp, "add", "README.md")
+
+            # 2. --apply path: untrack index + commit untracking on HEAD.
+            changed, failed = guard.untrack_index(st["index_tracked"])
+            assert not failed, failed
+            st = guard.audit()
+            assert not st["index_tracked"], st
+            changed2, failed2 = guard.commit_untrack_on_head(st["head_tracked"])
+            assert not failed2, failed2
+            assert any(c.startswith("untrack-commit:") for c in changed2), changed2
+
+            st = guard.audit()
+            assert st["healthy"], f"post-apply audit must be healthy: {st}"
+            assert "next_run_at" in live.read_text(), "store content must be untouched"
+            staged = git(tmp, "diff", "--cached", "--name-only")
+            assert "README.md" in staged, "caller's staged change must survive"
+            assert "jobs.json" not in git(tmp, "ls-files"), "no store may stay tracked"
+            print("PASS 2: --apply untracks index+HEAD, preserves content and staging")
+
+            # 3. Historical reset --hard re-tracks stores (and clobbers content —
+            # gitignored files are expendable to git); guard repairs tracking.
+            (tmp / ".gitignore").write_text("cron/jobs.json\nprofiles/*/cron/jobs.json\n")
+            git(tmp, "reset", "--hard", "-q", historical)
+            st = guard.audit()
+            assert not st["healthy"], "historical reset must re-detect tracked stores"
+            c, f = guard.untrack_index(st["index_tracked"])
+            assert not f, f
+            c, f = guard.commit_untrack_on_head(guard.audit()["head_tracked"])
+            assert not f, f
+            assert guard.audit()["healthy"], "must be healthy after historical repair"
+            print("PASS 3: reset --hard to historical commit detected -> repaired -> healthy")
+
+            # 4. In-progress merge detection (blocks the auto-commit in main()).
+            gitdir = tmp / ".git"
+            (gitdir / "MERGE_HEAD").write_text(historical + "\n")
+            assert guard.git_op_in_progress() == "merge"
+            (gitdir / "MERGE_HEAD").unlink()
+            assert guard.git_op_in_progress() is None
+            print("PASS 4: in-progress merge detected (auto-commit deferral path)")
+
         print("\nALL REGRESSION CHECKS PASS")
         return 0
     except AssertionError as exc:
         print(f"FAIL: {exc}")
         return 1
-    except Exception as exc:  # noqa: BLE001
-        print(f"ERROR: {type(exc).__name__}: {exc}")
-        return 2
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        guard.REPO = saved_repo
 
 
 if __name__ == "__main__":

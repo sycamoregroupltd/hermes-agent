@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import fnmatch
 import os
 import re
 import shutil
@@ -68,6 +67,10 @@ FORCE_INCLUDE = {
     "scripts/automation_vc_keeper.py",
     "profiles/devops/scripts/automation-vc-keeper.sh",
 }
+# Non-live path holding sanitized recovery snapshots of every live cron store
+# (t_6c32b13c: the live stores themselves are untracked + gitignored; a DGX
+# rebuild recovers job definitions from here, never from a live path).
+SNAPSHOT_PREFIX = "cron-snapshots"
 
 
 def run(cmd: list[str], cwd: Path = REPO, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -99,9 +102,13 @@ def is_allowed(rel: str) -> bool:
     if rel.startswith("agent-hooks/") and len(p.parts) == 2:
         return True
     # Live cron stores (cron/jobs.json, profiles/*/cron/jobs.json) are mutable
-    # scheduler runtime state and are intentionally NOT synced (t_6c32b13c): the
-    # branch keeps only the last historical snapshot; a store that survives branch
-    # swaps cannot be reverted or re-fired by a checkout.
+    # scheduler runtime state and are NEVER tracked (t_6c32b13c, completed
+    # 2026-08-05): a tracked sanitized copy clobbers next_run_at on every
+    # checkout/reset and silently defers the whole fleet's cron jobs. Recovery
+    # snapshots live under the non-live cron-snapshots/ path instead, generated
+    # fresh each tick by snapshot_cron_stores().
+    if rel.startswith(f"{SNAPSHOT_PREFIX}/"):
+        return True
     # The devops-profile keeper dispatcher wrapper is durable on this branch (see
     # FORCE_INCLUDE). It holds no secrets and only delegates to the tracked root script.
     if rel == "profiles/devops/scripts/automation-vc-keeper.sh":
@@ -135,13 +142,32 @@ def copy_into_worktree(paths: set[str], wt: Path) -> None:
                     continue
             except OSError:
                 pass
-            if rel == "cron/jobs.json" or fnmatch.fnmatch(rel, "profiles/*/cron/jobs.json"):
-                text = src.read_text(errors="ignore")
-                redacted = SECRET_PATTERN.sub("[REDACTED_SECRET]", normalize_cron_json(text))
-                dst.write_text(redacted)
-                shutil.copystat(src, dst)
-            else:
-                shutil.copy2(src, dst)
+            shutil.copy2(src, dst)
+
+
+def snapshot_cron_stores(wt: Path) -> set[str]:
+    """Write sanitized snapshots of every live cron store under cron-snapshots/.
+
+    The live stores are untracked + gitignored (t_6c32b13c) so they can never be
+    clobbered by a checkout; this non-live mirror keeps job DEFINITIONS durable
+    for recovery. normalize_cron_json strips volatile runtime fields, so the
+    snapshot content only changes when definitions change (no commit churn)."""
+    out: set[str] = set()
+    stores = sorted((REPO / "profiles").glob("*/cron/jobs.json"))
+    root = REPO / "cron" / "jobs.json"
+    if root.exists():
+        stores.append(root)
+    for src in stores:
+        if not src.is_file():
+            continue
+        rel = Path(SNAPSHOT_PREFIX) / src.relative_to(REPO)
+        text = src.read_text(errors="ignore")
+        redacted = SECRET_PATTERN.sub("[REDACTED_SECRET]", normalize_cron_json(text))
+        dst = wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(redacted)
+        out.add(str(rel))
+    return out
 
 
 def staged_files(wt: Path) -> list[str]:
@@ -222,8 +248,9 @@ def main() -> int:
         run(["git", "worktree", "add", "--detach", str(wt), f"{REMOTE}/{BRANCH}"], cwd=REPO)
         try:
             copy_into_worktree(paths, wt)
+            snapshots = snapshot_cron_stores(wt)
             # Stage only the allowed pathset. Deletions are intentionally not staged automatically.
-            run(["git", "add", "--", *sorted(paths)], cwd=wt)
+            run(["git", "add", "--", *sorted(paths | snapshots)], cwd=wt)
             files = staged_files(wt)
             hits = secret_scan(wt, files)
             if hits:

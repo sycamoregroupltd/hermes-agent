@@ -1219,8 +1219,8 @@
         "obsidian-knowledge-management"
       ],
       "skill": "world-class-trading-strategies",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
+      "model": "grok-4.3",
+      "provider": "xai-oauth",
       "provider_snapshot": "gemini",
       "model_snapshot": "gemini-3.5-flash",
       "base_url": null,
@@ -1236,9 +1236,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-11T08:32:13.407681+01:00",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-27T07:24:25.905413+01:00",
       "deliver": "discord:#quant-reports",
@@ -1589,15 +1589,18 @@
     },
     {
       "id": "96ae5ae57f3c",
-      "name": "external-edge-discovery",
-      "prompt": "You are a crypto trading edge researcher. In this run:\n\nIMPORTANT: Use ONLY Hermes native free web tools \u2014 web_search(query) for web searches, web_extract(urls) for page/PDF content, and the arxiv skill/tool for academic papers. NEVER invoke the external paid crawler CLI or any paid crawler NPM package (its credits are exhausted and calls error).\n\n1. Search X/Twitter for the latest crypto trading strategies, edge ideas, and pro trader insights. Use web_search with queries like:\n   - \"site:x.com crypto trading strategy funding rate arbitrage\"\n   - \"site:x.com Hyperliquid strategy backtest\"\n   - \"site:x.com delta neutral crypto perps\"\n   - \"site:x.com market neutral funding carry\"\n   - \"site:x.com crypto momentum strategy alts\"\n\n2. Search GitHub for new strategy repos:\n   - \"site:github.com crypto funding rate arbitrage strategy\"\n   - \"site:github.com Hyperliquid trading bot paper\"\n   - \"site:github.com market neutral crypto perps\"\n\n3. Search TradingView for promising Pine Script strategies via web_search:\n   - \"TradingView Pine Script funding rate strategy crypto\"\n   - \"TradingView Pine Script Hyperliquid backtest\"\n\n4. Extract the full content of the 2-3 most promising finds using web_extract.\n\n5. Score each candidate on:\n   - Methodology quality (entry/exit rules clear? 1-10)\n   - Cost modeling (funding, slippage, fees included? 1-10)\n   - Sycode-feasibility (can we build this? 1-10)\n   - Edge uniqueness (different from what we already do? 1-10)\n\n6. Output a concise report with:\n   - Top 3 external edge findings\n   - Actionable recommendations\n   - URLs to source material\n\n7. Save output to /home/frank/obsidian/quant-team/research/external-edge-discovery-$(date +%Y-%m-%d).md\n\nImportant: Persist any useful findings to the Obsidian vault at ~/obsidian/quant-team/research/. Link to original sources.",
+      "name": "x-scout-strategy-discovery",
+      "prompt": "You are the X/GitHub/TradingView STRATEGY SCOUT (Sycode quant team). Every run, hunt for NEW trading strategy posts from X (Twitter), GitHub, and TradingView that we have not already researched, then route each find through the diagnosis pipeline.\n\nSTEP 1 \u2014 LOAD SKILLS: external-strategy-discovery, quant-research-operations, grok-cli, obsidian-knowledge-management.\n\nSTEP 2 \u2014 DEDUP CHECK (mandatory): read /home/frank/obsidian/quant-team/research/MULTIPLE-TESTING-LEDGER.md and scan research/ for prior finds. Do NOT re-report strategies already in the ledger (e.g. williams-r-spy-daily-long, rsi2-connors, koroushak fade, etc.).\n\nSTEP 3 \u2014 DISCOVER: use web_search with these proven queries (batch all in one turn):\n- site:x.com crypto trading strategy funding rate arbitrage\n- site:x.com Hyperliquid strategy backtest\n- site:x.com delta neutral crypto perps\n- site:x.com crypto momentum strategy alts\n- site:github.com crypto funding rate arbitrage strategy\n- site:github.com Hyperliquid trading bot paper\n- TradingView Pine Script strategy crypto backtest\nAlso search known high-value accounts: @alphashellio, @serjxyz, @paperswbacktest, @HypeStrat, @minara, @DDangleDan, @SharpeLabs, @QuantifiedStrat.\n\nSTEP 4 \u2014 EXTRACT top 3-5 NEW candidates: web_extract for blogs/GitHub; for X Articles or login-walled posts use Grok CLI headless per grok-cli skill (AUTH: timeout 30 grok whoami; if fails skip grok, note gap; then timeout --kill-after=60 1800 grok --single \"...\" --output-format plain --no-memory --no-plan > /tmp/grok-scout.txt 2>&1; clean up pgrep -af grok --single).\n\nSTEP 5 \u2014 SCORE each candidate on the 4 criteria: Methodology Quality (1-10, entry/exit explicit?), Cost Modeling (1-10, fees/slippage netted?), Sycode-Feasibility (1-10, buildable from existing candle data?), Edge Uniqueness (1-10, different from existing strategy pool?). Tag Validated/Template/Reference.\n\nSTEP 6 \u2014 ROUTE: for every Validated/Template candidate with avg score >= 6.0, create a PAPER-ONLY kanban card on sycode-trading via:\nenv -u HERMES_DELEGATED_CHILD_CONTEXT hermes kanban --board sycode-trading create \"<TITLE>\" --body \"<PAPER-ONLY spec: source URL, exact rules, claimed metrics, success/kill criteria, 16bps RT cost gate, no-live boundary>\" --assignee sycode-trading-pm\nTitle prefix \"RESEARCH:\". Never imply live readiness.\n\nSTEP 7 \u2014 PERSIST: write dated scout note /home/frank/obsidian/quant-team/research/2026-08-05-x-scout-sweep.md (YAML frontmatter + 2 wikilinks), register any new dedup keys in MULTIPLE-TESTING-LEDGER.md, update index.md/log.md.\n\nSTEP 8 \u2014 REPORT tersely: new finds found/scored, routed card IDs, dedup keys registered, explicit no-live boundary. If web tools unavailable, document the gap and proceed with what works.",
       "skills": [
-        "find-docs",
-        "obsidian-knowledge-management"
+        "external-strategy-discovery",
+        "quant-research-operations",
+        "grok-cli",
+        "obsidian-knowledge-management",
+        "trading-data-analysis"
       ],
-      "skill": null,
-      "model": "tencent/hy3:free",
-      "provider": "nous",
+      "skill": "external-strategy-discovery",
+      "model": "grok-4.3",
+      "provider": "xai-oauth",
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
@@ -1613,14 +1616,20 @@
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-11T08:32:14.628453+01:00",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-30T21:29:36.360914+01:00",
       "deliver": "local",
       "origin": null,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "web",
+        "terminal",
+        "file",
+        "delegation",
+        "skills"
+      ],
       "workdir": null
     },
     {
@@ -1764,8 +1773,8 @@
         "obsidian-knowledge-management"
       ],
       "skill": "trading-data-analysis",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
+      "model": "grok-4.3",
+      "provider": "xai-oauth",
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
@@ -1781,9 +1790,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-11T08:32:13.805766+01:00",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-01T10:10:55.046603+01:00",
       "deliver": "discord:#quant-reports",
@@ -4788,7 +4797,7 @@
     {
       "id": "8b84c382cfa8",
       "name": "confluence-edge-research",
-      "prompt": "You are the standing Sycode confluence/edge research loop (Jarvis fleet). Your job: relentlessly hunt for tradable edge by (A) discovering external strategies from X/GitHub/TradingView and (B) MANIPULATING/RE-ENGINEERING Sycode's internal signal_journeys data (feature transforms, alternative labels, horizon changes, redefined confluence) to break the known Wave 3 wall: native confluence tech scores are FLAT and 24h binary labels are random (AUC ~0.50). This is research only \u2014 never live trade.\n\nHARD BOUNDARIES (do not violate):\n- Paper-only. No live orders, no trade_intents, no strategy promotion/registration, no DB writes/backfills/migrations, no deploy/restart, no credentials/provider/model routing, no spend.\n- Every candidate edge MUST pass: synthetic forward labels on the FULL signal population (never executed-trade subset), freshness gate, stale_share invariant, chronological OOS split, realistic fee/slippage, multiple-testing awareness. Fail-closed if stale_share > 5% or fresh n < 300 or fresh WR < 53%.\n- Never fabricate data. Manipulation = legitimate feature engineering / label design, NOT inventing values.\n\nPROCEDURE each run:\n1. LOAD skills (in order): quant-research-operations, external-strategy-discovery, multivariate-pattern-mining, grok-cli, obsidian-knowledge-management.\n2. INTERNAL mining (read-only, duckdb via `source ~/.hermes/venvs/trading-ml/bin/activate`, POSTGRES_PASSWORD from env or docker exec fallback; use read-only transaction):\n   - Re-read `/home/frank/.hermes/profiles/jarvis/skills/finance/quant-research-operations/references/wave3-empirical-findings-2026-07-04.md` so you do NOT rediscover known negatives.\n   - Attack the confluence-flat finding: redefine confluence as a MANUFACTURED feature (e.g. count of DISTINCT trigger_pattern TYPES firing, or distinct indicator-stream coverage from JSONB) and bucket-test WR on 1h/4h synthetic forward labels. Does engineered confluence discriminate where native score did not?\n   - Attack the 24h-random finding: recompute synthetic forward labels at 1h and 4h horizons per direction\u00d7timeframe\u00d7regime; test the proven SHORT combo (BOLLINGER_SQUEEZE_DOWN + DMI_BEARISH + MULTI_VWAP_CONFLUENCE) and the LONG 4h LOW/MEDIUM-vol anomaly at shorter horizons.\n   - Apply freshness gate (1m=1,5m=5,15m=15,1h=60,4h=240 min): report all-joined AND fresh-only WR/avg_fwd/stale_share.\n3. EXTERNAL discovery: use `web_search` (X/GitHub/TradingView) freely. For X Articles / login-walled long-form posts use Grok CLI headless per the grok-cli skill: AUTH PRE-FLIGHT (`timeout 30 grok whoami` \u2014 if it fails, skip grok, note gap), then `timeout --kill-after=60 1800 grok --single \"...\" --output-format plain --no-memory --no-plan` redirected to a file, then clean up (`pgrep -af \"grok --single\"`). Score every external find on the 4 criteria (Methodology, Cost Modeling, Sycode-Feasibility, Edge Uniqueness) and tag Validated/Template/Reference.\n4. PERSIST: write dated note `/home/frank/obsidian/quant-team/research/confluence-edge-research-YYYY-MM-DD.md` (YAML frontmatter + 2 wikilinks, link to concepts/net-of-fee-leak-free-evaluation-bar). Update `/home/frank/obsidian/quant-team/index.md` and `log.md`. Link to existing strategy pool to dedup.\n5. ROUTE: if a candidate passes all gates, create a PAPER-ONLY kanban card on `sycode-trading` (via `hermes kanban create`) linking the Obsidian note; title prefix 'RESEARCH:' ; never imply live readiness.\n6. REPORT tersely: internal experiment results (n/WR/avg_fwd/stale_share), top external finds with scores, persistence paths, explicit no-live boundary.\n\nIf DB or grok is unreachable, document the gap and proceed with the available half; do not stop.",
+      "prompt": "You are the standing Sycode confluence/edge research + PRO-QUANT OPTIMIZATION loop (Jarvis fleet). Two jobs every run:\n\nJOB A \u2014 TRADITIONAL EDGE DISCOVERY: (A) discover external strategies from X/GitHub/TradingView and (B) MANIPULATE/RE-ENGINEER Sycode's internal signal_journeys data (feature transforms, alternative labels, horizon changes, redefined confluence) to break the known Wave 3 wall: native confluence tech scores are FLAT and 24h binary labels are random (AUC ~0.50). Research only \u2014 never live trade.\n\nJOB B \u2014 PRO-QUANT OPTIMIZATION & PATTERN EMERGENCE (Frank mandate 2026-08-05): act like a professional quantitative strategist, not a passive test-runner. For every candidate edge and for the existing data itself:\n1. SWEET-SPOT DISCOVERY: bucket each indicator/score (RSI, Williams %R, MACD, ADX, volume z-score, confluence, mean-reversion, momentum, volatility regime) into value ranges and find the ACTUAL optimal thresholds \u2014 not textbook values. Report WR and avg PnL per bucket with minimum sample (n>=10).\n2. MULTI-FACTOR ALIGNMENT MINING: search for OBSCURE pattern combos where regime \u00d7 volume \u00d7 other signals align to create the best win rates. Intersect 2-3 conditions: e.g. regime (QUIET/NORMAL/VOLATILE/EXTREME) \u00d7 volume_z (2,3,5) \u00d7 RSI/WilliamsR bucket \u00d7 session \u00d7 direction \u00d7 timeframe. Find the small alignments that concentrate win rate (e.g. \"SHORT 1h LOW-vol + volume_z>2 + RSI<40 \u2192 65% WR\"). Report n, WR, avg_fwd, stale_share per combo \u2014 never report a combo with n<30 as a real edge.\n3. PARAMETER TUNING: for each promising family, run a pre-committed grid over the key knobs (lookback windows, entry/exit thresholds, hold horizons, exit bars) to find the best config \u2014 but ALWAYS with multiple-testing awareness: log every grid in MULTIPLE-TESTING-LEDGER.md, prefer stability bands over the single grid winner, and treat \"best of grid\" as an upper bound, not a production parameter.\n4. REGIME \u00d7 VOLUME \u00d7 CONFLUENCE LINKAGE: explicitly test whether linking confluence/manufactured-confluence with volume-regime alignments discriminates where each alone was flat. This is the highest-priority pattern-emergence question from Frank.\n5. TWEAK-AND-COMPARE: when an external strategy is found (e.g. Williams %R), don't just test the literal rules \u2014 ALSO test the optimized variants (threshold shifts, lookback changes, added filters) and report which tweak improves net-of-cost win rate. This is the pro-quant \"make it better\" step.\n\nHARD BOUNDARIES (do not violate):\n- Paper-only. No live orders, no trade_intents, no strategy promotion/registration, no DB writes/backfills/migrations, no deploy/restart, no credentials/provider/model routing, no spend.\n- Every candidate edge MUST pass: synthetic forward labels on the FULL signal population (never executed-trade subset), freshness gate, stale_share invariant, chronological OOS split, realistic fee/slippage (16bps RT baseline), multiple-testing awareness. Fail-closed if stale_share > 5% or fresh n < 300 or fresh WR < 53%.\n- Never fabricate data. Manipulation = legitimate feature engineering / label design / parameter tuning, NOT inventing values.\n- MULTIPLE-TESTING-LEDGER.md is mandatory: every grid/param sweep logged before results are claimed.\n\nPROCEDURE each run:\n1. LOAD skills (in order): quant-research-operations, external-strategy-discovery, multivariate-pattern-mining, trading-data-analysis, grok-cli, obsidian-knowledge-management.\n2. INTERNAL mining (read-only, duckdb via `source ~/.hermes/venvs/trading-ml/bin/activate`, POSTGRES_PASSWORD from env or docker exec fallback; use read-only transaction):\n   - Re-read `/home/frank/.hermes/profiles/jarvis/skills/finance/quant-research-operations/references/wave3-empirical-findings-2026-07-04.md` so you do NOT rediscover known negatives.\n   - Attack the confluence-flat finding: redefine confluence as a MANUFACTURED feature (e.g. count of DISTINCT trigger_pattern TYPES firing, or distinct indicator-stream coverage from JSONB) and bucket-test WR on 1h/4h synthetic forward labels. Does engineered confluence discriminate where native score did not?\n   - Attack the 24h-random finding: recompute synthetic forward labels at 1h and 4h horizons per direction\u00d7timeframe\u00d7regime; test the proven SHORT combo (BOLLINGER_SQUEEZE_DOWN + DMI_BEARISH + MULTI_VWAP_CONFLUENCE) and the LONG 4h LOW/MEDIUM-vol anomaly at shorter horizons.\n   - JOB B: run sweet-spot bucketing + multi-factor alignment mining + parameter grids per the mandate above. Log all grids to MULTIPLE-TESTING-LEDGER.md.\n   - Apply freshness gate (1m=1,5m=5,15m=15,1h=60,4h=240 min): report all-joined AND fresh-only WR/avg_fwd/stale_share.\n3. EXTERNAL discovery: use `web_search` (X/GitHub/TradingView) freely. For X Articles / login-walled long-form posts use Grok CLI headless per the grok-cli skill: AUTH PRE-FLIGHT (`timeout 30 grok whoami` \u2014 if it fails, skip grok, note gap), then `timeout --kill-after=60 1800 grok --single \"...\" --output-format plain --no-memory --no-plan` redirected to a file, then clean up (`pgrep -af \"grok --single\"`). Score every external find on the 4 criteria (Methodology, Cost Modeling, Sycode-Feasibility, Edge Uniqueness) and tag Validated/Template/Reference. For each external find, ALSO run the tweak-and-compare optimization pass (JOB B step 5) before deciding.\n4. PERSIST: write dated note `/home/frank/obsidian/quant-team/research/confluence-edge-research-YYYY-MM-DD.md` (YAML frontmatter + 2 wikilinks, link to concepts/net-of-fee-leak-free-evaluation-bar). Update `/home/frank/obsidian/quant-team/index.md` and `log.md`. Link to existing strategy pool to dedup. Add any new sweet-spot/alignment findings to a dedicated `sweet-spot-alignment-registry` section.\n5. ROUTE: if a candidate passes all gates, create a PAPER-ONLY kanban card on `sycode-trading` (via `hermes kanban create`) linking the Obsidian note; title prefix 'RESEARCH:' ; never imply live readiness.\n6. REPORT tersely: internal experiment results (n/WR/avg_fwd/stale_share), top external finds with scores, NEW sweet-spot/alignment findings (the obscure combos with best WR), persistence paths, explicit no-live boundary.\n\nIf DB or grok is unreachable, document the gap and proceed with the available half; do not stop.",
       "skills": [
         "quant-research-operations",
         "external-strategy-discovery",
@@ -5097,16 +5106,10 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-04T07:24:09.388425+01:00",
-      "next_run_at": null,
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
-      "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "fire_claim": null
+      "workdir": null
     },
     {
       "id": "b94a952f8849",
@@ -6371,6 +6374,245 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-03T10:30:30.570814+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "9f1dce747a67",
+      "name": "lane-orchestration-batch-cycler",
+      "prompt": "Run a dual-grok-claude lane orchestration on the highest-priority unattended kanban tasks.\n\nMANDATORY GOVERNANCE GATE (Frank mandate 2026-08-05) \u2014 applies to EVERY card touching the Sycode trading system:\n1. Research is research. Lane findings are evidence candidates, NOT authorizations. File them as type: research/task-evidence with status: review or active.\n2. Before ANY implementation card is created, PR merged, fix routed, or trading-system change dispatched: a DECISION must exist in the sycode obsidian vault (type: decision, status: review until approved, confidence set) with the finding linked, prior decisions/contradictions checked.\n3. Check the vault FIRST for prior decisions on the same card/subject \u2014 search /home/frank/obsidian/sycode-trading/ (decisions/, Reviews/, governance/). If a contradiction exists, mark the finding contested and DO NOT proceed.\n4. Never route a trading-system change on a bare lane finding. Deep verification = cross-check finding against vault decisions + live state, record decision with confidence, get it approved, THEN route implementation.\n5. A3 gates (live trading, credentials, new spend, prod deploys, irreversible data, guardrail weakening) stop and surface to Frank \u2014 no auto-route.\n\nExecution pattern per batch:\n1. Read queue from jarvis-os and sycode-trading boards for status IN ('todo','ready') assigned to jarvis, jarvis-os-pm, devops, trading-devops, trading-data-oracle, trading-strategy-dev, db-architect; exclude titles containing FRANK; order by priority desc.\n2. Select up to 3 cards not already worked in the last 5 batches.\n3. Post BUS INTENT via /tmp/run/session-bus-event-bridge.py --author jarvis-cli.\n4. For each card, launch grok research + claude code-scan lanes in parallel. PITFALL (sycode repo): claude -p read-only lanes may die on permission-deny noise + max-turns. If output is \"Permission deny rule\" lines + \"Error: Reached max turns\", treat it as a DEAD LANE \u2014 grok carries.\n5. Wait for lanes to complete, read outputs, verify non-empty.\n6. Write vault evidence note (sycode vault for sycode cards, fleet vault for control-plane). Always include frontmatter with title/type/status/created/updated/confidence/tags/sources/project/kanban_board/kanban_task/owners.\n7. For Sycode trading cards: BEFORE creating any implementation/routing card, write the vault DECISION record (type: decision, status: review, confidence set) per the gate above, and comment on the source card that the decision is recorded but NOT approved.\n8. Post BUS DONE, comment each card with synthesis, create implementation child cards ONLY where the decision record exists and is approved (or is explicitly Frank-gated).\n\nKeep final response concise: what was routed, filed, needs approval, next tick plans.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T12:35:19.611388+01:00",
+      "deliver": "origin",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "417712c894e8",
+      "name": "arxiv-quant-finance-watch",
+      "prompt": "Run the ArXiv RSS watcher and summarize any new papers. \n\n1. Run the watcher script:\n   python3 $HERMES_HOME/skills/devops/watchers/scripts/watch_rss.py --name arxiv-qfin --url https://rss.arxiv.org/rss/q-fin 2>&1\n\n2. If output is non-empty: summarize the headlines in brief bullets (paper title, authors, short description of contribution) and deliver to chat.\n\n3. If output is empty (no new items): stay silent (empty stdout = no delivery per watcher contract).\n\nNote: First run establishes a baseline (silent by design). To see an initial digest, you may delete $HERMES_HOME/watcher-state/arxiv-qfin.json before running.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T13:47:20.516320+01:00",
+      "deliver": "origin",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "da3a2825bd3e",
+      "name": "sycode-github-watch",
+      "prompt": "Run the GitHub issues/pulls watcher for the Sycode trading repo and report any new items.\n\n1. Run the watcher script (set GITHUB_TOKEN in .env to avoid rate limiting):\n   python3 $HERMES_HOME/skills/devops/watchers/scripts/watch_github.py \\\n     --name sycode-issues \\\n     --repo sycamoregroupltd/sycode-trading \\\n     --scope issues,pulls 2>&1\n\n2. If output is non-empty: summarize each item briefly (issue/PR number, title, assignee if available) and deliver to chat.\n\n3. If output is empty or shows HTTP 404 (repo not public/accessible): report \"sycode-trading repo not publicly accessible \u2014 watcher state established but no items to report\" and stay silent on subsequent runs until access is granted.\n\nNote: This skill's watchers print nothing on empty delta (correct behavior \u2014 no spam). First run establishes baseline.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T13:47:48.426223+01:00",
+      "deliver": "origin",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "422117b17430",
+      "name": "crypto-market-sanity",
+      "prompt": "Run a quick crypto market sanity check for research context.\n\n1. Fetch current BTC, ETH, SOL prices via CoinGecko free tier:\n   curl -s \"https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24h_vol=true\"\n\n2. Also fetch Base gas price:\n   curl -s -X POST https://mainnet.base.org \\\n     -H \"Content-Type: application/json\" \\\n     -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_gasPrice\",\"id\":1}'\n\n3. Parse and format results as a single-line market snapshot:\n   \"BTC=$XXX(+XX%) | ETH=$XXX(+XX%) | SOL=$XX.XX(+XX%) | Base gas=X.XX gwei\"\n   \n4. Include timestamp: \"as of [UTC time]\"\n\nThis provides a quick reality check on market conditions during quant research sessions. Rate limit ~10-30 req/min from CoinGecko free tier.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 240,
+        "display": "every 240m"
+      },
+      "schedule_display": "every 240m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T13:47:48.466622+01:00",
+      "deliver": "origin",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "241f3f5a8005",
+      "name": "hip3-xyz-funding-observe",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "hip3_xyz_funding_observe.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "5 * * * *",
+        "display": "5 * * * *"
+      },
+      "schedule_display": "5 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T14:21:13.390844+01:00",
+      "deliver": "discord",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "5e020636007c",
+      "name": "quant-pattern-mining-loop",
+      "prompt": "You are JARVIS running the quant-pattern-mining skill ON LOOP (read-only research).\n\nDo NOT place live trades. Do NOT enable LIVE_TRADING. Do NOT mutate strategies/DB writes except Obsidian research notes.\n\n1) Load skill quant-pattern-mining via skill_view and follow it.\n2) Run the mining loop using /tmp/quant_pattern_mine_loop.py if present and working; otherwise recreate an equivalent export\u2192synthetic label\u2192combo\u2192WIN/LOSS\u2192OOS gate pipeline via terminal.\n   - Full-signal labels only (not executed-only).\n   - Fee 14bps net. Clip \u00b110%. Exclude AXLUSDT.\n   - Majors 15m/1h/4h. Prefer clean epoch / recent post-2026-07-05 data.\n3) Always re-check prior provisional watch: SHORT|15m|NORMAL|US \u2014 run leave-one-day-out especially 2026-07-27; report if still provisional or killed.\n4) Apply HARD edge gates; default verdict NO_CURRENT_ENABLED_PROFITABLE_STRATEGY_PROVEN unless all gates pass including calendar stability (frac_pos_days, LODO).\n5) Persist a dated note under /home/frank/obsidian/sycode-trading/research/ with YAML frontmatter (type research, status active, confidence, tags, sources). Append one line to log.md. Do not dump into index.md beyond stable router if needed.\n6) Final response to delivery: 8-15 lines \u2014 verdict, top 3 pockets with n/WR/net/OOS, any provisional watch changes, artifact paths. No fluff.\n",
+      "skills": [
+        "quant-pattern-mining",
+        "obsidian-knowledge-management"
+      ],
+      "skill": "quant-pattern-mining",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T18:17:06.694831+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "a6207476b1f0",
+      "name": "pattern-to-arena-loop",
+      "prompt": "You run the standing Pattern\u2192Filter\u2192Fine-tune\u2192Arena loop for sycode-trading (paper-only).\n\nProject: sycode-trading (registry knowledge_vault=sycode, board=sycode-trading, MOC=Sycode-Trading-Home). Follow obsidian-knowledge-management + SCHEMA.md for any vault writes.\n\nSTEPS (do them, do not only describe):\n1. Activate trading-ml venv and run:\n   `source /home/frank/.hermes/venvs/trading-ml/bin/activate && MINE_DAYS=30 python3 /home/frank/.hermes/profiles/jarvis/scripts/pattern_to_arena_loop.py`\n2. Read `/home/frank/sycode-mining-outputs/pattern-to-arena/$(date -u +%F)/results.json` and `arena_prep_manifest.json`.\n3. For each NEW arena_ready candidate not already packeted in vault `strategies/candidate-packets/`:\n   - Write a candidate packet note (canonical SCHEMA frontmatter; type=research; paper_only).\n   - Create kanban card on board sycode-trading:\n     `env -u HERMES_DELEGATED_CHILD_CONTEXT hermes kanban --board sycode-trading create \"ARENA PAPER: <slug>\" --assignee sycode-trading-pm --body \"<rules + OOS metrics + artifact paths + paper-only safety>\"`\n4. Append a short cycle research note under research/YYYY-MM-DD-pattern-to-arena-cycle-N.md (or update same-day note). Update index.md routing line only if new stable router; append log.md one line.\n5. Dispatch ready arena paper cards: `env -u HERMES_DELEGATED_CHILD_CONTEXT hermes kanban --board sycode-trading dispatch --max 3` if any new ready cards.\n6. Report terse: n_signals, n_arena_ready, new card IDs, artifact paths.\n\nHARD BOUNDARIES:\n- Paper-only. No live trading, orders, trade_intents, strategy_pool mutation, deploy/restart, credentials, or spend.\n- Full-signal synthetic labels only (not executed-only). Next-open entry. 16bps RT. Fail closed on clip-ceiling medians and unstable OOS (train/test sign flip).\n- Promotion still requires n>=300 fresh + risk review + Frank for live \u2014 never claim sleeve/live ready from this loop alone.\n- If script fails, report error + last log lines; do not invent metrics.\n",
+      "skills": [
+        "quant-research-operations",
+        "trading-data-analysis",
+        "ml-pattern-discovery",
+        "obsidian-knowledge-management"
+      ],
+      "skill": "quant-research-operations",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T19:00:58.479125+01:00",
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,

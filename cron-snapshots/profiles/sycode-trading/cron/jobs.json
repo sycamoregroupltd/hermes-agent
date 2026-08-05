@@ -1,0 +1,513 @@
+{
+  "jobs": [
+    {
+      "id": "35606b3d2436",
+      "name": "tournament-daily-evaluation",
+      "prompt": "Daily tournament evaluation cron session for Sycode Trading (PAPER-ONLY; not a kanban worker): do not call kanban_show/kanban_complete/kanban_block unless an explicit HERMES_KANBAN_TASK or task id is provided in this prompt.\n\nHard safety boundary: paper-mode only. Do not enable live trading, create/modify trade_intents, deploy/restart production services, edit credentials/secrets/provider auth, alter billing/spend, or run irreversible DB/data operations. The tournament proposes; the canonical gates dispose.\n\nRequired context and source-of-truth checks:\n1. Load and follow the obsidian-knowledge-management skill before any durable knowledge write. Resolve Sycode Trading through /home/frank/obsidian-fleet-vault/Projects/Portfolio/registry.yaml, then read the registered MOC plus the owning vault AGENTS.md and SCHEMA.md. Search compiled knowledge before claiming current state. Inspect the registered tracker and runtime.\n2. Confirm /home/frank/sycode-wt/candle-full-universe/docs/strategy-tournament/PAPER_ARENA_HARNESS_DESIGN.md exists and read its promotion/kill gates. SCORING-SOURCE GUARD (t_392e518a): use strategy_outcomes joined via strategies.strategy_pool_id, never the dead trade_outcomes table. If about to query trade_outcomes, STOP and fail visibly.\n3. Reference strategy-profile-pack.json if present in the workdir.\n4. Probe http://localhost:3001/ready and read .proof. Retry a probe-shape failure once. Use read-only DB/data access and fail visibly when unavailable.\n\nEvaluation contract:\n1. Query strategy outcomes and paper trading results for every active tournament strategy.\n2. Compute net-of-fee, signal-time-only, leak-free metrics: WR, Sharpe, PF, capital-based MDD, sample size, temporal/OOS stability, and confidence/p-value where available.\n3. Apply PAPER_ARENA_HARNESS_DESIGN.md gates, including Sharpe>=1.0, WR>50% with n>=30, PF>1.5, MDD<15%, p<0.05 for promotion; and canonical documented kill conditions. Treat small clean samples as suspect.\n\nMANDATORY CORRELATION-SPACE AND WIRING-EVIDENCE GATE (kanban:t_c6ead070; correction from kanban:t_72d6b78d and kanban:t_9f029bd7):\n1. Before upgrading any stale-arm HOLD to ELIMINATE/KILL, classify the evidence space. Arena/tournament tables strategy_arena_decisions -> strategy_decision_logs -> strategy_outcomes are rating/counterfactual evidence. ArenaStreamDispatcher deliberately receives both validator-APPROVED and validator-REJECTED signals when the unfiltered Arena is enabled; rejected Arena rows are not expected to create TradeIntent rows. The actual approved paper execution path is SignalHandler -> StrategyEngine -> trade_intents -> managed_positions. signal_intent_decisions may provide live-path terminal telemetry when rows exist. There is no public.signal_intents table in the current schema.\n2. For every stale-arm candidate, resolve each recent Arena correlation against signal_journeys/validation state before interpreting missing intents. Count APPROVED versus REJECTED source signals. A validator-REJECTED Arena winner is counterfactual and has no winner->intent obligation.\n3. NEVER join Arena/tournament correlation IDs to trade_intents correlation IDs and infer a break merely from non-overlap. Arena IDs and approved execution lineage are separate evidence spaces; cross-space non-overlap is expected and is not a wiring defect.\n4. Query by strategy UUID: recent strategy_decision_logs would_trade rows; validator-APPROVED and validator-REJECTED source counts; simulated strategy_outcomes; executed strategy_outcomes; non-null actual_pnl rows; persisted trade_intents; managed_positions; and signal_intent_decisions. Report exact counts plus evidence_class for every stale-arm decision.\n5. Allowed evidence classes: REALIZED_OUTCOME_EVIDENCE; LIVE_PATH_PRESENT_UNSCORABLE; SIMULATED_ONLY_UNSCORABLE; ARENA_ONLY_UNSCORABLE; LIVE_WIRING_GAP; NO_CONTRADICTORY_EVIDENCE.\n6. If executed_outcomes=0 or non-null actual_pnl rows=0 while current evidence is simulated/counterfactual, verdict is UNSCORABLE HOLD. Historical trade_intents/managed_positions prove prior approved paper-path activity, not that the current tournament sample is realized. Never print KILL from a 0/n realized sample.\n7. If activity is only Arena simulation and live-path trade_intents/managed_positions are zero, classify SIMULATED_ONLY_UNSCORABLE and HOLD. Do not describe this as a wiring defect or decision-to-intent break.\n8. LIVE_WIRING_GAP is allowed only when validator-APPROVED live-path evidence or signal_intent_decisions establishes an intent-creation obligation and no durable trade_intent or first-class terminal pipeline audit exists. Arena would_trade rows alone can never justify this label.\n9. Pool 35 / Macro Regime Cycle regression anchor (strategy f951f84e-9fad-47b8-8394-ad8d557ea2cb): verified on 2026-07-19: 8 Arena correlations, all 8 validator-REJECTED; 2 historical paper trade_intents; 1 managed_position; 0 Arena-to-intent overlap; 3 simulated outcomes; 0 executed outcomes; 0 non-null actual_pnl. Correct classification is LIVE_PATH_PRESENT_UNSCORABLE; HOLD. The 0/8 join is expected because rejected unfiltered-Arena inputs do not create intents, and the eight rows are additionally contaminated by a separate fail-open filter-contract defect. Link [[Reviews/2026-07-19-pool35-macro-regime-cycle-false-kill-hold-t_72d6b78d]], [[Reviews/2026-07-19-pool35-filter-contract-and-arena-lineage-t_9f029bd7]], and kanban:t_c6ead070 when relevant.\n10. Every proposed ELIMINATE must include evidence_class and exact counts/queries. Any UNSCORABLE class forces HOLD and prohibits an eliminate card.\n\nDurable output contract:\n1. Write /home/frank/obsidian/quant-team/strategy-performance/tournament/YYYY-MM-DD.md using local date and existing path casing.\n2. Follow SCHEMA.md: required title, type, status, created, updated, confidence, tags, sources. Use type: task-evidence, status: review, confidence: high|medium|low|unknown, source_job_id: 35606b3d2436, safety: paper-only. Never use evidence or eval-evidence as confidence.\n3. Include Summary, Data Sources, Metric Method, Correlation-Space / Wiring Evidence, Candidate Scores, Promote/Eliminate Recommendations, Kanban Routing, Safety Notes, Raw/Source Provenance.\n4. Update index.md and log.md with a link if absent; run the vault validator and validate modified links/frontmatter.\n\nDecision routing contract \u2014 zero unrouted decisions:\n1. For each accepted promote/eliminate recommendation, create/reuse the canonical sycode-trading PM lane assigned sycode-trading-pm using stable key tournament-daily-pm. Put strategy UUID/report date/current evidence in body/comment; do not create date-suffixed clones.\n2. Create/reuse canonical risk lane assigned trading-risk-reviewer using stable key tournament-daily-risk and link to PM lane where possible. Promotions require promotionQuality; eliminations require independent false-kill/overfit/sampling review. This cron never promotes/retires directly.\n3. List all created/reused IDs/keys and visible failures. ROUTING_FAILED must name exact strategy/decision/error.\n4. Simulated-only or otherwise unscorable HOLD is not an eliminate recommendation: create no eliminate/retirement card. Record HOLD and only reuse/comment the PM lane when genuine action exists.\n\nDelivery and final response:\n1. After report validation, send via the already-running Jarvis bot-token REST command (no second gateway websocket): env HERMES_HOME=/home/frank/.hermes/profiles/jarvis HERMES_PROFILE=jarvis /home/frank/.local/bin/hermes send -t discord:#quant-reports \"Tournament report: MEDIA:<report_path>\". MEDIA is required for report size. Nonzero exit is DELIVERY_FAILED with stdout/stderr. Scheduler delivery remains local intentionally.\n2. Return report path, Discord target, strategies scored, promote/eliminate counts, PM/risk cards created/reused, harness doc check, correlation-space gate status, and failures. Say zero unrouted decisions when none were recommended. Include discord_rest_send=ok only after exit 0.\n\nEvidence provenance: source correction kanban:t_c6ead070; risk/PM corrections kanban:t_72d6b78d and kanban:t_9f029bd7. Repository source changes require independent review/landing before becoming canonical.",
+      "skills": [
+        "obsidian-knowledge-management"
+      ],
+      "skill": "obsidian-knowledge-management",
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * *",
+        "display": "0 9 * * *"
+      },
+      "schedule_display": "0 9 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-06-25T14:08:40.869002+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/sycode-wt/candle-full-universe"
+    },
+    {
+      "id": "493f2d7f179b",
+      "name": "north-star-governor-sweep",
+      "prompt": "Recurring Sycode-Trading north-star governor sweep (daily 07:30). You are running as the sycode-trading-pm profile from cron, not as a kanban worker. Do not call kanban_complete or kanban_block unless HERMES_KANBAN_TASK is explicitly set for this run. Use the live Sycode-Trading board and vault as evidence; do not rely on stale summaries.\n\nHard safety boundary: PAPER-ONLY governance. Do not perform live trading, create/modify trade_intents, deploy/restart production services, edit credentials/secrets/provider auth, alter billing/spend, or run irreversible DB/data operations. If you find a critical-list gate, document the exact gate and owner; do not bypass it.\n\nYou are provided with the output of the data gatherer script injected as context, containing five critical north-star reports:\n(1) Roadmap Ledger: /home/frank/obsidian/sycode-trading/roadmaps/SYCODE-NORTH-STAR-ROADMAP-v2.md\n(2) Latest Daily Feature Density Report (analytics/feature-density/)\n(3) Latest Daily Clean Cohort Accrual Report (analytics/clean-cohort-accrual/)\n(4) Latest Daily Surface Freshness Alerts (analytics/surface-freshness/)\n(5) Lineage Join Rate SQL Result (7-day rolling join rate)\n\nYour audit and posture assessment must explicitly consume and cite all five of these sources.\n\nAudit contract, derived from t_33079551 and recurring install task t_d8eef6d7:\n1. Read /home/frank/obsidian/quant-team/Sycode-Trading-Home.md and identify all five plan-of-record tracks: A Measurement truth & safety, B One reproducible code+deploy line, C Data-signal proof / go-forward engine, D Agent substrate, E Knowledge knit.\n2. Query the live Sycode-Trading kanban board at /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db and inspect relevant active/blocked/done task rows/comments/events for each track. You may use read-only sqlite queries or hermes kanban CLI. Verify every blocked card has an exact gate and owner.\n3. Audit alignment of active tasks against the phases/gates in (1) SYCODE-NORTH-STAR-ROADMAP-v2.md.\n4. Review (2) feature density and (3) clean-cohort accrual rates to check if the outcome factory is running healthy or stalled. Cite the number of clean outcomes, final outcomes, and R-multiple labels.\n5. Review (4) surface-freshness alerts for any gaps or SLO breaches.\n6. Check (5) the rolling lineage join rate result. If the full join rate is below the 99% acceptance gate for new closes, report it as a blocker.\n7. Score every track on two axes, each 0-100: throughput-alignment and measurement-integrity. Also compute an overall posture such as ON_TRACK_BUT_NOT_READY, DRIFTING, or OFF_TRACK. Preserve the honest state that \"no winner yet\" is acceptable when evidence says so.\n8. Route follow-ups for unowned findings: create concrete sycode-trading kanban cards assigned to the correct specialist profile, with explicit safety boundaries and parent/context references. Do not create duplicate cards; use live board/search evidence first.\n9. Update the \"Current truth\" section of /home/frank/obsidian/quant-team/Sycode-Trading-Home.md only if a gate/status materially changed. Keep the note concise and include task IDs/source evidence.\n10. Persist a dated governance note under /home/frank/obsidian/quant-team/governance/ named like YYYY-MM-DD-north-star-governor-sweep.md. The note must explicitly cite and integrate findings from all five new north-star reports (including the latest dates and numeric values), and must include: source paths, live board counts, per-track dual-axis scores, blocked-card gate/owner findings, follow-up card IDs (or \"none\"), whether Sycode-Trading-Home changed, paper-only boundary, and related task IDs t_33079551 and t_d8eef6d7.\n11. Run ad-hoc verification after any vault edit: use a fresh /tmp/hermes-verify-* Python script to assert the governance note exists and contains t_33079551, t_d8eef6d7, the five tracks, both score axes, paper-only boundary, references to all five reports, and any created follow-up IDs; if Sycode-Trading-Home was edited, assert the changed markers there too. Clean up the verifier and report that it was ad-hoc verification only.\n\nReturn a concise PM report: overall posture, five track scores, blocked gates needing owners, follow-up card IDs, governance note path, Sycode-Trading-Home changed/not changed, verification result, and explicit call-out/citation of the five new north-star sources.",
+      "skills": [],
+      "skill": null,
+      "model": "tencent/hy3:free",
+      "provider": "nous",
+      "provider_snapshot": "openai-codex",
+      "model_snapshot": "gpt-5.5",
+      "base_url": null,
+      "script": "north_star_governor_data_gatherer.py",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 7 * * *",
+        "display": "30 7 * * *"
+      },
+      "schedule_display": "30 7 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-07-11T08:32:15.626536+01:00",
+      "paused_reason": null,
+      "created_at": "2026-07-03T12:21:56.657458+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank"
+    },
+    {
+      "id": "5eea5079ff74",
+      "name": "sycode-trading-board-triage",
+      "prompt": "Hourly Sycode-Trading board triage cron session. You are running as the sycode-trading-pm profile from cron, not as a kanban worker; do not call kanban_complete or kanban_block unless HERMES_KANBAN_TASK is explicitly set for this run.\n\nCONTEXT-BUDGET CONTRACT (t_afdeceb5 repair): do not dump/read the full blocked board, full comments for many cards, or full skill/reference files unless a durable write is actually needed. First get compact board counts and candidate IDs with read-only SQLite or concise kanban CLI. Inspect at most 8 candidate cards per run and only enough fields/comments/runs to decide. Prefer compact terminal/SQLite summaries over large kanban_show payloads. If more work remains, stop with a partial ACTION/LEFT report rather than growing context.\n\nPurpose: prevent board-local freezes between daily north-star sweeps by making PM-judgment triage decisions on the live Sycode-Trading kanban board. This job was installed by jarvis-os kanban task t_369f9abe after sycode-trading-pm's gateway went live in t_77bb4837.\n\nSafety boundary: PAPER-ONLY governance. Do not perform live trading, create/modify trade_intents, deploy or restart production services, edit/copy/rotate credentials or provider auth, alter billing/spend, or run irreversible DB/data operations. Escalate those critical-list/A3-shaped items instead of acting. Before treating something as needing Frank, check /home/frank/uaa-rules/delegated-authority.md and /home/frank/uaa-rules/approvals-registry.md.\n\nRequired scope each run:\n1. Read the live Sycode-Trading board at /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db plus relevant task comments/events/runs before acting; do not rely on stale summaries.\n2. Scan blocked and review-required cards for unactioned REVIEW_VERDICT / guardian / risk-review handoffs. When the evidence is approval and the action is within PM delegated paper-only authority, record a `delegated:` comment with exact verdict task/comment evidence and unblock/promote the work. When verdict evidence says CHANGES_REQUESTED or gates failed, leave blocked and route a concrete rework card/comment rather than approving.\n3. Interplay with deterministic verdict-router companion card t_2afc2c67: if that router has landed and is active, do not duplicate deterministic verdict acting here; drop routine verdict-unblock duty and keep only judgment triage, deadlock diagnosis, dependency hygiene, and A3 escalation. Until it lands, this hourly job may act on clearly evidenced verdicts as a PM backstop.\n4. Verify there are no dependency cycles in the board graph. If a cycle is found, document the exact edge set and route/resolve only if the safe correction is obvious and reversible; otherwise escalate with a blocked/card comment.\n5. Promote dependency-released todo work when all parents are done and the task is otherwise ready; prefer the Hermes kanban CLI/tooling over direct SQLite writes for mutations.\n6. Escalate anything A3-shaped / Frank-critical (money, live trading, credentials/secrets, production deploys, irreversible data ops, new spend) to the NEEDS-FRANK surface (STATUS.md and/or Sycode-Trading-Home.md) and leave the card blocked; do not act on it.\n7. Persist significant governance/triage decisions to /home/frank/obsidian/quant-team/ with task IDs and evidence links. Keep noise low: if no action is needed, output exactly [SILENT].\n\nOutput contract: one line per action taken and one line per item intentionally left blocked/escalated. If no blocked/review/dependency work needed action and no cycle was found, output exactly [SILENT].",
+      "skills": [
+        "obsidian-knowledge-management"
+      ],
+      "skill": "obsidian-knowledge-management",
+      "model": "gpt-5.5",
+      "provider": "openai-codex",
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 * * * *",
+        "display": "0 * * * *"
+      },
+      "schedule_display": "0 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-02T22:45:00+01:00",
+      "paused_reason": "retired as sycode-trading PM-triage authority in favour of the no-agent bridge board-pm-triage-sycode-trading (jarvis profile, id eaf7ec9955df) - t_2ee87d1b Option B adoption, reviewer F2 single-triage-authority. Live pause is executed via `hermes -p sycode-trading-pm cron pause 5eea5079ff74` at adoption time; this file records the intended end-state.",
+      "created_at": "2026-07-03T20:31:51.805288+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal",
+        "file",
+        "skills"
+      ],
+      "workdir": "/home/frank"
+    },
+    {
+      "id": "327083e3a0b0",
+      "name": "sycode-superseded-banner-detector",
+      "prompt": "Script-only weekly Sycode/quant vault detector for stale edge-claim notes needing SUPERSEDED banners. It scans /home/frank/obsidian/sycode-trading against the 2026-07-03 kill-list regex/cutoff and creates exactly one idempotency-keyed sycode-trading triage card when candidates exist. No LLM reasoning.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "superseded_banner_detector.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 8 * * 1",
+        "display": "0 8 * * 1"
+      },
+      "schedule_display": "0 8 * * 1",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T21:23:21.654671+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "350b9809913b",
+      "name": "msb-weekly-rebalance",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "msb-weekly-rebalance.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 9 * * 1",
+        "display": "30 9 * * 1"
+      },
+      "schedule_display": "30 9 * * 1",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T09:48:32.278962+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "4c8faff831c9",
+      "name": "sycode-calibration-report",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "calibration_cron.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T17:54:55.370973+01:00",
+      "paused_reason": "dead-pin: script not found: calibration_cron.sh",
+      "created_at": "2026-07-05T17:42:44.805827+01:00",
+      "deliver": "discord:#critical-alerts",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "6db455df07e6",
+      "name": "macro-regime-change-monitor",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "macro-regime-change-monitor.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 6 * * *",
+        "display": "0 6 * * *"
+      },
+      "schedule_display": "0 6 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T18:17:01.403083+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "66b39b558eb3",
+      "name": "track-a-short-1h-low-vol-neutral-watchlist",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "track-a-watchlist.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * 0",
+        "display": "0 9 * * 0"
+      },
+      "schedule_display": "0 9 * * 0",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-05T18:20:27.072617+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "84e3333b249e",
+      "name": "sync-pattern-win-rate-registry",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sync-pattern-win-rate-registry.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T17:54:55.463365+01:00",
+      "paused_reason": "dead-pin: script not found: sync-pattern-win-rate-registry.sh",
+      "created_at": "2026-07-06T10:38:31.731457+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "171790695c94",
+      "name": "sycode-edge-emergence-scan",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_edge_emergence_scan.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 10 * * 0",
+        "display": "0 10 * * 0"
+      },
+      "schedule_display": "0 10 * * 0",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-07T22:45:34.230778+01:00",
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "d543688456a3",
+      "name": "arena-insert-liveness-monitor",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "arena-insert-liveness-cron-runner.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T12:09:49.791276+01:00",
+      "paused_reason": "dead-pin: script not found: arena-insert-liveness-cron-runner.sh",
+      "created_at": "2026-07-11T13:40:47.293690+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal",
+        "file"
+      ],
+      "workdir": "/home/frank/sycode-trading"
+    },
+    {
+      "id": "3228011cb8a3",
+      "name": "sycode-clean-epoch-ledger",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_clean_epoch_ledger.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 6 * * *",
+        "display": "0 6 * * *"
+      },
+      "schedule_display": "0 6 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-11T14:19:58.389214+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank"
+    },
+    {
+      "id": "45e0b154b41c",
+      "name": "sycode-candle-per-symbol-freshness",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_candle_per_symbol_freshness.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T12:00:49.592096+01:00",
+      "paused_reason": "dead-pin: script not found: sycode_candle_per_symbol_freshness.py",
+      "created_at": "2026-07-14T10:26:05.602781+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "361710e3dc14",
+      "name": "Fusion MCE Weekly Monitor (t_b2abbb7b) [sycode-trading-pm]",
+      "prompt": "You are running the Fusion MCE Weekly Monitor (root monitor card kanban:t_b2abbb7b) for the Sycode-Trading paper-only Fusion Engine calibration.\n\nMANDATORY FIRST STEP: load the `obsidian-knowledge-management` skill and follow its write rules (canonical sycode vault, 8-property closed-enum envelope, no secret/credential writes).\n\nGOAL: weekly check of Tier-1 realized-exit sample `n` and sample-weighted MCE in the Fusion Calibration Report; log to Obsidian; at `n >= 300` author the explicit go/no-go and escalate a validated breach.\n\nSTEPS:\n1. Read `/home/frank/obsidian/sycode-trading/devops/latest-fusion-calibration-report.md`.\n   - Capture the report's `Generated:` timestamp. If it is older than 48h, still proceed but FLAG staleness in the log entry.\n   - Parse: Tier-1 realized-exit clean `n` (the authoritative value, e.g. from \"Tier-1 clean unique journeys (realized-exit, authoritative) | <n>\"), and `Sample-weighted MCE` (Tier-1 only, e.g. \"19.10pp\"). Also read `VALIDATED_EDGE_STATUS`.\n   - Do NOT use the MERGED `n` or MERGED win rate \u2014 those are synthetic Tier-2 context only (runbook \u00a72).\n2. Open the running log `/home/frank/obsidian/sycode-trading/devops/fusion-mce-weekly-monitor-log.md`. Read its `## Check log` section and find the most recent prior check's `n` and MCE.\n3. DECISION:\n   A) If `n < 300`: status = INVESTIGATE / INSUFFICIENT_SAMPLE.\n      - Append a one-line entry under `## Check log` dated today (YYYY-MM-DD), recording report-generated time, n, MCE, VALIDATED_EDGE_STATUS, and status.\n      - If (n changed by >0 vs last check) OR (MCE crossed 15pp direction) OR (this is the first check in >10 days), also write a dated detail note `devops/YYYY-MM-DD-t_b2abbb7b-fusion-mce-weekly-monitor-check-NN.md` (increment NN from the latest existing check note) following the schema of the existing check-01 note (type: task-evidence, status: active, confidence: high, tags include fusion-engine/calibration/monitoring/investigate/insufficient-sample/task-evidence/paper-only, sources include the live report + runbook + t_f9f36dd6 + t_cab6f5c1, project: sycode-trading, kanban_task: t_b2abbb7b, kanban_board: sycode-trading, alert_status: INVESTIGATE, validated_edge_status: INSUFFICIENT_SAMPLE, tier1_n, sample_weighted_mce_pp). If no material change, the compact log line suffices \u2014 do NOT spam detail notes.\n      - Do NOT recalibrate, do NOT change the 15pp threshold, do NOT create kanban cards.\n   B) If `n >= 300`: this is the go/no-go gate (task acceptance).\n      - Re-evaluate per runbook \u00a73/\u00a76. If MCE > 15pp \u2192 status BREACH (confident-sample). Write the go/no-go detail note AND create a kanban card: assignee `sycode-trading-pm`, board `sycode-trading`, title \"Fusion Tier-1 MCE BREACH validated at n>=300 (t_b2abbb7b)\", body linking the standing investigation `devops/2026-07-13-t_b0494b88-fusion-calibration-breach-incident` and `operations/runbooks/fusion-calibration-alert-runbook`, parents=[t_b2abbb7b]. Report the go/no-go verdict explicitly in the log.\n      - If MCE <= 15pp \u2192 status RESOLVED/VALIDATED; write the go/no-go note recording the all-clear and that no recalibration is required.\n4. Update the running log's frontmatter `updated:` to today and keep `validated_edge_floor_n: 300` and `mce_threshold_pp: 15.0`.\n5. Keep all writes read-only to the report/DB; never touch live trading, credentials, deploys, or payment.\n\nOUTPUT: a terse summary of this run (date, n, MCE, status, action taken). On the INVESTIGATE path this is routine \u2014 keep it quiet; the durable record is the Obsidian log.",
+      "skills": [
+        "obsidian-knowledge-management"
+      ],
+      "skill": "obsidian-knowledge-management",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 6 * * 1",
+        "display": "0 6 * * 1"
+      },
+      "schedule_display": "0 6 * * 1",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-17T02:59:15.241306+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "file",
+        "kanban"
+      ],
+      "workdir": null
+    },
+    {
+      "id": "acf44ef06042",
+      "name": "sycode-tournament-provider-failure-guard",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "tournament_provider_failure_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/10 * * * *",
+        "display": "*/10 * * * *"
+      },
+      "schedule_display": "*/10 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-05T12:00:49.698282+01:00",
+      "paused_reason": "dead-pin: script not found: tournament_provider_failure_guard.py",
+      "created_at": "2026-07-23T13:25:25.381080+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    }
+  ]
+}

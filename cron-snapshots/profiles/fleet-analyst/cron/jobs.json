@@ -1,0 +1,103 @@
+{
+  "jobs": [
+    {
+      "id": "3c46eebd2224",
+      "name": "t_671747f7-T6-monitoring",
+      "prompt": "You are fleet-analyst completing kanban task t_671747f7. Run this snapshot NOW:\n\npython3 << 'PYEOF'\nimport sqlite3, time, json, os\n\nDB = '/home/frank/.hermes/kanban/boards/sycode-trading/kanban.db'\nNOW = int(time.time())\nts = time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(NOW))\n\ncon = sqlite3.connect('file:' + DB + '?mode=ro', uri=True)\ncur = con.cursor()\n\ndef age_bucket(ca):\n    h = (NOW - ca) / 3600.0\n    if h <= 24:\n        return '0-24h'\n    if h <= 48:\n        return '24-48h'\n    if h <= 168:\n        return '48h-7d'\n    if h <= 336:\n        return '7d-14d'\n    return '14d+'\n\nrows = cur.execute(\"SELECT created_at FROM tasks WHERE status='triage'\").fetchall()\nbuckets = {'0-24h': 0, '24-48h': 0, '48h-7d': 0, '7d-14d': 0, '14d+': 0}\nfor (ca,) in rows:\n    buckets[age_bucket(ca)] += 1\n\nper_status = dict(cur.execute(\n    \"SELECT status, COUNT(*) FROM tasks GROUP BY status ORDER BY 2 DESC\"\n).fetchall())\n\nvis = cur.execute(\n    \"SELECT id,title,status,assignee FROM tasks WHERE title LIKE 'PM TRIAGE VISIBILITY:%' ORDER BY created_at DESC LIMIT 5\"\n).fetchall()\n\npm_6h = cur.execute(\n    \"SELECT COUNT(*) FROM task_comments WHERE author LIKE '%sycode-trading-pm%' AND created_at >= ?\",\n    (NOW - 6 * 3600,)\n).fetchone()[0]\n\narr_24 = cur.execute(\n    \"SELECT COUNT(*) FROM tasks WHERE created_at >= ? AND status IN ('triage','blocked','todo','ready','running','scheduled')\",\n    (NOW - 86400,)\n).fetchone()[0]\n\nprint(f\"| {ts} | triage={len(rows)} | {json.dumps(buckets)} | statuses={json.dumps(per_status)} | visible={len(vis)} | pm_6h={pm_6h} | arrivals_24h={arr_24} |\")\n\n# Append CSV data for later aggregation\nos.makedirs('/home/frank/.hermes/var/log/fleet-metrics/', exist_ok=True)\nwith open('/home/frank/.hermes/var/log/fleet-metrics/sycode-triage-monitor.csv', 'a') as f:\n    f.write(f\"{ts},{len(rows)},{buckets['0-24h']},{buckets['24-48h']},{buckets['48h-7d']},{buckets['7d-14d']},{buckets['14d+]},{json.dumps(per_status)},{len(vis)},{pm_6h},{arr_24}\\n\")\n\ncon.close()\nPYEOF",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-04T23:30:23.653965+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "69a494dedba9",
+      "name": "t_671747f7-T24-verdict",
+      "prompt": "You are fleet-analyst completing kanban task t_671747f7 (Monitor sycode-trading triage trend post-activation). This is the T24 FINAL VERDICT for acceptance criterion 2 of root task t_6c72e838.\n\n## Context\n- Root: board-pm-triage-sycode-trading stood up (acceptance 2 = triage trends DOWN within 24h of activation)\n- Activation: 2026-08-04T23:22:15+0100 (unix 1785882135)\n- Bridge job: 4eb0f88275b5 (enabled:true)\n- Legacy job: retired (5eea5079ff74 enabled:false/paused)\n- Measurement: triage stays at floor 0 OR end-of-window triage \u2264 start-of-window AND no arrival piling (no triage cards older than ~24h)\n- Baseline (T0): triage=0, per-status was todo=241, blocked=126, ready=69, running=28, scheduled=24, archived=3992, done=2299\n- Monitoring data file: /home/frank/.hermes/var/log/fleet-metrics/sycode-triage-monitor.csv (created by hourly snapshot jobs)\n- Durable note: /home/frank/obsidian-fleet-vault/Operations/board-pm-triage-sycode-trading-impl-t_2ee87d1b.md\n\n## Action\n1. Read the monitoring CSV if it exists\n2. Run a fresh snapshot of current triage counts\n3. Compare against baseline and all collected snapshots\n4. Determine: ACCEPTANCE_MET or NOT_MET (trend DOWN / stable at floor 0 vs piling up)\n5. Append final verdict section to the durable note using patch\n6. Create a kanban_comment on t_671747f7 with the verdict and summary\n7. Update durable note's frontmatter status to active/review accordingly",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-08-05T23:30:00+01:00",
+        "display": "once at 2026-08-05 23:30"
+      },
+      "schedule_display": "once at 2026-08-05 23:30",
+      "repeat": {
+        "times": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-04T23:30:46.398621+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "85bc89e5241f",
+      "name": "t_671747f7-H2-monitoring",
+      "prompt": "You are fleet-analyst completing kanban task t_671747f7. Run this snapshot NOW against the kanban DB:\n\npython3 << 'PYEOF'\nimport sqlite3, time, json, os\n\nDB = '/home/frank/.hermes/kanban/boards/sycode-trading/kanban.db'\nNOW = int(time.time())\nts = time.strftime('%Y-%m-%dT%H:%M:%S%z', time.gmtime(NOW))\nACTIVATION_EPOCH = 1785882135\n\ncon = sqlite3.connect('file:' + DB + '?mode=ro', uri=True)\ncur = con.cursor()\n\ndef age_bucket(ca):\n    h = (NOW - ca) / 3600.0\n    if h <= 24: return '0-24h'\n    if h <= 48: return '24-48h'\n    if h <= 168: return '48h-7d'\n    if h <= 336: return '7d-14d'\n    return '14d+'\n\nrows = cur.execute(\"SELECT created_at FROM tasks WHERE status='triage'\").fetchall()\nbuckets = {'0-24h':0,'24-48h':0,'48h-7d':0,'7d-14d':0,'14d+':0}\nfor (ca,) in rows: buckets[age_bucket(ca)] += 1\n\nper_status = dict(cur.execute(\"SELECT status, COUNT(*) FROM tasks GROUP BY status ORDER BY 2 DESC\").fetchall())\nvis = cur.execute(\"SELECT COUNT(*) FROM tasks WHERE title LIKE 'PM TRIAGE VISIBILITY:%'\").fetchone()[0]\npm_6h = cur.execute(\"SELECT COUNT(*) FROM task_comments WHERE author LIKE '%sycode-trading-pm%' AND created_at >= ?\",(NOW-6*3600,)).fetchone()[0]\narr_24 = cur.execute(\"SELECT COUNT(*) FROM tasks WHERE created_at >= ?\",(NOW-86400,)).fetchone()[0]\n\nprint(f\"| {ts} | triage={len(rows)} | {json.dumps(buckets)} | statuses={json.dumps(per_status)} | vis={vis} | pm_6h={pm_6h} | arr_24={arr_24} |\")\n\nos.makedirs('/home/frank/.hermes/var/log/fleet-metrics/', exist_ok=True)\nwith open('/home/frank/.hermes/var/log/fleet-metrics/sycode-triage-monitor.csv', 'a') as f:\n    line_parts = [ts, str(len(rows)), str(buckets['0-24h']), str(buckets['24-48h']), str(buckets['48h-7d']), str(buckets['7d-14d']), str(buckets['14d+']), json.dumps(per_status), str(vis), str(pm_6h), str(arr_24)]\n    f.write(','.join(line_parts) + '\\n')\n\ncon.close()\nPYEOF",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 120,
+        "display": "every 120m"
+      },
+      "schedule_display": "every 120m",
+      "repeat": {
+        "times": 3
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-04T23:30:53.089474+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    }
+  ]
+}

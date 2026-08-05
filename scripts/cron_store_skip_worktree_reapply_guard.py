@@ -1,30 +1,26 @@
 #!/usr/bin/env python3
 # CANONICAL SOURCE — do not edit profile-local copies.
-"""Periodic re-apply + alert guard for cron-store skip-worktree protection.
+"""Periodic re-enforce + alert wrapper for cron-store untracked protection.
 
-This is the FIELD-LEVEL / UNPROTECTED-STORE complement to
-``fleet_cron_store_clobber_canary.py`` (which only detects 0-job / deploy-race
-clobbers). The skip-worktree bit set by ``cron_store_git_clobber_guard.py
---apply`` is a LOCAL, per-clone git index flag. It is NOT committed and does NOT
-survive:
-  (a) a fresh ``git clone`` of the fleet-automation repo,
-  (b) an index rebuild / ``.git/index`` loss,
-  (c) a NEWLY CREATED profile whose scheduler store is added to tracking after
-      the one-shot ``--apply`` ran.
+LEGACY NAME, CURRENT SEMANTICS (t_6c32b13c, completed 2026-08-05): the
+skip-worktree approach this wrapper was named for did NOT survive reset/rebase
+index rewrites and was replaced by the structural model — live cron stores are
+UNTRACKED + GITIGNORED, with sanitized recovery snapshots under the non-live
+``cron-snapshots/`` path. The canonical ``cron_store_git_clobber_guard.py``
+now enforces "no store is ever tracked" (untrack index + commit the untracking
+on HEAD); this wrapper simply runs it in --apply mode and alerts
+discord:#critical-alerts on any repair, so the t_3c33bc49 git-clobber class
+cannot silently reopen after a checkout/reset to a historical commit.
 
-This guard runs silently when healthy. On every tick it runs the canonical
-guard in audit + apply mode across all tracked scheduler stores; if any store
-was unprotected (fresh clone, index loss, or a new profile), it re-applies the
-protection AND alerts discord:#critical-alerts so the t_3c33bc49 git-clobber
-class cannot silently reopen.
+The 2m ``fleet_cron_store_clobber_canary`` performs the same check; this
+wrapper is kept for compatibility with existing references and as a manual
+re-enforcement entry point.
 
-Design mirrors the sibling canary (silent when healthy, self-alerts on event,
-deliver=local on the job so the ticker does not double-deliver). Returns 1 on a
-re-protection event (so the ticker records it), 2 only on a genuine operational
-error, 0 when healthy.
+Returns 1 on a repair event (so the ticker records it), 2 only on a genuine
+operational error, 0 when healthy.
 
-A2/A3-safe: bounded git index ops (update-index --skip-worktree) + alert only;
-never mutates schedules, provider/model routing, credentials, or live-trading.
+A2/A3-safe: bounded git index/ref ops + alert only; never mutates schedules,
+store content, provider/model routing, credentials, or live-trading.
 """
 from __future__ import annotations
 
@@ -99,21 +95,23 @@ def main() -> int:
     failed = state.get("failed", [])
 
     if changed or failed:
-        lines = ["[cron-store-skip-worktree-reapply-guard] re-applied skip-worktree protection "
+        lines = ["[cron-store-untracked-reapply-guard] re-enforced untracked cron-store protection "
                  f"@ {os.environ.get('HOSTNAME', 'dgx')}"]
         if changed:
-            lines.append(f"  re-protected {len(changed)} store(s):")
+            lines.append(f"  repair action(s) ({len(changed)}):")
             for p in changed:
                 lines.append(f"    + {p}")
         if failed:
-            lines.append(f"  FAILED to protect {len(failed)} store(s):")
+            lines.append(f"  FAILED repair action(s) ({len(failed)}):")
             for f in failed:
                 lines.append(f"    ! {f}")
         lines.append(
-            "  Cause: a freshly-cloned/rebuilt checkout or a newly-tracked profile store had "
-            "no skip-worktree bit (the t_3c33bc49 git-clobber class was re-opened locally). "
-            "Re-apply closed it. Verify no concurrent git working-tree rewrite (checkout/restore/"
-            "reset --hard/stash) is in flight that would re-revert scheduler runtime state."
+            "  Cause: a checkout/reset/rebase to a historical commit re-tracked live cron "
+            "stores (the t_3c33bc49/t_6c32b13c git-clobber class was re-opened locally). "
+            "The guard untracked them and committed the untracking on HEAD. If store "
+            "content was clobbered, gateways self-heal by deferring one interval — check "
+            "profiles/*/logs/agent.log for 'had no next_run_at' and the reflog for the "
+            "triggering operation."
         )
         msg = "\n".join(lines)
         ok, detail = send_alert(msg)
