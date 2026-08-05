@@ -329,7 +329,7 @@
       "schedule_display": "every 5m",
       "repeat": {
         "times": null,
-        "completed": 108
+        "completed": 110
       },
       "enabled": true,
       "state": "scheduled",
@@ -346,8 +346,8 @@
       "workdir": null,
       "provider_snapshot": null,
       "model_snapshot": null,
-      "next_run_at": "2026-08-05T09:48:02.596034+01:00",
-      "last_run_at": "2026-08-05T09:43:02.596034+01:00",
+      "next_run_at": "2026-08-05T10:00:06.918758+01:00",
+      "last_run_at": "2026-08-05T09:55:06.918758+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -373,7 +373,7 @@
       "schedule_display": "every 1m",
       "repeat": {
         "times": null,
-        "completed": 17
+        "completed": 22
       },
       "enabled": true,
       "state": "scheduled",
@@ -384,8 +384,8 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "next_run_at": "2026-08-05T09:47:33.499462+01:00",
-      "last_run_at": "2026-08-05T09:46:33.499462+01:00",
+      "next_run_at": "2026-08-05T09:57:34.422924+01:00",
+      "last_run_at": "2026-08-05T09:56:34.422924+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -416,7 +416,7 @@
       "schedule_display": "every 5m",
       "repeat": {
         "times": null,
-        "completed": 5
+        "completed": 6
       },
       "enabled": true,
       "state": "scheduled",
@@ -435,8 +435,8 @@
       "workdir": "/home/frank/.hermes/profiles/elon",
       "provider_snapshot": null,
       "model_snapshot": null,
-      "next_run_at": "2026-08-05T09:50:48.594276+01:00",
-      "last_run_at": "2026-08-05T09:45:48.594276+01:00",
+      "next_run_at": "2026-08-05T09:59:08.811383+01:00",
+      "last_run_at": "2026-08-05T09:54:08.811383+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -462,7 +462,7 @@
       "schedule_display": "every 10m",
       "repeat": {
         "times": null,
-        "completed": 6
+        "completed": 7
       },
       "enabled": true,
       "state": "scheduled",
@@ -479,8 +479,8 @@
       "workdir": null,
       "provider_snapshot": null,
       "model_snapshot": null,
-      "next_run_at": "2026-08-05T09:55:33.216393+01:00",
-      "last_run_at": "2026-08-05T09:45:33.216393+01:00",
+      "next_run_at": "2026-08-05T10:05:34.196754+01:00",
+      "last_run_at": "2026-08-05T09:55:34.196754+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -961,7 +961,7 @@
       "schedule_display": "37 */6 * * *",
       "repeat": {
         "times": null,
-        "completed": 2
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
@@ -981,9 +981,9 @@
         }
       },
       "next_run_at": "2026-08-05T12:37:00+01:00",
-      "last_run_at": "2026-08-05T06:37:59.100844+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/quant_researcher_6h.py",
+      "last_run_at": "2026-08-05T09:47:20.654344+01:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "fire_claim": null
     },
@@ -1785,7 +1785,7 @@
       "schedule_display": "every 60m",
       "repeat": {
         "times": null,
-        "completed": 10
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
@@ -1796,10 +1796,10 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "next_run_at": "2026-08-05T10:46:06.797899+01:00",
-      "last_run_at": "2026-08-05T08:28:19.817708+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/news_sentiment_catalyst.py",
+      "next_run_at": "2026-08-05T10:48:16.284052+01:00",
+      "last_run_at": "2026-08-05T09:48:16.284052+01:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "fire_claim": null
     },
@@ -2644,7 +2644,7 @@
       "schedule_display": "*/30 * * * *",
       "repeat": {
         "times": null,
-        "completed": 1
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
@@ -2656,9 +2656,9 @@
       "enabled_toolsets": null,
       "workdir": null,
       "next_run_at": "2026-08-05T10:00:00+01:00",
-      "last_run_at": "2026-08-04T22:01:55.616450+01:00",
+      "last_run_at": "2026-08-05T09:47:36.724707+01:00",
       "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/dgx_data_freshness_probe.py",
+      "last_error": "Script exited with code 1\nstdout:\nDATA FRESHNESS PROBE @ 2026-08-05T08:47:36.004918+00:00\n  [OK] candles: FRESH budget=3h age=-3.2h\n  [XX] funding_rate_history: ERROR budget=6h age=n/a err=ERROR:  canceling statement due to statement timeout\n  [OK] oi_snapshots: FRESH budget=3h age=0.0h\n  [OK] pattern_win_rate_registry: FRESH budget=26h age=13.8h\n  [XX] signal_fingerprints: ERROR budget=36h age=n/a err=ERROR:  canceling statement due to statement timeout\n  [XX] signal_journey_events: STALE budget=6h age=10.0h\n  [XX] signal_journeys: STALE budget=3h age=10.0h\n  [XX] signal_pnl_points: ERROR budget=3h age=n/a err=ERROR:  canceling statement due to statement timeout\n  [XX] signal_trajectory_bars: STALE budget=2h age=10.3h\nVERDICT: DEGRADED \u2014 3/9 pipelines fresh, 3 stale, 0 empty, 3 error\nRED-ALERT: pipeline(s) past budget (now-max(ts)):\n  \ud83d\udd34 signal_journeys: STALE 10.0h (budget 3h) \u2014 feed likely dead\n  \u26a0 signal_pnl_points: probe error \u2014 ERROR:  canceling statement due to statement timeout\n  \ud83d\udd34 signal_trajectory_bars: STALE 10.3h (budget 2h) \u2014 feed likely dead\n  \u26a0 funding_rate_history: probe error \u2014 ERROR:  canceling statement due to statement timeout\n  \u26a0 signal_fingerprints: probe error \u2014 ERROR:  canceling statement due to statement timeout\n  \ud83d\udd34 signal_journey_events: STALE 10.0h (budget 6h) \u2014 feed likely dead\nA process can be 'alive' while its data silently stops \u2014 check the owning ingester/cron/collector.",
       "last_delivery_error": null,
       "fire_claim": null
     },
@@ -3114,7 +3114,7 @@
       "schedule_display": "every 10m",
       "repeat": {
         "times": null,
-        "completed": 10
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
@@ -3125,8 +3125,8 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "next_run_at": "2026-08-05T09:52:32.756641+01:00",
-      "last_run_at": "2026-08-05T09:42:32.756641+01:00",
+      "next_run_at": "2026-08-05T10:02:33.663453+01:00",
+      "last_run_at": "2026-08-05T09:52:33.663453+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -3598,7 +3598,7 @@
       "schedule_display": "every 10m",
       "repeat": {
         "times": null,
-        "completed": 9
+        "completed": 10
       },
       "enabled": true,
       "state": "scheduled",
@@ -3609,12 +3609,12 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "last_run_at": "2026-08-05T09:40:32.686308+01:00",
+      "last_run_at": "2026-08-05T09:50:33.601192+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
       "fire_claim": null,
-      "next_run_at": "2026-08-05T09:50:32.686308+01:00"
+      "next_run_at": "2026-08-05T10:00:33.601192+01:00"
     },
     {
       "id": "0f39598f8210",
@@ -3672,11 +3672,11 @@
       "schedule_display": "15 7 * * *",
       "repeat": {
         "times": null,
-        "completed": 1
+        "completed": 2
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-05T09:16:48.951287+01:00",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:15:00.327606+01:00",
       "deliver": "discord:#critical-alerts",
@@ -3684,9 +3684,9 @@
       "enabled_toolsets": null,
       "workdir": null,
       "next_run_at": "2026-08-06T07:15:00+01:00",
-      "last_run_at": "2026-08-05T07:15:04.529315+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/sycode_strategy_quarantine_invariant.py",
+      "last_run_at": "2026-08-05T09:56:13.544337+01:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "fire_claim": null
     },
@@ -3792,7 +3792,7 @@
       "schedule_display": "*/1 * * * *",
       "repeat": {
         "times": null,
-        "completed": 73
+        "completed": 83
       },
       "enabled": true,
       "state": "scheduled",
@@ -3803,8 +3803,8 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "next_run_at": "2026-08-05T09:47:00+01:00",
-      "last_run_at": "2026-08-05T09:46:33.759193+01:00",
+      "next_run_at": "2026-08-05T09:57:00+01:00",
+      "last_run_at": "2026-08-05T09:56:34.085132+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -3834,9 +3834,9 @@
         "times": null,
         "completed": 1
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-05T09:16:49.747734+01:00",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T21:38:32.202492+01:00",
       "deliver": "discord:#fleet-reports",
@@ -3845,8 +3845,8 @@
       "workdir": null,
       "next_run_at": "2026-08-06T07:00:00+01:00",
       "last_run_at": "2026-08-05T07:00:01.958109+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/profile_script_drift_watch.py",
+      "last_status": null,
+      "last_error": null,
       "last_delivery_error": null,
       "fire_claim": null
     },
@@ -4445,7 +4445,7 @@
       "schedule_display": "every 15m",
       "repeat": {
         "times": null,
-        "completed": 42
+        "completed": 43
       },
       "enabled": true,
       "state": "scheduled",
@@ -4456,8 +4456,8 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "next_run_at": "2026-08-05T09:54:13.502398+01:00",
-      "last_run_at": "2026-08-05T09:39:13.502398+01:00",
+      "next_run_at": "2026-08-05T10:10:38.146413+01:00",
+      "last_run_at": "2026-08-05T09:55:38.146413+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -4797,7 +4797,7 @@
       "schedule_display": "every 15m",
       "repeat": {
         "times": null,
-        "completed": 1
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
@@ -4814,10 +4814,10 @@
       },
       "enabled_toolsets": null,
       "workdir": null,
-      "next_run_at": "2026-08-05T10:01:06.108617+01:00",
-      "last_run_at": "2026-08-04T22:10:55.655649+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/run_signal_fusion.py",
+      "next_run_at": "2026-08-05T10:01:57.241814+01:00",
+      "last_run_at": "2026-08-05T09:46:57.241814+01:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "fire_claim": null
     },
@@ -4843,7 +4843,7 @@
       "schedule_display": "0 */6 * * *",
       "repeat": {
         "times": null,
-        "completed": 2
+        "completed": 3
       },
       "enabled": true,
       "state": "scheduled",
@@ -4861,9 +4861,9 @@
       "enabled_toolsets": null,
       "workdir": null,
       "next_run_at": "2026-08-05T12:00:00+01:00",
-      "last_run_at": "2026-08-05T06:00:57.579957+01:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/frank/.hermes/profiles/jarvis/scripts/fusion_calibration_report.sh",
+      "last_run_at": "2026-08-05T09:48:10.038513+01:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "fire_claim": null
     },
@@ -5510,7 +5510,8 @@
       },
       "schedule_display": "every 720m",
       "repeat": {
-        "times": null
+        "times": null,
+        "completed": 1
       },
       "enabled": true,
       "state": "scheduled",
@@ -5532,7 +5533,12 @@
         "delegation"
       ],
       "workdir": null,
-      "next_run_at": "2026-08-05T09:55:41.224125+01:00"
+      "next_run_at": "2026-08-05T21:57:06.492908+01:00",
+      "last_run_at": "2026-08-05T09:57:06.492908+01:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "fire_claim": null
     },
     {
       "id": "ed3aedb474d2",
@@ -7105,7 +7111,7 @@
       "schedule_display": "every 15m",
       "repeat": {
         "times": null,
-        "completed": 6
+        "completed": 7
       },
       "enabled": true,
       "state": "scheduled",
@@ -7116,8 +7122,8 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "next_run_at": "2026-08-05T09:54:32.419547+01:00",
-      "last_run_at": "2026-08-05T09:39:32.419547+01:00",
+      "next_run_at": "2026-08-05T10:09:34.369768+01:00",
+      "last_run_at": "2026-08-05T09:54:34.369768+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -7301,15 +7307,15 @@
       "schedule_display": "every 15m",
       "repeat": {
         "times": null,
-        "completed": 44
+        "completed": 45
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-04T22:05:29.803493+01:00",
-      "next_run_at": "2026-08-05T09:52:32.450221+01:00",
-      "last_run_at": "2026-08-05T09:37:32.450221+01:00",
+      "next_run_at": "2026-08-05T10:07:33.926658+01:00",
+      "last_run_at": "2026-08-05T09:52:33.926658+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -7381,15 +7387,15 @@
       "schedule_display": "every 30m",
       "repeat": {
         "times": null,
-        "completed": 21
+        "completed": 22
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-04T22:05:30.672566+01:00",
-      "next_run_at": "2026-08-05T09:52:52.144194+01:00",
-      "last_run_at": "2026-08-05T09:22:52.144194+01:00",
+      "next_run_at": "2026-08-05T10:23:46.711200+01:00",
+      "last_run_at": "2026-08-05T09:53:46.711200+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -7421,15 +7427,15 @@
       "schedule_display": "every 2m",
       "repeat": {
         "times": null,
-        "completed": 219
+        "completed": 223
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-04T22:08:53.788517+01:00",
-      "next_run_at": "2026-08-05T09:46:35.131555+01:00",
-      "last_run_at": "2026-08-05T09:44:35.131555+01:00",
+      "next_run_at": "2026-08-05T09:58:36.325312+01:00",
+      "last_run_at": "2026-08-05T09:56:36.325312+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -7461,15 +7467,15 @@
       "schedule_display": "every 20m",
       "repeat": {
         "times": null,
-        "completed": 33
+        "completed": 34
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-04T22:09:24.264802+01:00",
-      "next_run_at": "2026-08-05T09:51:31.760353+01:00",
-      "last_run_at": "2026-08-05T09:31:31.760353+01:00",
+      "next_run_at": "2026-08-05T10:11:34.178292+01:00",
+      "last_run_at": "2026-08-05T09:51:34.178292+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -7661,15 +7667,15 @@
       "schedule_display": "every 5m",
       "repeat": {
         "times": null,
-        "completed": 118
+        "completed": 120
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-04T22:46:24.183782+01:00",
-      "next_run_at": "2026-08-05T09:49:32.995236+01:00",
-      "last_run_at": "2026-08-05T09:44:32.995236+01:00",
+      "next_run_at": "2026-08-05T09:59:34.481871+01:00",
+      "last_run_at": "2026-08-05T09:54:34.481871+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -7847,7 +7853,7 @@
       "schedule_display": "every 5m",
       "repeat": {
         "times": null,
-        "completed": 27
+        "completed": 29
       },
       "enabled": true,
       "state": "scheduled",
@@ -7859,8 +7865,8 @@
       "enabled_toolsets": null,
       "workdir": null,
       "fire_claim": null,
-      "next_run_at": "2026-08-05T09:49:33.203095+01:00",
-      "last_run_at": "2026-08-05T09:44:33.203095+01:00",
+      "next_run_at": "2026-08-05T10:00:34.371924+01:00",
+      "last_run_at": "2026-08-05T09:55:34.371924+01:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": "delivery error: WhatsApp send failed: Cannot connect to host localhost:3901 ssl:default [Connect call failed ('127.0.0.1', 3901)]"
@@ -7897,5 +7903,5 @@
       "next_run_at": "2026-08-05T10:09:32.258512+01:00"
     }
   ],
-  "updated_at": "2026-08-05T09:46:33.759996+01:00"
+  "updated_at": "2026-08-05T09:57:06.493102+01:00"
 }
