@@ -38,7 +38,6 @@ DEPLOYED="$(timeout 3 docker inspect "$CONTAINER" \
 [ -n "$DEPLOYED" ] || { DEPLOYED="PROBE FAILED"; note_fail "deployed-sha"; }
 
 # ---- origin/main tip + deploy gap (the merged!=deployed trap) --------------------
-# Only-network call, hard-bounded. Falls back to the cached ref if the fetch times out.
 FETCH_NOTE="cached"
 if timeout 3 git -C "$REPO" fetch -q --depth=50 origin main 2>/dev/null; then
   FETCH_NOTE="fetched"
@@ -49,7 +48,6 @@ MAIN="$(timeout 2 git -C "$REPO" rev-parse origin/main 2>/dev/null)"
 if [ -z "$MAIN" ]; then MAIN="PROBE FAILED"; note_fail "origin-main"; fi
 GAP="unknown"
 if [ "$DEPLOYED" != "PROBE FAILED" ] && [ "$MAIN" != "PROBE FAILED" ]; then
-  # Guard against shallow-clone ancestry lies: the deployed sha must be a known object.
   if timeout 2 git -C "$REPO" cat-file -e "$DEPLOYED" 2>/dev/null; then
     GAP="$(timeout 3 git -C "$REPO" rev-list --count "${DEPLOYED}..origin/main" 2>/dev/null)"
     [ -n "$GAP" ] || { GAP="unknown"; note_fail "behind-count"; }
@@ -70,13 +68,12 @@ HEAD_TAG=""
 if [ "$HEAD_BR" != "main" ] && [ "$HEAD_BR" != "PROBE FAILED" ]; then
   HEAD_TAG="  ⚠ OFF-MAIN (shared/mutable — deploy from origin/main, use a FRESH worktree)"
 fi
-# Detect mid-operation states so a transient branch isn't misread as a settled one.
 if [ -d "$REPO/.git" ]; then
   [ -d "$REPO/.git/rebase-merge" ] || [ -d "$REPO/.git/rebase-apply" ] && HEAD_TAG="$HEAD_TAG [REBASE IN PROGRESS]"
   [ -f "$REPO/.git/MERGE_HEAD" ] && HEAD_TAG="$HEAD_TAG [MERGE IN PROGRESS]"
 fi
 
-# ---- trading MODE gate (paper/live) — shell-callable, no psql --------------------
+# ---- trading MODE gate (paper/live) ----------------------------------------------
 HEALTH="$(timeout 2 curl -4 -s http://127.0.0.1:7777/health 2>/dev/null)"
 MODE="unknown"
 if [ -n "$HEALTH" ]; then
@@ -104,21 +101,53 @@ else
   note_fail "board-db-missing"
 fi
 
-# ---- open PR count (verdicts live in comments, not reviewDecision) ---------------
-PRS="$(timeout 8 gh pr list --repo sycamoregroupltd/sycode-trading --state open \
-  --limit 300 --json number --jq 'length' 2>/dev/null)"
+# ============================================================================
+# PR PROBES — raised timeout, retry-on-empty, timed-out distinction
+# ============================================================================
+# Bug (2026-08-03): timeout 8 was too short under host load; gh routinely exceeded 8s,
+# causing false PROBE FAILED that was indistinguishable from real outage/auth-fail.
+# Fix: timeout 25s per attempt, one retry after sleep 1, distinguish TIMEOUT vs EMPTY.
+GH="--repo sycamoregroupltd/sycode-trading"
+
+gh_pr_probe() {
+  # Usage: gh_pr_probe <state> <args...> [--jq '<filter>'] <varname>
+  local state="$1"; shift
+  local varname="$1"; shift
+  # Build remaining args
+  set -- "$@"
+  local output rc=0
+
+  # Attempt 1
+  output=$(timeout 25 gh pr list "$GH" --state "$state" "$@" 2>/dev/null) || rc=$?
+  if [ $rc -eq 124 ]; then
+    printf -v "$varname" '%s' "PROBE FAILED(TIMEOUT: ${varname} timed out at 25s)"
+    return
+  fi
+  # Attempt 2: retry if empty stdout (transient slowness)
+  if [ -z "$output" ]; then
+    sleep 1
+    output=$(timeout 25 gh pr list "$GH" --state "$state" "$@" 2>/dev/null) || rc=$?
+    if [ $rc -eq 124 ]; then
+      printf -v "$varname" '%s' "PROBE FAILED(TIMEOUT: ${varname} timed out twice at 25s each)"
+      return
+    elif [ -z "$output" ]; then
+      printf -v "$varname" '%s' "PROBE FAILED(gh returned empty after 2 retries)"
+      return
+    fi
+  fi
+  printf -v "$varname" '%s' "$output"
+}
+
+# open PR count
+gh_pr_probe open '--limit 300' '--json number' --jq 'length' PRS
 [ -n "$PRS" ] || { PRS="PROBE FAILED"; note_fail "open-prs"; }
 
-# ---- live PR ground-truth (so a stale curated line can NEVER hide a cluster) ------
-# The North Star line below is HAND-CURATED and can lag reality. These two probes are
-# LIVE from gh — they are the falsification test for the curated line. If the curated
-# NS text references a PR far below LATEST_MERGED, the seat is booting on stale progress.
-LATEST_MERGED="$(timeout 8 gh pr list --repo sycamoregroupltd/sycode-trading --state merged \
-  --limit 1 --json number,title,mergedAt \
-  --jq '.[0] | "#\(.number) \(.title[:48]) (\(.mergedAt[:10]))"' 2>/dev/null)"
+# latest merged PR
+gh_pr_probe merged '--limit 1' '--json number,title,mergedAt' --jq '.[0] | "#\(.number) \(.title[:48]) (\(.mergedAt[:10]))"' LATEST_MERGED
 [ -n "$LATEST_MERGED" ] || { LATEST_MERGED="PROBE FAILED"; note_fail "latest-merged-pr"; }
-RECENT_OPEN="$(timeout 8 gh pr list --repo sycamoregroupltd/sycode-trading --state open \
-  --limit 300 --json number --jq 'sort_by(.number) | reverse | [limit(6;.[])] | map("#\(.number)") | join(" ")' 2>/dev/null)"
+
+# recent open PRs
+gh_pr_probe open '--limit 300' '--json number' --jq 'sort_by(.number) | reverse | [limit(6;.[])] | map("#\(.number)") | join(" ")' RECENT_OPEN
 [ -n "$RECENT_OPEN" ] || { RECENT_OPEN="PROBE FAILED"; note_fail "recent-open-prs"; }
 
 # ---- North Star active phase (cheap, from curated board) + STATE.md pointer -------
@@ -126,20 +155,14 @@ NS="$(grep -P '\tACTIVE\t' /home/frank/.hermes/state/ns-phases.tsv 2>/dev/null |
 [ -n "$NS" ] || NS="(phase board unavailable)"
 
 # ---- staleness guard: have PRs merged SINCE the phase board was last curated? -----
-# ns-phases.frontier records the latest-merged PR# at the moment the TSV was curated.
-# If the live frontier has advanced past it, new progress exists that the curated NS
-# text predates → boot is at risk of reciting stale progress. This is the true test
-# (NOT "highest PR the line names" — an honest line may reference an open PR below the
-# merged frontier). Re-stamp the frontier whenever you re-curate ns-phases.tsv.
 NS_STALE=""
 FRONTIER_FILE="/home/frank/.hermes/state/ns-phases.frontier"
 CURATED_AT_PR="$(cat "$FRONTIER_FILE" 2>/dev/null | grep -oP '^[0-9]+' | head -1)"
 LIVE_MAX_PR="$(printf '%s' "$LATEST_MERGED" | grep -oP '#\K[0-9]+' | head -1)"
-# Count PRs actually MERGED above the stamp — a PR-number delta lies when a burst of
-# PRs is opened-but-unmerged (proven 2026-07-12: stamp 434, latest merged 460, "26 stale"
-# — but exactly ONE PR had merged in between).
-MERGED_SINCE="$(timeout 8 gh pr list --repo sycamoregroupltd/sycode-trading --state merged \
-  --limit 100 --json number --jq "[.[] | select(.number > ${CURATED_AT_PR:-0})] | length" 2>/dev/null)"
+# Count PRs actually MERGED above the stamp
+MERGED_SINCE=""
+CURATED_AT_PR="${CURATED_AT_PR:-0}"
+gh_pr_probe merged '--limit 100' '--json number' --jq "[.[] | select(.number > ${CURATED_AT_PR})] | length" MERGED_SINCE
 if [ -n "$CURATED_AT_PR" ] && [ -n "$MERGED_SINCE" ] && [ "$MERGED_SINCE" -ge 3 ]; then
   NS_STALE="  ⚠ STALE: ${MERGED_SINCE} PRs merged since the phase board was curated (stamp #${CURATED_AT_PR}, latest merged #${LIVE_MAX_PR:-?}) — re-derive ns-phases.tsv + re-stamp ns-phases.frontier BEFORE trusting the phase text"
 fi
