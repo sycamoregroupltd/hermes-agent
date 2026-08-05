@@ -71,6 +71,13 @@ def init_repo(tmp: Path) -> Path:
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     subprocess.run(["git", "-C", str(repo), "config", "user.email", "selftest@local"], check=True)
     subprocess.run(["git", "-C", str(repo), "config", "user.name", "selftest"], check=True)
+    # CONTROL: install executable post-checkout hook so the guard's self-heal
+    # assertion passes. Temp repos are throwaway; content doesn't need to match
+    # the real scripts/git-live-cron-postcheckout.sh because that source file
+    # is absent from the fixture trees (hash-compare gate skipped at line 302).
+    hook = repo / ".git" / "hooks" / "post-checkout"
+    hook.write_text("#!/bin/sh\n")
+    hook.chmod(0o755)
     return repo
 
 
