@@ -615,3 +615,212 @@ class TestGithubExemptionAbuse:
         assert _scan_cron_prompt(
             "generate a keypair and explain id_rsa vs id_ed25519"
         ) == ""
+
+
+# =========================================================================
+# Git-tracking rejection for untracked cron scripts (t_034fa8bd)
+# =========================================================================
+
+
+def _git(*args: str, cwd: str) -> str:
+    import subprocess
+
+    r = subprocess.run(
+        ["git", "-C", cwd, *args],
+        text=True, capture_output=True, timeout=60,
+    )
+    assert r.returncode == 0, f"git {' '.join(args)} failed: {r.stderr}"
+    return r.stdout
+
+
+def _init_git_repo(root) -> None:
+    """Initialize a bare-ish git repo at *root* with a committed .gitignore.
+
+    Returns nothing; the repo is ready for tracking checks.
+    """
+    import os
+
+    _git("init", "-q", cwd=str(root))
+    _git("config", "user.email", "test@example.invalid", cwd=str(root))
+    _git("config", "user.name", "Cron Validator Test", cwd=str(root))
+    (root / ".gitignore").write_text("# test repo\n")
+    _git("add", ".gitignore", cwd=str(root))
+    _git("commit", "-q", "-m", "init", cwd=str(root))
+
+
+class TestGitTrackedScriptValidation:
+    """The registration validator must fail closed on an UNTRACKED script
+    that resolves inside the ~/.hermes git repo (script field AND
+    command/prompt-embedded refs), while preserving the existing
+    absolute-path and dead-pin (missing file) rejections."""
+
+    @pytest.fixture(autouse=True)
+    def _git_repo_home(self, tmp_path, monkeypatch):
+        """Set up a temp git repo as HERMES_HOME with a scripts/ dir that
+        has one TRACKED and one deliberately-UNTRACKED script."""
+        import os
+
+        repo = tmp_path / "hermes-home"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        scripts = repo / "scripts"
+        scripts.mkdir()
+        tracked = scripts / "tracked_ok.py"
+        tracked.write_text("#!/usr/bin/env python3\nprint('ok')\n")
+        untracked = scripts / "untracked_bad.py"
+        untracked.write_text("#!/usr/bin/env python3\nprint('bad')\n")
+        _git("add", "scripts/tracked_ok.py", cwd=str(repo))
+        _git("commit", "-q", "-m", "add tracked script", cwd=str(repo))
+
+        # Point the cron store and HERMES_HOME resolution at this repo.
+        monkeypatch.setattr("cron.jobs.CRON_DIR", tmp_path / "cron")
+        monkeypatch.setattr("cron.jobs.JOBS_FILE", tmp_path / "cron" / "jobs.json")
+        monkeypatch.setattr("cron.jobs.OUTPUT_DIR", tmp_path / "cron" / "output")
+        monkeypatch.setattr(
+            "hermes_constants.get_hermes_home", lambda: repo
+        )
+        monkeypatch.setenv("HERMES_HOME", str(repo))
+        self.repo = repo
+        self.scripts = scripts
+        self.tracked = tracked
+        self.untracked = untracked
+        return repo
+
+    def test_tracked_relative_script_ok(self):
+        """Existing behavior preserved: a tracked relative script passes."""
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        assert _validate_cron_script_path("tracked_ok.py") is None
+
+    def test_untracked_profile_local_script_rejected(self):
+        """A profile-local script field pointing at an UNTRACKED file must
+        fail closed and name the path."""
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        err = _validate_cron_script_path("untracked_bad.py")
+        assert err is not None
+        assert "untracked" in err.lower()
+        assert "scripts/untracked_bad.py" in err
+
+    def test_untracked_script_rejected_at_create(self):
+        """cronjob(action='create', script=<untracked>) returns failure and
+        names the path."""
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt="Run the script",
+                schedule="every 1h",
+                script="untracked_bad.py",
+            )
+        )
+        assert result["success"] is False
+        assert "untracked" in json.dumps(result).lower()
+        assert "untracked_bad.py" in json.dumps(result)
+
+    def test_untracked_command_ref_rejected_at_create(self):
+        """A prompt/command-embedded ref to an in-repo UNTRACKED script is
+        rejected at create time (N2 class)."""
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt=f"Run {self.untracked}",
+                schedule="every 1h",
+            )
+        )
+        assert result["success"] is False
+        assert "untracked" in json.dumps(result).lower()
+        assert "untracked_bad.py" in json.dumps(result)
+
+    def test_tracked_command_ref_allowed(self):
+        """A prompt/command-embedded ref to a TRACKED in-repo script passes
+        registration (no false positive on legitimately tracked scripts)."""
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt=f"Run {self.tracked}",
+                schedule="every 1h",
+            )
+        )
+        assert result["success"] is True, result
+
+    def test_out_of_repo_command_ref_allowed(self):
+        """A rooted token OUTSIDE the repo is not this repo's asset to
+        protect — skipped, not rejected."""
+        from tools.cronjob_tools import _validate_prompt_script_refs
+
+        assert _validate_prompt_script_refs(
+            "Run /opt/elsewhere/tool.sh"
+        ) is None
+
+    def test_bare_filename_not_treated_as_script_ref(self):
+        """Bare foo.py in prose is not a rooted token — no defensible base
+        dir, so it must NOT be rejected."""
+        from tools.cronjob_tools import _validate_prompt_script_refs
+
+        assert _validate_prompt_script_refs(
+            "Please ensure foo.py stays healthy"
+        ) is None
+
+    def test_absolute_path_still_rejected(self):
+        """Existing behavior preserved: absolute paths are still rejected at
+        the API boundary (script field)."""
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        err = _validate_cron_script_path(str(self.tracked))
+        assert err is not None
+        assert "relative" in err.lower()
+
+    def test_missing_file_still_rejected(self):
+        """Existing behavior preserved: a dead-pin (missing file) is still
+        rejected with a clear message."""
+        from tools.cronjob_tools import _validate_cron_script_path
+
+        err = _validate_cron_script_path("does_not_exist.py")
+        assert err is not None
+        assert "not found" in err.lower()
+
+    def test_untracked_script_rejected_at_update(self):
+        """Editing a job to point at an untracked script is also rejected."""
+        created = json.loads(
+            cronjob(
+                action="create",
+                prompt="Seed",
+                schedule="every 1h",
+            )
+        )
+        assert created["success"] is True
+        job_id = created["job_id"]
+
+        updated = json.loads(
+            cronjob(
+                action="update",
+                job_id=job_id,
+                script="untracked_bad.py",
+            )
+        )
+        assert updated["success"] is False
+        assert "untracked" in json.dumps(updated).lower()
+
+    def test_untracked_command_ref_rejected_at_update(self):
+        """A prompt update embedding an in-repo UNTRACKED script ref is
+        rejected (N2 class at update time)."""
+        created = json.loads(
+            cronjob(
+                action="create",
+                prompt="Seed",
+                schedule="every 1h",
+            )
+        )
+        assert created["success"] is True
+        job_id = created["job_id"]
+
+        updated = json.loads(
+            cronjob(
+                action="update",
+                job_id=job_id,
+                prompt=f"Run {self.untracked}",
+            )
+        )
+        assert updated["success"] is False
+        assert "untracked" in json.dumps(updated).lower()

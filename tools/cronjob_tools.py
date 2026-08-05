@@ -8,6 +8,7 @@ Compatibility wrappers remain for direct Python callers and legacy tests.
 import json
 import logging
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -278,6 +279,57 @@ def _scan_cron_prompt(prompt: str) -> str:
     return ""
 
 
+# N2: script-like path tokens embedded in a job's `prompt` / `command`
+# string. Only rooted tokens (absolute or ~-prefixed) are considered — a
+# bare "foo.py" in prose is far too ambiguous to resolve without inventing
+# a base dir. Mirrors cron_untracked_script_guard.SCRIPT_TOKEN_RE so the
+# registration validator and the backstop detector agree on what a script
+# ref is.
+_CRON_PROMPT_SCRIPT_TOKEN_RE = re.compile(r"(?:/|~/)[\w./~+-]+\.(?:py|sh|bash|pl|rb|js|ts)\b")
+
+
+def _validate_prompt_script_refs(prompt: Optional[str]) -> Optional[str]:
+    """Reject an in-repo UNTRACKED script referenced from a prompt/command.
+
+    Extracts rooted script tokens (/... or ~/... with a script extension)
+    from *prompt*, resolves each against the filesystem, and — when the
+    token resolves inside the enclosing git repo reachable from HERMES_HOME
+    — requires it to be tracked. Out-of-repo tokens and bare filenames are
+    skipped (this repo cannot vouch for them).
+
+    Returns an error string if blocked, else None (valid).
+    """
+    if not prompt:
+        return None
+    from hermes_constants import get_hermes_home
+
+    home = get_hermes_home()
+    seen: set[str] = set()
+    for token in _CRON_PROMPT_SCRIPT_TOKEN_RE.findall(prompt):
+        if token in seen:
+            continue
+        seen.add(token)
+        try:
+            resolved = Path(token).expanduser().resolve()
+        except (OSError, ValueError):
+            continue
+        repo_info = _resolve_git_repo_and_rel(home, resolved)
+        if repo_info is None:
+            continue  # out-of-repo token: not this repo's asset to protect
+        repo_root, _rel = repo_info
+        try:
+            repo_relative = str(resolved.relative_to(repo_root))
+        except ValueError:
+            continue
+        if not is_git_tracked(repo_root, repo_relative):
+            return (
+                f"Prompt/command references an untracked script in the git "
+                f"repo: {repo_relative}. Only tracked scripts are allowed — "
+                f"add it with ``git add`` first."
+            )
+    return None
+
+
 def _scan_cron_skill_assembled(assembled: str) -> tuple[str, str]:
     """Scan an ASSEMBLED cron prompt that includes loaded skill content.
 
@@ -513,12 +565,65 @@ def _validate_cron_base_url(
     )
 
 
+def is_git_tracked(repo_root: Path, rel_path: str) -> bool:
+    """Check whether *rel_path* is tracked in the git repo rooted at *repo_root*.
+
+    Uses ``git ls-files --error-unmatch`` — the same primitive as the
+    untracked-script guard. This sees gitignored paths too, so a
+    gitignored-but-untracked file returns False (the intended behaviour;
+    such a file can be silently deleted by ``git clean``).
+
+    Returns True only when the file exists AND is tracked in this repo.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "--error-unmatch", "--", rel_path],
+            text=True, capture_output=True, timeout=30,
+        )
+        return r.returncode == 0
+    except Exception:
+        # If we cannot run git, fall back to checking existence — the
+        # caller will still catch untracked files later via the guard.
+        resolved = repo_root / rel_path
+        return resolved.exists()
+
+
+def _resolve_git_repo_and_rel(home: Path, target: Path) -> tuple[Path, str] | None:
+    """Try to resolve the git repo root and the target's repo-relative path.
+
+    Returns ``(repo_root, rel_path)`` when the target lives inside a git
+    repository reachable from *home*, else None.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(home), "rev-parse", "--show-toplevel"],
+            text=True, capture_output=True, timeout=15,
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            return None
+        repo_root = Path(r.stdout.strip()).expanduser()
+        try:
+            rel = str(target.resolve().relative_to(repo_root))
+            return repo_root, rel
+        except ValueError:
+            # target is outside the repo root
+            return None
+    except Exception:
+        return None
+
+
 def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
     """Validate a cron job script path at the API boundary.
 
     Scripts must be relative paths that resolve within HERMES_HOME/scripts/.
     Absolute paths and ~ expansion are rejected to prevent arbitrary script
     execution via prompt injection.
+
+    Additionally, any script that resolves inside the enclosing git
+    repository MUST be tracked (committed or staged); an untracked script
+    risks silent deletion by ``git clean`` / worktree resets / checkout
+    restores. The guard uses ``git ls-files --error-unmatch`` — the same
+    primitive as the live untracked-script detector.
 
     Returns an error string if blocked, else None (valid).
     """
@@ -548,6 +653,39 @@ def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
         return (
             f"Script path escapes the scripts directory via traversal: {raw!r}"
         )
+
+    resolved = (scripts_dir / raw).resolve()
+
+    # Dead-pin guard: the resolved script file must actually exist on disk.
+    # A job pointing at a non-existent script silently fails to fire forever
+    # (the incident class this closes). Reject at create/update time so the
+    # operator learns about the missing file immediately, not days later.
+    # NOTE: this deliberately checks only the job-time path; the scheduler
+    # *also* re-checks at fire time (files can be deleted after creation), so
+    # a missing script is caught whether it vanished before or after enable.
+    if not resolved.exists() or not resolved.is_file():
+        return (
+            f"Script file not found: {raw!r}. "
+            f"Place the script in ~/.hermes/scripts/ (resolved: {resolved}) "
+            f"before creating/updating the job. "
+            f"A dead-pin (missing script) is rejected so the job does not "
+            f"fail silently at fire time."
+        )
+
+    # Git-tracking check: when the resolved script lives inside a git repo
+    # reachable from HERMES_HOME, require it to be tracked.
+    repo_info = _resolve_git_repo_and_rel(get_hermes_home(), resolved)
+    if repo_info is not None:
+        repo_root, rel_path = repo_info
+        # Resolve against repo_root to match what ``git -C repo ...`` sees
+        # (handles symlinks in scripts/).
+        repo_relative = str(resolved.relative_to(repo_root))
+        if not is_git_tracked(repo_root, repo_relative):
+            return (
+                f"Script {raw!r} resolves to an untracked file in the git repo: "
+                f"{repo_relative}. Only tracked scripts are allowed — add it with "
+                f"``git add`` first."
+            )
 
     return None
 
@@ -759,6 +897,9 @@ def cronjob(
                 scan_error = _scan_cron_prompt(prompt)
                 if scan_error:
                     return tool_error(scan_error, success=False)
+                script_ref_error = _validate_prompt_script_refs(prompt)
+                if script_ref_error:
+                    return tool_error(script_ref_error, success=False)
 
             # Validate script path before storing
             if script:
@@ -917,6 +1058,9 @@ def cronjob(
                 scan_error = _scan_cron_prompt(prompt)
                 if scan_error:
                     return tool_error(scan_error, success=False)
+                script_ref_error = _validate_prompt_script_refs(prompt)
+                if script_ref_error:
+                    return tool_error(script_ref_error, success=False)
                 updates["prompt"] = prompt
             if name is not None:
                 updates["name"] = name
