@@ -4132,6 +4132,54 @@ def _has_sticky_block(conn: sqlite3.Connection, task_id: str) -> bool:
     return bool(row) and row["kind"] == "blocked"
 
 
+def _has_unresolved_block(conn: sqlite3.Connection, task_id: str) -> bool:
+    """Return True when ``task_id`` has a ``blocked`` event that has not
+    been followed by a legitimate ``unblocked`` event.
+
+    This is stricter than :func:`_has_sticky_block`: it also considers
+    ``promoted`` and ``promoted_manual`` as clearing events (the soak
+    monitor treats them the same way).  This catches the race where a
+    task is legitimately set to ``ready``, then immediately re-blocked
+    by a worker -- the next dispatch tick would see ``status='ready'``
+    and succeed the CAS, creating a blocked→claimed violation.
+
+    See: jarvis-os/t_1f0549ec (post-fix blocked-card-soak regression).
+    """
+    # Gather all clear events (unblock + promote + promoted_manual)
+    clear_rows = list(conn.execute(
+        "SELECT id FROM task_events "
+        "WHERE task_id = ? AND kind IN ('unblocked', 'promoted', 'promoted_manual') "
+        "ORDER BY id DESC",
+        (task_id,),
+    ))
+    clear_ids = {r["id"] for r in clear_rows}
+    max_clear_id = max(clear_ids) if clear_ids else None
+
+    # Get the latest control event of ANY type that matters.
+    # We need to know: is the latest event a block that has NOT been
+    # superseded by a clear? So we look at ALL relevant event kinds.
+    latest_row = conn.execute(
+        "SELECT id, kind FROM task_events "
+        "WHERE task_id = ? AND kind IN ('blocked', 'unblocked', 'promoted', 'promoted_manual') "
+        "ORDER BY id DESC LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    if not latest_row:
+        return False
+
+    # If the latest event is itself a clear, nothing unresolved
+    if latest_row["kind"] != "blocked":
+        return False
+
+    # The latest control event is blocked. Check if any clear event came
+    # after it. If yes, the block was superseded → resolved. If no clear
+    # events exist or none came after this block → unresolved.
+    if max_clear_id is not None and latest_row["id"] > max_clear_id:
+        return True
+    # No clear event after this block → unresolved.
+    return True
+
+
 def recompute_ready(
     conn: sqlite3.Connection, failure_limit: int = None,
 ) -> int:
@@ -4234,11 +4282,35 @@ def claim_task(
 
     Returns the claimed ``Task`` on success, ``None`` if the task was
     already claimed (or is not in ``ready`` status).
+
+    Guards against blocked→claimed violations (#13270): if the task has
+    a ``blocked`` event that was not followed by a legitimate ``unblocked``
+    / ``promoted`` / ``promoted_manual`` event, the claim is rejected
+    and a ``blocked_dispatch_attempt`` event is emitted.  This catches the
+    race where a task is legitimately set to ``ready``, then immediately
+    re-blocked — the CAS on ``status='ready'`` would otherwise succeed.
+    See jarvis-os/t_1f0549ec for the soak-monitor regression this fixes.
     """
     now = int(time.time())
     lock = claimer or _claimer_id()
     expires = now + _resolve_claim_ttl_seconds(ttl_seconds)
     with write_txn(conn):
+        # Guard: reject claims on tasks with unresolved sticky blocks
+        # (a block without a subsequent unblock/promote clears).
+        # This prevents the blocked→claim violation discovered by the
+        # post-fix soak monitor (t_1f0549ec).
+        if _has_unresolved_block(conn, task_id):
+            _append_event(
+                conn, task_id, "blocked_dispatch_attempt", {
+                    "dispatcher_id": lock.split(":", 1)[0] if ":" in lock else lock,
+                    "timestamp": now,
+                    "status_column": "ready",
+                    "sticky_block": True,
+                    "unresolved_block": True,
+                    "reason": "dispatcher refused to claim a blocked card",
+                },
+            )
+            return None
         # Structural invariant: never transition ready -> running while any
         # parent is not yet 'done'. This is the single enforcement point
         # regardless of which writer (create_task, link_tasks, unblock_task,
