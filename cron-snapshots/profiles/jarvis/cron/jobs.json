@@ -6168,8 +6168,8 @@
       "repeat": {
         "times": 48
       },
-      "enabled": true,
-      "state": "scheduled",
+      "enabled": false,
+      "state": "completed",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-03T10:25:49.023580+01:00",
