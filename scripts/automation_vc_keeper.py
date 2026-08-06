@@ -66,6 +66,7 @@ DENY_CONTAINS = ("/memories/", "/sessions/", "/logs/", "/cache/")
 FORCE_INCLUDE = {
     "scripts/automation_vc_keeper.py",
     "profiles/devops/scripts/automation-vc-keeper.sh",
+    "scripts/cron_live_script_guard.py",
 }
 # Non-live path holding sanitized recovery snapshots of every live cron store
 # (t_6c32b13c: the live stores themselves are untracked + gitignored; a DGX
