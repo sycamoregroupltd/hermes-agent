@@ -151,12 +151,22 @@ def select_refresh_targets(stuck_symbols, active_spot_symbols):
 
 
 def upsert(symbol, bar):
-    ts = time.strftime("%Y-%m-%d %H:%M:%S+00", time.gmtime(bar["closeTime"] / 1000.0))
+    # Stamp the bar's OPEN time. Every other writer in this estate stamps open, and
+    # `candles.timestamp` is expected to sit on the timeframe grid (epoch % 14400 == 0
+    # for 4h). Stamping closeTime put rows at :59:59 — off-grid AND, for the newest
+    # bar, in the FUTURE. Measured 2026-08-06 11:21Z: max(4h timestamp) = 11:59:59,
+    # 38 minutes ahead of now; 452 future-stamped rows, 904 off-grid.
+    ts = time.strftime("%Y-%m-%d %H:%M:%S+00", time.gmtime(bar["openTime"] / 1000.0))
+    # DO UPDATE, not DO NOTHING. A bar written while still forming must be correctable
+    # on a later pass; DO NOTHING froze partial OHLCV permanently. Volume/high/low only
+    # ever grow within a bar, so the later observation is always the better one.
     q = (
         "INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume) "
         f"VALUES ('{symbol}', '4h', '{ts}'::timestamptz, {bar['open']}::numeric, {bar['high']}::numeric, "
         f"{bar['low']}::numeric, {bar['close']}::numeric, {bar['volume']}::numeric) "
-        "ON CONFLICT (symbol, timeframe, timestamp) DO NOTHING;"
+        "ON CONFLICT (symbol, timeframe, timestamp) DO UPDATE SET "
+        "open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, "
+        "close = EXCLUDED.close, volume = EXCLUDED.volume;"
     )
     if DRYRUN:
         print(f"  [dry-run] would upsert {symbol} 4h @ {ts}")
@@ -174,8 +184,15 @@ def latest_refreshable_bar(symbol, bars, now_ms=None):
     """
     if not bars:
         return None, "no bars"
-    bar = bars[-1]
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    # Binance returns the STILL-FORMING bar as the last element. Writing it produced a
+    # frozen partial (with DO NOTHING) whose OHLCV never matched the settled bar, and
+    # made the 4h coverage SLO read GREEN on 452 fabricated rows. Take the newest bar
+    # that has actually CLOSED.
+    closed = [b for b in bars if b["closeTime"] <= now_ms]
+    if not closed:
+        return None, "no closed bar yet"
+    bar = closed[-1]
     age_days = (now_ms - bar["closeTime"]) / 86_400_000.0
     if age_days > DELISTED_MAX_AGE_DAYS:
         return None, f"delisted (bar {age_days:.0f}d old)"

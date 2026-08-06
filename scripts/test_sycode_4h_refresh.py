@@ -115,5 +115,74 @@ class RefreshDecisionTests(unittest.TestCase):
         upsert.assert_not_called()
 
 
+class GridAndFormingBarTests(unittest.TestCase):
+    """Regression cover for the 2026-08-06 4h corruption.
+
+    Three compounding defects wrote frozen, future-dated partial bars:
+      * upsert() stamped bar["closeTime"], so rows landed at :59:59 — off the 4h
+        grid — and for the newest bar, in the FUTURE.
+      * latest_refreshable_bar() returned bars[-1], which Binance defines as the
+        STILL-FORMING bar.
+      * ON CONFLICT DO NOTHING then made that partial permanent.
+    Measured on live data before the fix (2026-08-06 11:21Z): max(4h timestamp) =
+    11:59:59, i.e. 38 minutes in the future; 452 future-stamped rows, 904 off-grid.
+    The 4h coverage SLO read GREEN on exactly those fabricated rows.
+    """
+
+    H4_MS = 4 * 3600 * 1000
+    NOW_MS = 1785974400000  # 2026-08-06 00:00:00Z, exactly on the 4h grid
+
+    def _bar(self, open_ms):
+        # Binance convention: closeTime is the last millisecond of the interval.
+        return {
+            "openTime": open_ms,
+            "closeTime": open_ms + self.H4_MS - 1,
+            "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0,
+        }
+
+    def test_still_forming_bar_is_never_selected(self):
+        closed = self._bar(self.NOW_MS - self.H4_MS)
+        forming = self._bar(self.NOW_MS)  # closeTime is in the future
+
+        bar, err = refresh.latest_refreshable_bar("XUSDT", [closed, forming], now_ms=self.NOW_MS)
+
+        self.assertIsNone(err)
+        self.assertEqual(bar["openTime"], closed["openTime"])
+        self.assertLessEqual(bar["closeTime"], self.NOW_MS)
+
+    def test_only_a_forming_bar_yields_no_write(self):
+        forming = self._bar(self.NOW_MS)
+
+        bar, err = refresh.latest_refreshable_bar("XUSDT", [forming], now_ms=self.NOW_MS)
+
+        self.assertIsNone(bar)
+        self.assertEqual(err, "no closed bar yet")
+
+    def test_upsert_stamps_grid_aligned_open_time_not_close_time(self):
+        bar = self._bar(self.NOW_MS - self.H4_MS)
+        captured = {}
+
+        with patch.object(refresh, "DRYRUN", False), \
+             patch.object(refresh, "psql", lambda q, read_only=True: captured.setdefault("q", q)):
+            refresh.upsert("XUSDT", bar)
+
+        q = captured["q"]
+        # The 20:00 bar stamps its OPEN (20:00:00), not its close (23:59:59).
+        self.assertIn("'2026-08-05 20:00:00+00'::timestamptz", q)
+        self.assertNotIn(":59:59", q)
+
+    def test_upsert_can_correct_a_previously_written_bar(self):
+        bar = self._bar(self.NOW_MS - self.H4_MS)
+        captured = {}
+
+        with patch.object(refresh, "DRYRUN", False), \
+             patch.object(refresh, "psql", lambda q, read_only=True: captured.setdefault("q", q)):
+            refresh.upsert("XUSDT", bar)
+
+        # DO NOTHING is what froze the partials permanently.
+        self.assertIn("DO UPDATE", captured["q"])
+        self.assertNotIn("DO NOTHING", captured["q"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
