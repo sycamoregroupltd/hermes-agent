@@ -1,0 +1,70 @@
+{
+  "jobs": [
+    {
+      "id": "194e2a10fde4",
+      "name": "needs-input-sla-probe-emit",
+      "prompt": "Run the needs_input SLA probe emit sweep. Execute exactly: python3 /home/frank/.hermes/agent-hooks/needs-input-sla-probe.py --emit --heartbeat /tmp/needs-input-sla-probe.heartbeat\n\nReport what happened: exit code, stdout/stderr, whether a card was created, any errors. This runs every 6 hours across all boards (jarvis-os, sycode-trading, upero). If exit != 0, report the error clearly.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T21:09:24.729095+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "dcbedb167ed1",
+      "name": "needs-input-sla-probe-liveness",
+      "prompt": "Run the needs_input SLA probe liveness monitor. Execute exactly: python3 /home/frank/.hermes/agent-hooks/needs-input-sla-probe-liveness.py --heartbeat /tmp/needs-input-sla-probe.heartbeat\n\nIf exit code is 0: report OK and the last sweep age. If exit code is 1: report ALARM with the missing-or-stale heartbeat details and severity. This runs every 7 hours to detect when the 6-hour emit probe fails silently. If exit != 0, escalate clearly.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 420,
+        "display": "every 420m"
+      },
+      "schedule_display": "every 420m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-05T21:09:24.745537+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    }
+  ]
+}

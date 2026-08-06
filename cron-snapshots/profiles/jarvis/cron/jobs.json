@@ -6617,6 +6617,74 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "426b14e2307b",
+      "name": "mech-red-standing-guard",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "mech_red_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 1,
+        "display": "every 1m"
+      },
+      "schedule_display": "every 1m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-06T04:20:19.940120+01:00",
+      "paused_reason": null,
+      "created_at": "2026-08-06T03:05:54.706287+00:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/frank/.hermes/scripts"
+    },
+    {
+      "id": "fd3223e20f59",
+      "name": "cron-live-script-guard",
+      "prompt": "DETECT+ESCALATE live-script guard: check every enabled cron job's resolved script path against the live repo root. Exit 0 healthy, 1 MISSING/untracked/scheduler-blocked, 2 usage. After 3 consecutive failures escalate to os-reviewer. AMENDMENT 1: no autonomous service control.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "cron_live_script_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 5,
+        "display": "every 5m"
+      },
+      "schedule_display": "every 5m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-06T04:20:11.738923+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": "/home/frank/.hermes"
     }
   ]
 }
