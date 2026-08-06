@@ -53,6 +53,20 @@ MECHANISM_KEYS = {
     "kanban_review_required_auto_router",
     "sycode_alertmanager_spool_drain",
     "service_gate_escalation_watchdog",
+    "fleet_kanban_integrity_backup",
+}
+
+# Canonical-content pins: repo-relative script path -> expected sha256 of the
+# INSTALLED live copy. The integrity watchdog relapsed twice because a stale
+# 127-line stub (sha 78413219) was both committed to HEAD (6d7657c) and
+# installed live while existence+tracked checks passed silently. A content pin
+# turns any future stale-snapshot revert into a loud CANONICAL-DRIFT violation
+# (t_2b60fddf standing-guard acceptance).
+# Rebuild: c18cb80 / 8c458e5, blob 4d312b31, 511 lines, sha e0c0a50c.
+CANONICAL_SCRIPT_SHA = {
+    "profiles/jarvis/scripts/jarvis_os_kanban_integrity_backup.py": (
+        "e0c0a50c27ba16ac01079e064849342a33553674327b29921d5706a19a49fa26"
+    ),
 }
 
 # Escalation threshold: consecutive failures before os-reviewer escalation.
@@ -260,7 +274,38 @@ def audit() -> tuple[list[dict], list[str], list[str]]:
                 })
                 continue
 
-            # Script exists and is tracked — healthy for this job.
+            # Canonical-content pin: a tracked-but-stale script (e.g. a
+            # reverted rebuild) passes existence+tracked silently. Verify the
+            # installed content hash for pinned mechanism scripts (t_2b60fddf).
+            expected_sha = CANONICAL_SCRIPT_SHA.get(rel)
+            if expected_sha:
+                try:
+                    installed_sha = hashlib.sha256(resolved.read_bytes()).hexdigest()
+                except OSError as exc:
+                    violations.append({
+                        "job_id": job["id"],
+                        "job_name": job["name"],
+                        "profile": profile,
+                        "script": script,
+                        "store": job["store"],
+                        "reason": f"CANONICAL-DRIFT: unreadable installed script {rel}: {exc}",
+                    })
+                    continue
+                if installed_sha != expected_sha:
+                    violations.append({
+                        "job_id": job["id"],
+                        "job_name": job["name"],
+                        "profile": profile,
+                        "script": script,
+                        "store": job["store"],
+                        "reason": (
+                            f"CANONICAL-DRIFT: installed {rel} sha256 {installed_sha} "
+                            f"!= canonical {expected_sha} (stale snapshot revert / rebuild not installed)"
+                        ),
+                    })
+                    continue
+
+            # Script exists, tracked, and content-canonical — healthy for this job.
             # Clear any prior failure count for this job.
             prev = state.get(job["id"], {})
             prev["fail_count"] = 0
