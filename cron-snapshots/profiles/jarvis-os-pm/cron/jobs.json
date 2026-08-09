@@ -11,7 +11,7 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "fleet-status-refresh.sh",
+      "script": "spool_relay_fleet_status_refresh.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {
@@ -28,7 +28,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-06-29T21:59:04.279377+01:00",
-      "deliver": "discord:1521973775761936646",
+      "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
@@ -44,7 +44,7 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "cross-pm-fanout.sh",
+      "script": "spool_relay_cross_pm_fanout.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {
@@ -61,7 +61,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T15:55:00+01:00",
-      "deliver": "discord:#fleet-reports",
+      "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
@@ -343,7 +343,7 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "run_dqsh.sh",
+      "script": "spool_relay_dqsh_self_healer.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {

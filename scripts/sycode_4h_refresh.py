@@ -50,6 +50,33 @@ MIN_BINANCE_ACTIVE_USDT_SYMBOLS = 300
 # How far back a symbol's newest 4h bar must be before we consider it "stuck".
 # 4h bars close every 4h; we refresh anything older than 4.5h.
 STUCK_OLDER_THAN_HOURS = 4.5
+
+# --- multi-timeframe support (claude 2026-08-09) ---------------------------
+# 2026-08-06..09: 1D/1h/5m stopped writing for 2-4 days while 4h stayed fresh
+# BECAUSE 4h had this top-up cron and the others did not. The app-side fix
+# (PR #1019) cannot ship: the auto-deploy safety gate is blocked on an external
+# $75 dust position. So extend the proven in-gate pattern to the dead timeframes.
+#
+# DB timeframe -> (Binance API interval, stuck threshold hours)
+# NOTE the casing: the DB stores '1D' but the Binance API wants '1d'. Querying
+# candles with '1d' silently returns ZERO rows. Same class of trap as
+# managed_positions.status='open' and bmre.direction='UP'.
+TIMEFRAME_SPEC = {
+    "1m":  ("1m",  0.5),
+    "5m":  ("5m",  0.75),
+    "15m": ("15m", 1.5),
+    "1h":  ("1h",  2.5),
+    "4h":  ("4h",  4.5),
+    "1D":  ("1d",  30.0),
+}
+# Default '4h' so the existing */30 cron keeps behaving EXACTLY as before.
+TIMEFRAMES = [
+    t.strip() for t in os.environ.get("SYCODE_REFRESH_TIMEFRAMES", "4h").split(",") if t.strip()
+]
+# Bars fetched per symbol. 2 = top up the current bar only (original behaviour).
+# Raise it to CLOSE a real gap: Binance caps klines at 1000, which covers ~83h of
+# 5m, ~41d of 1h and ~2.7y of 1d.
+KLINE_LIMIT = int(os.environ.get("SYCODE_REFRESH_LIMIT", "2"))
 # A Binance 4h bar older than this (days) means the pair is delisted / no longer
 # trades on Binance — it can NEVER be fresh. Skip it so we never insert fake
 # historical data; these should be excluded from the freshness floor instead.
@@ -76,10 +103,12 @@ def psql(query, read_only=True):
     return r.stdout
 
 
-def get_stuck_symbols():
+def get_stuck_symbols(db_tf="4h", stuck_hours=None):
+    if stuck_hours is None:
+        stuck_hours = TIMEFRAME_SPEC.get(db_tf, ("", STUCK_OLDER_THAN_HOURS))[1]
     q = (
-        "SELECT symbol FROM public.candles WHERE timeframe='4h' GROUP BY symbol "
-        f"HAVING max(\"timestamp\") < now() - interval '{STUCK_OLDER_THAN_HOURS} hours' "
+        f"SELECT symbol FROM public.candles WHERE timeframe='{db_tf}' GROUP BY symbol "
+        f"HAVING max(\"timestamp\") < now() - interval '{stuck_hours} hours' "
         "ORDER BY symbol;"
     )
     out = psql(q, read_only=True)
@@ -97,8 +126,8 @@ def build_klines_url(symbol, interval="4h", limit=2):
     return f"{BINANCE_KLINES_URL}?{query}"
 
 
-def fetch_latest_4h(symbol):
-    url = build_klines_url(symbol, interval="4h", limit=2)
+def fetch_bars(symbol, interval="4h", limit=2):
+    url = build_klines_url(symbol, interval=interval, limit=limit)
     req = urllib.request.Request(url, headers={"User-Agent": "sycode-4h-refresh/1.1"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read().decode())
@@ -150,7 +179,7 @@ def select_refresh_targets(stuck_symbols, active_spot_symbols):
     return [symbol for symbol in stuck_symbols if symbol in active_spot_symbols]
 
 
-def upsert(symbol, bar):
+def upsert(symbol, bar, db_tf="4h"):
     # Stamp the bar's OPEN time. Every other writer in this estate stamps open, and
     # `candles.timestamp` is expected to sit on the timeframe grid (epoch % 14400 == 0
     # for 4h). Stamping closeTime put rows at :59:59 — off-grid AND, for the newest
@@ -162,14 +191,14 @@ def upsert(symbol, bar):
     # ever grow within a bar, so the later observation is always the better one.
     q = (
         "INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume) "
-        f"VALUES ('{symbol}', '4h', '{ts}'::timestamptz, {bar['open']}::numeric, {bar['high']}::numeric, "
+        f"VALUES ('{symbol}', '{db_tf}', '{ts}'::timestamptz, {bar['open']}::numeric, {bar['high']}::numeric, "
         f"{bar['low']}::numeric, {bar['close']}::numeric, {bar['volume']}::numeric) "
         "ON CONFLICT (symbol, timeframe, timestamp) DO UPDATE SET "
         "open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, "
         "close = EXCLUDED.close, volume = EXCLUDED.volume;"
     )
     if DRYRUN:
-        print(f"  [dry-run] would upsert {symbol} 4h @ {ts}")
+        print(f"  [dry-run] would upsert {symbol} {db_tf} @ {ts}")
         return True
     psql(q, read_only=False)
     return True
@@ -199,24 +228,91 @@ def latest_refreshable_bar(symbol, bars, now_ms=None):
     return bar, None
 
 
-def refresh_one(sym):
+def upsert_many(symbol, bars, db_tf="4h"):
+    """Single multi-row upsert for a symbol's bars.
+
+    Gap-closing needs hundreds of bars per symbol; the per-bar upsert() spawns one
+    psql subprocess EACH, so 5m over a 2-day hole would be ~280k subprocess calls
+    (hours). One statement per symbol keeps it to one call per symbol.
+    Same ON CONFLICT DO UPDATE semantics and same open-time stamping as upsert().
+    """
+    rows = []
+    for bar in bars:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S+00", time.gmtime(bar["openTime"] / 1000.0))
+        rows.append(
+            f"('{symbol}', '{db_tf}', '{ts}'::timestamptz, {bar['open']}::numeric, "
+            f"{bar['high']}::numeric, {bar['low']}::numeric, {bar['close']}::numeric, "
+            f"{bar['volume']}::numeric)"
+        )
+    if not rows:
+        return
+    # ARG_MAX guard: psql is invoked with -c "<sql>", so one statement of 1000 rows
+    # (~120KB) hit "[Errno 7] Argument list too long" on all 421 symbols for 5m.
+    # Chunk rather than raise the limit — bounded statements are also easier on the
+    # DB than one enormous multi-row INSERT.
+    CHUNK = 150
+    if len(rows) > CHUNK and not DRYRUN:
+        for i in range(0, len(rows), CHUNK):
+            _upsert_rows(rows[i:i + CHUNK])
+        return
+    if DRYRUN:
+        print(f"  [dry-run] would upsert {symbol} {db_tf} x{len(rows)} bars "
+              f"({rows[0].split(chr(39))[5][:10]}..)")
+        return
+    _upsert_rows(rows)
+
+
+def _upsert_rows(rows):
+    q = (
+        "INSERT INTO candles (symbol, timeframe, timestamp, open, high, low, close, volume) "
+        "VALUES " + ", ".join(rows) + " "
+        "ON CONFLICT (symbol, timeframe, timestamp) DO UPDATE SET "
+        "open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low, "
+        "close = EXCLUDED.close, volume = EXCLUDED.volume;"
+    )
+    psql(q, read_only=False)
+
+
+def refresh_one(sym, db_tf="4h", api_interval="4h"):
     try:
-        bars = fetch_latest_4h(sym)
+        bars = fetch_bars(sym, api_interval, KLINE_LIMIT)
     except Exception as e:
         return sym, False, f"fetch: {str(e)[:80]}"
+    # Keeps the delisted guard: if the NEWEST Binance bar is itself ancient the pair
+    # no longer trades, and we must never insert fake history for it.
     bar, err = latest_refreshable_bar(sym, bars)
     if err:
         return sym, False, err
-    upsert(sym, bar)
+    if KLINE_LIMIT <= 2:
+        upsert(sym, bar, db_tf)          # original top-up behaviour, unchanged
+        return sym, True, None
+    # Gap-closing mode: upsert every CLOSED bar so a multi-day hole actually fills,
+    # rather than only making the freshness probe report fresh.
+    now_ms = time.time() * 1000.0
+    closed = [b for b in bars if b["closeTime"] < now_ms]
+    upsert_many(sym, closed, db_tf)
     return sym, True, None
 
 
 def main():
-    print(f"sycode_4h_refresh {'[DRYRUN]' if DRYRUN else ''} @ {time.strftime('%Y-%m-%d %H:%MZ', time.gmtime())}", flush=True)
-    symbols = get_stuck_symbols()
-    stuck_count = len(symbols)
-    print(f"stuck 4h symbols: {stuck_count}", flush=True)
+    print(f"sycode_candle_refresh {'[DRYRUN]' if DRYRUN else ''} @ {time.strftime('%Y-%m-%d %H:%MZ', time.gmtime())} "
+          f"timeframes={','.join(TIMEFRAMES)} limit={KLINE_LIMIT}", flush=True)
     active_spot_symbols = fetch_active_binance_spot_symbols()
+    grand_refreshed = grand_errors = 0
+    for db_tf in TIMEFRAMES:
+        api_interval, _thr = TIMEFRAME_SPEC.get(db_tf, (db_tf, STUCK_OLDER_THAN_HOURS))
+        r, e = run_timeframe(db_tf, api_interval, active_spot_symbols)
+        grand_refreshed += r
+        grand_errors += e
+    print(f"TOTAL refreshed={grand_refreshed} errors={grand_errors}", flush=True)
+    return 0 if grand_errors == 0 else 1
+
+
+def run_timeframe(db_tf, api_interval, active_spot_symbols):
+    print(f"--- timeframe {db_tf} (binance '{api_interval}') ---", flush=True)
+    symbols = get_stuck_symbols(db_tf)
+    stuck_count = len(symbols)
+    print(f"stuck {db_tf} symbols: {stuck_count}", flush=True)
     symbols = select_refresh_targets(symbols, active_spot_symbols)
     print(
         "refreshable active Binance spot-USDT symbols: "
@@ -227,7 +323,7 @@ def main():
     errors = 0
     err_samples = []
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        futures = {ex.submit(refresh_one, s): s for s in symbols}
+        futures = {ex.submit(refresh_one, s, db_tf, api_interval): s for s in symbols}
         done = 0
         for fut in as_completed(futures):
             done += 1
@@ -248,10 +344,11 @@ def main():
                 print(f"  progress {done}/{len(symbols)} refreshed={refreshed} errors={errors}", flush=True)
     for e in err_samples:
         print(f"  ERROR {e}", flush=True)
-    print(f"done: refreshed={refreshed} errors={errors}", flush=True)
-    # Exit non-zero on errors so a wrapping cron can alert.
-    sys.exit(1 if errors else 0)
+    print(f"done {db_tf}: refreshed={refreshed} errors={errors}", flush=True)
+    # Return counts — main() aggregates and sets the exit code once, so the loop
+    # is not aborted after the first timeframe.
+    return refreshed, errors
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
