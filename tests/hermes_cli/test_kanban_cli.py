@@ -150,8 +150,55 @@ def test_run_slash_reclaim_running_task(kanban_home):
     out = kc.run_slash(f"reclaim {tid} --reason 'test'")
     assert "Reclaimed" in out, out
     # Status back to ready.
-    out2 = kc.run_slash(f"show {tid}")
-    assert "ready" in out2.lower()
+    out = kc.run_slash(f"show {tid}")
+    assert "ready" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# show must not crash on a closed database (regression: task_graph_context
+# was called after connect_closing() had already closed the connection)
+# ---------------------------------------------------------------------------
+
+
+def test_show_renders_graph_without_closed_database_crash(kanban_home):
+    """`kanban show` must render a task that has parent/child graph edges
+    without raising `Cannot operate on a closed database`. The diagnostics
+    section previously queried the task graph with a connection that the
+    enclosing ``with kb.connect_closing()`` block had already closed, so any
+    show of a graphed task tracebacked after printing the header.
+    """
+    from hermes_cli import kanban_db as kb
+
+    with kb.connect() as conn:
+        parent = kb.create_task(conn, title="parent task", assignee="alice")
+        child = kb.create_task(
+            conn, title="child task", assignee="bob", parents=[parent]
+        )
+        pid = parent if isinstance(parent, str) else parent.id
+        cid = child if isinstance(child, str) else child.id
+    # Sanity: the graph edge exists in the DB.
+    with kb.connect() as conn:
+        assert pid in kb.parent_ids(conn, cid)
+
+    for tid in (pid, cid):
+        out = kc.run_slash(f"show {tid}")
+        assert "Cannot operate on a closed database" not in out, out
+        assert f"Task {tid}:" in out, out
+        # Events section must render (it was truncated by the traceback).
+        assert "Events (" in out, out
+
+    # Graph edges must render in text output (previously truncated).
+    out_parent = kc.run_slash(f"show {pid}")
+    assert f"children:  {cid}" in out_parent, out_parent
+    out_child = kc.run_slash(f"show {cid}")
+    assert f"parents:   {pid}" in out_child, out_child
+
+    # JSON path exercises the same graph fetch inside the connection block.
+    import json as _json
+    raw = kc.run_slash(f"show {cid} --json")
+    payload = _json.loads(raw)
+    assert pid in payload["parents"], payload
+
 
 
 
