@@ -144,11 +144,28 @@ ${missing_report}
 Checked ${checked} script target(s) across the crontab. A vanished script is invisible to cron: it counts the failed exec as a run.
 Restore from a .bak copy in the same directory if one exists, then confirm the job's output file starts moving again.
 Check: crontab -l; ls -la ~/.hermes/scripts/"
+    # --- MONITOR→ACTION: route UNHEALTHY to a deduped kanban card (t_dc22ee7e) ---
+    # Alerts notify; the board owns remediation. The router keys on the same
+    # `targets_<md5>` key so alert throttle and card dedupe stay in lockstep.
+    # Pipe the missing_report on stdin; the router reads the live throttle key
+    # from MON_STATE via CRONTAB_MON_STATE_FILE.
+    CRONTAB_MON_HEALTHY=0 CRONTAB_MON_STATE_FILE="$MON_STATE" \
+    /home/frank/.hermes/scripts/system-crontab-watchdog-kanban-router.py \
+    <<< "$missing_report" >>"$LOG_FILE" 2>&1 || \
+    log "KANBAN-ROUTER-FAILED rc=$? key=$key"
     log "UNHEALTHY checked=$checked missing=$missing notexec=$notexec skipped_docker=$skipped_docker"
     echo "[system-crontab-watchdog] UNHEALTHY: ${missing} missing, ${notexec} unrunnable (of ${checked} checked)"
     echo "$missing_report"
     exit 1
 fi
+
+# --- MONITOR→ACTION (healthy): resolve any lingering open card for this key ---
+# On a clean tick the watchdog prints [SILENT]; we let the router clear any
+# previously-filed UNHEALTHY card (comment RESOLVED + auto-complete if untouched).
+CRONTAB_MON_HEALTHY=1 CRONTAB_MON_STATE_FILE="$MON_STATE" \
+/home/frank/.hermes/scripts/system-crontab-watchdog-kanban-router.py \
+<<< "" >>"$LOG_FILE" 2>&1 || \
+log "KANBAN-ROUTER-FAILED on healthy resolution"
 
 log "OK checked=$checked missing=0 notexec=0 skipped_docker=$skipped_docker"
 echo "[SILENT] system crontab healthy: ${checked} script target(s) present and runnable (${skipped_docker} docker-exec line(s) not path-checked)"

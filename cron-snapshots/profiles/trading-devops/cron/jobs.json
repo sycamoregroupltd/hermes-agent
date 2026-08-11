@@ -65,6 +65,41 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "8718bedd960e",
+      "name": "sycode-journey-censor-monitor",
+      "prompt": "Standing read-only watchdog (t_f379ecf5): detect COMPLETED_* signal_journeys missing realized_pnl_percent within the last 24h. Expected steady-state 0/day (14d baseline ~0.19%). Runs the in-dir shim sycode_journey_censor_monitor.sh which execs the canonical monitor at /home/frank/.hermes/profiles/trading-data-oracle/scripts/sycode_signal_journey_censor_monitor.py. Silent on 0; on >0 emits an alert block to stdout (delivered via telegram) and opens/updates a standing kanban triage card on the sycode-trading board. PAPER-MODE ONLY \u2014 never inserts trade_intents, never enables live trading, never mutates data. Read-only SELECT against localhost:5432.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_journey_censor_monitor.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-10T19:58:00+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/scripts"
     }
   ]
 }

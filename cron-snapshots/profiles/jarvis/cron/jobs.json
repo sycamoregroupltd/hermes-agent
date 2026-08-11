@@ -2344,7 +2344,7 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "fleet-dispatch.sh",
+      "script": "fleet-dispatch-selective-wrapper.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {
@@ -2356,9 +2356,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-10T06:32:30.536174+01:00",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T15:46:40.204311+01:00",
       "deliver": "local",
@@ -2448,7 +2448,7 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "codex_exhaustion_circuit_breaker.py",
+      "script": "codex_breaker_selective_wrapper.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {
@@ -6685,6 +6685,78 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": "/home/frank/.hermes"
+    },
+    {
+      "id": "044709de3d82",
+      "name": "perp-candles-topup",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "perp_candles_topup.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 240,
+        "display": "every 240m"
+      },
+      "schedule_display": "every 240m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-10T18:44:02.486033+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "f6f8caedb40b",
+      "name": "hl-maker-campaign",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "hl_maker_campaign.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-10T20:44:24.557301+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }
