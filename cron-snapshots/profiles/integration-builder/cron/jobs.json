@@ -28,10 +28,11 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-05T21:09:24.729095+01:00",
-      "deliver": "telegram",
+      "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "preflight_alerted": true
     },
     {
       "id": "dcbedb167ed1",
@@ -61,10 +62,11 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-05T21:09:24.745537+01:00",
-      "deliver": "telegram",
+      "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "preflight_alerted": true
     }
   ]
 }

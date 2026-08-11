@@ -8,7 +8,16 @@ set -u
 cd /home/frank/sycode-trading/server || { echo "ALERT clean-outcome-labeler-24h-v2: cd failed"; exit 1; }
 # Host-side run: server/.env pins the docker-network host `supabase-db` (unresolvable
 # from the host). Override with the host-reachable URL, same DB (see server/.env.prod).
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres"
+# Host-side run: server/.env pins docker-network hostnames (unresolvable
+# from the host). Override with host-reachable URLs (root CAUTION: do not
+# sed the canonical server/.env — these are per-run env overrides).
+#   - DATABASE_URL -> localhost (TCP by-passes Kong; the wrapper already did this).
+#   - Redis -> 127.0.0.1:6379 (the docker-published host port).
+export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:***@localhost:5432/postgres}"
+export BULLMQ_REDIS_HOST="${BULLMQ_REDIS_HOST:-127.0.0.1}"
+export BULLMQ_REDIS_PORT="${BULLMQ_REDIS_PORT:-6379}"
+export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
+export REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 OUT=$(CLEAN_OUTCOME_LABELER_EXECUTE=true timeout 600 bun scripts/label-clean-outcomes-24h.ts --execute --json 2>&1)
 RC=$?
 if [ "$RC" -eq 2 ]; then

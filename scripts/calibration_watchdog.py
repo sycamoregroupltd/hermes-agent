@@ -55,6 +55,37 @@ BREACH_CARD_COOLDOWN_HOURS = 24
 STATE_DIR = Path(__file__).resolve().parent / "state"
 STATE_FILE = STATE_DIR / "calibration_watchdog_state.json"
 
+# --- t_ece49d50: canonical calibration_verdict.json source -------------------
+# Weighted MCE and Tier-1 clean n are read from a machine-readable verdict
+# v1 produced by the fusion_calibration_report_v2 pipeline. The watchdog uses
+# these two fields as the PRIMARY source; when the JSON is absent or corrupt
+# it falls back to Section-7 regex parsing (tier1_clean_n only — weighted_mce
+# stays None and the DB-computed Tier-1 scored-only MCE in main() carries
+# the alert decision). The path is environment-overridable so staging can
+# point at an ephemeral /tmp copy without changing production behaviour.
+VERDICT_PATH_ENV = os.environ.get(
+    "CALIBRATION_VERDICT_PATH",
+    "/home/frank/.hermes/var/sycode/calibration_verdict.json"
+)
+VERDICT_PATH = Path(VERDICT_PATH_ENV)
+
+
+def load_verdict() -> dict:
+    """Read the canonical calibration_verdict.json (best-effort).
+
+    Returns a dict with keys ``weighted_mce`` and ``tier1_clean_n`` when the
+    file exists and is valid JSON; otherwise returns ``{}`` (fail-open).
+    Never raises — a missing or corrupt verdict simply disables the JSON
+    shortcut and lets the caller fall back to regex.
+    """
+    try:
+        if VERDICT_PATH.exists():
+            import json
+            return json.loads(VERDICT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
 def run_report() -> tuple[int, str]:
     """Run the report wrapper and capture its output."""
     env = os.environ.copy()
@@ -81,8 +112,19 @@ def run_report() -> tuple[int, str]:
     except Exception as e:
         return -2, f"Error running report: {e}"
 
-def parse_metrics(output: str) -> dict:
-    """Parse key metrics from the report output using robust regex."""
+def parse_metrics(output: str, verdict: dict | None = None) -> dict:
+    """Parse key metrics from the report output using robust regex.
+
+    JSON-first path (t_ece49d50): ``weighted_mce`` and ``tier1_clean_n`` are
+    read from the canonical ``calibration_verdict.json`` produced by the
+    fusion-calibration-report pipeline.  When the file is absent or corrupt
+    the watchdog falls back to the existing Section-7 regex parsers so the
+    monitor never goes silent during pipeline transition or temporary failure.
+
+    The optional ``verdict`` parameter lets callers (notably the regression
+    harness) inject a pre-loaded verdict dict for deterministic testing;
+    when ``None`` the function calls :func:`load_verdict` itself.
+    """
     metrics = {
         "n": None,
         "merged_n": None,
@@ -106,7 +148,21 @@ def parse_metrics(output: str) -> dict:
         "news_items_48h": None,
         "news_metadata_rows": None,
         "news_nonnull_sentiment": None,
+        "verdict_source": None,  # "json" | "regex" | None
     }
+
+    # --- (t_ece49d50) JSON-first: read canonical calibration_verdict.json ----
+    verdict = verdict if verdict is not None else load_verdict()
+    if verdict:
+        json_tier1 = verdict.get("tier1_clean_n")
+        if isinstance(json_tier1, (int, float)):
+            metrics["tier1_clean_n"] = int(json_tier1)
+        json_mce = verdict.get("weighted_mce")
+        if isinstance(json_mce, (int, float)):
+            metrics["weighted_mce"] = float(json_mce)
+            metrics["merged_mce"] = float(json_mce)
+        if metrics["tier1_clean_n"] is not None or metrics["weighted_mce"] is not None:
+            metrics["verdict_source"] = "json"
 
     # --- Sample size: TWO distinct populations (t_fb422737 / t_016ac4e4) -----
     # merged_n      = Tier-1 realized-exit + Tier-2 synthetic candle-replay.
@@ -132,29 +188,31 @@ def parse_metrics(output: str) -> dict:
 
     # Tier-1 realized-exit clean unique journeys (authoritative calibration n).
     # Match both the Section-1 summary-table form and the Section-7 observation
-    # text form (identical underlying tier1_clean_n value).
-    tier1_match = re.search(
-        r'\|\s*\*\*Tier-1 clean unique journeys \(realized-exit, authoritative\)\*\*\s*\|\s*\*\*([\d,]+)\*\*\s*\|', output
-    )
-    if tier1_match:
-        metrics["tier1_clean_n"] = int(tier1_match.group(1).replace(",", ""))
-    else:
-        _t_txt = re.search(
-            r'-\s*\*\*Tier-1 clean unique journeys \(realized-exit\): n=([\d,]+)\*\*', output
+    # text form (identical underlying tier1_clean_n value). Only regex-fallback
+    # when JSON did not supply tier1_clean_n above (t_ece49d50: JSON is primary).
+    if metrics["tier1_clean_n"] is None:
+        tier1_match = re.search(
+            r'\|\s*\*\*Tier-1 clean unique journeys \(realized-exit, authoritative\)\*\*\s*\|\s*\*\*([\d,]+)\*\*\s*\|', output
         )
-        if _t_txt:
-            metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
+        if tier1_match:
+            metrics["tier1_clean_n"] = int(tier1_match.group(1).replace(",", ""))
+        else:
+            _t_txt = re.search(
+                r'-\s*\*\*Tier-1 clean unique journeys \(realized-exit\): n=([\d,]+)\*\*', output
+            )
+            if _t_txt:
+                metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
 
-    # n = the calibration-sample identity (Tier-1). Fall back to merged_n ONLY
-    # when the Tier-1 line is absent (legacy/pre-Tier-2 reports) so the monitor
-    # never goes silently blind — but the MCE is always measured on
-    # tier1_clean_n, so labelling the alert with merged_n is wrong and is the
-    # root-cause defect fixed by t_016ac4e4.
-    metrics["n"] = (
-        metrics["tier1_clean_n"]
-        if metrics["tier1_clean_n"] is not None
-        else metrics["merged_n"]
-    )
+    # n = the calibration-sample identity (Tier-1). t_b60eb1f4 / t_cb8bfb91:
+    # n is ALWAYS tier1_clean_n — the merged_n fallback is REMOVED so the alert
+    # emission can never report the merged (Tier-1 + Tier-2 synthetic) sample,
+    # which is large by construction and would mislabel the sample the MCE was
+    # measured on (t_fb422737). When the Tier-1 line is absent, n stays None and
+    # the watchdog stays silent (THIN_SAMPLE / runbook §5) instead of emitting
+    # merged_n as the calibration sample. The merged figure is still parsed as
+    # metrics["merged_n"] purely for the labeled MERGED-sample (non-authoritative)
+    # MCE display line — it is NEVER used for suppression or the alert sample n.
+    metrics["n"] = metrics["tier1_clean_n"]
 
     # Extract win rate. t_ba7757c8: the pinned v2 report emits
     # `**Tier-1 clean win rate**` (Section 1 table) and
@@ -196,9 +254,12 @@ def parse_metrics(output: str) -> dict:
     # NOT the authoritative Tier-1 miscalibration. We parse it as merged_mce and
     # NEVER label it Tier-1. The authoritative Tier-1 scored-only MCE is
     # computed read-only by compute_tier1_scored_mce() (see below).
+    # t_ece49d50: a JSON-preferred verdict already set weighted_mce (authoritative);
+    # only regex-override when JSON did not supply it.
     mce_match = re.search(r'Sample-weighted MCE.*?\*\*([0-9.]+)\s*pp\*\*', output, re.IGNORECASE)
-    if mce_match:
+    if mce_match and metrics["weighted_mce"] is None:
         metrics["weighted_mce"] = float(mce_match.group(1))
+    if mce_match and metrics["merged_mce"] is None:
         metrics["merged_mce"] = float(mce_match.group(1))
 
     # --- Sample window / resolution span (t_ba7757c8 payload enrichment) -----
@@ -784,11 +845,15 @@ def decide_alert(metrics: dict) -> dict | None:
             lines.append(f"- {rolling}")
         return lines
 
+    # t_9353bc26: Use tier1_clean_n (NOT n which falls back to merged_n) as the
+    # suppression gate. This ensures suppressed alerts only fire when the Tier-1
+    # realized-exit sample itself exceeds MIN_CLEAN_N.
+    _tcn = metrics.get("tier1_clean_n")
     # Sample too small for any confident statistic — log metrics, never alert.
-    if n is None or n < MIN_CLEAN_N:
+    if _tcn is None or _tcn < MIN_CLEAN_N:
         lines = [
             "🔎 FUSION CALIBRATION — THIN SAMPLE (below MIN_CLEAN_N) 🔎",
-            f"Tier-1 realized-exit sample (n={n}) is too thin to gauge calibration health.",
+            f"Tier-1 realized-exit sample (tier1_clean_n={_tcn}) is too thin to gauge calibration health.",
             "No breach claim is made. Metrics are logged for accumulation tracking only.\n",
             "[Monitored Metrics]",
         ] + monitored_block()
@@ -980,7 +1045,7 @@ def regression_test() -> int:
 
     # (A) Healthy thin sample must NOT claim a breach / open a card; it emits
     #     the SAMPLE_ACCUMULATING tracker (t_e79f6568) with no card.
-    d = decide_alert({"n": 150, "win_rate": 52.0, "avg_pnl": 0.4, "weighted_mce": 10.0})
+    d = decide_alert({"n": 150, "tier1_clean_n": 150, "win_rate": 52.0, "avg_pnl": 0.4, "weighted_mce": 10.0})
     check("n=150, MCE=10pp -> SAMPLE_ACCUMULATING (no false breach)",
           d is not None and d["kind"] == "SAMPLE_ACCUMULATING")
     check("n=150 -> SAMPLE_ACCUMULATING opens NO card", d is not None and d["card"] is False)
@@ -990,7 +1055,7 @@ def regression_test() -> int:
 
     # (B) Real thin-sample MCE breach -> INVESTIGATE, NO card (t_ef700332: no
     #     alert/flag below the validated-edge floor). Honest INSUFFICIENT_SAMPLE.
-    d = decide_alert({"n": 124, "win_rate": 50.0, "avg_pnl": 0.1, "weighted_mce": 20.07})
+    d = decide_alert({"n": 124, "tier1_clean_n": 124, "win_rate": 50.0, "avg_pnl": 0.1, "weighted_mce": 20.07})
     check("n=124, MCE=20.07pp -> INVESTIGATE", d is not None and d["kind"] == "INVESTIGATE")
     check("n=124, MCE=20.07pp -> NO card raised (t_ef700332: floor not reached)",
           d is not None and d["card"] is False)
@@ -1001,30 +1066,30 @@ def regression_test() -> int:
           or "not a validated" in " ".join(d["stdout_lines"]).lower())
 
     # (C) n<100 silent gap closed: metrics logged, no card, no breach claim.
-    d = decide_alert({"n": 42, "win_rate": 51.0, "avg_pnl": 0.2, "weighted_mce": 9.0})
+    d = decide_alert({"n": 42, "tier1_clean_n": 42, "win_rate": 51.0, "avg_pnl": 0.2, "weighted_mce": 9.0})
     check("n=42 -> THIN_SAMPLE (logs metrics, no card)", d is not None and d["kind"] == "THIN_SAMPLE" and d["card"] is False)
-    check("n=42 -> logs Tier-1 n", "n=42" in " ".join(d["stdout_lines"]))
+    check("n=42 -> logs Tier-1 n", "tier1_clean_n=42" in " ".join(d["stdout_lines"]))
     check("n=42 -> logs MCE metric", "Sample-weighted MCE" in " ".join(d["stdout_lines"]))
 
     # (D) Confident healthy sample -> SAMPLE_ACCUMULATING (floor reached), no card,
     #     no recalibration side-effect. This is the t_e79f6568 accumulation status
     #     emitted once the validated-edge floor is met.
-    d = decide_alert({"n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 8.0})
+    d = decide_alert({"n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 8.0})
     check("n=400, healthy -> SAMPLE_ACCUMULATING (floor reached, no breach card)",
           d is not None and d["kind"] == "SAMPLE_ACCUMULATING" and d["card"] is False)
 
     # (E) Confident MCE breach -> BREACH + card.
-    d = decide_alert({"n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 18.0})
+    d = decide_alert({"n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7, "weighted_mce": 18.0})
     check("n=400, MCE=18pp -> BREACH", d is not None and d["kind"] == "BREACH" and d["card"] is True)
 
     # (F) Thin win-rate breach -> INVESTIGATE (not BREACH), honest.
-    d = decide_alert({"n": 200, "win_rate": 35.0, "avg_pnl": -0.5, "weighted_mce": 9.0})
+    d = decide_alert({"n": 200, "tier1_clean_n": 200, "win_rate": 35.0, "avg_pnl": -0.5, "weighted_mce": 9.0})
     check("n=200, WR=35% -> INVESTIGATE (thin genuine breach)", d is not None and d["kind"] == "INVESTIGATE")
     check("n=200, WR=35% -> no false MCE-breach claim", "mce breach" not in " ".join(d["stdout_lines"]).lower())
 
     # (G) SAMPLE_ACCUMULATING guarantees: explicitly no recalibration wording and
     #     that the status string is present exactly once in stdout.
-    d = decide_alert({"n": 260, "win_rate": 54.0, "avg_pnl": 0.6, "weighted_mce": 11.0})
+    d = decide_alert({"n": 260, "tier1_clean_n": 260, "win_rate": 54.0, "avg_pnl": 0.6, "weighted_mce": 11.0})
     check("n=260 -> SAMPLE_ACCUMULATING status present",
           d is not None and d["kind"] == "SAMPLE_ACCUMULATING"
           and any("SAMPLE_ACCUMULATING" in ln for ln in d["stdout_lines"]))
@@ -1048,7 +1113,7 @@ def regression_test() -> int:
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
         compute_tier1_slice_context = lambda: None
         parse_metrics = lambda out: {
-            "n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
+            "n": 127, "tier1_clean_n": 127, "win_rate": 40.16, "avg_pnl": 0.4772,
             "weighted_mce": 19.4, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
         }
@@ -1081,7 +1146,7 @@ def regression_test() -> int:
         compute_tier1_scored_mce = lambda: (None, None, "mocked")
         compute_tier1_slice_context = lambda: None
         parse_metrics = lambda out: {
-            "n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
+            "n": 42, "tier1_clean_n": 42, "win_rate": 51.0, "avg_pnl": 0.2,
             "weighted_mce": 9.0, "has_integrity_warning": False,
             "sql_errors": 0, "epoch_start": "2026-07-05",
         }
@@ -1147,7 +1212,7 @@ def regression_test() -> int:
     # scored-only MCE is available, the breach/headline keys on it and the
     # merged figure is labeled non-authoritative with its own n.
     d = decide_alert({
-        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
         "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
         "tier1_scored_mce": 32.72, "tier1_scored_n": 381,
     })
@@ -1171,7 +1236,7 @@ def regression_test() -> int:
     # figure is used but explicitly labeled non-authoritative (never misread
     # as Tier-1).
     d = decide_alert({
-        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
         "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
     })
     check("t_0bfed6a8: merged fallback returns a BREACH decision", d is not None)
@@ -1243,7 +1308,7 @@ def regression_test() -> int:
 
     # (P) t_ba7757c8: BREACH payload includes evidence context + report links.
     d = decide_alert({
-        "n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
+        "n": 400, "tier1_clean_n": 400, "win_rate": 55.0, "avg_pnl": 0.7,
         "weighted_mce": 15.8, "merged_mce": 15.8, "merged_n": 7842,
         "tier1_scored_mce": 32.72, "tier1_scored_n": 381,
         "sample_window": "last 30d (30d)",
@@ -1309,6 +1374,87 @@ def regression_test() -> int:
               _card_in_cooldown("MCE", _now) is False)
     finally:
         STATE_FILE = _orig_state_file2
+
+    # (S) t_b60eb1f4: alert emission sample identity. The alert's reported
+    # sample size n MUST be tier1_clean_n (112 on current data), NEVER the
+    # merged (Tier-1 + Tier-2 synthetic) sample (6842). parse_metrics sets
+    # n = tier1_clean_n always — merged_n is parsed only for the labeled
+    # MERGED-sample (non-authoritative) MCE display line and is never the
+    # alert sample n. A legacy report with no Tier-1 line yields n=None (not
+    # merged_n), so the watchdog stays silent (THIN_SAMPLE/runbook §5) instead
+    # of misreporting the merged sample as the calibration sample.
+    _both = parse_metrics(
+        "| **Tier-1 clean unique journeys (realized-exit, authoritative)** | **112** |\n"
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "| **Tier-1 clean win rate** | **19.0%** |\n"
+        "Sample-weighted MCE: **18.86 pp**\n")
+    check("t_b60eb1f4: n is tier1_clean_n (112), never merged (6842)",
+          _both.get("n") == 112 and _both.get("tier1_clean_n") == 112
+          and _both.get("merged_n") == 6842)
+    d_s = decide_alert(dict(_both, avg_pnl=-0.20, tier1_scored_mce=None,
+                            tier1_scored_n=None, tier1_scored_error=None))
+    check("t_b60eb1f4: emission decision produced",
+          d_s is not None and d_s["kind"] == "INVESTIGATE")
+    if d_s is not None:
+        _all_s = "\n".join(d_s["stdout_lines"])
+        check("t_b60eb1f4: emission reports Tier-1 clean n=112",
+              "Tier-1 clean unique journeys (n): 112" in _all_s)
+        t1_line_s = next(
+            (l for l in d_s["stdout_lines"] if "Tier-1 clean unique journeys" in l),
+            None)
+        check("t_b60eb1f4: Tier-1 identity line never reports merged_n=6842",
+              t1_line_s is not None and "6842" not in t1_line_s)
+        check("t_b60eb1f4: merged figure only in labeled MERGED (non-authoritative) line",
+              any("MERGED sample (non-authoritative)" in l and "6842" in l
+                  for l in d_s["stdout_lines"]))
+    # Legacy report with ONLY a merged sample (no Tier-1 line): n must be None,
+    # never merged_n — the watchdog must NOT emit merged_n as the calibration n.
+    _legacy = parse_metrics(
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "| **Clean win rate** | **19.0%** |\n"
+        "Sample-weighted MCE: **18.86 pp**\n")
+    check("t_b60eb1f4: legacy no-Tier-1 report -> n=None (never merged_n)",
+          _legacy.get("n") is None and _legacy.get("merged_n") == 6842)
+
+    # (S2) t_49688e05 / parent t_df54ca93 acceptance replay: with current data
+    # the watchdog fires (weighted_mce 18.86pp >= 15pp, tier1_clean_n=112 <
+    # MIN_CLEAN_N) and the alert reports n=112; suppression is NOT driven by
+    # merged_n=6842. tier1_clean_n is the sole suppression input.
+    _both2 = parse_metrics(
+        "| **Tier-1 clean unique journeys (realized-exit, authoritative)** | **112** |\n"
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "| **Tier-1 clean win rate** | **19.0%** |\n"
+        "Sample-weighted MCE: **18.86 pp**\n")
+    check("t_49688e05: n == tier1_clean_n when both populations present",
+          _both2.get("n") == 112 and _both2.get("tier1_clean_n") == 112
+          and _both2.get("merged_n") == 6842)
+    check("t_49688e05: alert n never falls back to merged_n (112 != 6842)",
+          _both2.get("n") != _both2.get("merged_n"))
+    d_acc = decide_alert(dict(_both2, avg_pnl=-0.2, tier1_scored_mce=None,
+                              tier1_scored_n=None, tier1_scored_error=None))
+    _all_acc = " ".join(d_acc["stdout_lines"]) if d_acc else ""
+    check("t_49688e05: acceptance replay (n=112, MCE=18.86) -> INVESTIGATE",
+          d_acc is not None and d_acc["kind"] == "INVESTIGATE" and d_acc["card"] is False)
+    check("t_49688e05: alert reports n=112 (tier1_clean_n)",
+          "Tier-1 clean unique journeys (n): 112" in _all_acc)
+    check("t_49688e05: alert never claims the Tier-1 sample is merged_n",
+          "Tier-1 clean unique journeys (n): 6842" not in _all_acc
+          and "tier1_clean_n=6842" not in _all_acc)
+    # JSON-preferred path: verdict JSON overrides regex; n always tier1_clean_n.
+    _verdict = {
+        "weighted_mce": 18.86, "tier1_clean_n": 112, "merged_n": 6842,
+        "threshold_pp": 15.0, "min_clean_n": 100,
+    }
+    _json_metrics = parse_metrics(
+        "| **MERGED clean unique journeys (n)** | **9,999** |\n"
+        "Sample-weighted MCE: **99.0 pp**\n",
+        verdict=_verdict)
+    check("t_49688e05: JSON-preferred overrides regex tier1_clean_n",
+          _json_metrics.get("tier1_clean_n") == 112
+          and _json_metrics.get("weighted_mce") == 18.86
+          and _json_metrics.get("verdict_source") == "json")
+    check("t_49688e05: JSON-preferred n is tier1_clean_n (112), not regex merged (9999)",
+          _json_metrics.get("n") == 112 and _json_metrics.get("merged_n") == 9999)
 
     # Restore the temp state redirect used for the whole harness.
     STATE_FILE, STATE_DIR = _orig_state_file, _orig_state_dir
