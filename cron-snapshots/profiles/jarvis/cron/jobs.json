@@ -6640,9 +6640,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-06T04:20:19.940120+01:00",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-06T03:05:54.706287+00:00",
       "deliver": "local",

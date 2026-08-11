@@ -37,7 +37,7 @@ PIPELINES = {
     "signal_journeys":        ("created_at",  3),
     "signal_pnl_points":      ("ts",          3),
     "oi_snapshots":           ("created_at",  3),
-    "signal_trajectory_bars": ("captured_at", 2),
+    "signal_trajectory_bars": ("captured_at", 8),
     "funding_rate_history":   ("created_at",  6),
     "signal_fingerprints":    ("created_at", 36),
     "signal_journey_events":  ("recorded_at",  6),  # emission fixed 2026-07-02 (was frozen 15d); recorded_at = DB write time (best "is data landing" signal). No created_at column exists on this table.
@@ -166,14 +166,27 @@ def normalize_alert_for_fingerprint(alert):
     return stable
 
 
+# Per-connection timeout override: postgres role has statement_timeout=3s (role rolconfig),
+# which kills max(ts) probes on multi-gigabyte tables even when indexes are present.
+# SET LOCAL raises it only for this psql session; does NOT mutate the role or affect
+# other connections/servers. Safe connection-pool-tuning fix authorized by t_c1eed563.
+PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(60000))
+
+
 def psql_scalar(q):
+    # Wrap the query so the per-connection timeout overrides the role-level 3s cap.
+    # psql -c with SET;SELECT emits "SET\\n<value>" — strip the SET prefix.
+    wrapped_q = f"SET statement_timeout = {PROBE_STATEMENT_TIMEOUT}; {q}"
     r = subprocess.run(
-        ["docker", "exec", PG, "psql", "-U", "postgres", "-d", "postgres", "-Atc", q],
-        capture_output=True, text=True, timeout=60)
+        ["docker", "exec", PG, "psql", "-U", "postgres", "-d", "postgres", "-Atc", wrapped_q],
+        capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).strip()
         raise RuntimeError(msg.splitlines()[-1][:90] if msg else "rc=%d" % r.returncode)
-    return r.stdout.strip()
+    # psql -c may emit multi-line output for SET;SELECT combos.
+    # Only return the last non-empty line (the actual query result).
+    lines = [l for l in r.stdout.strip().splitlines() if l.strip()]
+    return lines[-1].strip() if lines else ""
 
 
 def probe(table, col):

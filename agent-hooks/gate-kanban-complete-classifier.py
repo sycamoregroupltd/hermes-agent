@@ -239,6 +239,15 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     # negative fixture proves the same wording attached to concrete apps/web
     # work still blocks.
     r"\b(monitor|report|script)\b[^\n]{0,120}\brenders?\b[^\n]{0,160}\b(0pp|metric|number|value|output|section|marker|unmeasured|unavailable)\b",
+    # PM planning cards issue concrete-looking PM verbs (route/create/expand)
+    # alongside an explicit "create one implementation child" instruction,
+    # which the broad APP_IMPL verb+route regex latches onto as app work (false
+    # positive). When the body pairs that with a paper-only safety clause, it is
+    # a PM routing/delegation instruction, not frontend implementation. Concrete
+    # apps/web work still matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS
+    # and is caught by paired negatives; this override only relaxes the false
+    # positive on PM planning + paper-only safety wording.
+    r"\bcreate one implementation child\b[\s\S]{0,900}\b(paper[- ]?only|no (app|product|frontend|web) code changes|no [\s\S]{0,80}(route|page|component|middleware|layout|ui|trpc|browser)[\s\S]{0,200}(is changed|changed|touched|modified))\b",
 ]
 
 FLEET_SLO_NONAPP_PATTERNS: PatternList = [
@@ -295,6 +304,15 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     r"\bprofile-local config/checklist/tool-path repair\b[^\n.]{0,180}\bfrontend/web reviewers can run required gates\b",
     r"\bpaired frontend negative\b[^\n.]{0,160}\b(still )?blocks?\b[^\n.]{0,160}\bapps/web\b",
     r"\bapps/web\b[^\n.]{0,160}\b(still )?blocks?\b[^\n.]{0,160}\bwithout verify_pass\b",
+    # PM planning cards issue concrete-looking PM verbs (route/create/expand)
+    # alongside an explicit "create one implementation child" instruction,
+    # which the broad APP_IMPL verb+route regex latches onto as app work. When
+    # the body pairs that with a paper-only / no-app safety clause it is a PM
+    # routing/delegation instruction, not frontend implementation. Concrete
+    # apps/web work still matches APP_IMPL_PATTERNS and is caught by the paired
+    # negative fixture; this negation only relaxes the false positive on PM
+    # planning cards.
+    r"\bcreate one implementation child\b[\s\S]{0,900}\b(paper[- ]?only|no (app|product|frontend|web) code changes)\b",
 ]
 
 NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [

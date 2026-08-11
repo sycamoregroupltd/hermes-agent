@@ -90,8 +90,8 @@
       "repeat": {
         "times": 3
       },
-      "enabled": true,
-      "state": "scheduled",
+      "enabled": false,
+      "state": "completed",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-04T23:30:53.089474+01:00",

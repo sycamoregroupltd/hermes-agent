@@ -31,8 +31,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "preflight_alerted": true
+      "workdir": null
     },
     {
       "id": "dcbedb167ed1",
@@ -65,8 +64,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "preflight_alerted": true
+      "workdir": null
     }
   ]
 }
