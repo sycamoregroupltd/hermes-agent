@@ -145,16 +145,16 @@ def parse_metrics(output: str) -> dict:
         if _t_txt:
             metrics["tier1_clean_n"] = int(_t_txt.group(1).replace(",", ""))
 
-    # n = the calibration-sample identity (Tier-1). Fall back to merged_n ONLY
-    # when the Tier-1 line is absent (legacy/pre-Tier-2 reports) so the monitor
-    # never goes silently blind — but the MCE is always measured on
-    # tier1_clean_n, so labelling the alert with merged_n is wrong and is the
-    # root-cause defect fixed by t_016ac4e4.
-    metrics["n"] = (
-        metrics["tier1_clean_n"]
-        if metrics["tier1_clean_n"] is not None
-        else metrics["merged_n"]
-    )
+    # n = the calibration-sample identity (Tier-1). t_b60eb1f4 / t_cb8bfb91:
+    # n is ALWAYS tier1_clean_n — the merged_n fallback is REMOVED so the alert
+    # emission can never report the merged (Tier-1 + Tier-2 synthetic) sample,
+    # which is large by construction and would mislabel the sample the MCE was
+    # measured on (t_fb422737). When the Tier-1 line is absent, n stays None and
+    # the watchdog stays silent (THIN_SAMPLE / runbook §5) instead of emitting
+    # merged_n as the calibration sample. The merged figure is still parsed as
+    # metrics["merged_n"] purely for the labeled MERGED-sample (non-authoritative)
+    # MCE display line — it is NEVER used for suppression or the alert sample n.
+    metrics["n"] = metrics["tier1_clean_n"]
 
     # Extract win rate. t_ba7757c8: the pinned v2 report emits
     # `**Tier-1 clean win rate**` (Section 1 table) and
@@ -1309,6 +1309,47 @@ def regression_test() -> int:
               _card_in_cooldown("MCE", _now) is False)
     finally:
         STATE_FILE = _orig_state_file2
+
+    # (S) t_b60eb1f4: alert emission sample identity. The alert's reported
+    # sample size n MUST be tier1_clean_n (112 on current data), NEVER the
+    # merged (Tier-1 + Tier-2 synthetic) sample (6842). parse_metrics sets
+    # n = tier1_clean_n always — merged_n is parsed only for the labeled
+    # MERGED-sample (non-authoritative) MCE display line and is never the
+    # alert sample n. A legacy report with no Tier-1 line yields n=None (not
+    # merged_n), so the watchdog stays silent (THIN_SAMPLE/runbook §5) instead
+    # of misreporting the merged sample as the calibration sample.
+    _both = parse_metrics(
+        "| **Tier-1 clean unique journeys (realized-exit, authoritative)** | **112** |\n"
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "| **Tier-1 clean win rate** | **19.0%** |\n"
+        "Sample-weighted MCE: **18.86 pp**\n")
+    check("t_b60eb1f4: n is tier1_clean_n (112), never merged (6842)",
+          _both.get("n") == 112 and _both.get("tier1_clean_n") == 112
+          and _both.get("merged_n") == 6842)
+    d_s = decide_alert(dict(_both, avg_pnl=-0.20, tier1_scored_mce=None,
+                            tier1_scored_n=None, tier1_scored_error=None))
+    check("t_b60eb1f4: emission decision produced",
+          d_s is not None and d_s["kind"] == "INVESTIGATE")
+    if d_s is not None:
+        _all_s = "\n".join(d_s["stdout_lines"])
+        check("t_b60eb1f4: emission reports Tier-1 clean n=112",
+              "Tier-1 clean unique journeys (n): 112" in _all_s)
+        t1_line_s = next(
+            (l for l in d_s["stdout_lines"] if "Tier-1 clean unique journeys" in l),
+            None)
+        check("t_b60eb1f4: Tier-1 identity line never reports merged_n=6842",
+              t1_line_s is not None and "6842" not in t1_line_s)
+        check("t_b60eb1f4: merged figure only in labeled MERGED (non-authoritative) line",
+              any("MERGED sample (non-authoritative)" in l and "6842" in l
+                  for l in d_s["stdout_lines"]))
+    # Legacy report with ONLY a merged sample (no Tier-1 line): n must be None,
+    # never merged_n — the watchdog must NOT emit merged_n as the calibration n.
+    _legacy = parse_metrics(
+        "| **MERGED clean unique journeys (n)** | **6,842** |\n"
+        "| **Clean win rate** | **19.0%** |\n"
+        "Sample-weighted MCE: **18.86 pp**\n")
+    check("t_b60eb1f4: legacy no-Tier-1 report -> n=None (never merged_n)",
+          _legacy.get("n") is None and _legacy.get("merged_n") == 6842)
 
     # Restore the temp state redirect used for the whole harness.
     STATE_FILE, STATE_DIR = _orig_state_file, _orig_state_dir
