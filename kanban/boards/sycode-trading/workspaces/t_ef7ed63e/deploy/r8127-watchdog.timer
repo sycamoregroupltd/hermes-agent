@@ -1,0 +1,15 @@
+[Unit]
+Description=r8127 watchdog health-check timer (t_837875d3)
+Documentation=file:///home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_ef7ed63e/deploy/README.md
+
+[Timer]
+# Fire 30s after boot/network comes up, then every 30 seconds.
+OnBootSec=30
+OnUnitActiveSec=30
+AccuracySec=5s
+# Re-run a missed tick if the box was off / asleep when it was due.
+Persistent=true
+Unit=r8127-watchdog.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=r8127 watchdog: default-route and carrier health probe (t_837875d3)
+Documentation=file:///home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_ef7ed63e/deploy/README.md
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+# Runs the health probe every tick. Healthy link -> logs OK, exits 0.
+# Unhealthy (route missing or carrier down) -> exits non-zero so the
+# recovery path / alerting can fire. Recovery logic (ip link + driver
+# reload) lives in r8127-recover.sh (t_00aa238c), kept separate by
+# design so the check cannot accidentally mutate the link on a
+# transient flap.
+Environment=WATCHDOG_IFACE=enP7s7
+Environment=WATCHDOG_STATE_DIR=/run/r8127-watchdog
+ExecStart=/usr/local/sbin/r8127-watchdog.sh
+# Do NOT auto-restart on failure: a non-zero exit is the unhealthy
+# signal, and the 30s timer re-evaluates anyway. Restarting a oneshot
+# that exits non-zero would spin the link unnecessarily.
+TimeoutStartSec=30
