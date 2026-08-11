@@ -1360,7 +1360,7 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "dgx_cron_health_canary.py",
+      "script": "cron_health_canary_wrapper.sh",
       "no_agent": true,
       "context_from": null,
       "schedule": {
@@ -6081,8 +6081,7 @@
       "name": "DQSH alert-reduction 2-week measurement (t_9cb96d37 window close)",
       "prompt": "You are the scheduled gate-resolver + measurement runner for the time-gated DQSH alert-reduction follow-up. Today (the earliest fire date) is on/after 2026-08-12, so the 14-day post-fix window (2026-07-28 \u2192 2026-08-11) has elapsed and the real measurement is due.\n\nCONTEXT (read first):\n- Measurement task: kanban t_9cb96d37 (devops). Parent: sycode-trading/t_f020e1a4 (DQSH bounded-status hardening). Gate task: t_e33da949 (dependency parent of t_9cb96d37).\n- Fix-date baseline captured 2026-07-28T14:21Z: attached to t_9cb96d37 AND at /home/frank/.hermes/scripts/dqsh_alert_reduction_baseline_2026-07-28.json. A method note lives in the fleet vault at /home/frank/obsidian-fleet-vault/Operations/DQSH-Alert-Reduction-Measurement-Baseline-t_9cb96d37.md.\n- Method script: /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py\n- Board DB: /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db\n- Registry: project control-plane, tracker jarvis-os, vault fleet. The obsidian-knowledge-management skill is MANDATORY before any durable vault write.\n\nWINDOW TIMESTAMPS (epoch s):\n- start = 1785196800 (2026-07-28T00:00:00Z)\n- end   = 1786492799 (2026-08-11T23:59:59Z)\n\nSTEPS:\n1. Run `date -u` and confirm current UTC date >= 2026-08-12. If NOT, do NOT mutate anything \u2014 kanban_comment t_9cb96d37 \"cron fired early; window not elapsed\" and STOP (should not happen given schedule).\n2. kanban_show t_9cb96d37 and t_e33da949 to re-read baseline context and attached baseline JSON.\n3. Run the measurement over the window AND the full current board:\n   python3 /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py --db /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db --json --window-start 1785196800 --window-end 1786492799\n   python3 /home/frank/.hermes/scripts/dqsh_alert_reduction_measure.py --db /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db --json\n   Capture both outputs. The first gives new_in_window per term (cards created in the 14-day window); the second gives current by_status for comparison vs the fix-date baseline.\n4. Compare new_in_window counts against baseline expectations:\n   - Baseline new_in_window@t0: dlq 0, backlog 7, starvation 0, pipeline_sta 0, queue_backlog 0.\n   - GENUINE recurrence cluster = material new set of dlq / starvation / pipeline_sta cards NOT explainable as normal board churn: e.g. new_in_window for dlq OR starvation OR pipeline_sta >= 3, OR a tight temporal cluster of same-term cards, OR open/blocked same-term cards indicating an unresolved incident. backlog/queue_backlog at low counts are likely noise \u2014 judge by inspecting titles + created_at.\n5. CLASSIFY and ACT:\n   a) NO genuine recurrence cluster \u2192 reduction MET. kanban_comment t_9cb96d37 with the full report (new_in_window per term, open-vs-resolved at window close, baseline comparison, recurrence-vs-noise verdict). The spawned devops worker (auto-promoted after gate completion) will finalize kanban_complete. (Optionally, you may also write the durable fleet task-evidence note now per step 6.)\n   b) GENUINE recurrence cluster \u2192 DO NOT auto-mutate. kanban_create a remediation task (assignee devops, parent t_9cb96d37) titled \"Remediate <term> recurrence cluster post DQSH fix (window 2026-07-28..08-11)\" with the evidence (counts, sample card ids/titles, created_at cluster). kanban_comment t_9cb96d37 summarizing the cluster. Then block t_9cb96d37 with kind='needs_input' reason summarizing the cluster (so a human reviews before declaring success). After blocking, proceed to step 7 (complete the gate).\n6. (On no-recurrence path) Persist a durable task-evidence note to the FLEET vault at /home/frank/obsidian-fleet-vault/Operations/ following the obsidian-knowledge-management skill (load it first): type: task-evidence, status: active, created/updated YYYY-MM-DD, confidence: high, tags, sources=[sycode-trading/t_f020e1a4, jarvis-os board, this task], body with measured new_in_window counts, open-vs-resolved, baseline comparison, and recurrence-vs-noise verdict. Link [[Projects/Control-Plane]] and [[Operations/DQSH-Bounded-Status-Hardening-t_f020e1a4]] and the baseline note.\n7. COMPLETE THE GATE: kanban_complete t_e33da949 with summary \"2-week window elapsed 2026-08-11; measurement triggered for t_9cb96d37.\" This auto-promotes t_9cb96d37 to ready so the dispatcher spawns a devops worker to finalize. (Do NOT call kanban_complete on t_9cb96d37 here \u2014 leave the official completion to the spawned worker, except in the recurrence case where you have already blocked it.)\n\nNO live trading, credentials, destructive DB/schema, prod deploy, or spend. Read-only board observation + report only.\n\nHonesty rule: never fabricate a board state. The board is live; measure it now. If the board DB is missing/corrupt, kanban_block t_9cb96d37 with kind='capability' and kanban_complete t_e33da949, then STOP.",
       "skills": [
-        "obsidian-knowledge-management",
-        "devops"
+        "obsidian-knowledge-management"
       ],
       "skill": "obsidian-knowledge-management",
       "model": null,
@@ -6754,6 +6753,113 @@
       "paused_reason": null,
       "created_at": "2026-08-10T20:44:24.557301+01:00",
       "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "b9e411f11a4c",
+      "name": "nous-token-presence",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "nous_token_presence.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-11T09:35:10.237971+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "3e0ad6fee667",
+      "name": "sycode-pipeline-anomaly-engine",
+      "prompt": "Standing read-only anomaly detection engine (t_fa200457): audits surface freshness across 12 certified surfaces (register SLOs), feature density, pg_stat_activity, table bloat, and clean-cohort accrual on the sycode-trading DB. Runs the in-dir shim sycode_pipeline_anomaly_engine.sh which execs the canonical engine at /home/frank/.hermes/profiles/trading-data-oracle/scripts/sycode_pipeline_anomaly_engine.py. Silent (exit 0) when healthy; on warning/breach findings exports structured diagnostics to /tmp/data-integrity-diagnostics/<ts>/ (diagnostics.json + anomalies.csv) and exits 2 with alert lines on stdout. PAPER-MODE ONLY - SELECT-only via PGOPTIONS read-only; never writes production tables, never inserts trade_intents, never enables live trading.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_pipeline_anomaly_engine.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-11T09:27:23.000000+00:00",
+      "deliver": "discord:#critical-alerts",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/scripts"
+    },
+    {
+      "id": "450bec18f08b",
+      "name": "kanban-idempotency-board-guard",
+      "prompt": "Kanban idempotency-board pairing guard (t_c7040708): no-agent watchdog. Any hermes kanban create with --idempotency-key must also pass --board; dedup lookups must resolve the kanban.db from the idempotency key embedded board slug, never from ambient HERMES_KANBAN_BOARD/DB env. Runs kanban_idempotency_board_guard.py --check; silent when clean; prints violations otherwise.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "kanban_idempotency_board_guard.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 */6 * * *",
+        "display": "0 */6 * * *"
+      },
+      "schedule_display": "0 */6 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-11T10:30:30.814229+01:00",
+      "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null

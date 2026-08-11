@@ -135,6 +135,28 @@ def resolve_board_db(board_slug):
     legacy = os.path.expanduser("~/.hermes/kanban.db")
     return str(legacy)
 
+
+def board_env(board_name):
+    """Build a subprocess env pinned to `board_name` for `hermes kanban` calls.
+
+    The CLI resolves the target DB from HERMES_KANBAN_DB (explicit path,
+    highest priority) BEFORE HERMES_KANBAN_BOARD and the `--board` flag. If a
+    parent process leaks HERMES_KANBAN_DB pointing at another board (e.g. an
+    ambient sycode-trading pin), every `hermes kanban <subcommand>` call would
+    silently write to the WRONG board, and the framework's key-driven dedup
+    (which resolves the DB from the idempotency key's board slug) would no
+    longer match — creating duplicate diag cards (t_4f419b25 root cause).
+
+    So both vars are pinned: HERMES_KANBAN_DB to the resolved board DB path
+    (via :func:`resolve_board_db`, the same source used by dedup queries) and
+    HERMES_KANBAN_BOARD to the slug. Returns a fresh dict; the caller's env is
+    never mutated.
+    """
+    env = os.environ.copy()
+    env["HERMES_KANBAN_DB"] = resolve_board_db(board_name)
+    env["HERMES_KANBAN_BOARD"] = board_name
+    return env
+
 # Auto-close: after this many consecutive healthy CDPDS/audit profiles the
 # active diagnostic card is completed to clear the board (review §2.2/§4.1.5).
 AUTO_CLOSE_CONSECUTIVE_HEALTHY = 2
@@ -165,52 +187,89 @@ def inspect_orphans():
     """Traces orphan rows across signal_pnl_points and trade_close_events.
 
     Returns:
-        dict: Orphan counts and sample rows.
+        dict: Orphan counts and sample rows. Each numeric metric is
+        accompanied by a `status` key ("OK" or "UNKNOWN"): if the underlying
+        SQL query times out or errors (e.g. the DB is congested by a long-held
+        lock — these LEFT JOINs over ~2.4M signal_journeys are the most exposed
+        queries, measured 55s+ standalone on 2026-08-11), the metric is
+        reported as "UNKNOWN" instead of crashing the whole monitor. This is
+        the same hardening applied to inspect_queues (t_d9c7537b): a failed
+        measurement must not abort the audit before kanban routing happens —
+        it is surfaced as MONITOR_DEGRADED so the incident stays visible.
     """
+    UNKNOWN = "UNKNOWN"
+
+    def safe_orphan(query, label):
+        try:
+            rows = run_sql(query)
+            return len(rows), rows, "OK"
+        except Exception as e:
+            print(f"[WARN] inspect_orphans.{label} query failed ({type(e).__name__}): {e}",
+                  file=sys.stderr)
+            return UNKNOWN, [], UNKNOWN
+
     # 1. signal_pnl_points orphans (no signal_journeys match)
-    pnl_orphans_query = """
+    pnl_count, pnl_orphans, pnl_status = safe_orphan(pnl_orphans_query(), "pnl_points")
+
+    # 2. trade_close_events orphans (journey_id set but no signal_journeys match)
+    close_j_count, close_journey_orphans, close_j_status = safe_orphan(
+        close_journey_orphans_query(), "trade_close_journeys")
+
+    # 3. trade_close_events orphans with invalid position_id (no managed_positions match)
+    close_p_count, close_position_orphans, close_p_status = safe_orphan(
+        close_position_orphans_query(), "trade_close_positions")
+
+    return {
+        "pnl_points": {
+            "count": pnl_count,  # Note: Count reflects the sample or total if below limit
+            "samples": pnl_orphans,
+            "status": pnl_status,
+        },
+        "trade_close_journeys": {
+            "count": close_j_count,
+            "samples": close_journey_orphans,
+            "status": close_j_status,
+        },
+        "trade_close_positions": {
+            "count": close_p_count,
+            "samples": close_position_orphans,
+            "status": close_p_status,
+        }
+    }
+
+
+def pnl_orphans_query():
+    """SQL for signal_pnl_points orphans. Hoisted so the safe_orphan helper and
+    tests can reference it without duplicating the literal."""
+    return """
         SELECT p.id::text, p.ts::text, p.journey_id::text, p.symbol, p.pnl_percent::text
         FROM public.signal_pnl_points p
         LEFT JOIN public.signal_journeys j ON p.journey_id = j.id
         WHERE j.id IS NULL
         LIMIT 100;
     """
-    pnl_orphans = run_sql(pnl_orphans_query)
 
-    # 2. trade_close_events orphans (journey_id set but no signal_journeys match)
-    close_journey_orphans_query = """
+
+def close_journey_orphans_query():
+    """SQL for trade_close_events orphans (journey_id set but no signal_journeys match)."""
+    return """
         SELECT t.id::text, t.created_at::text, t.journey_id::text, t.symbol, t.pnl_percent::text
         FROM public.trade_close_events t
         LEFT JOIN public.signal_journeys j ON t.journey_id = j.id
         WHERE t.journey_id IS NOT NULL AND j.id IS NULL
         LIMIT 100;
     """
-    close_journey_orphans = run_sql(close_journey_orphans_query)
 
-    # 3. trade_close_events orphans with invalid position_id (no managed_positions match)
-    close_position_orphans_query = """
+
+def close_position_orphans_query():
+    """SQL for trade_close_events orphans with invalid position_id (no managed_positions match)."""
+    return """
         SELECT t.id::text, t.created_at::text, t.position_id::text, t.symbol, t.pnl_percent::text
         FROM public.trade_close_events t
         LEFT JOIN public.managed_positions p ON t.position_id = p.id
         WHERE p.id IS NULL
         LIMIT 100;
     """
-    close_position_orphans = run_sql(close_position_orphans_query)
-
-    return {
-        "pnl_points": {
-            "count": len(pnl_orphans),  # Note: Count reflects the sample or total if below limit
-            "samples": pnl_orphans
-        },
-        "trade_close_journeys": {
-            "count": len(close_journey_orphans),
-            "samples": close_journey_orphans
-        },
-        "trade_close_positions": {
-            "count": len(close_position_orphans),
-            "samples": close_position_orphans
-        }
-    }
 
 
 def _status_for_value(value):
@@ -420,7 +479,8 @@ def collect_and_save_evidence(results, breaches):
     exported_files = [str(report_path)]
 
     # 2. Save sample orphan signal PnL points (CSV)
-    if results["orphans"]["pnl_points"]["count"] > 0:
+    # Count may be "UNKNOWN" (query timeout) — never compare a str to 0.
+    if isinstance(results["orphans"]["pnl_points"]["count"], int) and results["orphans"]["pnl_points"]["count"] > 0:
         pnl_path = EVIDENCE_DIR / f"orphan-signal-pnl-points-{timestamp}.csv"
         samples = results["orphans"]["pnl_points"]["samples"]
         if samples:
@@ -431,7 +491,9 @@ def collect_and_save_evidence(results, breaches):
             exported_files.append(str(pnl_path))
 
     # 3. Save sample orphan trade close events (CSV)
-    if results["orphans"]["trade_close_journeys"]["count"] > 0 or results["orphans"]["trade_close_positions"]["count"] > 0:
+    j_count = results["orphans"]["trade_close_journeys"]["count"]
+    p_count = results["orphans"]["trade_close_positions"]["count"]
+    if (isinstance(j_count, int) and j_count > 0) or (isinstance(p_count, int) and p_count > 0):
         close_path = EVIDENCE_DIR / f"orphan-trade-close-events-{timestamp}.csv"
         samples = results["orphans"]["trade_close_journeys"]["samples"] + results["orphans"]["trade_close_positions"]["samples"]
         if samples:
@@ -476,7 +538,12 @@ def evaluate_data_integrity():
     breaches = []
 
     # Evaluate Orphan Rows
-    if orphans["pnl_points"]["count"] > THRESHOLD_ORPHANS:
+    # Orphan counts may be "UNKNOWN" (string sentinel) when the underlying
+    # LEFT JOIN query timed out under DB lock contention. A non-measured
+    # orphan count is NOT evidence of orphans, so skip the numeric comparison
+    # rather than crashing on str > int (t_d9c7537b hardening, extended to
+    # orphans on 2026-08-11 after a live statement timeout aborted the audit).
+    if isinstance(orphans["pnl_points"]["count"], (int, float)) and orphans["pnl_points"]["count"] > THRESHOLD_ORPHANS:
         breaches.append({
             "type": "ORPHAN_ROWS",
             "metric": "signal_pnl_points_orphans",
@@ -484,7 +551,7 @@ def evaluate_data_integrity():
             "threshold": THRESHOLD_ORPHANS,
             "message": f"Found {orphans['pnl_points']['count']} orphan rows in signal_pnl_points (unlinked to signal_journeys)."
         })
-    if orphans["trade_close_journeys"]["count"] > THRESHOLD_ORPHANS:
+    if isinstance(orphans["trade_close_journeys"]["count"], (int, float)) and orphans["trade_close_journeys"]["count"] > THRESHOLD_ORPHANS:
         breaches.append({
             "type": "ORPHAN_ROWS",
             "metric": "trade_close_journeys_orphans",
@@ -492,7 +559,7 @@ def evaluate_data_integrity():
             "threshold": THRESHOLD_ORPHANS,
             "message": f"Found {orphans['trade_close_journeys']['count']} orphan rows in trade_close_events (unlinked to signal_journeys)."
         })
-    if orphans["trade_close_positions"]["count"] > THRESHOLD_ORPHANS:
+    if isinstance(orphans["trade_close_positions"]["count"], (int, float)) and orphans["trade_close_positions"]["count"] > THRESHOLD_ORPHANS:
         breaches.append({
             "type": "ORPHAN_ROWS",
             "metric": "trade_close_positions_orphans",
@@ -554,7 +621,17 @@ def evaluate_data_integrity():
     # congestion / lock contention / timeout), raise a single MONITOR_DEGRADED
     # breach so the incident is VISIBLE instead of being masked by a crash or
     # by the framework emitting a false "all healthy" exit 0 (t_d9c7537b).
+    # Orphan-status UNKNOWNs (statement timeout on the heavy LEFT JOINs) are
+    # folded into the same breach (extended 2026-08-11).
     unknown_metrics = [m for m, s in qstatus.items() if s == "UNKNOWN"]
+    orphan_status = {
+        "pnl_points": orphans["pnl_points"].get("status", "OK"),
+        "trade_close_journeys": orphans["trade_close_journeys"].get("status", "OK"),
+        "trade_close_positions": orphans["trade_close_positions"].get("status", "OK"),
+    }
+    for m, s in orphan_status.items():
+        if s == "UNKNOWN":
+            unknown_metrics.append(f"orphans.{m}")
     if unknown_metrics:
         breaches.append({
             "type": "MONITOR_DEGRADED",
@@ -622,7 +699,7 @@ def query_last_task(idempotency_key):
         return None
         
     try:
-        conn = kb.connect(db_path=db_path)
+        conn = kb.connect(db_path=Path(db_path))
         cursor = conn.cursor()
         cursor.execute(
             """
@@ -638,6 +715,44 @@ def query_last_task(idempotency_key):
     except Exception as e:
         print(f"Warning: Failed to query kanban db ({db_path}) for deduplication: {e}", file=sys.stderr)
         return None
+
+
+def bump_priority(task_id, board_name, priority):
+    """Directly set a task's priority in the board DB (Tier-2 escalation).
+
+    The kanban CLI `edit` verb only backfills DONE tasks (requires --result)
+    and there is no CLI verb to mutate priority on a running task, so the
+    framework performs the single-column UPDATE itself through the same
+    board-resolved connection used for dedup lookups (systemic fix
+    t_4f419b25: the DB is resolved from the board slug encoded in the
+    canonical idempotency key, never ambient env).
+
+    Args:
+        task_id: existing active card id to bump.
+        board_name: kanban board slug owning the card.
+        priority: new priority int (e.g. 1 = Tier-2 escalation lane).
+
+    Returns:
+        bool: True on success.
+    """
+    db_path = resolve_board_db(board_name)
+    if not os.path.exists(db_path):
+        print(f"Warning: kanban db ({db_path}) missing; priority bump skipped", file=sys.stderr)
+        return False
+    try:
+        conn = kb.connect(db_path=Path(db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE tasks SET priority = ? WHERE id = ?",
+            (priority, task_id),
+        )
+        conn.commit()
+        conn.close()
+        print(f"[TIER2] Bumped card {task_id} priority to {priority} on {board_name}.")
+        return True
+    except Exception as e:
+        print(f"[TIER2] WARNING: priority bump failed for {task_id}: {e}", file=sys.stderr)
+        return False
 
 
 def comment_diagnostic_update(task_id, b, board_name, delta_note=None, queue_backlog=None,
@@ -672,8 +787,7 @@ def comment_diagnostic_update(task_id, b, board_name, delta_note=None, queue_bac
     lines.append(f"- status: {status}")
     body = "\n".join(lines)
 
-    env = os.environ.copy()
-    env["HERMES_KANBAN_BOARD"] = board_name
+    env = board_env(board_name)
     cmd = [
         "hermes", "kanban", "comment", task_id, body,
         "--author", "sycode-data-quality-framework",
@@ -793,24 +907,20 @@ def escalate_a3(task_id, metric, message, board_name=None):
     a3_gate_hit_this_run = True
     board_name = board_name or os.environ.get("HERMES_KANBAN_BOARD") or "sycode-trading"
     print(f"[TIER3] A3 gate breach for [{metric}] -> blocking + routing to Frank: {message[:160]}")
-    env = os.environ.copy()
-    env["HERMES_KANBAN_BOARD"] = board_name
+    env = board_env(board_name)
     try:
         subprocess.run(
             ["hermes", "kanban", "block", task_id,
              "--kind", "needs_input",
-             "--board", board_name,
              f"A3 gate breach (credential/credit exhaustion) for metric {metric}: {message[:200]}. "
-             f"Escalated to Frank; automated retries suppressed.",
-             "--json"],
+             f"Escalated to Frank; automated retries suppressed."],
             capture_output=True, text=True, check=True, env=env,
         )
     except Exception as e:
         print(f"[TIER3] WARNING: failed to block {task_id}: {e}", file=sys.stderr)
     try:
         subprocess.run(
-            ["hermes", "kanban", "reassign", "--reclaim", task_id, TIER3_ASSIGNEE,
-             "--board", board_name],
+            ["hermes", "kanban", "reassign", "--reclaim", task_id, TIER3_ASSIGNEE],
             capture_output=True, text=True, check=True, env=env,
         )
     except Exception as e:
@@ -821,15 +931,12 @@ def auto_close_diagnostic(task_id, metric, board_name):
     """Two consecutive healthy profiles -> kanban_complete the active card (review §2.2/§4.1.5)."""
     board_name = board_name or os.environ.get("HERMES_KANBAN_BOARD") or "sycode-trading"
     print(f"[AUTOCLOSE] Metric [{metric}] normalized; completing active diagnostic card {task_id} on {board_name}.")
-    env = os.environ.copy()
-    env["HERMES_KANBAN_BOARD"] = board_name
+    env = board_env(board_name)
     try:
         subprocess.run(
             ["hermes", "kanban", "complete", task_id,
-             "--board", board_name,
              "--summary", f"Auto-closed by data-quality framework: metric {metric} returned under threshold for "
-                          f"{AUTO_CLOSE_CONSECUTIVE_HEALTHY} consecutive healthy profiles.",
-             "--json"],
+                          f"{AUTO_CLOSE_CONSECUTIVE_HEALTHY} consecutive healthy profiles."],
             capture_output=True, text=True, check=True, env=env,
         )
         return True
@@ -919,16 +1026,11 @@ def route_breaches_to_kanban(breaches, exported_files, state=None):
             # Tier 2 escalation: sustained breach >24h -> priority 1 + reassign.
             if age_seconds > TIER2_ESCALATION_SECONDS and status not in ("blocked",):
                 try:
+                    bump_priority(existing_id, board_name, 1)
+                    env2 = board_env(board_name)
                     subprocess.run(
-                        ["hermes", "kanban", "edit", existing_id,
-                         "--metadata", json.dumps({"priority": 1}),
-                         "--board", board_name],
-                        capture_output=True, text=True, check=True,
-                    )
-                    subprocess.run(
-                        ["hermes", "kanban", "reassign", "--reclaim", existing_id, TIER2_ASSIGNEE,
-                         "--board", board_name],
-                        capture_output=True, text=True, check=True,
+                        ["hermes", "kanban", "reassign", "--reclaim", existing_id, TIER2_ASSIGNEE],
+                        capture_output=True, text=True, check=True, env=env2,
                     )
                     print(f"[TIER2] Breach for [{metric}] persisted >24h ({age_seconds/3600:.1f}h); bumped to priority 1 + reassigned {TIER2_ASSIGNEE}.")
                 except Exception as e:
@@ -957,12 +1059,12 @@ def route_breaches_to_kanban(breaches, exported_files, state=None):
             # it as a routine actionable (t_d9c7537b hardening).
             if b_type == "MONITOR_DEGRADED":
                 try:
+                    env3 = board_env(board_name)
                     subprocess.run(
                         ["hermes", "kanban", "block", task_id,
                          "--kind", "needs_input",
-                         "--reason", f"MONITOR_DEGRADED: {b['message']}",
-                         "--board", board_name],
-                        capture_output=True, text=True, check=True,
+                         f"MONITOR_DEGRADED: {b['message']}"],
+                        capture_output=True, text=True, check=True, env=env3,
                     )
                     print(f"[MONITOR_DEGRADED] Card {task_id} blocked as needs_input (DB contention).")
                 except Exception as e:
@@ -1006,11 +1108,9 @@ def _create_diag_card(b, assignee, idempotency_key, board_name, exported_files, 
         f"and resolve the underlying database or pipeline ingestion issue immediately.\n\n"
         f"*Automated diagnostic card generated by SycodeTrading Data Quality Framework.*"
     )
-    env = os.environ.copy()
-    env["HERMES_KANBAN_BOARD"] = board_name
+    env = board_env(board_name)
     cmd = [
         "hermes", "kanban", "create",
-        "--board", board_name,
         title,
         "--assignee", assignee,
         "--idempotency-key", idempotency_key,
@@ -1033,43 +1133,99 @@ def _create_diag_card(b, assignee, idempotency_key, board_name, exported_files, 
 
 
 
-def query_active_diag_cards(priority=None):
+def enumerate_diag_board_dbs():
+    """Yield (board_slug, db_path) pairs for every kanban board DB that may
+    hold diag cards.
+
+    Resolution is fully key-driven: diag cards are created per-board with the
+    canonical idempotency key ``diag:<board>:<type>:<metric>``, so the board
+    belongs to the KEY, not to ambient ``HERMES_KANBAN_DB`` /
+    ``HERMES_KANBAN_BOARD`` env (systemic fix t_4f419b25 / R2 key-driven dedup).
+
+    We scan deterministically: every per-board kanban.db under
+    ``~/.hermes/kanban/boards/<slug>/kanban.db`` (plus the legacy flat
+    ``~/.hermes/kanban.db``) and ask each for rows whose
+    ``idempotency_key LIKE 'diag:%'``. The board slug is decoded from the key
+    at query time (parts[1]), so callers never depend on an ambient
+    board pin whose value may drift from the board the card was created on.
+
+    Never reads HERMES_KANBAN_DB / HERMES_KANBAN_BOARD for resolution.
+    """
+    candidates = []
+    # Per-board DBs (deterministic board dirs).
+    if KANBAN_BOARDS_DIR.exists():
+        for board_dir in sorted(KANBAN_BOARDS_DIR.iterdir()):
+            if board_dir.is_dir():
+                db = board_dir / "kanban.db"
+                if db.exists():
+                    candidates.append((board_dir.name, str(db)))
+    # Legacy flat DB (single copy, no per-board subdir).
+    legacy = Path(os.path.expanduser("~/.hermes/kanban.db"))
+    if legacy.exists():
+        candidates.append(("sycode-trading", str(legacy)))
+    return candidates
+
+
+def query_active_diag_cards(priority=None, board_slugs=None):
     """Return all active (non-archived) diagnostic cards keyed by idempotency_key.
 
     Used by auto-close: when no breaches are detected we look up the previously
     active diag cards (optionally filtered to a priority lane) to complete them
     after two consecutive healthy profiles (review §2.2/§4.1.5).
 
-    Board resolution: cards are created per-board (diag:<board>:...), so we
-    must scan the SAME board DB the card was created on. We resolve from the
-    ambient HERMES_KANBAN_BOARD (set by _create_diag_card's env) and fall back
-    to the legacy flat DB (systemic fix t_4f419b25).
+    Board resolution: cards are created per-board with the canonical key
+    ``diag:<board>:<type>:<metric>``, so the board is decoded from the KEY,
+    never from ambient ``HERMES_KANBAN_BOARD`` / ``HERMES_KANBAN_DB`` env. Each
+    returned card carries a ``board`` field sourced from its key
+    (``parts[1]``), so ``process_auto_close`` can route the completion to the
+    correct board DB without any env dependency (systemic fix t_4f419b25 / R2).
+
+    Args:
+        priority: optional int lane filter applied per-DB.
+        board_slugs: optional iterable restricting which board dirs to scan.
+            When None (default) all boards under KANBAN_BOARDS_DIR are scanned.
+            Ambient env is never consulted for resolution.
     """
-    board_name = os.environ.get("HERMES_KANBAN_BOARD") or "sycode-trading"
-    db_path = resolve_board_db(board_name)
-    if not os.path.exists(db_path):
-        return []
-    try:
-        conn = kb.connect(db_path=db_path)
-        cursor = conn.cursor()
-        if priority is None:
-            cursor.execute(
-                "SELECT id, idempotency_key, priority FROM tasks "
-                "WHERE idempotency_key LIKE 'diag:%' AND status != 'archived' AND status != 'done'"
-            )
-        else:
-            cursor.execute(
-                "SELECT id, idempotency_key, priority FROM tasks "
-                "WHERE idempotency_key LIKE 'diag:%' AND status != 'archived' AND status != 'done' "
-                "AND priority = ?",
-                (priority,),
-            )
-        rows = cursor.fetchall()
-        conn.close()
-        return [{"id": r[0], "idempotency_key": r[1], "priority": r[2]} for r in rows]
-    except Exception as e:
-        print(f"Warning: failed to query active diag cards: {e}", file=sys.stderr)
-        return []
+    results = []
+    for board_slug, db_path in enumerate_diag_board_dbs():
+        if board_slugs is not None and board_slug not in board_slugs:
+            continue
+        if not os.path.exists(db_path):
+            continue
+        try:
+            conn = kb.connect(db_path=Path(db_path))
+            cursor = conn.cursor()
+            if priority is None:
+                cursor.execute(
+                    "SELECT id, idempotency_key, priority FROM tasks "
+                    "WHERE idempotency_key LIKE 'diag:%' "
+                    "AND status != 'archived' AND status != 'done'"
+                )
+            else:
+                cursor.execute(
+                    "SELECT id, idempotency_key, priority FROM tasks "
+                    "WHERE idempotency_key LIKE 'diag:%' "
+                    "AND status != 'archived' AND status != 'done' "
+                    "AND priority = ?",
+                    (priority,),
+                )
+            rows = cursor.fetchall()
+            conn.close()
+            for r in rows:
+                key = r[1]
+                parts = key.split(":")
+                # diag:<board>:<type>:<metric> — board is parts[1]; if the key
+                # is malformed we fall back to the DB's own board dir name.
+                key_board = parts[1] if len(parts) >= 4 else board_slug
+                results.append({
+                    "id": r[0],
+                    "idempotency_key": key,
+                    "priority": r[2],
+                    "board": key_board,
+                })
+        except Exception as e:
+            print(f"Warning: failed to query active diag cards on {board_slug} ({db_path}): {e}", file=sys.stderr)
+    return results
 
 
 def process_auto_close(metric_ids, state, now=None):
@@ -1155,6 +1311,25 @@ class TestDataQualityFramework(unittest.TestCase):
         self.assertEqual(results["trade_close_journeys"]["count"], 1)
         self.assertEqual(results["trade_close_positions"]["count"], 0)
         self.assertEqual(results["pnl_points"]["samples"][0]["symbol"], "BTC")
+
+    @patch("__main__.run_sql")
+    def test_inspect_orphans_db_timeout_marked_unknown(self, mock_run_sql):
+        """An orphan-query timeout must be reported as UNKNOWN, not crash the
+        monitor (t_d9c7537b hardening extended to orphans 2026-08-11: a live
+        statement timeout on the heavy LEFT JOIN previously aborted the whole
+        audit with FATAL before kanban routing could happen)."""
+        def side_effect(query):
+            if "signal_pnl_points" in query:
+                raise TimeoutError("psql timed out after 120 seconds")
+            return []
+        mock_run_sql.side_effect = side_effect
+        results = inspect_orphans()
+        self.assertEqual(results["pnl_points"]["count"], "UNKNOWN")
+        self.assertEqual(results["pnl_points"]["status"], "UNKNOWN")
+        # Unaffected orphan metrics still measured normally.
+        self.assertEqual(results["trade_close_journeys"]["count"], 0)
+        self.assertEqual(results["trade_close_journeys"]["status"], "OK")
+        self.assertEqual(results["trade_close_positions"]["count"], 0)
 
     @patch("__main__.run_sql")
     def test_inspect_queues_healthy(self, mock_run_sql):
@@ -1243,6 +1418,63 @@ class TestDataQualityFramework(unittest.TestCase):
         # Starvation must NOT be falsely raised from UNKNOWN metrics.
         self.assertNotIn("PIPELINE_STARVATION", breach_types)
 
+    @patch("__main__.inspect_orphans")
+    @patch("__main__.inspect_queues")
+    @patch("__main__.inspect_dlq")
+    @patch("__main__.inspect_cohort_accrual")
+    @patch("__main__.collect_and_save_evidence")
+    def test_evaluate_monitor_degraded_on_orphan_unknown(self, mock_save, mock_cohort, mock_dlq, mock_queues, mock_orphans):
+        """Orphan UNKNOWN (LEFT JOIN timeout) folds into MONITOR_DEGRADED and
+        never raises a false ORPHAN_ROWS breach or a crash (extended 2026-08-11)."""
+        mock_orphans.return_value = {
+            "pnl_points": {"count": "UNKNOWN", "samples": [], "status": "UNKNOWN"},
+            "trade_close_journeys": {"count": 0, "samples": [], "status": "OK"},
+            "trade_close_positions": {"count": 0, "samples": [], "status": "OK"},
+        }
+        mock_queues.return_value = {
+            "finalizer_backlog": 0, "binary_backlog": 0,
+            "finalizer_lag_hours": 0.5, "closer_lag_hours": 0.1, "binary_lag_hours": 0.2,
+            "status": {m: "OK" for m in ("finalizer_backlog", "binary_backlog",
+                                         "finalizer_lag_hours", "closer_lag_hours", "binary_lag_hours")},
+        }
+        mock_dlq.return_value = {"count": 0, "events": []}
+        mock_cohort.return_value = {
+            "signals": 1, "outcomes": 1, "closes": 1, "hours_since_epoch": 1, "signals_per_day": 24,
+            "progress_rebaseline_pct": 1.0, "progress_research_pct": 0.3,
+        }
+        mock_save.return_value = []
+        results, breaches = evaluate_data_integrity()
+        breach_types = [b["type"] for b in breaches]
+        self.assertIn("MONITOR_DEGRADED", breach_types)
+        degraded = [b for b in breaches if b["type"] == "MONITOR_DEGRADED"][0]
+        self.assertIn("orphans.pnl_points", degraded["value"])
+        # UNKNOWN orphan count must NOT be compared numerically (no ORPHAN_ROWS).
+        self.assertNotIn("ORPHAN_ROWS", breach_types)
+
+    @patch("__main__.EVIDENCE_DIR")
+    def test_collect_evidence_unknown_orphans_no_crash(self, mock_evidence_dir):
+        """Evidence export must not crash when orphan counts are UNKNOWN (strings)."""
+        import tempfile
+        from pathlib import Path as _P
+        tmp = _P(tempfile.mkdtemp(prefix="dq-ev-unknown-test-"))
+        mock_evidence_dir.__truediv__ = lambda self, name: tmp / name
+        results = {
+            "orphans": {
+                "pnl_points": {"count": "UNKNOWN", "samples": []},
+                "trade_close_journeys": {"count": "UNKNOWN", "samples": []},
+                "trade_close_positions": {"count": 0, "samples": []},
+            },
+            "queues": {}, "dlq": {"count": 0, "events": []}, "cohort": {},
+        }
+        breaches = [{"type": "MONITOR_DEGRADED", "metric": "queue_monitor_availability",
+                     "value": "orphans.pnl_points", "threshold": "all-OK", "message": "x"}]
+        exported = collect_and_save_evidence(results, breaches)
+        self.assertTrue(any("diagnostics-report" in p for p in exported))
+        # No orphan CSV exported for UNKNOWN counts.
+        self.assertFalse(any("orphan-signal" in p or "orphan-trade" in p for p in exported))
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
     @patch("__main__.run_sql")
     def test_inspect_dlq(self, mock_run_sql):
         mock_run_sql.return_value = [
@@ -1313,7 +1545,7 @@ class TestDataQualityFramework(unittest.TestCase):
         self.assertEqual(len(breaches), 5)  # 2 orphans, 2 starvations, 1 DLQ
 
     @patch("os.path.exists")
-    @patch("sqlite3.connect")
+    @patch("__main__.kb.connect")
     def test_query_last_task_exists(self, mock_connect, mock_exists):
         mock_exists.return_value = True
         mock_conn = MagicMock()
@@ -1566,12 +1798,14 @@ class TestDataQualityFramework(unittest.TestCase):
     @patch("__main__._dispatch_discord_alert")
     @patch("__main__.comment_diagnostic_update")
     @patch("__main__.query_last_task")
-    def test_tier2_escalation_after_24h(self, mock_query, mock_comment, mock_dispatch):
+    @patch("__main__.bump_priority")
+    def test_tier2_escalation_after_24h(self, mock_bump, mock_query, mock_comment, mock_dispatch):
         """Tier 2: breach persists >24h -> priority 1 + reassign trading-devops.
 
         `_dispatch_discord_alert` is mocked (Defect B): the existing-card path
         still fires a throttled Discord alert, and the test must not emit the
-        real `[ALERT] Sending Discord` line.
+        real `[ALERT] Sending Discord` line. `bump_priority` is mocked so the
+        test stays hermetic (no UPDATE against the real board DB).
         """
         # Created 25h ago -> age > 86400s.
         mock_query.return_value = ("t_old_1", time.time() - (25 * 3600), "running")
@@ -1584,11 +1818,10 @@ class TestDataQualityFramework(unittest.TestCase):
         try:
             with patch("subprocess.run") as mock_run:
                 routed, deduped, _h = route_breaches_to_kanban(breaches, ["/tmp/report.json"])
-                # Capture the edit + reassign kanban invocations.
-                edit_calls = [c for c in mock_run.call_args_list
-                              if c.args and list(c.args[0])[:2] == ["hermes", "kanban"]]
-                edit_seen = any(list(c.args[0])[2] == "edit" for c in edit_calls)
-                reassign_seen = any(list(c.args[0])[2] == "reassign" for c in edit_calls)
+                # Capture the reassign kanban invocation.
+                kanban_calls = [c for c in mock_run.call_args_list
+                                if c.args and list(c.args[0])[:2] == ["hermes", "kanban"]]
+                reassign_seen = any(list(c.args[0])[2] == "reassign" for c in kanban_calls)
         finally:
             if old_board is None:
                 os.environ.pop("HERMES_KANBAN_BOARD", None)
@@ -1598,8 +1831,11 @@ class TestDataQualityFramework(unittest.TestCase):
         self.assertEqual(deduped, 1)
         mock_comment.assert_called_once()
         mock_dispatch.assert_called()  # throttled first-alert request still attempted
-        # Tier 2 promotion commands must have fired.
-        self.assertTrue(edit_seen, "expected kanban edit (priority bump) on >24h breach")
+        # Tier 2 priority bump must have fired against the board DB.
+        mock_bump.assert_called_once()
+        self.assertEqual(mock_bump.call_args[0][0], "t_old_1")
+        self.assertEqual(mock_bump.call_args[0][2], 1)
+        # Tier 2 reassign to trading-devops must have fired.
         self.assertTrue(reassign_seen, "expected kanban reassign to trading-devops on >24h breach")
 
     @patch("__main__.auto_close_diagnostic")
@@ -1766,6 +2002,85 @@ class TestDataQualityFramework(unittest.TestCase):
         self.assertEqual(resolve_board_db("jarvis-os"), str(legacy))
         import shutil
         shutil.rmtree(base, ignore_errors=True)
+
+    @patch("__main__.KANBAN_BOARDS_DIR")
+    @patch("__main__.kb.connect")
+    @patch("os.path.exists")
+    def test_query_active_diag_cards_key_driven_board(self, mock_exists, mock_connect, mock_boards_dir):
+        """R2: query_active_diag_cards must decode the board from the diag
+        idempotency key, NOT from ambient HERMES_KANBAN_BOARD env.
+
+        Regression for t_6cf8bfd4: the old implementation read
+        HERMES_KANBAN_BOARD to pick a single DB; when that env pointed at the
+        wrong board the auto-close lookup missed the real card (or hit the
+        wrong DB). The new implementation scans every board DB and records
+        the board decoded from each key (parts[1]).
+
+        Ambient env is deliberately poisoned to a DIFFERENT board to prove it
+        is ignored.
+        """
+        import tempfile
+        from pathlib import Path as _P
+        base = _P(tempfile.mkdtemp(prefix="dq-diag-test-"))
+
+        def board_div(name):
+            return base / name
+
+        mock_boards_dir.__truediv__ = lambda self, name: base / name
+        mock_boards_dir.iterdir = lambda: [base / "jarvis-os", base / "sycode-trading"]
+        for d in ("jarvis-os", "sycode-trading"):
+            (base / d / "kanban.db").parent.mkdir(parents=True, exist_ok=True)
+            (base / d / "kanban.db").touch()
+
+        def exists_side_effect(path):
+            return str(path) in (str(base / "jarvis-os" / "kanban.db"), str(base / "sycode-trading" / "kanban.db"))
+
+        mock_exists.side_effect = exists_side_effect
+
+        def connect_side_effect(db_path=None, board=None):
+            conn = MagicMock()
+            cur = MagicMock()
+            conn.cursor.return_value = cur
+            # Each board returns diag cards that encode a board in the key.
+            if str(db_path) == str(base / "jarvis-os" / "kanban.db"):
+                cur.fetchall.return_value = [
+                    ("t_j1", "diag:jarvis-os:QUEUE_BACKLOG:finalizer_backlog", 0),
+                ]
+            elif str(db_path) == str(base / "sycode-trading" / "kanban.db"):
+                cur.fetchall.return_value = [
+                    ("t_s1", "diag:sycode-trading:PIPELINE_STARVATION:finalizer_lag_hours", 1),
+                ]
+            else:
+                cur.fetchall.return_value = []
+            return conn
+
+        mock_connect.side_effect = connect_side_effect
+
+        # Poison ambient env to a board that has NO diag cards here — must be ignored.
+        old_db = os.environ.get("HERMES_KANBAN_DB")
+        old_board = os.environ.get("HERMES_KANBAN_BOARD")
+        os.environ["HERMES_KANBAN_DB"] = "/nonexistent/board/kanban.db"
+        os.environ["HERMES_KANBAN_BOARD"] = "yorkstone-supplies"
+        try:
+            cards = query_active_diag_cards()
+            # Both boards scanned; board decoded from key, not env.
+            by_id = {c["id"]: c for c in cards}
+            self.assertIn("t_j1", by_id)
+            self.assertIn("t_s1", by_id)
+            self.assertEqual(by_id["t_j1"]["board"], "jarvis-os")
+            self.assertEqual(by_id["t_s1"]["board"], "sycode-trading")
+            # The poisoned ambient board must NOT appear in results.
+            self.assertTrue(all(c["board"] != "yorkstone-supplies" for c in cards))
+            # Each key is the canonical diag key.
+            self.assertEqual(by_id["t_j1"]["idempotency_key"], "diag:jarvis-os:QUEUE_BACKLOG:finalizer_backlog")
+        finally:
+            for k, v in (("HERMES_KANBAN_DB", old_db), ("HERMES_KANBAN_BOARD", old_board)):
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            import shutil
+            shutil.rmtree(base, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------------

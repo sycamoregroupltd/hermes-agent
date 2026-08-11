@@ -5,7 +5,21 @@
 Reads every profile-local ``~/.hermes/profiles/*/cron/jobs.json`` directly,
 not the caller-scoped ``hermes cron list`` view. Silent when healthy. Emits a
 single actionable alert when an enabled job has ``last_status=error`` (or a
-delivery error) or is overdue by more than 2x its interval/cron cadence.
+delivery error), is overdue by more than 2x its interval/cron cadence, or is
+UNPINNED — missing an explicit stable provider/model pin and therefore
+susceptible to configuration drift or unintended fallback spend.
+
+Drift detection (t_d43a2e82):
+- Skips ``no_agent`` script-only jobs (they never consume a model).
+- Skips jobs with an explicit job-level ``provider`` AND ``model`` (pinned
+  jobs are stable by definition — silent even when they differ from baseline).
+- Flags enabled LLM jobs that lack an explicit pin. The alert names the
+  profile, job id/name, any last-run ``provider_snapshot``/``model_snapshot``
+  evidence, the profile-default settings the job would resolve to, and whether
+  that default differs from the approved global baseline (root config.yaml
+  ``model.provider``/``model.default``).
+- Dedupes profile stores by resolved realpath so a symlinked profile pair
+  (e.g. ``sycode-trading -> sycode-trading-pm``) is scanned exactly once.
 """
 
 from __future__ import annotations
@@ -21,6 +35,11 @@ if not (REAL_HERMES_HOME / "profiles").exists() and (REAL_HERMES_HOME / ".hermes
     REAL_HERMES_HOME = REAL_HERMES_HOME / ".hermes"
 PROFILES_DIR = REAL_HERMES_HOME / "profiles"
 MAX_ALERTS = int(os.environ.get("CRON_HEALTH_MAX_ALERTS", "25"))
+# Approved global baseline: root config.yaml model.provider / model.default.
+# Overridable for tests/simulation via CRON_HEALTH_BASELINE_CONFIG.
+BASELINE_CONFIG = Path(
+    os.environ.get("CRON_HEALTH_BASELINE_CONFIG", str(REAL_HERMES_HOME / "config.yaml"))
+).expanduser()
 
 
 def parse_dt(value: str | None) -> datetime | None:
@@ -62,6 +81,35 @@ def interval_seconds(job: dict[str, Any]) -> int | None:
     return None
 
 
+def _load_model_settings(path: Path) -> tuple[str | None, str | None, str | None]:
+    """Return (provider, default_model, error). Never raises."""
+    try:
+        import yaml
+    except Exception as exc:
+        return None, None, f"PyYAML unavailable: {exc}"
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+        m = data.get("model") or {}
+        return m.get("provider"), m.get("default"), None
+    except Exception as exc:
+        return None, None, f"{type(exc).__name__}: {exc}"
+
+
+BASELINE_PROVIDER, BASELINE_MODEL, BASELINE_ERROR = _load_model_settings(BASELINE_CONFIG)
+
+
+def _profile_model_defaults(profile: str) -> tuple[str | None, str | None, str | None]:
+    """Profile-level config model defaults, falling back to the global baseline.
+
+    Returns (provider, default_model, error). A profile without its own
+    config.yaml resolves to the approved global baseline.
+    """
+    cfg = REAL_HERMES_HOME / "profiles" / profile / "config.yaml"
+    if not cfg.exists():
+        return BASELINE_PROVIDER, BASELINE_MODEL, None
+    return _load_model_settings(cfg)
+
+
 def iter_profile_jobs() -> list[tuple[str, Path, dict[str, Any]]]:
     rows: list[tuple[str, Path, dict[str, Any]]] = []
     if not PROFILES_DIR.exists():
@@ -71,8 +119,18 @@ def iter_profile_jobs() -> list[tuple[str, Path, dict[str, Any]]]:
     if not job_paths:
         rows.append(("<scan>", PROFILES_DIR, {"name": "<profiles>", "enabled": True, "last_status": "error", "last_error": f"zero profile cron stores matched under {PROFILES_DIR}"}))
         return rows
+    seen_real: set[str] = set()
     for path in job_paths:
-        profile = path.parts[-3]
+        # Dedupe symlinked profile stores (e.g. sycode-trading -> sycode-trading-pm)
+        # so one physical jobs.json is scanned exactly once, under its real name.
+        real = str(path.resolve())
+        if real in seen_real:
+            continue
+        seen_real.add(real)
+        profile_dir = path.parent.parent
+        profile = profile_dir.name
+        if profile_dir.is_symlink():
+            profile = str(profile_dir.resolve()).rstrip("/").rsplit("/", 1)[-1]
         try:
             data = json.loads(path.read_text())
         except Exception as exc:
@@ -129,11 +187,60 @@ def check_script_resolution(profile: str, job: dict[str, Any]) -> str | None:
     )
 
 
+def check_drift(profile: str, job: dict[str, Any]) -> list[str]:
+    """Flag enabled LLM jobs that lack an explicit stable provider/model pin.
+
+    Pinned jobs (explicit job-level ``provider`` AND ``model``) are stable by
+    definition and stay silent, even when their pin differs from the approved
+    global baseline (that difference is a deliberate, approved choice).
+
+    Unpinned jobs get a descriptive alert naming the profile, job id/name,
+    snapshot evidence (if any), the settings they would resolve to via the
+    profile default, and whether that differs from the approved baseline.
+    """
+    if not job.get("enabled", True):
+        return []
+    if job.get("no_agent"):
+        return []  # script-only job — never consumes a model
+    if not job.get("id"):
+        return []  # synthetic <scan>/<jobs.json> error rows are not real jobs
+    name = job.get("name") or job.get("id") or "<unnamed>"
+    jid = job.get("id") or "<no-id>"
+    provider = job.get("provider")
+    model = job.get("model")
+    if provider is not None and model is not None:
+        return []  # explicitly pinned — stable
+    prefix = f"{profile}/{name} [{jid}]"
+    p_snap = job.get("provider_snapshot")
+    m_snap = job.get("model_snapshot")
+    pp, pm, perr = _profile_model_defaults(profile)
+    resolved = f"{pp or '<none>'}/{pm or '<none>'}"
+    base = f"{BASELINE_PROVIDER or '<none>'}/{BASELINE_MODEL or '<none>'}"
+    detail: list[str] = []
+    if p_snap or m_snap:
+        detail.append(f"last-run snapshot provider={p_snap or '<none>'}, model={m_snap or '<none>'}")
+    if perr:
+        detail.append(f"profile default unreadable: {perr}")
+    if pp and pm and (pp != BASELINE_PROVIDER or pm != BASELINE_MODEL):
+        detail.append(f"would resolve to profile default {resolved} — DIFFERS from approved baseline {base}")
+    else:
+        detail.append(f"would resolve to {resolved} (approved baseline {base})")
+    snap_tag = " snapshot-recorded" if (p_snap or m_snap) else ""
+    return [
+        f"UNPINNED{snap_tag} {prefix}: no explicit provider/model pin (provider={provider!r}, model={model!r}); "
+        + "; ".join(detail)
+        + " — susceptible to config drift / unintended fallback spend"
+    ]
+
+
 def main() -> None:
     now = datetime.now(timezone.utc)
     bad: list[str] = []
     scanned_profiles: set[str] = set()
     scanned_jobs = 0
+
+    if BASELINE_ERROR:
+        bad.append(f"DRIFT-BASELINE {BASELINE_CONFIG}: cannot read approved global baseline: {BASELINE_ERROR}")
 
     for profile, path, job in iter_profile_jobs():
         scanned_profiles.add(profile)
@@ -154,6 +261,9 @@ def main() -> None:
         if path_alert:
             bad.append(path_alert)
 
+        # Config-drift / unpinned-model detection (t_d43a2e82).
+        bad.extend(check_drift(profile, job))
+
         cadence = interval_seconds(job)
         if cadence:
             last = parse_dt(job.get("last_run_at"))
@@ -166,6 +276,10 @@ def main() -> None:
                 bad.append(f"OVERDUE {prefix}: next_run_at is {late_h:.1f}h in the past")
 
     if bad:
+        # Show drift/unpinned alerts first: they are the proactive signal this
+        # canary exists for and must not be truncated behind legacy ERROR/OVERDUE
+        # noise when the total exceeds MAX_ALERTS. Detection counts are unchanged.
+        bad.sort(key=lambda line: 0 if line.startswith(("UNPINNED", "DRIFT")) else 1)
         shown = bad[:MAX_ALERTS]
         lines = [f"🔴 CRON HEALTH: {len(bad)} issue(s) across {len(scanned_profiles)} profile cron store(s), {scanned_jobs} enabled job(s) scanned"]
         lines.extend(f"  • {item}" for item in shown)
@@ -177,4 +291,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
