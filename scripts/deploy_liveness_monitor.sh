@@ -180,4 +180,26 @@ else
     sed -i '/^tree_dirty_since=/d' "$MON_STATE" 2>/dev/null || true
 fi
 
+# ── 5. BUILD-TREE-REF (added 2026-08-11, deploy-checkout integrity) ───────────
+# The pristine deploy checks out ONLY the sycode-deploy-build branch into
+# $BUILD_TREE (see sycode-deploy-pristine.sh). If a worker or a crashed agent
+# leaves the tree on some feature branch, the next pristine reset still works
+# (reset --hard), but it means the deploy-state receipt (deployed_sha) can
+# silently diverge from what `git -C $BUILD_TREE rev-parse HEAD` reports — the
+# 2026-08-05 audit class where the deploy checkout sat on
+# feat/register-sleeve-endpoint-t_e553ab13 with 3 unlanded, unreviewed commits
+# (2 superseded, 1 genuinely unlanded) and nobody tripped an alarm.
+#
+# Expected deploy ref is env-overridable for branch renames; the canonical
+# value is the branch sycode-deploy-pristine.sh checks out.
+EXPECTED_TREE_REF="${BUILD_TREE_EXPECTED_REF:-sycode-deploy-build}"
+tree_ref=$(git -C "$BUILD_TREE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "DETACHED")
+tree_sha=$(git -C "$BUILD_TREE" rev-parse HEAD 2>/dev/null || echo "unknown")
+if [ "$tree_ref" != "$EXPECTED_TREE_REF" ]; then
+    send_alert tree_ref_mismatch "🚨 sycode: deploy build-tree on WRONG REF '${tree_ref}' (expected '${EXPECTED_TREE_REF}')" "deploy-owned tree $BUILD_TREE is on branch '${tree_ref}' @ ${tree_sha:0:9} but sycode-deploy-pristine.sh only ever checks out '${EXPECTED_TREE_REF}'. A worker/agent has left the tree on a feature branch — the next pristine reset will destroy their work and the deploy-state receipt may be reading a stale sha. Re-checkout the expected ref or salvage the WIP to a real branch first."
+else
+    clear_key tree_ref_mismatch
+    log "BUILD-TREE-REF OK: ${tree_ref} @ ${tree_sha:0:9}"
+fi
+
 exit 0
