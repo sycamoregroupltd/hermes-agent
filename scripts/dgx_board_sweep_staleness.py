@@ -62,9 +62,16 @@ KANBAN_HOME = os.environ.get(
     "HERMES_KANBAN_HOME", "/home/frank/.hermes/kanban/boards"
 )
 
-# DISPATCH GAP threshold (see module docstring). Tunable via env for soak testing.
+# DISPATCH GAP thresholds (see module docstring). Tunable via env for soak testing.
+# Final tuned values after 7-day soak (t_aaa43bb6, 2026-08-11):
+#   STALE_HOURS = 48  — oldest ready task beyond this fires a gap (keep).
+#   BACKLOG     = 10  — depth backstop: ready-running >= this (keep).
+#   BACKLOG_STALE = 24 — NEW: the depth backstop only fires when oldest ready is
+#                        also > 24h, so healthy deep-but-young research bursts do
+#                        not false-positive while real stalls (deep + old) still alert.
 STALE_HOURS_THRESHOLD = float(os.environ.get("DISPATCH_GAP_STALE_HOURS", "48"))
 BACKLOG_GAP_THRESHOLD = int(os.environ.get("DISPATCH_GAP_BACKLOG", "10"))
+BACKLOG_STALE_HOURS = float(os.environ.get("DISPATCH_GAP_BACKLOG_STALE_HOURS", "24"))
 
 DB_ACCESS_ERROR = False  # set True if any board read fails
 
@@ -144,10 +151,10 @@ def probe_board(board: str, now: int) -> dict:
                 % (entry["oldest_ready_age_h"], STALE_HOURS_THRESHOLD)
             )
         backlog = entry["ready_count"] - entry["running_count"]
-        if backlog >= BACKLOG_GAP_THRESHOLD:
+        if backlog >= BACKLOG_GAP_THRESHOLD and entry["oldest_ready_age_h"] > BACKLOG_STALE_HOURS:
             entry["gap_reasons"].append(
-                "backlog(ready-running)=%d >= %d"
-                % (backlog, BACKLOG_GAP_THRESHOLD)
+                "backlog(ready-running)=%d >= %d AND oldest_ready_age_h=%.2f > %.0f"
+                % (backlog, BACKLOG_GAP_THRESHOLD, entry["oldest_ready_age_h"], BACKLOG_STALE_HOURS)
             )
         entry["dispatch_gap"] = len(entry["gap_reasons"]) > 0
 
