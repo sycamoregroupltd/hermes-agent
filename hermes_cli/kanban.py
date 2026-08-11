@@ -1685,6 +1685,11 @@ def _cmd_show(args: argparse.Namespace) -> int:
         # ``result=``. Surfacing the latest summary here keeps ``show`` from
         # looking like a no-op when the worker actually did real work.
         latest_summary = kb.latest_summary(conn, args.task_id)
+        # Pre-compute diagnostics while conn is still open.
+        # Must happen inside the with-block because review_lane_dependency_warnings
+        # calls get_task and other conn-dependent helpers.
+        from hermes_cli import kanban_diagnostics as kd
+        _diags = kd.compute_task_diagnostics(task, events, runs, config={})
 
     if getattr(args, "json", False):
         payload = {
@@ -1759,12 +1764,11 @@ def _cmd_show(args: argparse.Namespace) -> int:
     print(f"  created:   {_fmt_ts(task.created_at)} by {task.created_by or '-'}")
 
     # Diagnostics section — surface active distress signals at the top
-    # of show output so CLI users see them before scrolling through
-    # comments / runs.
-    from hermes_cli import kanban_diagnostics as kd
-    diags = kd.compute_task_diagnostics(
-        task, events, runs, graph=kb.task_graph_context(conn, task.id)
-    )
+    # of show output. Pre-computed _diags above keeps conn open while
+    # compute_task_dependencies (called by review_lane_dependency_warnings)
+    # resolves dependencies, and avoids the post-with
+    # compute_task_diagnostics call that hit a closed database.
+    diags = _diags
     if diags:
         sev_marker = {"warning": "⚠", "error": "!!", "critical": "!!!"}
         print(f"\n  Diagnostics ({len(diags)}):")
