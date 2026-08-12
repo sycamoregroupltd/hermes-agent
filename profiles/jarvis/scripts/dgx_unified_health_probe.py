@@ -526,6 +526,10 @@ def check_kanban_crashes() -> tuple[int, list[str], int]:
     seen_task_ids: set[str] = set()
     for db in sorted(BOARDS_DIR.glob("*/kanban.db")):
         board = db.parent.name
+        if is_excluded_board_dir(board):
+            # Quarantine/backup dirs (.bak_*) are not live boards and must
+            # never emit crash-signal WARN/BLOCK telemetry (t_9ab9a1f6).
+            continue
         try:
             import sqlite3
             con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
@@ -649,6 +653,31 @@ def check_jarvis_ready_backlog(now: dt.datetime | None = None) -> dict[str, Any]
     return _scan_board_ready_backlog(JARVIS_OS_KANBAN_DB, "jarvis-os", now)
 
 
+_EXCLUDED_BOARD_SUFFIXES = ("attachments", "snapshots", "snapshot")
+
+
+def is_excluded_board_dir(name: str) -> bool:
+    """True for directories that are NOT live project boards.
+
+    Quarantine/backup/snapshot residue must never be walked as board dirs.
+    Excludes:
+      * Hidden dirs (dot-prefixed, e.g. .bak_t_c3bd9fec_...)
+      * Stale .bak*/backup dirs (any name containing ".bak")
+      * Underscore-prefixed frozen/snapshot dirs (e.g. _archived)
+      * attachment/snapshot dirs that some tooling lays down in boards/
+    This keeps dead/corrupt backup DBs from ever re-triggering a fleet WARN/BLOCK
+    via ready-backlog OR crash telemetry (t_5c102f32, t_9ab9a1f6). Shared by
+    _discover_board_dbs() and check_kanban_crashes() so both scan paths honour
+    the t_12975ee4 dot/underscore-prefix exclusion rule identically.
+    """
+    if not name:
+        return True
+    if name.startswith(".") or name.startswith("_"):
+        return True
+    low = name.lower()
+    return ".bak" in low or low in _EXCLUDED_BOARD_SUFFIXES
+
+
 def _discover_board_dbs() -> list[Path]:
     """All tracked board DBs: every BOARDS_DIR/<label>/kanban.db.
 
@@ -659,7 +688,12 @@ def _discover_board_dbs() -> list[Path]:
     """
     if not BOARDS_DIR.exists():
         return []
-    return sorted(BOARDS_DIR.glob("*/kanban.db"))
+
+    return sorted(
+        db
+        for db in BOARDS_DIR.glob("*/kanban.db")
+        if not is_excluded_board_dir(db.parent.name)
+    )
 
 
 def _ready_backlog_check_name(label: str) -> str:
