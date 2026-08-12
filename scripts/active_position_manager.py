@@ -29,7 +29,7 @@ HISTORY_FILE = os.path.join(STATE_DIR, "history.jsonl")
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
 SYCODE_READ_TOKEN = os.environ.get("SYCODE_READ_TOKEN", "")
 SYCODE_TRADE_TOKEN = os.environ.get("SYCODE_TRADE_TOKEN", "")
-OPENCLAW_BASE = "http://localhost:3001/api/openclaw"
+OPENCLAW_BASE = "http://localhost:3001/api/agent-exec"
 
 os.makedirs(STATE_DIR, exist_ok=True)
 

@@ -5,7 +5,7 @@ Uses fear/greed context from DB. Faster and more consistent than LLM-based tradi
 import subprocess, json, os, sys
 from datetime import datetime
 
-OC = os.environ.get("OPENCLAW_API_BASE", "http://localhost:3001/api/openclaw")
+OC = os.environ.get("OPENCLAW_API_BASE", "http://localhost:3001/api/agent-exec")
 READ_TOKEN_ENV = "OPENCLAW_READ_TOKEN"
 TRADE_TOKEN_ENV = "OPENCLAW_TRADE_TOKEN"
 ENV_FILE = os.environ.get("AUTO_SIGNAL_TRADER_ENV_FILE", "/home/frank/.hermes/secrets/auto-signal-trader.env")

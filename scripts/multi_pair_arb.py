@@ -58,7 +58,7 @@ for pair in PAIRS:
         r = subprocess.run(["curl","-s","-X","POST",
             "-H",f"X-Sycode-Token:{TOKEN}","-H","Content-Type:application/json",
             "-d",json.dumps({"symbol":pair,"direction":"LONG","sizeUsd":100,"leverage":1}),
-            "http://localhost:3001/api/openclaw/trade/open"], capture_output=True, text=True, timeout=10)
+            "http://localhost:3001/api/agent-exec/trade/open"], capture_output=True, text=True, timeout=10)
         print(f"  [TRADE] Arb {pair} {r.stdout[:80]}")
 
 print(f"Checked {len(PAIRS)} pairs")

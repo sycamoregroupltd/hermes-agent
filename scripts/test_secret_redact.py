@@ -17,7 +17,7 @@ SAMPLES = [
     f"X-Sycode-Token:{LEAK_TOKEN}",
     # The exact argv repr that the subprocess TimeoutExpired traceback emits.
     f"Command '['curl', '-s', '-H', 'X-Sycode-Token:{LEAK_TOKEN}', "
-    f"'http://localhost:3001/api/openclaw/status']' timed out after 35 seconds",
+    f"'http://localhost:3001/api/agent-exec/status']' timed out after 35 seconds",
     # Env assignment form.
     f"SYCODE_READ_TOKEN={LEAK_TOKEN}",
     # Quoted -H form.

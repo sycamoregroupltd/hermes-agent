@@ -4,7 +4,7 @@ import subprocess, json, sys, os
 from datetime import datetime, timezone
 
 SYCODE_CURL = os.path.expanduser("~/.hermes/scripts/sycode-token-safe-curl.sh")
-BASE = "http://localhost:3001/api/openclaw"
+BASE = "http://localhost:3001/api/agent-exec"
 
 def safe_fetch(endpoint):
     """Run token-safe curl, return parsed JSON."""

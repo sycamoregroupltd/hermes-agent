@@ -99,7 +99,7 @@ ORDER BY n DESC, arm_id ASC
 LIMIT 25" 2>/dev/null || echo "N/A")
 
 # ---- 4. OpenClaw API status ----
-OPENCLAW_STATUS=$(curl -s -H "X-Sycode-Token: ${SYCODE_READ_TOKEN:-}" http://localhost:3001/api/openclaw/status 2>/dev/null || echo '{"error":"unreachable"}')
+OPENCLAW_STATUS=$(curl -s -H "X-Sycode-Token: ${SYCODE_READ_TOKEN:-}" http://localhost:3001/api/agent-exec/status 2>/dev/null || echo '{"error":"unreachable"}')
 
 # ---- 5. Auto-trader status ----
 AUTO_TRADER=$(curl -s http://localhost:3001/api/auto-trader/status 2>/dev/null || echo '{"error":"unreachable"}')

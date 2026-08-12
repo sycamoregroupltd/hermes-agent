@@ -375,7 +375,7 @@
         "web",
         "session_search"
       ],
-      "workdir": "/home/frank/.hermes/profiles/elon",
+      "workdir": null,
       "provider_snapshot": null,
       "model_snapshot": null
     },
@@ -6684,7 +6684,7 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes"
+      "workdir": null
     },
     {
       "id": "044709de3d82",

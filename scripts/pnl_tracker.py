@@ -31,7 +31,7 @@ DB = ["docker", "exec", "-i", "sycodetrading-supabase-db", "psql", "-U", "postgr
 # --- PnL Tracking ---
 r = subprocess.run(["curl","-s","--connect-timeout","10","--max-time","30",
     "-H", f"X-Sycode-Token:{SYCODE_TOKEN}",
-    "http://localhost:3001/api/openclaw/status"], capture_output=True, text=True, timeout=35)
+    "http://localhost:3001/api/agent-exec/status"], capture_output=True, text=True, timeout=35)
 if r.returncode != 0:
     # Any failure (including timeout) leaks the argv repr — which embeds the
     # token — into stderr. Mask it before logging so the cron job's persisted

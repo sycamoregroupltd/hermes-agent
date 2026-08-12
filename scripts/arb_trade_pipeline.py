@@ -35,7 +35,7 @@ if not TRADE_TOKEN or not READ_TOKEN:
 assert TRADE_TOKEN is not None and READ_TOKEN is not None, "fail-closed guard above guarantees this"
 
 AUTH_HEADER_NAME = "X-" + "Sycode-Token"
-OC = os.environ.get("OPENCLAW_BASE_URL", "http://localhost:3001/api/openclaw").rstrip("/")
+OC = os.environ.get("OPENCLAW_BASE_URL", "http://localhost:3001/api/agent-exec").rstrip("/")
 HTTP_TIMEOUT = float(os.environ.get("ARB_PIPELINE_HTTP_TIMEOUT", "10"))
 DB_TIMEOUT = float(os.environ.get("ARB_PIPELINE_DB_TIMEOUT", "10"))
 SKIP_SIDE_EFFECTS = os.environ.get("ARB_PIPELINE_SKIP_SIDE_EFFECTS", "").lower() in {"1", "true", "yes"}

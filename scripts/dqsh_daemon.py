@@ -501,7 +501,7 @@ def process_active_candle_interpolation(live_mode=False):
                 if live_mode:
                     cmd = ["curl", "-s", "-X", "POST", "-H", "Content-Type: application/json",
                            "-d", json.dumps({"symbol": symbol, "startTime": meta['start_time'], "endTime": meta['end_time']}),
-                           "http://localhost:3001/api/openclaw/backfill"]
+                           "http://localhost:3001/api/agent-exec/backfill"]
                     try:
                         subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                     except Exception as e:

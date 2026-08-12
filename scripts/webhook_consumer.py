@@ -5,7 +5,7 @@ Runs as systemd service."""
 import subprocess, json, time, os, sys
 from datetime import datetime
 
-OC = "http://localhost:3001/api/openclaw"
+OC = "http://localhost:3001/api/agent-exec"
 TOKEN = os.environ.get("SYCODE_READ_TOKEN") or os.environ.get("JARVIS_READ_TOKEN")
 TRADE_TOKEN = os.environ.get("SYCODE_TRADE_TOKEN") or os.environ.get("JARVIS_TRADE_TOKEN")
 DB = ["docker", "exec", "-i", "sycodetrading-supabase-db", "psql", "-U", "postgres", "-d", "postgres"]

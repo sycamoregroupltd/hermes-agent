@@ -17,7 +17,7 @@ def safe_err(label, proc):
 
 from second_brain_writer import write_markdown_atomic
 
-OC = "http://localhost:3001/api/openclaw"
+OC = "http://localhost:3001/api/agent-exec"
 # Credential loading: shared env file (defaults to sycode-credential.env); env vars override.
 _CRED_ENV_FILE = os.environ.get("SYCODE_CREDENTIAL_ENV_FILE", "/home/frank/.hermes/secrets/sycode-credential.env")
 if os.path.exists(_CRED_ENV_FILE):
