@@ -4285,6 +4285,35 @@ def run_job(
                         break
                     _heartbeat_run_claim_if_due()
                     # Agent still running — check inactivity.
+                    #
+                    # REAPER SCOPE — IDLE-HOLDERS ONLY: this inactivity monitor
+                    # reaps (interrupts) only IDLE holders of the TERMINAL_CWD
+                    # lock — i.e. jobs whose `seconds_since_activity` crosses the
+                    # `_cron_inactivity_limit` bound. A BUSY holder that has
+                    # acquired the write lock and is mid-`run_conversation` is
+                    # never reaped here, by design: killing a healthy long writer
+                    # would orphan its os.environ["TERMINAL_CWD"] override and
+                    # corrupt concurrent readers (see test_reader_never_observes_writer_override).
+                    #
+                    # BUSY-HOLDER WAIT-BOUNDING: the other side. A busy workdir
+                    # job held too long is bounded on the WAITER side, not here —
+                    # a waiter that cannot acquire the TERMINAL_CWD lock within
+                    # the fail-closed 660s ceiling (#79768, defined at
+                    # `_CWD_LOCK_TIMEOUT_FLOOR_SECONDS` + margin above) FAILS
+                    # LOUDLY instead of proceeding without the lock. So waiters
+                    # time out even when the reaper leaves the holder alone.
+                    #
+                    # DO NOT add a lock-TTL / auto-release that frees an ACTIVE
+                    # holder mid-run: the env override is process-global and is
+                    # read directly by terminal/code-exec/mcp tools at command
+                    # launch (not the _SESSION_CWD contextvar), so releasing the
+                    # write lock while TERMINAL_CWD stays set leaks the override
+                    # into every concurrent reader's shell/file/code-exec commands
+                    # — exactly the wrong-directory corruption this lock prevents.
+                    # The durable fix for "stuck long writers" is schedule
+                    # staggering + the fail-closed waiter bound already live, NOT
+                    # weakening the lock. See _terminal_cwd_lock / run_job lock
+                    # acquire+release and Decision/2026-08-12-terminal-cwd-lock-structural-gap.
                     _idle_secs = 0.0
                     if hasattr(agent, "get_activity_summary"):
                         try:
