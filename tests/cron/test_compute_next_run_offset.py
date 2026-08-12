@@ -1,0 +1,136 @@
+"""Tests for the optional ``schedule.offset_minutes`` jitter/phase field in
+``compute_next_run``.
+
+Implements DECIDER-approved proposal t_0256865b: a deterministic phase offset
+that spreads jobs that would otherwise fire on the same tick (reducing the
+TERMINAL_CWD readers-writer lock cascade, incident t_b79554a8 / #79768).
+
+The field is strictly additive and sanitized: absent, negative, or non-numeric
+values fall back to today's behavior (no offset) and never raise.
+"""
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import pytest
+
+pytest.importorskip("croniter")
+
+from cron.jobs import compute_next_run
+
+
+def _shift_aware(dt: datetime, minutes: int) -> datetime:
+    """Add ``minutes`` to an aware datetime, preserving its tzinfo."""
+    return dt + timedelta(minutes=minutes)
+
+
+class TestOffsetInterval:
+    def test_offset_applied_to_first_interval_run(self, monkeypatch):
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=ZoneInfo("UTC"))
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "interval", "minutes": 60, "offset_minutes": 5}
+        result = compute_next_run(schedule)
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        # now + 60 (interval) + 5 (offset) = now + 65
+        assert next_dt == _shift_aware(now, 65)
+
+    def test_offset_applied_to_interval_with_last_run(self, monkeypatch):
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=ZoneInfo("UTC"))
+        last = datetime(2026, 4, 10, 20, 0, 0, tzinfo=ZoneInfo("UTC"))
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "interval", "minutes": 30, "offset_minutes": 7}
+        result = compute_next_run(schedule, last_run_at=last.isoformat())
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        # anchored to last_run_at: last + 30 (interval) + 7 (offset)
+        assert next_dt == _shift_aware(last, 37)
+
+
+class TestOffsetCron:
+    def test_offset_applied_to_cron_expr(self, monkeypatch):
+        morocco = ZoneInfo("Africa/Casablanca")
+        last = datetime(2026, 4, 6, 14, 10, 0, tzinfo=morocco)
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=morocco)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        # every 6h on the hour; base Apr 6 14:10 -> next grid point 18:00.
+        schedule = {"kind": "cron", "expr": "0 */6 * * *", "offset_minutes": 5}
+        result = compute_next_run(schedule, last_run_at=last.isoformat())
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        assert next_dt.date().isoformat() == "2026-04-06"
+        assert next_dt.hour == 18
+        assert next_dt.minute == 5
+
+    def test_offset_zero_is_a_noop(self, monkeypatch):
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=ZoneInfo("UTC"))
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "interval", "minutes": 60, "offset_minutes": 0}
+        result = compute_next_run(schedule)
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        assert next_dt == _shift_aware(now, 60)
+
+
+class TestOffsetAbsent:
+    def test_absent_offset_interval_unchanged(self, monkeypatch):
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=ZoneInfo("UTC"))
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "interval", "minutes": 60}
+        result = compute_next_run(schedule)
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        assert next_dt == _shift_aware(now, 60)
+
+    def test_absent_offset_cron_unchanged(self, monkeypatch):
+        morocco = ZoneInfo("Africa/Casablanca")
+        last = datetime(2026, 4, 6, 14, 10, 0, tzinfo=morocco)
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=morocco)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "cron", "expr": "0 */6 * * *"}
+        result = compute_next_run(schedule, last_run_at=last.isoformat())
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        assert next_dt.date().isoformat() == "2026-04-06"
+        assert next_dt.hour == 18
+        assert next_dt.minute == 0
+
+
+class TestOffsetSanitized:
+    def test_negative_offset_ignored(self, monkeypatch):
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=ZoneInfo("UTC"))
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "interval", "minutes": 60, "offset_minutes": -15}
+        result = compute_next_run(schedule)
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        assert next_dt == _shift_aware(now, 60)
+
+    @pytest.mark.parametrize("bogus", ["5", "five", True, False, [5], {"m": 5}])
+    def test_bogus_offset_ignored(self, monkeypatch, bogus):
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=ZoneInfo("UTC"))
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "interval", "minutes": 60, "offset_minutes": bogus}
+        result = compute_next_run(schedule)
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        assert next_dt == _shift_aware(now, 60), f"bogus={bogus!r} must be ignored"
+
+    def test_float_offset_is_numeric_and_accepted(self, monkeypatch):
+        # A float is numeric (not "non-numeric"); it is truncated to whole
+        # minutes and applied.
+        now = datetime(2026, 4, 10, 22, 0, 0, tzinfo=ZoneInfo("UTC"))
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        schedule = {"kind": "interval", "minutes": 60, "offset_minutes": 5.9}
+        result = compute_next_run(schedule)
+        assert result is not None
+        next_dt = datetime.fromisoformat(result)
+        assert next_dt == _shift_aware(now, 65)
