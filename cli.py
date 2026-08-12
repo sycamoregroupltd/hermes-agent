@@ -18899,7 +18899,23 @@ def main(
                 # Surface security advisories before the agent runs — short
                 # banner, doesn't depend on the welcome banner being shown.
                 cli._show_security_advisories()
-                cli.chat(query, images=single_query_images or None)
+                _chat_result = cli.chat(query, images=single_query_images or None)
+                # Kanban workers must never report a clean rc=0 when the run
+                # failed to start. `cli.chat()` returns None when runtime
+                # credential resolution fails (missing/expired provider token),
+                # agent init fails, or the run produced no response — in every
+                # case the agent never reasoned, so the task is still
+                # `running` in the DB with no terminal kanban call. Exiting 0
+                # here makes the dispatcher's reaper misclassify a pre-reasoning
+                # startup/provider failure as a clean-exit protocol violation,
+                # corrupting the board's violation budget and hiding the real
+                # cause (see jarvis-os/t_0ef907ab). Exit non-zero instead so
+                # the reaper records it as a real crash and the actual
+                # credential/provider failure surfaces. Mirrors the quiet
+                # single-query path, which already exits 1 on credential /
+                # agent-init failure.
+                if _chat_result is None and os.environ.get("HERMES_KANBAN_TASK"):
+                    sys.exit(1)
                 cli._print_exit_summary(clear_screen=False)
         finally:
             _finalize_single_query(cli)

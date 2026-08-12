@@ -201,3 +201,113 @@ def test_quiet_single_query_main_finalizes_while_preserving_exit_code(monkeypatc
     assert ("claim", "cli", True) in calls
     assert ("run", "hello", []) in calls
     assert calls[-1] == ("finalize", "quiet-session")
+
+
+def test_kanban_worker_startup_failure_exits_nonzero(monkeypatch):
+    """A kanban worker whose run fails to start (credential/agent-init
+    failure → ``cli.chat()`` returns None) must exit non-zero so the
+    dispatcher reaper records a real crash instead of misclassifying the
+    clean rc=0 as a protocol violation (jarvis-os/t_0ef907ab)."""
+    calls = []
+
+    import cli as cli_mod
+
+    class _Console:
+        def print(self, *_args, **_kwargs):
+            calls.append("query-label")
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            self.console = _Console()
+            self.session_id = "kanban-worker-session"
+            self.agent = SimpleNamespace(
+                session_id="kanban-worker-session",
+                platform="cli",
+            )
+
+        def _claim_active_session(self, surface, *, stderr=False):
+            calls.append(("claim", surface, stderr))
+            return True
+
+        def _show_security_advisories(self):
+            calls.append("advisories")
+
+        def chat(self, query, images=None):
+            calls.append(("chat", query, images))
+            # Startup failure — no response, agent never reasoned.
+            return None
+
+        def _print_exit_summary(self, clear_screen=True):
+            calls.append("summary")
+
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_test1234")
+    monkeypatch.delenv("HERMES_KANBAN_GOAL_MODE", raising=False)
+    monkeypatch.setattr(cli_mod, "HermesCLI", FakeCLI)
+    monkeypatch.setattr(cli_mod.atexit, "register", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cli_mod,
+        "_finalize_single_query",
+        lambda fake_cli: calls.append(("finalize", fake_cli.session_id)),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_mod.main(query="work kanban task t_test1234", quiet=False, toolsets="terminal")
+
+    assert exc_info.value.code == 1
+    assert ("chat", "work kanban task t_test1234", None) in calls
+    # _print_exit_summary is skipped on the failure path.
+    assert "summary" not in calls
+    assert calls[-1] == ("finalize", "kanban-worker-session")
+
+
+def test_kanban_worker_success_still_exits_zero(monkeypatch):
+    """A kanban worker whose run completes (chat returns a response) keeps
+    the normal rc=0 single-query contract — the new non-zero exit only fires
+    on the startup-failure (None) path."""
+    calls = []
+
+    import cli as cli_mod
+
+    class _Console:
+        def print(self, *_args, **_kwargs):
+            calls.append("query-label")
+
+    class FakeCLI:
+        def __init__(self, **_kwargs):
+            self.console = _Console()
+            self.session_id = "kanban-worker-session"
+            self.agent = SimpleNamespace(
+                session_id="kanban-worker-session",
+                platform="cli",
+            )
+
+        def _claim_active_session(self, surface, *, stderr=False):
+            calls.append(("claim", surface, stderr))
+            return True
+
+        def _show_security_advisories(self):
+            calls.append("advisories")
+
+        def chat(self, query, images=None):
+            calls.append(("chat", query, images))
+            return "done"
+
+        def _print_exit_summary(self, clear_screen=True):
+            calls.append("summary")
+
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_test1234")
+    monkeypatch.delenv("HERMES_KANBAN_GOAL_MODE", raising=False)
+    monkeypatch.setattr(cli_mod, "HermesCLI", FakeCLI)
+    monkeypatch.setattr(cli_mod.atexit, "register", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cli_mod,
+        "_finalize_single_query",
+        lambda fake_cli: calls.append(("finalize", fake_cli.session_id)),
+    )
+
+    # No SystemExit should be raised on the success path.
+    cli_mod.main(query="work kanban task t_test1234", quiet=False, toolsets="terminal")
+
+    assert ("chat", "work kanban task t_test1234", None) in calls
+    assert "summary" in calls
+    assert calls[-1] == ("finalize", "kanban-worker-session")
