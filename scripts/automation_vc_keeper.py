@@ -66,6 +66,10 @@ DENY_CONTAINS = ("/memories/", "/sessions/", "/logs/", "/cache/")
 FORCE_INCLUDE = {
     "scripts/automation_vc_keeper.py",
     "profiles/devops/scripts/automation-vc-keeper.sh",
+    # The keeper cron now runs from the jarvis profile (job bbc6def62725),
+    # whose script path resolves to profiles/jarvis/scripts/. Track the jarvis
+    # wrapper too so a DGX rebuild restores the exact copy the live cron runs.
+    "profiles/jarvis/scripts/automation-vc-keeper.sh",
     "scripts/cron_live_script_guard.py",
 }
 # Non-live path holding sanitized recovery snapshots of every live cron store
@@ -113,6 +117,8 @@ def is_allowed(rel: str) -> bool:
     # The devops-profile keeper dispatcher wrapper is durable on this branch (see
     # FORCE_INCLUDE). It holds no secrets and only delegates to the tracked root script.
     if rel == "profiles/devops/scripts/automation-vc-keeper.sh":
+        return True
+    if rel == "profiles/jarvis/scripts/automation-vc-keeper.sh":
         return True
     return False
 

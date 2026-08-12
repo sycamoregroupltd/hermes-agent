@@ -5879,7 +5879,7 @@
     {
       "id": "036f0c8b5720",
       "name": "arena-insert-liveness-monitor (t_a20174c0)",
-      "prompt": "No-agent Sycode Trading arena insert-liveness watchdog for kanban task t_a20174c0. Run /home/frank/.hermes/profiles/devops/scripts/arena-insert-liveness-monitor.sh every 15 minutes. The wrapper runs /home/frank/.bun/bin/bun run server/scripts/arena-insert-liveness-monitor.ts with --max-age-minutes=30 from /home/frank/sycode-trading/.worktrees/arena-liveness-monitor, using DATABASE_URL host 127.0.0.1:5432/postgres (not supabase-db). Exit code handling: 0 healthy/silent; 1 stale or unreachable alert; 2 config/runtime error alert. SELECT-only monitor; no DDL, no DB writes, no deploy, no live trading.",
+      "prompt": "No-agent Sycode Trading arena insert-liveness watchdog for kanban task t_a20174c0. Run /home/frank/.hermes/profiles/jarvis/scripts/arena-insert-liveness-monitor.sh every 15 minutes. The wrapper runs /home/frank/.bun/bin/bun run server/scripts/arena-insert-liveness-monitor.ts with --max-age-minutes=30 from /home/frank/sycode-trading/.worktrees/arena-liveness-monitor, using DATABASE_URL host 127.0.0.1:5432/postgres (not supabase-db). Exit code handling: 0 healthy/silent; 1 stale or unreachable alert; 2 config/runtime error alert. SELECT-only monitor; no DDL, no DB writes, no deploy, no live trading.",
       "skills": [],
       "skill": null,
       "model": null,

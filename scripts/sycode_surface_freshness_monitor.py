@@ -86,9 +86,10 @@ SURFACES = [
      "graduates to 26h SLO on first batch"),
     ("pattern_win_rate_registry", "pattern_win_rate_registry", "last_updated", 26.0, "alert",
      "Class C read-model refreshed by registry updater; research reads it as advisory only"),
-    ("liquidation_events",     "liquidation_events",       "\"timestamp\"", 0.0,  "gap",
-     "table exists, capture NEVER wired (0 rows since birth) — register GAP; "
-     "liquidation_context on journeys comes from elsewhere"),
+    ("liquidation_events",     "liquidation_events",       "\"timestamp\"", 5.0,  "alert",
+     "collector PR #394 (Binance USDM forceOrder WS) producing since 2026-07-29; "
+     "consumer PR #928 (FeatureStoreV2). SLO 5h catches a dead collector within a "
+     "work-shift while tolerating sparse cascades (register GAP #1 resolved 2026-08-05)."),
 ]
 # data_epoch_registry is certified in the register but has NO freshness SLO:
 # it is event-driven (rows appear when defects are registered). Completeness is
