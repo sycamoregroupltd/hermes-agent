@@ -3,8 +3,13 @@
 
 WHY THIS EXISTS (t_1290f179 / CEO follow-up to t_ccaa946a)
   The dispatcher's ``detect_crashed_workers`` is supposed to fire a
-  ``kanban_failure_alert`` lifecycle hook at ``consecutive_failures >= 3`` on a
-  dead-PID fingerprint (``_maybe_fire_deadpid_fleet_alert`` in kanban_db.py).
+  ``kanban_failure_alert`` lifecycle hook at ``consecutive_failures >= N`` on a
+  dead-PID fingerprint (``_maybe_fire_deadpid_fleet_alert`` in kanban_db.py),
+  where ``N`` is the dispatcher's circuit-breaker trip point
+  (``DEFAULT_FAILURE_LIMIT = 2``, i.e. the breaker trips at cf=2 and
+  auto-blocks the task as ``blocked``/``gave_up``). The alert threshold below
+  MUST track that trip point (not one tick above it) — see DETECTOR GAP in
+  t_pid_not_alive_ceo_fix_20260812.
   That hook is served by the ``deadpid-fleet-alert`` plugin, which forwards ONE
   deduped summary to ``#fleet-reports``. That plugin is a standalone plugin and
   was never enabled in ``plugins.enabled`` for any dispatcher, so the hook had
@@ -28,9 +33,19 @@ WHAT IT ALERTS ON (the silent-accumulation signature)
        (resolved 'done'/'archived' and pre-active 'scheduled'/'triage' are
         excluded as noise even if they carry a stale dead-PID error string)
     AND last_failure_error LIKE 'pid % not alive'
-    AND consecutive_failures >= 3
+    AND consecutive_failures >= <trip point>
   i.e. a dead-PID worker-kill that has built up retries WITHOUT the operator
   being notified.
+
+DETECTOR GAP (t_pid_not_alive_ceo_fix_20260812)
+  The original hard-coded threshold ``consecutive_failures >= 3`` sat ONE TICK
+  ABOVE the dispatcher's actual circuit-breaker trip point
+  (``DEFAULT_FAILURE_LIMIT = 2`` in kanban_db.py). The breaker auto-blocks a
+  dead-PID crash at cf=2, so a task never reaches cf=3 while stuck — leaving a
+  multi-hundred card pid-not-alive cascade completely invisible to the guard.
+  The fix: derive the alert threshold from the dispatcher's live trip point so
+  alerting tracks tripping exactly, not one tick above a stale constant.
+  See the runtime ``ALERT_CF_THRESHOLD`` block below.
 
 DELIVERY: self-delivers via ``hermes send`` to #fleet-reports. The cron-layer
 ``deliver: discord`` path is currently broken fleet-wide ("platform 'discord'
@@ -58,7 +73,17 @@ import time
 
 KANBAN_HOME = os.environ.get("HERMES_KANBAN_HOME", "/home/frank/.hermes/kanban")
 DEADPID_RE_SQL = "last_failure_error LIKE 'pid % not alive'"
-ALERT_CF_THRESHOLD = int(os.environ.get("DEADPID_ALERT_CF", "3"))
+ALERT_CF_THRESHOLD = int(os.environ.get("DEADPID_ALERT_CF", "0"))
+if ALERT_CF_THRESHOLD == 0:
+    try:
+        # Mirror the dispatcher's circuit-breaker trip point exactly so a
+        # dead-PID cascade auto-blocked at cf=N is surfaced at cf=N, not cf>N+1.
+        import importlib, hermes_cli.kanban_db as _kb
+        importlib.reload(_kb)  # be sure we read the live module constant
+        ALERT_CF_THRESHOLD = int(getattr(_kb, "DEFAULT_FAILURE_LIMIT", 2))
+    except Exception:
+        ALERT_CF_THRESHOLD = 2  # fail-safe: match the canonical default trip
+
 STATE_PATH = os.environ.get(
     "DEADPID_ALERT_STATE",
     "/home/frank/.hermes/cron/state/deadpid-fleet-alert-guard.seen",
@@ -73,13 +98,27 @@ HERMES_PROFILE = os.environ.get("DEADPID_FLEET_ALERT_PROFILE", "jarvis")
 
 def _board_db_paths() -> list[str]:
     out: list[str] = []
-    for db in glob.glob(os.path.join(KANBAN_HOME, "boards", "*", "kanban.db")):
-        out.append(db)
-    for extra in glob.glob(os.path.join(KANBAN_HOME, "*.db")):
-        base = os.path.basename(extra)
+    candidates = glob.glob(os.path.join(KANBAN_HOME, "boards", "*", "kanban.db"))
+    candidates += glob.glob(os.path.join(KANBAN_HOME, "*.db"))
+    for db in candidates:
+        base = os.path.basename(db)
         if base in ("db", "db.db", "store.duckdb", "dispatch.db", "default.db"):
             continue
-        out.append(extra)
+        # Reject stray files in KANBAN_HOME root that aren't real board DBs
+        # (e.g. kanban.db / jarvis-os.db at the home root) by checking the
+        # tasks table exists. This keeps the scan silent and noise-free.
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            tables = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+            con.close()
+            if "tasks" not in tables:
+                continue
+        except Exception:
+            continue
+        if db not in out:
+            out.append(db)
     return sorted(out)
 
 
