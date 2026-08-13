@@ -367,6 +367,80 @@ def test_respawn_guard_defers_rate_limited_within_cooldown(
         assert kb.check_respawn_guard(conn, tid) is None
 
 
+def _add_comment_at(conn, task_id, body, created_at, author="jarvis"):
+    """Insert a task_comments row at an explicit created_at."""
+    conn.execute(
+        "INSERT INTO task_comments (task_id, author, body, created_at) VALUES (?, ?, ?, ?)",
+        (task_id, author, body, created_at),
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Respawn guard: active_pr must not starve a review card stranded in ready
+# (reviewer profile assignee + open-PR handoff comment) — while still
+# suppressing genuine implementation cards with a worker-owned open PR.
+# ---------------------------------------------------------------------------
+
+
+def test_respawn_guard_active_pr_suppressed_for_implementation_card(kanban_home, monkeypatch):
+    """An implementation assignee with an open-PR comment must STILL be
+    guarded (the duplicate-work signal is correct here)."""
+    import hermes_cli.kanban_db as _kb
+
+    now = 5_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    pr_url = "https://github.com/sycamoregroupltd/sycode-trading/pull/1110"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="impl card", assignee="worker-bee")
+        conn.execute(
+            "UPDATE tasks SET status='ready', claim_lock=NULL, "
+            "claim_expires=NULL, worker_pid=NULL WHERE id=?", (tid,)
+        )
+        _add_comment_at(conn, tid, f"opened PR {pr_url}", now - 100)
+        assert kb.check_respawn_guard(conn, tid) == "active_pr"
+
+
+def test_respawn_guard_active_pr_releases_reviewer_assigned_ready_card(kanban_home, monkeypatch):
+    """A review card stranded in the ready lane — reviewer-profile assignee
+    plus an open-PR handoff comment — must be dispatchable (no active_pr
+    guard). Regression for sycode-trading/t_82dae659."""
+    import hermes_cli.kanban_db as _kb
+
+    now = 5_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    pr_url = "https://github.com/sycamoregroupltd/sycode-trading/pull/1113"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="REVIEW: ...", assignee="trading-risk-reviewer")
+        conn.execute(
+            "UPDATE tasks SET status='ready', claim_lock=NULL, "
+            "claim_expires=NULL, worker_pid=NULL WHERE id=?", (tid,)
+        )
+        _add_comment_at(conn, tid, f"REVIEW HANDOFF: PR {pr_url} ready to review", now - 60)
+        assert kb.check_respawn_guard(conn, tid) is None
+
+
+def test_respawn_guard_active_pr_suppressed_when_assignee_null(kanban_home, monkeypatch):
+    """A NULL assignee is not a reviewer profile → active_pr still guards
+    (preserves the default-safe behavior for unowned open-PR cards)."""
+    import hermes_cli.kanban_db as _kb
+
+    now = 5_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    pr_url = "https://github.com/sycamoregroupltd/sycode-trading/pull/1110"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="unowned pr", assignee=None)
+        conn.execute(
+            "UPDATE tasks SET status='ready', claim_lock=NULL, "
+            "claim_expires=NULL, worker_pid=NULL WHERE id=?", (tid,)
+        )
+        _add_comment_at(conn, tid, f"opened PR {pr_url}", now - 100)
+        assert kb.check_respawn_guard(conn, tid) == "active_pr"
+
+
 
 
 

@@ -7641,9 +7641,31 @@ _RESPAWN_GUARD_PR_WINDOW = 86400  # 24 hours
 
 # Pattern matching a GitHub PR URL in task comments.
 _RESPAWN_GUARD_PR_URL_RE = re.compile(
-    r"https?://github\.com/[^/\s]+/[^/\s]+/pull/\d+",
+    r"https?://github\.com/[^\s/]+/[^\s/]+/pull/\d+",
     re.IGNORECASE,
 )
+
+# Fleet reviewer profiles follow the ``*-reviewer`` naming convention
+# (os-reviewer, trading-risk-reviewer, platform-reviewer, ...). A task whose
+# assignee matches this is a *review* handoff — when such a task has an open-PR
+# comment it is awaiting review, so the ``active_pr`` respawn guard must NOT
+# treat it as a duplicate-work signal. The check is intentionally conservative:
+# it matches the canonical suffix only (not arbitrary substrings) and tolerates
+# a NULL assignee.
+_REVIEWER_PROFILE_RE = re.compile(r"-reviewer$", re.IGNORECASE)
+
+
+def _is_reviewer_profile(assignee: Optional[str]) -> bool:
+    """True iff ``assignee`` is a fleet reviewer profile (``*-reviewer``).
+
+    Used by :func:`check_respawn_guard` to distinguish a review handoff
+    stranded in the ready lane (which must be dispatchable to its reviewer)
+    from a genuine implementation card with a worker-owned open PR (which
+    must stay suppressed to avoid duplicate work).
+    """
+    if not assignee:
+        return False
+    return bool(_REVIEWER_PROFILE_RE.search(assignee.strip()))
 
 
 @dataclass
@@ -9133,11 +9155,30 @@ def check_respawn_guard(
 
     # 4. GitHub PR URL in a recent comment — prior worker already opened a PR.
     pr_cutoff = now - _RESPAWN_GUARD_PR_WINDOW
+    has_pr_comment = False
     for c in conn.execute(
         "SELECT body FROM task_comments WHERE task_id = ? AND created_at >= ?",
         (task_id, pr_cutoff),
     ).fetchall():
         if c["body"] and _RESPAWN_GUARD_PR_URL_RE.search(c["body"]):
+            has_pr_comment = True
+            break
+    if has_pr_comment:
+        # A review card stranded in the ready lane — the reviewer profile
+        # (fleet ``*-reviewer`` convention: os-reviewer, trading-risk-
+        # reviewer, ...) was assigned and a handoff comment linked the open
+        # PR — is *awaiting* that reviewer, not an implementation card with
+        # a worker-owned PR. The active_pr duplicate-suppression signal
+        # only makes sense for an implementation assignee; the ready-lane
+        # rule must not starve a review handoff sitting in ready.
+        # (Cards that actually moved to the 'review' lane are already
+        # short-circuited by the ``lane == "review"`` early-return above.)
+        assignee_row = conn.execute(
+            "SELECT assignee FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        assignee = assignee_row["assignee"] if assignee_row else None
+        if not _is_reviewer_profile(assignee):
             return "active_pr"
 
     return None
