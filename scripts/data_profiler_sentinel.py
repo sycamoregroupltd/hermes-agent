@@ -42,6 +42,11 @@ OBSIDIAN_DASHBOARD_PATH = Path("/home/frank/obsidian-fleet-vault/analytics/data-
 THRESHOLD_FRESHNESS_STALE_HOURS = 24.0
 THRESHOLD_COLLAPSE_STDDEV = 0.005
 THRESHOLD_COLLAPSE_MIN_COUNT = 10
+# Max allowed age (hours) of the newest clean-labeled row before the accuracy
+# metrics are considered stale (a frozen window that must not be read as a live
+# model collapse). See t_c435a0a4: the labeler stalled, so "recent" accuracy
+# was computed on a 3h-old burst.
+LABELER_FRESHNESS_STALE_HOURS = 6.0
 
 
 def run_sql(sql):
@@ -280,29 +285,62 @@ def compute_consistency():
 
 
 def compute_accuracy():
-    """Computes predictive accuracy statistics and score."""
-    # Check overall calibration of direction_quality_prob vs clean_outcome_binary_24h
+    """Computes predictive accuracy statistics and score.
+
+    Hardened (t_c435a0a4) so a stale frozen window cannot masquerade as a model
+    accuracy collapse:
+      - Surfaces labeler freshness: age of the newest row with a non-null dqp +
+        clean label. If that age exceeds LABELER_FRESHNESS_STALE_HOURS, the
+        "recent" metrics reflect a frozen window, not live model behavior.
+      - Surfaces the recent-window time span alongside recent_1000.
+      - Reports rank discrimination (Pearson/point-biserial corr of dqp vs clean
+        label) in addition to threshold accuracy, so a burst cannot be misread as
+        a global inversion.
+    Read-only; no DB mutation.
+    """
+    # Overall calibration of direction_quality_prob vs clean_outcome_binary_24h.
+    # CORR() over a binary label is the point-biserial (rank) correlation.
     stats_query = """
         SELECT
           COUNT(*)::integer AS labeled_count,
           AVG( (direction_quality_prob - (CASE WHEN clean_outcome_binary_24h = true THEN 1.0 ELSE 0.0 END))^2 )::double precision AS brier_score,
           AVG( ABS(direction_quality_prob - (CASE WHEN clean_outcome_binary_24h = true THEN 1.0 ELSE 0.0 END)) )::double precision AS mae,
-          AVG(CASE WHEN (direction_quality_prob >= 0.5) = clean_outcome_binary_24h THEN 1.0 ELSE 0.0 END)::double precision AS binary_accuracy
+          AVG(CASE WHEN (direction_quality_prob >= 0.5) = clean_outcome_binary_24h THEN 1.0 ELSE 0.0 END)::double precision AS binary_accuracy,
+          COALESCE(CORR(direction_quality_prob, CASE WHEN clean_outcome_binary_24h = true THEN 1.0 ELSE 0.0 END), 0.0)::double precision AS corr
         FROM public.signal_journeys
         WHERE direction_quality_prob IS NOT NULL AND clean_outcome_binary_24h IS NOT NULL;
     """
     stats_res = run_sql(stats_query)[0]
     total_labeled = int(stats_res["labeled_count"] or 0)
 
-    # Check recent calibration over the last 1000 labeled predictions
+    # Labeler freshness: age of the newest clean-labeled row. If this is stale,
+    # accuracy metrics must not be read as live.
+    freshness_query = """
+        SELECT
+          COALESCE(MAX(created_at)::text, '') AS newest_labeled_at,
+          COALESCE(EXTRACT(EPOCH FROM (now() - MAX(created_at)))/3600.0, -1.0)::double precision AS labeler_lag_hours
+        FROM public.signal_journeys
+        WHERE direction_quality_prob IS NOT NULL AND clean_outcome_binary_24h IS NOT NULL;
+    """
+    freshness_res = run_sql(freshness_query)[0]
+    newest_labeled_at = freshness_res["newest_labeled_at"] or ""
+    labeler_lag = float(freshness_res["labeler_lag_hours"] or -1.0)
+    labeler_stale = (labeler_lag >= 0 and labeler_lag > LABELER_FRESHNESS_STALE_HOURS)
+
+    # Recent calibration over the last 1000 labeled predictions, plus the
+    # window's time span and rank correlation.
     recent_query = """
         SELECT
           COUNT(*)::integer AS labeled_count,
           AVG( (direction_quality_prob - (CASE WHEN clean_outcome_binary_24h = true THEN 1.0 ELSE 0.0 END))^2 )::double precision AS brier_score,
           AVG( ABS(direction_quality_prob - (CASE WHEN clean_outcome_binary_24h = true THEN 1.0 ELSE 0.0 END)) )::double precision AS mae,
-          AVG(CASE WHEN (direction_quality_prob >= 0.5) = clean_outcome_binary_24h THEN 1.0 ELSE 0.0 END)::double precision AS binary_accuracy
+          AVG(CASE WHEN (direction_quality_prob >= 0.5) = clean_outcome_binary_24h THEN 1.0 ELSE 0.0 END)::double precision AS binary_accuracy,
+          COALESCE(CORR(direction_quality_prob, CASE WHEN clean_outcome_binary_24h = true THEN 1.0 ELSE 0.0 END), 0.0)::double precision AS corr,
+          COALESCE(MIN(created_at)::text, '') AS window_start,
+          COALESCE(MAX(created_at)::text, '') AS window_end,
+          COALESCE(EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at)))/3600.0, -1.0)::double precision AS window_span_hours
         FROM (
-          SELECT direction_quality_prob, clean_outcome_binary_24h
+          SELECT direction_quality_prob, clean_outcome_binary_24h, created_at
           FROM public.signal_journeys
           WHERE direction_quality_prob IS NOT NULL AND clean_outcome_binary_24h IS NOT NULL
           ORDER BY created_at DESC
@@ -320,17 +358,28 @@ def compute_accuracy():
         "score": round(score, 2),
         "total_labeled_predictions": total_labeled,
         "recent_labeled_predictions": recent_labeled,
+        "labeler_freshness": {
+            "newest_labeled_at": newest_labeled_at,
+            "labeler_lag_hours": round(labeler_lag, 2) if labeler_lag >= 0 else None,
+            "stale": labeler_stale,
+            "stale_threshold_hours": LABELER_FRESHNESS_STALE_HOURS
+        },
         "overall": {
             "brier_score": round(float(stats_res["brier_score"] or 0.0), 4),
             "mean_absolute_error": round(float(stats_res["mae"] or 0.0), 4),
-            "binary_accuracy_pct": round(float(stats_res["binary_accuracy"] or 0.0) * 100.0, 2)
+            "binary_accuracy_pct": round(float(stats_res["binary_accuracy"] or 0.0) * 100.0, 2),
+            "rank_corr": round(float(stats_res["corr"] or 0.0), 4)
         },
         "recent_1000": {
             "brier_score": round(float(recent_res["brier_score"] or 0.0), 4),
             "mean_absolute_error": round(float(recent_res["mae"] or 0.0), 4),
-            "binary_accuracy_pct": round(binary_accuracy * 100.0, 2)
+            "binary_accuracy_pct": round(binary_accuracy * 100.0, 2),
+            "rank_corr": round(float(recent_res["corr"] or 0.0), 4),
+            "window_start": recent_res["window_start"] or "",
+            "window_end": recent_res["window_end"] or "",
+            "window_span_hours": round(float(recent_res["window_span_hours"] or 0.0), 2)
         },
-        "details": "Evaluates prediction accuracy (Brier score, MAE, Binary Accuracy) of DirectionQuality probability models vs mature outcome labels."
+        "details": "Evaluates prediction accuracy (Brier score, MAE, Binary Accuracy, rank corr) of DirectionQuality probability models vs mature outcome labels, with a labeler-freshness guard so a frozen window is not read as a live collapse."
     }
 
 
@@ -440,7 +489,19 @@ def generate_obsidian_dashboard(scorecard):
     cons_details = f"Orphan counts: PnL={cons['orphan_counts']['pnl_points_orphans']}, close_journeys={cons['orphan_counts']['trade_close_journeys_orphans']}, close_positions={cons['orphan_counts']['trade_close_positions_orphans']}."
     
     recent_1000 = acc.get("recent_1000") or {}
-    acc_details = f"Recent 1000 labeled: Accuracy={recent_1000.get('binary_accuracy_pct', 'N/A')}%, Brier={recent_1000.get('brier_score', 0.0):.4f}, MAE={recent_1000.get('mean_absolute_error', 0.0):.4f}."
+    labeler_fresh = acc.get("labeler_freshness") or {}
+    lag = labeler_fresh.get("labeler_lag_hours")
+    lag_str = f"{lag}h" if lag is not None else "N/A"
+    stale_flag = "⚠️ STALE" if labeler_fresh.get("stale") else "OK"
+    newest = labeler_fresh.get("newest_labeled_at") or "N/A"
+    acc_details = (
+        f"Recent 1000 labeled: Accuracy={recent_1000.get('binary_accuracy_pct', 'N/A')}%, "
+        f"Brier={recent_1000.get('brier_score', 0.0):.4f}, MAE={recent_1000.get('mean_absolute_error', 0.0):.4f}, "
+        f"RankCorr={recent_1000.get('rank_corr', 'N/A')}. "
+        f"Window: {recent_1000.get('window_start', 'N/A')} to {recent_1000.get('window_end', 'N/A')} "
+        f"(span {recent_1000.get('window_span_hours', 'N/A')}h). "
+        f"Labeler: newest labeled {newest}, lag {lag_str} [{stale_flag}]."
+    )
 
     dq_mean = feedback['stats'].get('mean')
     dq_stddev = feedback['stats'].get('stddev')
@@ -560,6 +621,27 @@ def check_alert_thresholds(scorecard):
     evaluate("Validity", val["score"], 99.0, 95.0)
     evaluate("Consistency", cons["score"], 99.0, 95.0)
     evaluate("Accuracy", acc["score"], 55.0, 50.0)
+
+    # Labeler-freshness guard (t_c435a0a4): when the newest clean-labeled row is
+    # stale, recent_1000 accuracy reflects a frozen window and must not be read as
+    # a live model collapse or inversion. Tag any Accuracy alert with a caveat and
+    # surface the freshness facts explicitly.
+    labeler_fresh = acc.get("labeler_freshness") or {}
+    if labeler_fresh.get("stale"):
+        lag = labeler_fresh.get("labeler_lag_hours")
+        newest = labeler_fresh.get("newest_labeled_at") or "unknown"
+        caveat = (f" (NOTE: labeler stale {lag}h - newest clean-labeled row {newest}; "
+                  f"accuracy reflects a frozen window, NOT a live collapse)")
+        for lst in (critical_alerts, warning_alerts):
+            for i, msg in enumerate(lst):
+                if msg.startswith(("🚨 **Critical Breach: Accuracy",
+                                   "⚠️ **Warning Breach: Accuracy")):
+                    lst[i] = msg + caveat
+        warning_alerts.append(
+            f"⚠️ **Labeler Freshness Warning:** newest clean-labeled row is **{lag}h** old "
+            f"(at `{newest}`, threshold {labeler_fresh.get('stale_threshold_hours')}h). "
+            f"Recent accuracy reflects a frozen window, not live model behavior."
+        )
 
     # Route notifications
     if critical_alerts:
@@ -761,6 +843,80 @@ class TestDataProfilerSentinel(unittest.TestCase):
         self.assertTrue(res["collapsed"])
         self.assertEqual(res["reason"], "standard_deviation_too_low")
 
+    @patch("__main__.run_sql")
+    def test_compute_accuracy_reports_freshness_and_rank_corr(self, mock_run_sql):
+        # Mirrors the live t_f05fc45f scenario: labeler stale on a frozen window.
+        mock_run_sql.side_effect = [
+            # 1. stats (overall)
+            [{"labeled_count": "536037", "brier_score": "0.25", "mae": "0.40",
+              "binary_accuracy": "0.5036", "corr": "-0.0008"}],
+            # 2. labeler freshness
+            [{"newest_labeled_at": "2026-08-10 10:59:15.706+00", "labeler_lag_hours": "66.66"}],
+            # 3. recent_1000 window
+            [{"labeled_count": "1000", "brier_score": "0.3970", "mae": "0.5922",
+              "binary_accuracy": "0.3630", "corr": "-0.4671",
+              "window_start": "2026-08-10 08:00:27.295+00",
+              "window_end": "2026-08-10 10:59:15.706+00",
+              "window_span_hours": "2.98"}],
+        ]
+        res = compute_accuracy()
+        self.assertAlmostEqual(res["score"], 36.3, places=1)
+        self.assertEqual(res["recent_1000"]["binary_accuracy_pct"], 36.3)
+        self.assertEqual(res["recent_1000"]["rank_corr"], -0.4671)
+        self.assertEqual(res["recent_1000"]["window_span_hours"], 2.98)
+        self.assertEqual(res["overall"]["rank_corr"], -0.0008)
+        # Labeler stale (66.66h > 6h threshold)
+        self.assertTrue(res["labeler_freshness"]["stale"])
+        self.assertEqual(res["labeler_freshness"]["labeler_lag_hours"], 66.66)
+        self.assertEqual(res["labeler_freshness"]["newest_labeled_at"],
+                         "2026-08-10 10:59:15.706+00")
+        self.assertEqual(res["labeler_freshness"]["stale_threshold_hours"], 6.0)
+
+    @patch("__main__.run_sql")
+    def test_compute_accuracy_fresh_labeler_not_stale(self, mock_run_sql):
+        mock_run_sql.side_effect = [
+            [{"labeled_count": "100", "brier_score": "0.25", "mae": "0.40",
+              "binary_accuracy": "0.60", "corr": "0.05"}],
+            [{"newest_labeled_at": "2026-08-13 09:00:00.000+00", "labeler_lag_hours": "1.0"}],
+            [{"labeled_count": "100", "brier_score": "0.25", "mae": "0.40",
+              "binary_accuracy": "0.60", "corr": "0.05",
+              "window_start": "2026-08-13 07:00:00.000+00",
+              "window_end": "2026-08-13 09:00:00.000+00",
+              "window_span_hours": "2.0"}],
+        ]
+        res = compute_accuracy()
+        self.assertFalse(res["labeler_freshness"]["stale"])
+        self.assertEqual(res["labeler_freshness"]["labeler_lag_hours"], 1.0)
+        self.assertEqual(res["recent_1000"]["rank_corr"], 0.05)
+
+    @patch("__main__.send_discord_alert")
+    def test_check_alert_thresholds_stale_labeler_guard(self, mock_send_alert):
+        # Low recent accuracy ON a stale labeler must be surfaced as a frozen
+        # window (caveat + freshness warning), not read as a live collapse.
+        scorecard = {
+            "timestamp_utc": "2026-08-13T12:00:00Z",
+            "overall_score": 60.0,
+            "metrics": {
+                "completeness": {"score": 95.0, "total_rows": 100, "null_counts": {"direction_quality_prob": 0}, "null_percentages": {"direction_quality_prob": 0.0}},
+                "freshness": {"score": 90.0, "signal_lag_hours": 1.0, "outcome_lag_hours": 1.0, "trade_close_lag_hours": 1.0},
+                "validity": {"score": 100.0, "invalid_rows_count": {"invalid_direction": 0, "invalid_entry_price": 0, "invalid_direction_quality_probability": 0, "invalid_progress_percent": 0}},
+                "consistency": {"score": 100.0, "orphan_counts": {"pnl_points_orphans": 0, "trade_close_journeys_orphans": 0, "trade_close_positions_orphans": 0}},
+                "accuracy": {
+                    "score": 36.3,
+                    "recent_1000": {"binary_accuracy_pct": 36.3, "brier_score": 0.397, "mean_absolute_error": 0.592, "rank_corr": -0.4671, "window_span_hours": 2.98},
+                    "labeler_freshness": {"newest_labeled_at": "2026-08-10 10:59:15", "labeler_lag_hours": 66.66, "stale": True, "stale_threshold_hours": 6.0},
+                },
+                "direction_quality_feedback": {"collapsed": False, "reason": "healthy", "stats": {"count": 1000, "mean": 0.5, "stddev": 0.1, "unique_values_count": 500, "recent_24h_journeys": 100}}
+            }
+        }
+        critical, warnings = check_alert_thresholds(scorecard)
+        # Stale labeler produces a warning
+        self.assertTrue(any("Labeler Freshness Warning" in w for w in warnings))
+        # The low-accuracy critical alert is tagged as a frozen window
+        self.assertTrue(any("frozen window" in c for c in critical))
+        # Alerts were delivered
+        self.assertGreater(mock_send_alert.call_count, 0)
+
     @patch("__main__.send_discord_alert")
     def test_check_alert_thresholds_healthy(self, mock_send_alert):
         scorecard = {
@@ -829,6 +985,15 @@ def main():
     print(f"  - Validity:     {scorecard['metrics']['validity']['score']:.2f}%")
     print(f"  - Consistency:  {scorecard['metrics']['consistency']['score']:.2f}%")
     print(f"  - Accuracy:     {scorecard['metrics']['accuracy']['score']:.2f}%")
+
+    acc = scorecard['metrics']['accuracy']
+    recent = acc.get('recent_1000') or {}
+    lf = acc.get('labeler_freshness') or {}
+    lag = lf.get('labeler_lag_hours')
+    lag_str = f"{lag}h" if lag is not None else "N/A"
+    stale_flag = "STALE" if lf.get('stale') else "OK"
+    print(f"    Accuracy detail: recent1000 acc={recent.get('binary_accuracy_pct')}% rank_corr={recent.get('rank_corr')} "
+          f"window_span={recent.get('window_span_hours')}h labeler_lag={lag_str} [{stale_flag}]")
 
     feedback = scorecard['metrics']['direction_quality_feedback']
     print(f"\n--- DIRECTION QUALITY SENTINEL ---")
