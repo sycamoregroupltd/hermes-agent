@@ -579,6 +579,139 @@ def test_check_kanban_crashes_dedupes_same_task():
     assert count == 1, f"same-task multi-run should dedup to 1, got {count}: {hits}"
 
 
+def _make_executions_db(db: Path, *, stale_running: int = 0,
+                        recent_running: int = 0,
+                        now: datetime | None = None) -> None:
+    """Create a profile executions.db with the executions schema and the
+    requested mix of running rows: stale (started_at > 2h, finished_at NULL)
+    and recent (< 2h). Exactly mirrors cron/executions.py's schema.
+
+    ``now`` (tz-aware) pins both the row timestamps AND (via a matching
+    ``uhealth.utc_now`` stub in the caller) the reader's cutoff so the test is
+    immune to other tests' ``utc_now`` monkeypatch leaking into it."""
+    ref = now or _now_iso()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "CREATE TABLE executions ("
+        "id TEXT PRIMARY KEY, job_id TEXT NOT NULL, source TEXT NOT NULL, "
+        "process_id TEXT NOT NULL, pid INTEGER NOT NULL, process_started_at INTEGER, "
+        "status TEXT NOT NULL, claimed_at TEXT NOT NULL, started_at TEXT, "
+        "finished_at TEXT, error TEXT)"
+    )
+    for i in range(stale_running):
+        con.execute(
+            "INSERT INTO executions (id, job_id, source, process_id, pid, status, "
+            "claimed_at, started_at) VALUES (?, ?, 'direct', ?, ?, 'running', ?, ?)",
+            (f"stale_{i}", f"job_{i}", "p", 1,
+             (ref - timedelta(hours=3)).isoformat(),
+             (ref - timedelta(hours=3)).isoformat()),
+        )
+    for i in range(recent_running):
+        con.execute(
+            "INSERT INTO executions (id, job_id, source, process_id, pid, status, "
+            "claimed_at, started_at) VALUES (?, ?, 'direct', ?, ?, 'running', ?, ?)",
+            (f"recent_{i}", f"job_r_{i}", "p", 1,
+             (ref - timedelta(minutes=1)).isoformat(),
+             (ref - timedelta(minutes=1)).isoformat()),
+        )
+    con.commit()
+    con.close()
+
+
+def test_stale_direct_rows_scans_all_profiles_and_warns():
+    tmp = Path(tempfile.mkdtemp())
+    profiles = tmp / "profiles"
+    uhealth.PROFILES_DIR = profiles
+    now = _now_iso()
+    uhealth.utc_now = lambda: now  # pin the reader's cutoff to our row clock
+    _make_executions_db(profiles / "fleet-analyst" / "cron" / "executions.db",
+                        stale_running=2, now=now)
+    _make_executions_db(profiles / "jarvis" / "cron" / "executions.db", now=now)
+    _make_executions_db(profiles / "trading-devops" / "cron" / "executions.db",
+                        recent_running=1, now=now)
+
+    rep = uhealth.check_cron_stale_direct_rows()
+    assert rep["scanned"] == 3
+    assert rep["count"] == 2, f"expected 2 stale rows, got {rep}"
+    assert rep["by_profile"] == {"fleet-analyst": 2}
+    assert rep["warn"] is True
+    assert "fleet-analyst" in rep["detail"]
+
+
+def test_stale_direct_rows_clean_stays_pass():
+    tmp = Path(tempfile.mkdtemp())
+    profiles = tmp / "profiles"
+    uhealth.PROFILES_DIR = profiles
+    now = _now_iso()
+    uhealth.utc_now = lambda: now  # pin the reader's cutoff to our row clock
+    _make_executions_db(profiles / "jarvis" / "cron" / "executions.db", now=now)
+    _make_executions_db(profiles / "devops" / "cron" / "executions.db",
+                        recent_running=3, now=now)
+
+    rep = uhealth.check_cron_stale_direct_rows()
+    assert rep["scanned"] == 2
+    assert rep["count"] == 0
+    assert rep["by_profile"] == {}
+    assert rep["warn"] is False
+
+
+def test_stale_direct_rows_absent_profiles_fails_open():
+    tmp = Path(tempfile.mkdtemp())
+    uhealth.PROFILES_DIR = tmp / "profiles"  # does not exist
+    rep = uhealth.check_cron_stale_direct_rows()
+    assert rep["scanned"] == 0
+    assert rep["count"] == 0
+    assert rep["warn"] is False
+
+
+def test_stale_direct_rows_present_warns_main_not_block():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 13, 0, 0, tzinfo=timezone.utc)
+    profiles = tmp / "profiles"
+    uhealth.PROFILES_DIR = profiles
+    _make_executions_db(profiles / "fleet-analyst" / "cron" / "executions.db",
+                        stale_running=1)
+    uhealth.BOARDS_DIR = tmp / "boards"  # empty -> no real-board ready WARN
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    _stub_checks_pass()
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] == "WARN", \
+        f"stale direct row must WARN, not BLOCK: {record['verdict']}"
+    assert record["cron_stale_direct_row_count"] == 1
+    assert record["cron_stale_direct_rows"]["warn"] is True
+    assert "cron_stale_direct_rows" not in record["infra_failed"], \
+        "stale direct rows are not an infra failure"
+
+
+def test_stale_direct_rows_clean_main_stays_pass():
+    tmp = Path(tempfile.mkdtemp())
+    now = datetime(2026, 8, 13, 0, 0, tzinfo=timezone.utc)
+    uhealth.PROFILES_DIR = tmp / "profiles"  # absent -> fails open clean
+    uhealth.BOARDS_DIR = tmp / "boards"  # empty -> no real-board ready WARN
+    uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
+    uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
+    uhealth.SYCODE_TRADING_KANBAN_DB = tmp / "sycode-trading" / "kanban.db"  # absent
+    uhealth.CRON_OUTPUT = tmp / "cron"
+    uhealth.UNIFIED_LOG = uhealth.CRON_OUTPUT / "unified_health_canary.jsonl"
+    _stub_checks_pass()
+    uhealth.utc_now = lambda: now
+
+    rc = uhealth.main()
+    assert rc == 0
+    record = json.loads(uhealth.UNIFIED_LOG.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["verdict"] == "PASS", f"clean stale rows must stay PASS: {record['verdict']}"
+    assert record["cron_stale_direct_row_count"] == 0
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failures = 0
