@@ -42,11 +42,23 @@ OBSIDIAN_DASHBOARD_PATH = Path("/home/frank/obsidian-fleet-vault/analytics/data-
 THRESHOLD_FRESHNESS_STALE_HOURS = 24.0
 THRESHOLD_COLLAPSE_STDDEV = 0.005
 THRESHOLD_COLLAPSE_MIN_COUNT = 10
-# Max allowed age (hours) of the newest clean-labeled row before the accuracy
-# metrics are considered stale (a frozen window that must not be read as a live
-# model collapse). See t_c435a0a4: the labeler stalled, so "recent" accuracy
-# was computed on a 3h-old burst.
-LABELER_FRESHNESS_STALE_HOURS = 6.0
+# Labeler staleness is a FRONTIER GAP, not an absolute age.
+#
+# clean_outcome_binary_24h is a 24-hour-FORWARD label: the labeler
+# (buildBaseWhere in cleanOutcomeLabeler24h.ts) only labels journeys where
+#   triggered_at + interval '24 hours' <= now,
+# so even a perfectly healthy labeler's newest labeled row is inherently ~24h+
+# old. An absolute-age threshold (e.g. 6h) is therefore structurally
+# unsatisfiable: it would permanently report STALE and tag every real accuracy
+# breach as a "frozen window" (a safety inversion that masks genuine collapses).
+#
+# Instead we measure the frontier GAP: how far the labeler's newest output lags
+# behind the newest journey that is now MATURE (triggered_at + 24h <= now) but
+# still unlabeled. A healthy labeler keeps up with the maturity frontier (gap
+# ~0-2h cadence); a stalled labeler's gap grows unboundedly (43.6h in the
+# t_f05fc45f incident, newest labeled 08-10 vs mature-unlabeled frontier 08-12).
+# Stale when the gap exceeds this threshold.
+LABELER_FRONTIER_GAP_STALE_HOURS = 6.0
 
 
 def run_sql(sql):
@@ -289,9 +301,13 @@ def compute_accuracy():
 
     Hardened (t_c435a0a4) so a stale frozen window cannot masquerade as a model
     accuracy collapse:
-      - Surfaces labeler freshness: age of the newest row with a non-null dqp +
-        clean label. If that age exceeds LABELER_FRESHNESS_STALE_HOURS, the
-        "recent" metrics reflect a frozen window, not live model behavior.
+      - Surfaces labeler freshness as a FRONTIER GAP (how far the newest labeled
+        row lags the newest MATURE-but-unlabeled journey). This is correct
+        because clean_outcome_binary_24h is a 24h-forward label: even a healthy
+        labeler's newest labeled row is ~24h+ old, so an absolute-age threshold
+        would permanently report stale. When the frontier gap exceeds
+        LABELER_FRONTIER_GAP_STALE_HOURS, the "recent" metrics reflect a frozen
+        window, not live model behavior.
       - Surfaces the recent-window time span alongside recent_1000.
       - Reports rank discrimination (Pearson/point-biserial corr of dqp vs clean
         label) in addition to threshold accuracy, so a burst cannot be misread as
@@ -313,19 +329,37 @@ def compute_accuracy():
     stats_res = run_sql(stats_query)[0]
     total_labeled = int(stats_res["labeled_count"] or 0)
 
-    # Labeler freshness: age of the newest clean-labeled row. If this is stale,
-    # accuracy metrics must not be read as live.
+    # Labeler freshness: how far the labeler's newest output lags the newest
+    # MATURE-but-unlabeled journey. Because clean_outcome_binary_24h is a 24h-
+    # forward label, even a healthy labeler's newest labeled row is ~24h+ old,
+    # so staleness must be measured as a FRONTIER GAP, not absolute age. A
+    # healthy labeler keeps up with the maturity frontier (gap ~0-2h cadence);
+    # a stalled labeler's gap grows unboundedly (43.6h in t_f05fc45f).
     freshness_query = """
         SELECT
           COALESCE(MAX(created_at)::text, '') AS newest_labeled_at,
-          COALESCE(EXTRACT(EPOCH FROM (now() - MAX(created_at)))/3600.0, -1.0)::double precision AS labeler_lag_hours
+          COALESCE(EXTRACT(EPOCH FROM (now() - MAX(created_at)))/3600.0, -1.0)::double precision AS labeler_lag_hours,
+          COALESCE((SELECT MAX(triggered_at)::text FROM public.signal_journeys
+                    WHERE clean_outcome_binary_24h IS NULL
+                      AND triggered_at + interval '24 hours' <= now()), '') AS newest_mature_unlabeled_at,
+          COALESCE(EXTRACT(EPOCH FROM (
+            (SELECT MAX(triggered_at) FROM public.signal_journeys
+             WHERE clean_outcome_binary_24h IS NULL
+               AND triggered_at + interval '24 hours' <= now())
+            - MAX(created_at)
+          ))/3600.0, -1.0)::double precision AS frontier_gap_hours
         FROM public.signal_journeys
         WHERE direction_quality_prob IS NOT NULL AND clean_outcome_binary_24h IS NOT NULL;
     """
     freshness_res = run_sql(freshness_query)[0]
     newest_labeled_at = freshness_res["newest_labeled_at"] or ""
     labeler_lag = float(freshness_res["labeler_lag_hours"] or -1.0)
-    labeler_stale = (labeler_lag >= 0 and labeler_lag > LABELER_FRESHNESS_STALE_HOURS)
+    newest_mature_unlabeled_at = freshness_res["newest_mature_unlabeled_at"] or ""
+    frontier_gap = float(freshness_res["frontier_gap_hours"] or -1.0)
+    # Stale when the labeler falls behind the maturity frontier by more than the
+    # frontier-gap threshold. Absolute labeler age is surfaced for context but is
+    # NOT the staleness basis (it is structurally ~24h+ in healthy operation).
+    labeler_stale = (frontier_gap >= 0 and frontier_gap > LABELER_FRONTIER_GAP_STALE_HOURS)
 
     # Recent calibration over the last 1000 labeled predictions, plus the
     # window's time span and rank correlation.
@@ -361,8 +395,10 @@ def compute_accuracy():
         "labeler_freshness": {
             "newest_labeled_at": newest_labeled_at,
             "labeler_lag_hours": round(labeler_lag, 2) if labeler_lag >= 0 else None,
+            "newest_mature_unlabeled_at": newest_mature_unlabeled_at,
+            "frontier_gap_hours": round(frontier_gap, 2) if frontier_gap >= 0 else None,
             "stale": labeler_stale,
-            "stale_threshold_hours": LABELER_FRESHNESS_STALE_HOURS
+            "stale_threshold_hours": LABELER_FRONTIER_GAP_STALE_HOURS
         },
         "overall": {
             "brier_score": round(float(stats_res["brier_score"] or 0.0), 4),
@@ -490,8 +526,8 @@ def generate_obsidian_dashboard(scorecard):
     
     recent_1000 = acc.get("recent_1000") or {}
     labeler_fresh = acc.get("labeler_freshness") or {}
-    lag = labeler_fresh.get("labeler_lag_hours")
-    lag_str = f"{lag}h" if lag is not None else "N/A"
+    gap = labeler_fresh.get("frontier_gap_hours")
+    gap_str = f"{gap}h" if gap is not None else "N/A"
     stale_flag = "⚠️ STALE" if labeler_fresh.get("stale") else "OK"
     newest = labeler_fresh.get("newest_labeled_at") or "N/A"
     acc_details = (
@@ -500,7 +536,7 @@ def generate_obsidian_dashboard(scorecard):
         f"RankCorr={recent_1000.get('rank_corr', 'N/A')}. "
         f"Window: {recent_1000.get('window_start', 'N/A')} to {recent_1000.get('window_end', 'N/A')} "
         f"(span {recent_1000.get('window_span_hours', 'N/A')}h). "
-        f"Labeler: newest labeled {newest}, lag {lag_str} [{stale_flag}]."
+        f"Labeler: newest labeled {newest}, frontier gap {gap_str} [{stale_flag}]."
     )
 
     dq_mean = feedback['stats'].get('mean')
@@ -622,15 +658,18 @@ def check_alert_thresholds(scorecard):
     evaluate("Consistency", cons["score"], 99.0, 95.0)
     evaluate("Accuracy", acc["score"], 55.0, 50.0)
 
-    # Labeler-freshness guard (t_c435a0a4): when the newest clean-labeled row is
-    # stale, recent_1000 accuracy reflects a frozen window and must not be read as
-    # a live model collapse or inversion. Tag any Accuracy alert with a caveat and
-    # surface the freshness facts explicitly.
+    # Labeler-freshness guard (t_c435a0a4): when the labeler falls behind the
+    # maturity frontier, recent_1000 accuracy reflects a frozen window and must
+    # not be read as a live model collapse or inversion. Tag any Accuracy alert
+    # with a caveat and surface the freshness facts explicitly. Staleness is a
+    # FRONTIER GAP (24h-forward label makes absolute age structurally ~24h+).
     labeler_fresh = acc.get("labeler_freshness") or {}
     if labeler_fresh.get("stale"):
-        lag = labeler_fresh.get("labeler_lag_hours")
+        gap = labeler_fresh.get("frontier_gap_hours")
         newest = labeler_fresh.get("newest_labeled_at") or "unknown"
-        caveat = (f" (NOTE: labeler stale {lag}h - newest clean-labeled row {newest}; "
+        gap_str = f"{gap}h" if gap is not None else "N/A"
+        caveat = (f" (NOTE: labeler stale {gap_str} behind maturity frontier - "
+                  f"newest clean-labeled row {newest}; "
                   f"accuracy reflects a frozen window, NOT a live collapse)")
         for lst in (critical_alerts, warning_alerts):
             for i, msg in enumerate(lst):
@@ -638,8 +677,9 @@ def check_alert_thresholds(scorecard):
                                    "⚠️ **Warning Breach: Accuracy")):
                     lst[i] = msg + caveat
         warning_alerts.append(
-            f"⚠️ **Labeler Freshness Warning:** newest clean-labeled row is **{lag}h** old "
-            f"(at `{newest}`, threshold {labeler_fresh.get('stale_threshold_hours')}h). "
+            f"⚠️ **Labeler Freshness Warning:** newest clean-labeled row is **{gap_str}** "
+            f"behind the maturity frontier (at `{newest}`, threshold "
+            f"{labeler_fresh.get('stale_threshold_hours')}h frontier gap). "
             f"Recent accuracy reflects a frozen window, not live model behavior."
         )
 
@@ -845,13 +885,17 @@ class TestDataProfilerSentinel(unittest.TestCase):
 
     @patch("__main__.run_sql")
     def test_compute_accuracy_reports_freshness_and_rank_corr(self, mock_run_sql):
-        # Mirrors the live t_f05fc45f scenario: labeler stale on a frozen window.
+        # Mirrors the live t_f05fc45f scenario: labeler stalled on a frozen window.
         mock_run_sql.side_effect = [
             # 1. stats (overall)
             [{"labeled_count": "536037", "brier_score": "0.25", "mae": "0.40",
               "binary_accuracy": "0.5036", "corr": "-0.0008"}],
-            # 2. labeler freshness
-            [{"newest_labeled_at": "2026-08-10 10:59:15.706+00", "labeler_lag_hours": "66.66"}],
+            # 2. labeler freshness: frontier gap 43.6h (newest labeled 08-10,
+            #    mature-unlabeled frontier 08-12) -> STALE
+            [{"newest_labeled_at": "2026-08-10 10:59:15.706+00",
+              "labeler_lag_hours": "66.66",
+              "newest_mature_unlabeled_at": "2026-08-12 06:38:06.397+00",
+              "frontier_gap_hours": "43.65"}],
             # 3. recent_1000 window
             [{"labeled_count": "1000", "brier_score": "0.3970", "mae": "0.5922",
               "binary_accuracy": "0.3630", "corr": "-0.4671",
@@ -865,28 +909,41 @@ class TestDataProfilerSentinel(unittest.TestCase):
         self.assertEqual(res["recent_1000"]["rank_corr"], -0.4671)
         self.assertEqual(res["recent_1000"]["window_span_hours"], 2.98)
         self.assertEqual(res["overall"]["rank_corr"], -0.0008)
-        # Labeler stale (66.66h > 6h threshold)
+        # Labeler stale (frontier gap 43.65h > 6h threshold)
         self.assertTrue(res["labeler_freshness"]["stale"])
+        self.assertEqual(res["labeler_freshness"]["frontier_gap_hours"], 43.65)
         self.assertEqual(res["labeler_freshness"]["labeler_lag_hours"], 66.66)
         self.assertEqual(res["labeler_freshness"]["newest_labeled_at"],
                          "2026-08-10 10:59:15.706+00")
+        self.assertEqual(res["labeler_freshness"]["newest_mature_unlabeled_at"],
+                         "2026-08-12 06:38:06.397+00")
         self.assertEqual(res["labeler_freshness"]["stale_threshold_hours"], 6.0)
 
     @patch("__main__.run_sql")
     def test_compute_accuracy_fresh_labeler_not_stale(self, mock_run_sql):
+        # Realistic HEALTHY labeler: clean_outcome_binary_24h is a 24h-forward
+        # label, so the newest labeled row is ~24h old (absolute lag ~24-26h).
+        # The labeler keeps up with the maturity frontier, so the FRONTIER GAP is
+        # small (~1h cadence) -> NOT stale. This fixture is reachable, unlike the
+        # previous impossible 1.0h absolute-lag healthy case (a 24h label cannot
+        # be 1h old).
         mock_run_sql.side_effect = [
             [{"labeled_count": "100", "brier_score": "0.25", "mae": "0.40",
               "binary_accuracy": "0.60", "corr": "0.05"}],
-            [{"newest_labeled_at": "2026-08-13 09:00:00.000+00", "labeler_lag_hours": "1.0"}],
+            [{"newest_labeled_at": "2026-08-12 10:00:00.000+00",
+              "labeler_lag_hours": "24.5",
+              "newest_mature_unlabeled_at": "2026-08-12 11:00:00.000+00",
+              "frontier_gap_hours": "1.0"}],
             [{"labeled_count": "100", "brier_score": "0.25", "mae": "0.40",
               "binary_accuracy": "0.60", "corr": "0.05",
-              "window_start": "2026-08-13 07:00:00.000+00",
-              "window_end": "2026-08-13 09:00:00.000+00",
-              "window_span_hours": "2.0"}],
+              "window_start": "2026-08-11 08:00:00.000+00",
+              "window_end": "2026-08-12 10:00:00.000+00",
+              "window_span_hours": "26.0"}],
         ]
         res = compute_accuracy()
         self.assertFalse(res["labeler_freshness"]["stale"])
-        self.assertEqual(res["labeler_freshness"]["labeler_lag_hours"], 1.0)
+        self.assertEqual(res["labeler_freshness"]["frontier_gap_hours"], 1.0)
+        self.assertEqual(res["labeler_freshness"]["labeler_lag_hours"], 24.5)
         self.assertEqual(res["recent_1000"]["rank_corr"], 0.05)
 
     @patch("__main__.send_discord_alert")
@@ -904,7 +961,7 @@ class TestDataProfilerSentinel(unittest.TestCase):
                 "accuracy": {
                     "score": 36.3,
                     "recent_1000": {"binary_accuracy_pct": 36.3, "brier_score": 0.397, "mean_absolute_error": 0.592, "rank_corr": -0.4671, "window_span_hours": 2.98},
-                    "labeler_freshness": {"newest_labeled_at": "2026-08-10 10:59:15", "labeler_lag_hours": 66.66, "stale": True, "stale_threshold_hours": 6.0},
+                    "labeler_freshness": {"newest_labeled_at": "2026-08-10 10:59:15", "frontier_gap_hours": 43.65, "labeler_lag_hours": 66.66, "stale": True, "stale_threshold_hours": 6.0},
                 },
                 "direction_quality_feedback": {"collapsed": False, "reason": "healthy", "stats": {"count": 1000, "mean": 0.5, "stddev": 0.1, "unique_values_count": 500, "recent_24h_journeys": 100}}
             }
@@ -989,11 +1046,11 @@ def main():
     acc = scorecard['metrics']['accuracy']
     recent = acc.get('recent_1000') or {}
     lf = acc.get('labeler_freshness') or {}
-    lag = lf.get('labeler_lag_hours')
-    lag_str = f"{lag}h" if lag is not None else "N/A"
+    gap = lf.get('frontier_gap_hours')
+    gap_str = f"{gap}h" if gap is not None else "N/A"
     stale_flag = "STALE" if lf.get('stale') else "OK"
     print(f"    Accuracy detail: recent1000 acc={recent.get('binary_accuracy_pct')}% rank_corr={recent.get('rank_corr')} "
-          f"window_span={recent.get('window_span_hours')}h labeler_lag={lag_str} [{stale_flag}]")
+          f"window_span={recent.get('window_span_hours')}h labeler_frontier_gap={gap_str} [{stale_flag}]")
 
     feedback = scorecard['metrics']['direction_quality_feedback']
     print(f"\n--- DIRECTION QUALITY SENTINEL ---")
