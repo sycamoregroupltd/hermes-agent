@@ -671,7 +671,7 @@ def test_stale_direct_rows_present_warns_main_not_block():
     profiles = tmp / "profiles"
     uhealth.PROFILES_DIR = profiles
     _make_executions_db(profiles / "fleet-analyst" / "cron" / "executions.db",
-                        stale_running=1)
+                        stale_running=1, now=now)
     uhealth.BOARDS_DIR = tmp / "boards"  # empty -> no real-board ready WARN
     uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
     uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
