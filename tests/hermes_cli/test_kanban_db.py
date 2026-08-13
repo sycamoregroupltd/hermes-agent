@@ -367,6 +367,97 @@ def test_respawn_guard_defers_rate_limited_within_cooldown(
         assert kb.check_respawn_guard(conn, tid) is None
 
 
+def _add_comment_at(conn, task_id, author, body, created_at):
+    """Insert a task_comments row at an explicit created_at (for verdict
+    ordering tests that need precise recency control)."""
+    conn.execute(
+        "INSERT INTO task_comments (task_id, author, body, created_at) VALUES (?, ?, ?, ?)",
+        (task_id, author, body, created_at),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Respawn guard: active_pr must yield to CHANGES_REQUESTED (#t_a3fc81ea)
+# ---------------------------------------------------------------------------
+
+
+def test_respawn_guard_active_pr_suppressed_when_apPROVED_only(kanban_home, monkeypatch):
+    """A single open-PR + APPROVED comment must STILL suppress re-spawn."""
+    import hermes_cli.kanban_db as _kb
+
+    now = 5_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    pr_url = "https://github.com/sycamoregroupltd/sycode-trading/pull/1110"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="pr-approved", assignee="a")
+        _add_comment_at(
+            conn, tid, "trading-risk-reviewer",
+            f"REVIEW_VERDICT=APPROVED — PR {pr_url}", now - 100,
+        )
+        assert kb.check_respawn_guard(conn, tid) == "active_pr"
+
+
+def test_respawn_guard_active_pr_released_when_CHANGES_REQUESTED(kanban_home, monkeypatch):
+    """APPROVED earlier, CHANGES_REQUESTED later → latest verdict wins:
+    the card is released to implementation, NOT guarded."""
+    import hermes_cli.kanban_db as _kb
+
+    now = 5_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    pr_url = "https://github.com/sycamoregroupltd/sycode-trading/pull/1110"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="changes-requested", assignee="a")
+        # APPROVED first...
+        _add_comment_at(
+            conn, tid, "trading-risk-reviewer",
+            f"REVIEW_VERDICT=APPROVED — PR {pr_url}", now - 200,
+        )
+        # ...then a superseding CHANGES_REQUESTED (newer) with the same PR ref.
+        _add_comment_at(
+            conn, tid, "trading-risk-reviewer",
+            f"REVIEW_VERDICT=CHANGES_REQUESTED — supersedes the earlier APPROVED; PR {pr_url}",
+            now - 50,
+        )
+        assert kb.check_respawn_guard(conn, tid) is None
+
+
+def test_respawn_guard_active_pr_released_when_CHANGES_REQUESTED_only(kanban_home, monkeypatch):
+    """CHANGES_REQUESTED is authoritative even with NO prior APPROVED."""
+    import hermes_cli.kanban_db as _kb
+
+    now = 5_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    pr_url = "https://github.com/sycamoregroupltd/sycode-trading/pull/1110"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="first-cr", assignee="a")
+        _add_comment_at(
+            conn, tid, "trading-risk-reviewer",
+            f"REVIEW_VERDICT=CHANGES_REQUESTED — PR {pr_url}", now - 50,
+        )
+        assert kb.check_respawn_guard(conn, tid) is None
+
+
+def test_respawn_guard_active_pr_suppressed_when_negated_verdict(kanban_home, monkeypatch):
+    """A negated / no-verdict APPROVED prose must NOT release a genuinely
+    open-PR card — the denial is skipped and the guard still fires."""
+    import hermes_cli.kanban_db as _kb
+
+    now = 5_000_000
+    monkeypatch.setattr(_kb.time, "time", lambda: now)
+
+    pr_url = "https://github.com/sycamoregroupltd/sycode-trading/pull/1110"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="negated-verdict", assignee="a")
+        _add_comment_at(
+            conn, tid, "trading-risk-reviewer",
+            f"No REVIEW_VERDICT=APPROVED issued here — PR {pr_url}", now - 50,
+        )
+        assert kb.check_respawn_guard(conn, tid) == "active_pr"
+
+
 
 
 

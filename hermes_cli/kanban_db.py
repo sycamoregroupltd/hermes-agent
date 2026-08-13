@@ -7645,6 +7645,21 @@ _RESPAWN_GUARD_PR_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Authoritative review-verdict token emitted by reviewer seats
+# (``trading-risk-reviewer``, ``os-reviewer``, ``guardian``, etc.).
+# Mirrors ``verdict_router.py`` ``VERDICT_RE`` so the dispatcher's
+# respawn guard agrees with the fleet's canonical verdict parser.
+# Only *affirmative* (non-negated) declarations count; a later
+# CHANGES_REQUESTED supersedes an earlier APPROVED on the same card.
+_RESPAWN_GUARD_VERDICT_RE = re.compile(
+    r"\bREVIEW_VERDICT\s*[:=]\s*([A-Z0-9_]+)", re.IGNORECASE,
+)
+_RESPAWN_GUARD_NEGATION_RE = re.compile(
+    r"\b(?:no|not|never|without|none|none[- ]?verdict|no[- ]?review[- ]?verdict)\b",
+    re.IGNORECASE,
+)
+_RESPAWN_GUARD_SENTENCE_BOUNDARY_RE = re.compile(r"[.!?\n]")
+
 
 @dataclass
 class DispatchResult:
@@ -9044,6 +9059,13 @@ def check_respawn_guard(
         A GitHub PR URL appears in a recent task comment (within
         ``_RESPAWN_GUARD_PR_WINDOW`` seconds).  A prior worker already
         opened a PR; re-spawning risks a duplicate PR on the same task.
+        EXCEPTION: when the most recent authoritative ``REVIEW_VERDICT``
+        comment in that window is ``CHANGES_REQUESTED`` the card is
+        released to implementation — a reviewer explicitly asked for
+        changes, so re-spawning is the intended next step, not a duplicate.
+        A newer ``CHANGES_REQUESTED`` supersedes an older ``APPROVED``;
+        superseded APPROVED comments do not override the later
+        CHANGES_REQUESTED.
 
     Stale / dead claim locks are NOT a guard reason — they are handled
     by ``release_stale_claims`` and ``detect_crashed_workers`` which
@@ -9133,13 +9155,74 @@ def check_respawn_guard(
 
     # 4. GitHub PR URL in a recent comment — prior worker already opened a PR.
     pr_cutoff = now - _RESPAWN_GUARD_PR_WINDOW
-    for c in conn.execute(
+    pr_comment_rows = conn.execute(
         "SELECT body FROM task_comments WHERE task_id = ? AND created_at >= ?",
         (task_id, pr_cutoff),
-    ).fetchall():
+    ).fetchall()
+    has_pr_comment = False
+    for c in pr_comment_rows:
         if c["body"] and _RESPAWN_GUARD_PR_URL_RE.search(c["body"]):
+            has_pr_comment = True
+            break
+    if has_pr_comment:
+        # Only suppress re-spawn on an open-PR signal when there is no
+        # *later* CHANGES_REQUESTED verdict superseding it. A reviewer
+        # that explicitly asked for changes turns the PR signal from
+        # "duplicate work" into "implementation needed" (#t_a3fc81ea).
+        if _latest_review_verdict(conn, task_id, pr_cutoff) != "CHANGES_REQUESTED":
             return "active_pr"
 
+    return None
+
+
+def _latest_review_verdict(
+    conn: sqlite3.Connection, task_id: str, pr_cutoff: int
+) -> Optional[str]:
+    """Return the most recent authoritative ``REVIEW_VERDICT`` value on the
+    task, or ``None``.
+
+    Scans comments created at/after ``pr_cutoff`` (the same 24h PR window)
+    newest-first and returns the first *affirmative* (non-negated) verdict
+    declaration it finds. Negated / "no-verdict" prose is skipped so a
+    reviewer's denial cannot mask a real earlier verdict, and the parser
+    agrees with the fleet canonical ``verdict_router.VERDICT_RE``.
+
+    Returns the raw uppercased verdict token (``APPROVED``,
+    ``CHANGES_REQUESTED``, ``REJECT``, ``REJECTED``, ...) so callers can
+    distinguish "approved → keep suppressing" from "changes requested →
+    release to implementation".
+    """
+    rows = conn.execute(
+        "SELECT body FROM task_comments WHERE task_id = ? AND created_at >= ? "
+        "ORDER BY created_at DESC, id DESC",
+        (task_id, pr_cutoff),
+    ).fetchall()
+    for r in rows:
+        body = r["body"] or ""
+        if not body:
+            continue
+        for m in _RESPAWN_GUARD_VERDICT_RE.finditer(body):
+            token_start = m.start()
+            # Determine the sentence/clause scope around this verdict
+            # declaration so negation cues in the same clause suppress it.
+            # Mirror the fleet router's sentence-boundary heuristic: cut at
+            # '.' '!' '?' or newline, but not at bare '/' or ',' (list seps).
+            sent_start = 0
+            for b in _RESPAWN_GUARD_SENTENCE_BOUNDARY_RE.finditer(body[:token_start]):
+                sent_start = b.end()
+            sent_end = len(body)
+            for b in _RESPAWN_GUARD_SENTENCE_BOUNDARY_RE.finditer(body, m.end()):
+                sep = b.group(0)
+                if sep in ("/", ",", "...", "\u2026"):
+                    continue
+                sent_end = b.start()
+                break
+            clause = body[sent_start:sent_end]
+            if _RESPAWN_GUARD_NEGATION_RE.search(clause):
+                # "No REVIEW_VERDICT=APPROVED" / "no verdict" is a denial,
+                # not a verdict — keep scanning for an affirmative one.
+                continue
+            return m.group(1).strip().upper()
     return None
 
 
