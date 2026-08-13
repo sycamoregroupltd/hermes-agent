@@ -25,6 +25,7 @@ import errno
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -82,6 +83,22 @@ CRON_FORCED_RELEASE_WARN_MIN = 1
 # >= this many recent releases => BLOCK: repeated wedges mean the scheduler
 # keeps losing in-flight claims to the stale sweep (a crash class, not noise).
 CRON_FORCED_RELEASE_BLOCK_MIN = 3
+
+# Stale source=direct execution-row observability (t_84b68726): the cron
+# scheduler's per-tick terminalizer (cron/executions.py
+# terminalize_stale_executions) reclaims execution rows whose owner pid is
+# provably dead and older than this age, marking them 'unknown' with an error
+# note and mirroring a row to <profile>/cron/stale_terminalized.jsonl. This
+# probe is the OUT-OF-PROCESS reader of the residual LITMUS: it scans every
+# profile's executions.db for the fleet-wide zombie predicate
+# (status='running' AND started_at > 2h AND finished_at IS NULL) and WARNs when
+# a stale row still exists — i.e. the terminalizer has NOT cleared it yet
+# (gateway down / sweep not running). Read-only: the probe never writes these.
+CRON_STALE_DIRECT_MIN_AGE_H = 2
+PROFILES_DIR = HOME / ".hermes" / "profiles"
+# A stale row surviving past this many probe cycles is suspicious enough to
+# WARN; a single fresh one may simply predate the gateway's next tick.
+CRON_STALE_DIRECT_WARN_MIN = 1
 
 # Repeat-BLOCK hard-alert escalation (t_7a97ba51 proposal #3 / t_cafc1119 C3).
 # If the canary re-emits BLOCK >= CRITICAL_ALERT_MIN_COUNT times within
@@ -396,6 +413,73 @@ def check_cron_forced_releases(now: dt.datetime | None = None) -> dict[str, Any]
         "warn": warn,
         "detail": detail,
     }
+
+
+def check_cron_stale_direct_rows() -> dict[str, Any]:
+    """Scan every profile's executions.db for stale running rows (read-only).
+
+    The acceptance litmus for t_84b68726 is the fleet-wide zombie scan
+    ``status='running' AND started_at > 2h AND finished_at IS NULL`` — the same
+    predicate the scheduler's per-tick terminalizer
+    (``cron/executions.py::terminalize_stale_executions``) reclaims. This
+    probe is the OUT-OF-PROCESS reader of that predicate: it WARNs when a stale
+    running row still exists after the gateway's sweep has had a chance to run
+    (i.e. the terminalizer is not clearing it, or its owning gateway is down).
+
+    Fail-open contract: an absent/unreadable executions.db degrades to count-0
+    for that profile and never BLOCKs the fleet on a monitoring gap. Never a
+    BLOCK cause on its own — stale rows are a self-healing class once the
+    terminalizer runs, so a persistent residue degrades PASS -> WARN only.
+
+    Returns:
+      scanned     — number of profile executions.db files read
+      count       — total stale running rows across all profiles
+      by_profile  — profile name -> stale row count (profiles with residue)
+      warn        — count >= CRON_STALE_DIRECT_WARN_MIN
+      detail      — human-readable summary
+    """
+    cutoff = (utc_now() - dt.timedelta(hours=CRON_STALE_DIRECT_MIN_AGE_H)).isoformat()
+    scanned = 0
+    by_profile: dict[str, int] = {}
+    if not PROFILES_DIR.is_dir():
+        return {
+            "scanned": 0, "count": 0, "by_profile": {}, "warn": False,
+            "detail": f"profiles dir {PROFILES_DIR} absent — cannot scan",
+        }
+    for db in sorted(PROFILES_DIR.glob("*/cron/executions.db")):
+        profile = db.parent.parent.name
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+            try:
+                row = con.execute(
+                    "SELECT COUNT(*) FROM executions "
+                    "WHERE status='running' AND started_at IS NOT NULL "
+                    "AND finished_at IS NULL "
+                    "AND datetime(started_at) < datetime(?)",
+                    (cutoff,),
+                ).fetchone()
+            finally:
+                con.close()
+        except Exception:
+            continue  # unreadable/locked DB fails open for that profile
+        scanned += 1
+        n = int(row[0]) if row and row[0] else 0
+        if n:
+            by_profile[profile] = n
+    count = sum(by_profile.values())
+    warn = count >= CRON_STALE_DIRECT_WARN_MIN
+    if not scanned:
+        detail = "no profile executions.db found to scan"
+    elif count == 0:
+        detail = (f"no stale running cron execution rows across {scanned} "
+                  f"profiles (status=running AND started_at > "
+                  f"{CRON_STALE_DIRECT_MIN_AGE_H}h AND finished_at IS NULL)")
+    else:
+        detail = (f"{count} stale running cron execution row(s) across {scanned} "
+                  f"profiles: {sorted(by_profile)} — the per-tick terminalizer "
+                  f"has NOT cleared them (sweep/gateway may be down)")
+    return {"scanned": scanned, "count": count, "by_profile": by_profile,
+            "warn": warn, "detail": detail}
 
 
 def check_docker() -> tuple[bool, str, bool]:
@@ -887,6 +971,23 @@ def main() -> int:
     forced_block = bool(forced_releases.get("block"))
     forced_warn = bool(forced_releases.get("warn"))
 
+    # Stale source=direct execution-row observability (t_84b68726): WARN when a
+    # stale running row (>2h, dead-owner class) survives across profiles — the
+    # per-tick terminalizer has not cleared it. Never a BLOCK cause.
+    stale_direct_rows = check_cron_stale_direct_rows()
+    checks.append({
+        "name": "cron_stale_direct_rows",
+        # Mirror forced-releases: `ok` reflects only a hard `block` (always
+        # False for stale rows — never a BLOCK cause); `warn` drives the
+        # PASS->WARN verdict separately. So a stale row surfaces as WARN and
+        # never lands in infra_failed.
+        "ok": not stale_direct_rows.get("block", False),
+        "detail": stale_direct_rows.get("detail", ""),
+        "fork_resource_pressure": False,
+        "warn": stale_direct_rows.get("warn", False),
+    })
+    stale_warn = bool(stale_direct_rows.get("warn"))
+
     # Boards whose oldest ready task exceeds READY_BACKLOG_WARN_DAYS
     # (observability only — never a BLOCK cause). Each entry:
     # (board, oldest_task_id, age_days). Computed structurally across ALL
@@ -914,7 +1015,8 @@ def main() -> int:
         "profile": PROFILE,
         "verdict": ("BLOCK" if blocked else
                     "DEGRADED" if degraded else
-                    "WARN" if (bool(warn_boards) or forced_warn) else "PASS"),
+                    "WARN" if (bool(warn_boards) or forced_warn or stale_warn)
+                    else "PASS"),
         "infra_failed": [c["name"] for c in infra_failed],
         "mechanism_overall": mech.get("overall"),
         "mechanism_dead": mech.get("dead"),
@@ -929,6 +1031,14 @@ def main() -> int:
             "log": str(CRON_FORCED_RELEASES_LOG),
         },
         "cron_forced_release_count": forced_releases.get("count", 0),
+        "cron_stale_direct_rows": {
+            "count": stale_direct_rows.get("count", 0),
+            "scanned": stale_direct_rows.get("scanned", 0),
+            "by_profile": stale_direct_rows.get("by_profile", {}),
+            "min_age_h": CRON_STALE_DIRECT_MIN_AGE_H,
+            "warn": stale_warn,
+        },
+        "cron_stale_direct_row_count": stale_direct_rows.get("count", 0),
         "jarvis_ready_backlog": ready_backlog,
         "sycode_trading_ready_backlog": sycode_ready_backlog,
         "boards_ready_backlog": board_backlogs,
@@ -976,6 +1086,7 @@ def main() -> int:
             + f"\n\nmechanism={mech.get('overall','n/a')} "
               f"active_crashes={crash_count} stale_crashes={stale_count} "
               f"forced_releases={forced_releases.get('count', 0)} "
+              f"stale_direct_rows={stale_direct_rows.get('count', 0)} "
               f"ready_backlog={ready_backlog.get('ready_total')} "
               f"devops_ready={ready_backlog.get('devops_ready_count')}"
         )
@@ -996,7 +1107,7 @@ def main() -> int:
         # BLOCKing (t_bf11a0ce); a single/rare cron forced release degrades
         # PASS -> WARN too (t_615aa245). WARN names the board + oldest ready
         # task id and/or the forced-release count.
-        verdict = "WARN" if (bool(warn_boards) or forced_warn) else "PASS"
+        verdict = "WARN" if (bool(warn_boards) or forced_warn or stale_warn) else "PASS"
         emoji = "🟠" if verdict == "WARN" else "🟢"
         lines = [
             f"{emoji} UNIFIED FLEET HEALTH — {now.isoformat()} — VERDICT: {verdict}",
@@ -1032,10 +1143,18 @@ def main() -> int:
                              f"{r.get('at')} age_s={r.get('age_seconds')}")
             lines.append("      action: check the wedged cron job's last_error; "
                          "a second wedge in the window escalates to BLOCK.")
+        if stale_warn:
+            lines.append("")
+            lines.append("## Cron stale-direct execution-row WARN "
+                         "(dead-owner running rows not terminalized)")
+            lines.append(f"  - {stale_direct_rows.get('detail')}")
+            lines.append("      action: verify the owning gateway is up so the "
+                         "per-tick terminalizer can clear these rows.")
         lines.append("")
         lines.append(f"mechanism={mech.get('overall','n/a')} "
                      f"active_crashes={crash_count} stale_crashes={stale_count} "
                      f"forced_releases={forced_releases.get('count', 0)} "
+                     f"stale_direct_rows={stale_direct_rows.get('count', 0)} "
                      f"ready_backlog={ready_backlog.get('ready_total')} "
                      f"devops_ready={ready_backlog.get('devops_ready_count')}")
         body = "\n".join(lines)
