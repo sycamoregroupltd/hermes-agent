@@ -7645,9 +7645,14 @@ _AUTH_FAILURE_RE = re.compile(
 
 # How much of a dead worker's log to scan for auth signals. Startup/auth
 # failures are terminal: the error is printed right before the process exits,
-# so the tail of the log is where the signal lives. Bounding the read keeps
-# the reap path cheap even for long-lived workers with multi-MB logs.
-_AUTH_FAILURE_LOG_TAIL_BYTES = 64 * 1024
+# so the tail of the log is where the signal lives. The window is kept small
+# (exit-neighborhood) on purpose: a long-lived worker's log can contain an
+# UNRELATED "403"/"forbidden" token (e.g. a scraper logging a 3rd-party 403)
+# far earlier in the run; scanning the whole log would auth-BLOCK a genuine
+# retryable crash on run #1 over noise. 2KB is enough to hold a final
+# traceback/error block while excluding mid-run noise. Bounding the read also
+# keeps the reap path cheap even for multi-MB logs.
+_AUTH_FAILURE_LOG_TAIL_BYTES = 2 * 1024
 
 # Within this window a completed run counts as "recent proof"; don't re-spawn.
 _RESPAWN_GUARD_SUCCESS_WINDOW = 3600  # 1 hour
@@ -8573,8 +8578,12 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     crashed: list[str] = []
     rate_limited: list[str] = []
     auth_blocked: list[str] = []
-    crash_details: list[tuple[str, int, str, bool, str, Optional[str]]] = []
-    # (task_id, pid, claimer, protocol_violation, error_text, auth_signal)
+    crash_details: list[tuple[str, int, str, str, bool, str, Optional[str]]] = []
+    # (task_id, pid, claimer, assignee, protocol_violation, error_text, auth_signal)
+    # ``assignee`` is the task's owning profile — the REAL claim_lock is
+    # ``host:pid`` (the dispatcher's claim_task passes no claimer), so the
+    # profile owner must come from the task row, never parsed out of the
+    # claim lock (which would yield a PID number).
     # ``auth_signal`` is the auth-shaped text matched against the dead worker's
     # log (None when no auth signal / log unreadable). When non-None the task
     # is BLOCKed immediately on this first reap instead of being fed into the
@@ -8582,7 +8591,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # retry, so burning failure_limit runs just hides the real cause.
     with write_txn(conn):
         rows = conn.execute(
-            "SELECT id, worker_pid, claim_lock, started_at FROM tasks "
+            "SELECT id, assignee, worker_pid, claim_lock, started_at FROM tasks "
             "WHERE status = 'running' AND worker_pid IS NOT NULL"
         ).fetchall()
         host_prefix = f"{_claimer_id().split(':', 1)[0]}:"
@@ -8717,7 +8726,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                         )
                     crashed.append(row["id"])
                     crash_details.append(
-                        (row["id"], pid, row["claim_lock"],
+                        (row["id"], pid, row["claim_lock"], row["assignee"],
                          protocol_violation, error_text,
                          _detect_auth_failure(row["id"]))
                     )
@@ -8741,10 +8750,10 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     if crash_details:
         # Fingerprint errors to detect systemic failures.
         _fp_counts: dict[str, int] = {}
-        for _, _, _, _, err_text, _auth in crash_details:
+        for _, _, _, _, _, err_text, _auth in crash_details:
             fp = _error_fingerprint(err_text)
             _fp_counts[fp] = _fp_counts.get(fp, 0) + 1
-        for tid, pid, claimer, protocol_violation, error_text, auth_signal in crash_details:
+        for tid, pid, claimer, assignee, protocol_violation, error_text, auth_signal in crash_details:
             # AUTH-FAILURE FAST-PATH (t_e84d3817).
             # A nonzero_exit whose worker log carries a provider auth-shaped
             # signal (401/403, token expiry, invalid api key, dead session)
@@ -8759,11 +8768,16 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
             # a clean_exit protocol violation has no stderr to inspect and is
             # handled by its own violation-streak path below.
             if auth_signal is not None and not protocol_violation:
+                # owner = the task's owning profile (assignee). The REAL
+                # dispatcher claim_lock is ``host:pid`` — parsing the suffix
+                # would yield a PID number, not a routable profile — so the
+                # claim-lock fallback is only a last resort for rows with no
+                # assignee at all (legacy/edge rows), never the primary source.
                 _block_auth_failure(
                     conn, tid,
                     error=error_text,
                     auth_signal=auth_signal,
-                    owner=claimer.rsplit(":", 1)[-1] if claimer else None,
+                    owner=assignee or (claimer.rsplit(":", 1)[-1] if claimer else None),
                 )
                 auth_blocked.append(tid)
                 continue
@@ -8868,9 +8882,10 @@ def _block_auth_failure(
       never trip on a credential wall, mirroring the rate-limit path's
       "not a task failure" semantics;
     * stumps ``last_failure_error`` with an owner-packet naming the failed
-      provider/profile owner and the observable signal, so the profile owner
-      lands in the gateway notifier / kanban tail with an exact, actionable
-      handoff;
+      provider/profile owner (the task's ``assignee`` — never the claim_lock,
+      which is ``host:pid`` in production) and the observable signal, so the
+      profile owner lands in the gateway notifier / kanban tail with an exact,
+      actionable handoff;
     * emits a dedicated ``auth_blocked`` event (not ``gave_up``) so board
       history reads as "credential wall" rather than "exhausted retries".
 

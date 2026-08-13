@@ -1692,7 +1692,13 @@ def test_auth_failure_fastpath_blocks_on_first_crash_without_budget(
 
     An auth-shaped worker crash (rc=1, auth-pattern error text in stderr/log)
     results in an immediate BLOCK + owner-packet, and ``consecutive_failures``
-    stays 0 (NOT bumped toward failure_limit)."""
+    stays 0 (NOT bumped toward failure_limit).
+
+    The claim uses the REAL dispatcher format ``host:pid`` (the dispatcher's
+    ``claim_task`` passes no claimer, so ``_claimer_id()`` yields
+    ``\"{host}:{os.getpid()}\"`` — live boards show e.g. ``spark-4be3:3430683``).
+    The owner-packet must therefore name the task's ASSIGNEE, not the claim
+    lock's PID suffix, or the block never routes to the owning profile."""
     import hermes_cli.kanban_db as _kb
 
     monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
@@ -1705,7 +1711,9 @@ def test_auth_failure_fastpath_blocks_on_first_crash_without_budget(
         pid = 800001
 
         # Claim -> open a real run, point claim at this host + dead pid.
-        kb.claim_task(conn, tid, claimer=f"{host}:auth-worker")
+        # Use the REAL claim format "{host}:{pid}" (dispatcher passes no
+        # claimer, so claim_lock is host:pid, NOT a profile name).
+        kb.claim_task(conn, tid, claimer=f"{host}:12345")
         conn.execute(
             "UPDATE tasks SET worker_pid=?, consecutive_failures=0 WHERE id=?",
             (pid, tid),
@@ -1741,8 +1749,18 @@ def test_auth_failure_fastpath_blocks_on_first_crash_without_budget(
         assert "PROVIDER AUTH FAILURE" in task.last_failure_error
         assert "signal=" in task.last_failure_error
         assert "provider_profile=" in task.last_failure_error
-        # The owner-packet names the failed profile owner (assignee).
-        assert "a" in task.last_failure_error
+        # The owner-packet names the failed profile owner = the task's actual
+        # assignee ("a"), NOT the claim_lock PID suffix (real claim format is
+        # host:pid). A fall-through to the PID (e.g. provider_profile=12345)
+        # would leave the block unroutable to the owning profile.
+        assert "provider_profile=a" in task.last_failure_error, (
+            f"owner-packet must name the task's assignee 'a'; got: "
+            f"{task.last_failure_error!r}"
+        )
+        assert "provider_profile=12345" not in task.last_failure_error, (
+            "owner-packet must NOT fall through to the claim_lock PID suffix; "
+            f"got: {task.last_failure_error!r}"
+        )
 
         # A dedicated auth_blocked event exists (not a generic gave_up).
         events = [
