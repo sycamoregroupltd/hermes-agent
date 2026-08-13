@@ -45,6 +45,26 @@ assert spec is not None and spec.loader is not None
 uhealth: Any = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(uhealth)
 
+# Snapshot the REAL crash-scan + clock functions at import. _stub_checks_pass()
+# permanently replaces uhealth.check_kanban_crashes / utc_now for the whole
+# module, so any test that runs after a _stub_checks_pass() caller would call
+# the stub instead of the function under test (test-order pollution). The crash
+# tests restore these real references before asserting so they are
+# order-independent (t_047d91e7).
+_REAL_CHECK_KANBAN_CRASHES = uhealth.check_kanban_crashes
+_REAL_UTC_NOW = uhealth.utc_now
+
+
+def _restore_real_crash_scan() -> None:
+    """Re-point the module at the REAL crash scan + clock.
+
+    Call at the top of any test that asserts on check_kanban_crashes() so a
+    prior _stub_checks_pass() leak can never make the test see a canned
+    (0, [], 0, []) instead of the function under test.
+    """
+    uhealth.check_kanban_crashes = _REAL_CHECK_KANBAN_CRASHES
+    uhealth.utc_now = _REAL_UTC_NOW
+
 
 def _now_iso(offset_min: float = 0.0) -> datetime:
     return datetime.now(timezone.utc) + timedelta(minutes=offset_min)
@@ -217,7 +237,7 @@ def _stub_checks_pass() -> None:
         "detail": "ok",
         "fork_resource_pressure": False,
     }
-    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+    uhealth.check_kanban_crashes = lambda: (0, [], 0, [])
 
 
 def test_cron_forced_releases_absent_file_fails_open():
@@ -342,6 +362,7 @@ def test_forced_releases_absent_main_stays_pass():
 
 
 def test_check_kanban_crashes_active_vs_stale():
+    _restore_real_crash_scan()
     tmp = Path(tempfile.mkdtemp())
     boards = tmp / "boards"
     # Active crash: running task with crashed run in window
@@ -349,7 +370,7 @@ def test_check_kanban_crashes_active_vs_stale():
     # Stale crash: done task with crashed run in window
     _make_board(boards / "sycode-trading", "t_done", "done", "gave_up", -5)
     uhealth.BOARDS_DIR = boards
-    count, hits, stale = uhealth.check_kanban_crashes()
+    count, hits, stale, superseded = uhealth.check_kanban_crashes()
     assert count == 1, f"expected 1 active crash, got {count}: {hits}"
     assert any("t_active" in h for h in hits), f"active hit missing: {hits}"
     assert stale == 1, f"expected 1 stale, got {stale}"
@@ -399,7 +420,7 @@ def test_jarvis_ready_backlog_observability_does_not_block_main():
         "detail": "ok",
         "fork_resource_pressure": False,
     }
-    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+    uhealth.check_kanban_crashes = lambda: (0, [], 0, [])
     uhealth.utc_now = lambda: now
 
     rc = uhealth.main()
@@ -437,7 +458,7 @@ def test_legacy_substrate_bridge_stamps_fresh_health_canary_record():
         "detail": "ok",
         "fork_resource_pressure": False,
     }
-    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+    uhealth.check_kanban_crashes = lambda: (0, [], 0, [])
     uhealth.utc_now = lambda: datetime(2026, 7, 28, 17, 0, tzinfo=timezone.utc)
 
     rc = uhealth.main()
@@ -519,7 +540,7 @@ def test_ready_backlog_warn_does_not_block_main_verdict():
         "detail": "ok",
         "fork_resource_pressure": False,
     }
-    uhealth.check_kanban_crashes = lambda: (0, [], 0)
+    uhealth.check_kanban_crashes = lambda: (0, [], 0, [])
     uhealth.utc_now = lambda: now
 
     rc = uhealth.main()
@@ -536,6 +557,7 @@ def test_ready_backlog_warn_does_not_block_main_verdict():
 
 
 def test_check_kanban_crashes_treats_done_parent_active_child_as_stale():
+    _restore_real_crash_scan()
     tmp = Path(tempfile.mkdtemp())
     boards = tmp / "boards"
     _make_board(
@@ -548,7 +570,7 @@ def test_check_kanban_crashes_treats_done_parent_active_child_as_stale():
     )
     _make_board(boards / "sycode-trading", "t_unparented", "running", "crashed", -5)
     uhealth.BOARDS_DIR = boards
-    count, hits, stale = uhealth.check_kanban_crashes()
+    count, hits, stale, superseded = uhealth.check_kanban_crashes()
     assert count == 1, f"expected only unparented active crash, got {count}: {hits}"
     assert any("t_unparented" in h for h in hits), f"active hit missing: {hits}"
     assert not any("t_done_parent_child" in h for h in hits), \
@@ -557,6 +579,7 @@ def test_check_kanban_crashes_treats_done_parent_active_child_as_stale():
 
 
 def test_check_kanban_crashes_dedupes_same_task():
+    _restore_real_crash_scan()
     tmp = Path(tempfile.mkdtemp())
     boards = tmp / "boards"
     bd = boards / "jarvis-os"
@@ -575,8 +598,133 @@ def test_check_kanban_crashes_dedupes_same_task():
     con.commit()
     con.close()
     uhealth.BOARDS_DIR = boards
-    count, hits, stale = uhealth.check_kanban_crashes()
+    count, hits, stale, superseded = uhealth.check_kanban_crashes()
     assert count == 1, f"same-task multi-run should dedup to 1, got {count}: {hits}"
+
+
+def _make_crash_db(board_dir: Path, task_id: str, task_status: str,
+                   runs: list[tuple], now: int | None = None) -> None:
+    """Create a kanban DB with the REAL task_runs schema (status, worker_pid,
+    last_heartbeat_at) for a single task plus the runs list.
+
+    Each run is (outcome, started_at, ended_at, status, worker_pid,
+    last_heartbeat_at). ``now`` pins the utc_now stub so heartbeat freshness is
+    deterministic; defaults to the current epoch."""
+    board_dir.mkdir(parents=True, exist_ok=True)
+    db = board_dir / "kanban.db"
+    con = sqlite3.connect(str(db))
+    con.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT)")
+    con.execute("CREATE TABLE task_links (parent_id TEXT, child_id TEXT)")
+    con.execute(
+        "CREATE TABLE task_runs (id INTEGER PRIMARY KEY, task_id TEXT, "
+        "status TEXT, outcome TEXT, worker_pid INTEGER, last_heartbeat_at "
+        "INTEGER, started_at INTEGER, ended_at INTEGER)"
+    )
+    con.execute("INSERT INTO tasks (id, status) VALUES (?, ?)",
+                (task_id, task_status))
+    ref = now if now is not None else int(_now_iso().timestamp())
+    for i, (outcome, started_at, ended_at, status, pid, hb) in enumerate(runs):
+        con.execute(
+            "INSERT INTO task_runs (id, task_id, status, outcome, worker_pid, "
+            "last_heartbeat_at, started_at, ended_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (i + 1, task_id, status, outcome, pid,
+             None if hb is None else int(hb),
+             int(started_at),
+             None if ended_at is None else int(ended_at)),
+        )
+    con.commit()
+    con.close()
+
+
+def test_check_kanban_crashes_supersedes_newer_live_run():
+    """t_047d91e7: an older gave_up within the lookback on an ACTIVE task is
+    SUPERSEDED (observe, not BLOCK) when the same task holds a newer run that
+    is still running with a recent heartbeat and an alive pid.
+
+    Mirrors the real t_0e1a9416 shape: gave_up run ends, then a newer run
+    starts, stays running, heartbeats, and its worker pid is alive."""
+    _restore_real_crash_scan()
+    import os as _os
+    tmp = Path(tempfile.mkdtemp())
+    now = int(_now_iso().timestamp())
+    alive_pid = _os.getpid()  # this very process is guaranteed alive
+    uhealth.utc_now = lambda: datetime.fromtimestamp(now, tz=timezone.utc)
+    boards = tmp / "boards"
+    _make_crash_db(
+        boards / "sycode-trading", "t_0e1a9416", "running",
+        runs=[
+            # older gave_up ended 30m ago within the 60m lookback
+            ("gave_up", now - 45 * 60, now - 30 * 60, "crashed",
+             None, now - 31 * 60),
+            # NEWER run: started 20m ago, still running, heartbeat 10s ago, alive pid
+            (None, now - 20 * 60, None, "running", alive_pid, now - 10),
+        ],
+        now=now,
+    )
+    uhealth.BOARDS_DIR = boards
+    count, hits, stale, superseded = uhealth.check_kanban_crashes()
+    assert count == 0, f"newer live run must supersede the crash, got {count}: {hits}"
+    assert stale == 0, f"no stale expected, got {stale}"
+    assert len(superseded) == 1, f"expected 1 superseded, got {superseded}"
+    assert "t_0e1a9416" in superseded[0]
+
+
+def test_check_kanban_crashes_blocks_without_newer_live_run():
+    """t_047d91e7: with NO newer live run (only a dead-pid run or a stale
+    heartbeat), the old crash stays a genuine BLOCK — the fix must not over-
+    suppress real infra failures."""
+    _restore_real_crash_scan()
+    import os as _os
+    tmp = Path(tempfile.mkdtemp())
+    now = int(_now_iso().timestamp())
+    uhealth.utc_now = lambda: datetime.fromtimestamp(now, tz=timezone.utc)
+    boards = tmp / "boards"
+    # Case A: crash run exists but NO newer run at all => still BLOCK.
+    _make_crash_db(
+        boards / "jarvis-os", "t_no_newer", "running",
+        runs=[("gave_up", now - 45 * 60, now - 30 * 60, "crashed",
+               None, now - 31 * 60)],
+        now=now,
+    )
+    uhealth.BOARDS_DIR = boards
+    count, hits, stale, superseded = uhealth.check_kanban_crashes()
+    assert count == 1, f"no newer run must still BLOCK, got {count}: {hits}"
+    assert superseded == [], f"no supersession without a newer run: {superseded}"
+
+    # Case B: newer run present but pid is DEAD => still BLOCK.
+    tmp2 = Path(tempfile.mkdtemp())
+    boards2 = tmp2 / "boards"
+    dead_pid = 99999999  # almost certainly not alive
+    _make_crash_db(
+        boards2 / "sycode-trading", "t_dead_pid", "running",
+        runs=[
+            ("gave_up", now - 45 * 60, now - 30 * 60, "crashed", None, now - 31 * 60),
+            (None, now - 20 * 60, None, "running", dead_pid, now - 10),
+        ],
+        now=now,
+    )
+    uhealth.BOARDS_DIR = boards2
+    count2, hits2, stale2, superseded2 = uhealth.check_kanban_crashes()
+    assert count2 == 1, f"dead-pid newer run must still BLOCK, got {count2}: {hits2}"
+    assert superseded2 == [], f"dead pid is not a supersession: {superseded2}"
+
+    # Case C: newer run present, alive pid, but heartbeat is STALE (> 15m) => BLOCK.
+    tmp3 = Path(tempfile.mkdtemp())
+    boards3 = tmp3 / "boards"
+    _make_crash_db(
+        boards3 / "jarvis-os", "t_stale_hb", "running",
+        runs=[
+            ("gave_up", now - 45 * 60, now - 30 * 60, "crashed", None, now - 31 * 60),
+            (None, now - 20 * 60, None, "running", _os.getpid(),
+             now - uhealth.RUN_LIVE_HEARTBEAT_MAX_SEC - 60),
+        ],
+        now=now,
+    )
+    uhealth.BOARDS_DIR = boards3
+    count3, hits3, stale3, superseded3 = uhealth.check_kanban_crashes()
+    assert count3 == 1, f"stale-heartbeat newer run must still BLOCK, got {count3}"
+    assert superseded3 == [], f"stale heartbeat is not a supersession: {superseded3}"
 
 
 def _make_executions_db(db: Path, *, stale_running: int = 0,
@@ -671,7 +819,7 @@ def test_stale_direct_rows_present_warns_main_not_block():
     profiles = tmp / "profiles"
     uhealth.PROFILES_DIR = profiles
     _make_executions_db(profiles / "fleet-analyst" / "cron" / "executions.db",
-                        stale_running=1)
+                        stale_running=1, now=now)
     uhealth.BOARDS_DIR = tmp / "boards"  # empty -> no real-board ready WARN
     uhealth.CRON_FORCED_RELEASES_LOG = tmp / "inflight_forced_releases.jsonl"  # absent
     uhealth.JARVIS_OS_KANBAN_DB = tmp / "jarvis-os" / "kanban.db"  # absent
