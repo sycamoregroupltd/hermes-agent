@@ -19,7 +19,7 @@ Frozen protocol (do not edit without a superseding prereg):
   Costs: primary 14 bps per leg change per side-equivalent (28 bps RT double-leg,
   W1 rt28 basis) scaled by 1/3 slot weight; diagnostic single-leg 7 bps.
   Kill/alert: K1 trail60 < +2%/yr (2 consecutive, after day 60);
-  K2 |basis_pnl| > 1% notional/day; K3 held hourly funding <= -0.5%/hr;
+  K2 |basis_pnl| > 1% notional/day; K3 held hourly funding <= -0.005%/hr;
   A1 HL/Bybit BTC 30d premium < 1.2x for 30 consecutive rows; A2 feed stale >26h.
 """
 import csv
@@ -44,7 +44,7 @@ COST_PRIMARY_BPS = 14.0                 # per leg change (28 bps RT double-leg)
 COST_DIAG_BPS = 7.0                     # W1 single-leg primary (diagnostic)
 K1_FLOOR = 0.02                         # trailing-60d annualized kill floor
 K2_BASIS_LIMIT = 0.01                   # 1% of notional in a single day
-K3_HOURLY = -0.005                      # -0.5%/hr violent negative funding
+K3_HOURLY = -5e-5  # -0.005%/hr violent negative funding (v2.1 re-scale; was -0.5%/hr inert)
 A1_CANARY = 1.2                         # HL/CEX premium compression floor
 A1_DAYS = 30
 FRESH_HOURS = 26
