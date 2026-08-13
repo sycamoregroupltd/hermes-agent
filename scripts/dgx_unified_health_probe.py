@@ -62,6 +62,13 @@ CANARY_STALE_MIN = 40        # newest INDEPENDENT health_canary.jsonl write
                              # substrate_source bridge records are excluded so
                              # the check cannot grade its own liveness (t_0050991e).
 CRASH_LOOKBACK_MIN = 60      # kanban crash/gave_up window
+# A crashed/gave_up run is "superseded" (observed, NOT a BLOCK cause) when the
+# owning task holds a NEWER run that is genuinely live: status='running', an
+# alive worker pid, and a heartbeat within this many seconds. 15m is well below
+# the dispatcher's reclaim window yet far above a busy agent's normal heartbeat
+# cadence, so a productive in-flight run is never mistaken for a stale crash
+# while a genuinely dead run (no recent heartbeat) still blocks (t_047d91e7).
+RUN_LIVE_HEARTBEAT_MAX_SEC = 900
 
 # Cron forced-release observability (t_615aa245): the scheduler mirrors every
 # stale in-flight claim it force-releases to <hermes_home>/cron/
@@ -589,7 +596,51 @@ def critical_alert_due(now: dt.datetime) -> bool:
     return record_block_event(now) >= CRITICAL_ALERT_MIN_COUNT
 
 
-def check_kanban_crashes() -> tuple[int, list[str], int]:
+def _pid_alive(pid: int | None) -> bool:
+    """True if a kanban worker pid maps to a live process.
+
+    None (no pid recorded) and any process that no longer exists => False.
+    A PermissionError means the pid exists but is owned by another user; we
+    treat it as alive (the worker is still resident)."""
+    if pid is None:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except (ProcessLookupError, OverflowError, ValueError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _task_has_newer_live_run(cur, task_id: str, now: int) -> bool:
+    """True when `task_id` currently holds a NEWER live/productive run.
+
+    Supersession test (t_047d91e7): a prior timed_out/gave_up attempt should
+    not keep fleet health at BLOCK when the same task has since been retried
+    and the newer run is genuinely in flight — status='running', an alive
+    worker pid, and a recent heartbeat. Any of those failing (no newer run,
+    dead pid, no/stale heartbeat) returns False so the task stays a BLOCK."""
+    try:
+        row = cur.execute(
+            "SELECT status, worker_pid, last_heartbeat_at FROM task_runs "
+            "WHERE task_id = ? AND status = 'running' "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return False
+    if not row:
+        return False
+    status, pid, hb = row
+    if status != "running" or not _pid_alive(pid):
+        return False
+    if hb is None:
+        return False
+    return (now - int(hb)) <= RUN_LIVE_HEARTBEAT_MAX_SEC
+
+
+def check_kanban_crashes() -> tuple[int, list[str], int, list[str]]:
     """Read-only scan for recent crashed/gave_up runs across boards.
 
     Crash-signal precision (task t_7b1ceb0f): a run counts as a FRESH/active
@@ -601,12 +652,21 @@ def check_kanban_crashes() -> tuple[int, list[str], int]:
     and the task is owned/resolved. Re-counting it every cycle keeps the whole
     fleet verdict at BLOCK and drowns out real signals. Stale runs are counted
     for transparency but do NOT drive the verdict.
+
+    Newer-live-run supersession (t_047d91e7): even on an ACTIVE task, a prior
+    crashed/gave_up attempt is SUPERSEDED (observed, NOT a BLOCK cause) when
+    the same task has a newer run that is still genuinely in flight
+    (status='running', alive pid, recent heartbeat). Without this the fleet
+    stays at BLOCK while a productive retry is running — an aging-out false
+    BLOCK, not an infra failure.
     """
     if not BOARDS_DIR.exists():
-        return 0, [], 0
-    cutoff = int(utc_now().timestamp()) - CRASH_LOOKBACK_MIN * 60
+        return 0, [], 0, []
+    now = int(utc_now().timestamp())
+    cutoff = now - CRASH_LOOKBACK_MIN * 60
     active_hits: list[str] = []
     stale_count = 0
+    superseded_hits: list[str] = []
     seen_task_ids: set[str] = set()
     for db in sorted(BOARDS_DIR.glob("*/kanban.db")):
         board = db.parent.name
@@ -635,21 +695,27 @@ def check_kanban_crashes() -> tuple[int, list[str], int]:
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
-            con.close()
             for task_id, outcome, ended, status, has_done_parent in rows:
                 if status in ACTIVE_TASK_STATES and not has_done_parent:
                     # de-dupe by task_id so one task with several crashed/gave_up
                     # runs in the window is not double-counted.
-                    if task_id not in seen_task_ids and len(active_hits) < 8:
-                        active_hits.append(
-                            f"{board}/{task_id}:{outcome} (status={status})"
-                        )
+                    if task_id not in seen_task_ids:
+                        if _task_has_newer_live_run(cur, task_id, now):
+                            superseded_hits.append(
+                                f"{board}/{task_id}:{outcome} "
+                                f"(superseded by newer live run)"
+                            )
+                        elif len(active_hits) < 8:
+                            active_hits.append(
+                                f"{board}/{task_id}:{outcome} (status={status})"
+                            )
                     seen_task_ids.add(task_id)
                 else:
                     stale_count += 1
+            con.close()
         except Exception:
             continue
-    return len(active_hits), active_hits, stale_count
+    return len(active_hits), active_hits, stale_count, superseded_hits
 
 
 def _age_days(now: dt.datetime, created_at: int | None) -> float | None:
@@ -835,11 +901,13 @@ def main() -> int:
                    and mech.get("overall") in (None, "GREEN"), "detail": mech.get("detail", ""),
                    "fork_resource_pressure": bool(mech.get("fork_resource_pressure", False))})
 
-    crash_count, crash_hits, stale_count = check_kanban_crashes()
+    crash_count, crash_hits, stale_count, superseded_hits = check_kanban_crashes()
+    superseded_count = len(superseded_hits)
     checks.append({"name": "kanban_crashes", "ok": crash_count == 0,
                    "detail": f"{crash_count} active crash/gave_up run(s) within "
                              f"{CRASH_LOOKBACK_MIN}m (stale/parked on resolved "
-                             f"tasks: {stale_count})",
+                             f"tasks: {stale_count}; superseded by newer live "
+                             f"run: {superseded_count})",
                    "fork_resource_pressure": False})
 
     ready_backlog = check_jarvis_ready_backlog(now)  # jarvis-os (back-compat)
@@ -931,6 +999,8 @@ def main() -> int:
         "mechanism_dead": mech.get("dead"),
         "kanban_crash_count": crash_count,
         "kanban_crash_stale": stale_count,
+        "kanban_crash_superseded": superseded_count,
+        "kanban_crash_superseded_hits": superseded_hits,
         "cron_forced_releases": {
             "count": forced_releases.get("count", 0),
             "window_h": CRON_FORCED_RELEASE_WINDOW_H,
@@ -993,6 +1063,7 @@ def main() -> int:
             + "\n".join(f"  - {c['name']}: {c['detail']}" for c in checks)
             + f"\n\nmechanism={mech.get('overall','n/a')} "
               f"active_crashes={crash_count} stale_crashes={stale_count} "
+              f"superseded_crashes={superseded_count} "
               f"forced_releases={forced_releases.get('count', 0)} "
               f"stale_direct_rows={stale_direct_rows.get('count', 0)} "
               f"ready_backlog={ready_backlog.get('ready_total')} "
@@ -1057,9 +1128,17 @@ def main() -> int:
             lines.append(f"  - {stale_direct_rows.get('detail')}")
             lines.append("      action: verify the owning gateway is up so the "
                          "per-tick terminalizer can clear these rows.")
+        if superseded_count:
+            lines.append("")
+            lines.append(f"## Kanban SUPERSEDED crash/gave_up runs (newer live "
+                         f"run present, last {CRASH_LOOKBACK_MIN}m): "
+                         f"{superseded_count}  (observed, NOT a BLOCK cause)")
+            for h in superseded_hits:
+                lines.append(f"  - {h}")
         lines.append("")
         lines.append(f"mechanism={mech.get('overall','n/a')} "
                      f"active_crashes={crash_count} stale_crashes={stale_count} "
+                     f"superseded_crashes={superseded_count} "
                      f"forced_releases={forced_releases.get('count', 0)} "
                      f"stale_direct_rows={stale_direct_rows.get('count', 0)} "
                      f"ready_backlog={ready_backlog.get('ready_total')} "
@@ -1089,7 +1168,7 @@ def main() -> int:
         lines.append("## Mechanism matrix RED")
         lines.append(f"  - overall={mech.get('overall')} dead={mech.get('dead')} "
                      f"warn={mech.get('warn')} keys={mech.get('dead_keys')}")
-    if crash_count or stale_count:
+    if crash_count or stale_count or superseded_count:
         lines.append("")
         if crash_count:
             lines.append(f"## Kanban ACTIVE crashes (last {CRASH_LOOKBACK_MIN}m): "
@@ -1099,6 +1178,13 @@ def main() -> int:
         if stale_count:
             lines.append(f"## Kanban STALE crash/gave_up runs on parked/resolved "
                          f"tasks: {stale_count}  (monitored, NOT a BLOCK cause)")
+        if superseded_count:
+            lines.append(f"## Kanban SUPERSEDED crash/gave_up runs (newer live "
+                         f"run present, last {CRASH_LOOKBACK_MIN}m): "
+                         f"{superseded_count}  (aging-out false BLOCK, NOT a "
+                         f"BLOCK cause)")
+            for h in superseded_hits:
+                lines.append(f"  - {h}")
     if forced_block:
         lines.append("")
         lines.append(f"## Cron forced releases (repeated wedges, last "
@@ -1156,6 +1242,7 @@ def main() -> int:
                 "mechanism_dead_keys": mech.get("dead_keys"),
                 "kanban_crash_count": crash_count,
                 "kanban_crash_stale": stale_count,
+                "kanban_crash_superseded": superseded_count,
                 "cron_forced_release_count": forced_releases.get("count", 0),
                 "jarvis_ready_backlog": ready_backlog,
                 "sycode_trading_ready_backlog": sycode_ready_backlog,
