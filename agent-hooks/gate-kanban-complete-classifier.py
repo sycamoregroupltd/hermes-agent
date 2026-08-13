@@ -313,6 +313,38 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # negative fixture; this negation only relaxes the false positive on PM
     # planning cards.
     r"\bcreate one implementation child\b[\s\S]{0,900}\b(paper[- ]?only|no (app|product|frontend|web) code changes)\b",
+    # Diagnostic/dispensation idiom: "route the narrow host-runtime fix",
+    # "route a separate reviewed implementation card", "route ... disposition",
+    # "route ... evidence path". Here "route" is a dispatch verb (direct the fix
+    # elsewhere), NOT a "route component" app-surface noun. The broad
+    # APP_IMPL_PATTERNS[1] matches "route ... fix" and falsely classifies
+    # postmortem/log-forensics DIAGNOSE cards as frontend/web (t_2a606755).
+    # This only neutralizes the verb+routed-object idiom; concrete
+    # "apps/web ... route component/page" still matches APP_IMPL_PATTERNS and
+    # CONCRETE_WEB_IMPL_PATTERNS and is caught by paired negative fixtures.
+    r"\broute\s+(the|a|this|that|an)\s+[^.\n]{0,80}\b(narrow|host-runtime|separate|reviewed|next)\b[^.\n]{0,140}\b(fix|implementation card|disposition|evidence path|verdict|implementation)\b",
+    # Companion: "comment disposition back on <owner>" / "post ... disposition"
+    # evidence-back-reference phrasing in DIAGNOSE/forensics cards routes the
+    # verdict/disposition rather than implementing a browser route.
+    r"\b(comment|post)\s+[^.\n]{0,120}\b(disposition|verdict|evidence path|outcome)\b[^.\n]{0,120}back\b",
+]
+
+GATE_SCOPE_NONAPP_PATTERNS: PatternList = [
+    # Cards that fix/scope the verify-running-app completion gate itself (often
+    # "FIX:"-titled, e.g. t_5a334580 "scope verify-running-app gate away from
+    # non-UI log-forensics cards"). They quote the gate's surface vocabulary
+    # (UI, frontend, route, middleware, layout, trpc, apps/web) to state what
+    # the gate SHOULD apply to, and name forensics/non-UI cards as what it
+    # should NOT. That describes the gate — it does not build or serve a
+    # frontend surface. Concrete web implementation (apps/web, react pages/
+    # routes/components) still wins via has_concrete_web_impl in the caller,
+    # and app-surface changed_files is still caught by the rule-1
+    # BLOCK_APP_CHANGED_FILES backstop. Paired negative fixtures prove a real
+    # frontend card that also mentions the gate still blocks.
+    r"\b(verify[- ]?running[- ]app|running[- ]app|verify_pass|app[- ]verification)\b[^\n.]{0,120}\b(scope|scoping|gate|classifier|false[ -]?positive|non[- ]?app)\b",
+    r"\b(verify[- ]?running[- ]app|running[- ]app|app[- ]verification)\b[^\n.]{0,200}\b(forensic|non[- ]?ui|log[- ]forensic|postmortem|diagnos)\b",
+    r"\b(scope|scoping)\b[^\n.]{0,120}\b(verify[- ]?running[- ]app|running[- ]app|app[- ]verification)\b[^\n.]{0,160}\bgate\b",
+    r"\bnon[- ]?ui\b[^\n.]{0,120}\b(verify[- ]?running[- ]app|running[- ]app|app[- ]verification)\b",
 ]
 
 NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
@@ -419,7 +451,17 @@ def _has_app_impl(task_part: str) -> bool:
         and not has_concrete_web_impl
     )
     has_app_impl = raw_app_impl and not review_completion_gate_nonapp
-    if re.search(r"^\s*review:[^\n]{0,300}", task_part):
+    # verify-running-app gate-scope/classifier-fix cards (often "FIX:"-titled)
+    # quote the gate's surface vocabulary to say what the gate applies to, but
+    # do not build or serve a frontend surface. They are NOT app implementation.
+    # Concrete web implementation (apps/web, react pages/routes) still wins via
+    # has_concrete_web_impl, and app-surface changed_files is still caught by
+    # the rule-1 BLOCK_APP_CHANGED_FILES backstop. This closes the gap where a
+    # gate-fix card (t_5a334580) was itself blocked as `web` by APP_IMPL_PATTERNS
+    # matching "implement a narrow classifier fix ... page/route/middleware".
+    if _any(GATE_SCOPE_NONAPP_PATTERNS, task_part) and not has_concrete_web_impl:
+        return False
+    if re.search(r"^\s*review:", task_part):
         # The title starts with "review:". Check if this is about completion-gate
         # repair (not app impl) vs. actual frontend review. Concrete app
         # implementation signals win: a review-prefixed card that itself says to

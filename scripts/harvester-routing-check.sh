@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HARVESTER_PATH="/home/frank/sycode-trading/.worktrees/t_9f7449fb/self-improvement-harvester.py"
+HARVESTER_PATH="/home/frank/sycode-trading/tools/self-improvement-harvester/self-improvement-harvester.py"
 
 if [ ! -f "$HARVESTER_PATH" ]; then
   echo "HARVESTER-ROUTING-CHECK: CRITICAL — harvester script not found at $HARVESTER_PATH"

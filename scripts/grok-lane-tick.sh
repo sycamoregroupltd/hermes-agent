@@ -38,6 +38,10 @@ flock -n 9 || exit 0   # a tick is already running
 [ -x "$CELLS" ] || { echo "GROK LANE BROKEN: $CELLS missing/not executable"; exit 0; }
 
 # --- backpressure: count cards already carrying a grok cell output awaiting review
+# 2026-08-13 (grok seat): do NOT count a card whose independent review card is
+# already done/archived. Those are waiting on PM verdict-consumption, not review
+# capacity. Counting them (21 vs max 20) skipped every tick from 2026-08-11
+# through 2026-08-13 even after 37+ sycode / 14 jarvis-os review cards completed.
 inreview=0
 for b in $BOARDS; do
   db="$HOME/.hermes/kanban/boards/$b/kanban.db"
@@ -45,7 +49,12 @@ for b in $BOARDS; do
   n=$(sqlite3 "file:${db}?mode=ro" "SELECT COUNT(DISTINCT c.task_id) FROM task_comments c
       JOIN tasks t ON t.id=c.task_id
       WHERE t.status='blocked' AND c.author='fable-grok'
-        AND c.body LIKE '%ready for independent review%';" 2>/dev/null || echo 0)
+        AND c.body LIKE '%ready for independent review%'
+        AND NOT EXISTS (
+          SELECT 1 FROM tasks r
+          WHERE r.title LIKE 'REVIEW grok draft: ' || t.id || '%'
+            AND r.status IN ('done','archived')
+        );" 2>/dev/null || echo 0)
   inreview=$((inreview + n))
 done
 if [ "$inreview" -ge "$MAX_IN_REVIEW" ]; then

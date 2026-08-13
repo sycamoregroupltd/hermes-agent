@@ -35,7 +35,7 @@
     "task_id": "t_f5f5385f_fixture",
     "expected": "allow",
     "expected_class": "readonly_nonapp",
-    "title": "P0: paper-risk-agent (15m safety monitor) failing every run \u2014 repoint off paid nous deepseek-v4-flash",
+    "title": "P0: paper-risk-agent (15m safety monitor) failing every run — repoint off paid nous deepseek-v4-flash",
     "body": "FINDING: jarvis cron job paper-risk-agent is the fleet paper-trading risk monitor and model traffic is demonstrably serving elsewhere. TASK: repoint the job provider/model pin, back up jobs.json, verify forced smoke output, and record before/after pins. This is a cron/config task only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backup path recorded; jobs.json before/after pins recorded; forced cron smoke output ok; no app route changed; no running app VERIFY_PASS supplied",
     "metadata": {
@@ -57,7 +57,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "Reconcile stale provider-state bookkeeping: codex exhausted zombie flags vs demonstrably-serving reality",
-    "body": "TASK (bookkeeping only \u2014 NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
+    "body": "TASK (bookkeeping only — NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backups recorded; forced smokes ok; before/after flags recorded; zero credential/routing changes; no running app VERIFY_PASS supplied",
     "metadata": {
       "changed_files": [
@@ -896,7 +896,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "REVIEW: sycode-trading Fix UI spacing on order-book widget from sycode-trading/t_5c33e334",
-    "body": "Review source task sycode-trading/t_5c33e334: UI spacing fixes for the order-book widget display. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 spacing needs width breakpoint adjustments.",
+    "body": "Review source task sycode-trading/t_5c33e334: UI spacing fixes for the order-book widget display. REVIEW_VERDICT=CHANGES_REQUESTED — spacing needs width breakpoint adjustments.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED posted for sycode-trading/t_5c33e334; verdict consumed by verdict-router.",
     "metadata": {
       "changed_files": [
@@ -911,7 +911,7 @@
     "expected": "block",
     "expected_class": "web",
     "title": "REVIEW: sycode-trading marketplace order-book from sycode-trading/t_patch01",
-    "body": "Review source task sycode-trading/t_patch01: implement marketplace order-book React route component\u2014this card applies the reviewed spacing fixes. REVIEW_VERDICT=CHANGES_REQUESTED.",
+    "body": "Review source task sycode-trading/t_patch01: implement marketplace order-book React route component—this card applies the reviewed spacing fixes. REVIEW_VERDICT=CHANGES_REQUESTED.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; apps/web files modified.",
     "metadata": {
       "changed_files": [
@@ -926,7 +926,7 @@
     "expected": "block",
     "expected_class": "web",
     "title": "REVIEW: sycode-trading marketplace dashboard from sycode-trading/t_patch02",
-    "body": "Review source task sycode-trading/t_patch02: fix marketplace dashboard page component layout. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 this card applies the reviewed changes. No running app VERIFY_PASS supplied.",
+    "body": "Review source task sycode-trading/t_patch02: fix marketplace dashboard page component layout. REVIEW_VERDICT=CHANGES_REQUESTED — this card applies the reviewed changes. No running app VERIFY_PASS supplied.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; fix marketplace dashboard page component.",
     "metadata": {
       "changed_files": [
@@ -1005,14 +1005,14 @@
     "metadata": {
       "changed_files": []
     },
-    "description": "BLOCK: regression guard for t_f31ab4c4 \u2014 a CHILD REVIEW_VERDICT=APPROVED phrase must not reclassify a goal-judge provider-error trap as readonly_nonapp and fail open. Fixture id is deliberately NON-hex to also guard the removed task-id-format prerequisite on the shell trap."
+    "description": "BLOCK: regression guard for t_f31ab4c4 — a CHILD REVIEW_VERDICT=APPROVED phrase must not reclassify a goal-judge provider-error trap as readonly_nonapp and fail open. Fixture id is deliberately NON-hex to also guard the removed task-id-format prerequisite on the shell trap."
   },
   {
     "name": "t_cdeab9c4-source-pr-review-guc-bypass-allows",
     "task_id": "t_cdeab9c4_fixture",
     "expected": "allow",
     "expected_class": "readonly_nonapp",
-    "title": "Review PR #752 \u2014 DataRetentionService append-only bypass fix (exact-SHA review required)",
+    "title": "Review PR #752 — DataRetentionService append-only bypass fix (exact-SHA review required)",
     "body": "Review PR #752: fixes trg_signal_pnl_points_append_only raising SQLSTATE 23514 on retention deletes by adding SET LOCAL app.bypass_append_only='true' inside the retention transaction. Also fixes the trigger function to return OLD (not NEW) for DELETE operations. Changes: Migration 0115, DataRetentionService.ts, tests. Review gates: exact-SHA code review, CI evidence, verdict REVIEW_VERDICT=approve or changes_requested. After APPROVED: route to Frank for merge + deploy approval (proof-boundary gate).",
     "summary": "REVIEW_VERDICT=APPROVED at exact SHA d4a5eda8; PR #752 MERGED 2026-07-28 (acfea2db); migration 0115 NOT applied to live DB (Frank-gated deploy child t_48ea3e4b); paper-only review, no frontend/web/app surface touched.",
     "metadata": {
@@ -1021,7 +1021,7 @@
       ],
       "verdict": "APPROVED"
     },
-    "description": "ALLOW: real t_cdeab9c4 regression \u2014 a paper-only source PR review whose body quotes the PostgreSQL GUC app.bypass_append_only must NOT be misclassified as frontend/app implementation; it routes through the source-review readonly_nonapp lane. Paired negative below proves the same GUC wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_cdeab9c4 regression — a paper-only source PR review whose body quotes the PostgreSQL GUC app.bypass_append_only must NOT be misclassified as frontend/app implementation; it routes through the source-review readonly_nonapp lane. Paired negative below proves the same GUC wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_cdeab9c4-paired-frontend-guc-bypass-negative-blocks",
@@ -1044,7 +1044,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "FIX (source-only): calibration-drift-monitor renders timed-out queries as 0pp + unweighted MCE inflated by tiny buckets",
-    "body": "Source-only fix to the drift monitor script /home/frank/.hermes/scripts/calibration-drift-monitor.py (no deploy, no schedule change). Defect 1: a timed-out query is rendered as 0pp (perfectly calibrated) because db_query() imposes a hard 30s timeout and overall_calibration() returns {} which build_report renders as stats.get('overall_bias_pp', 0). Fix: never render an unmeasured metric as a number \u2014 emit MEASUREMENT_UNAVAILABLE marker in both the report and the card body, and raise the timeout. Defect 2: MCE formula is an unweighted mean over buckets with n>=5 letting 1-row and 2-row buckets drive the headline; report sample-weighted as headline and keep significant-bucket figure alongside. Defect 3: group cohort by composite_confidence_weights_version and print the split. Verify by running the script with --verbose against the live read-only DB and pasting real output.",
+    "body": "Source-only fix to the drift monitor script /home/frank/.hermes/scripts/calibration-drift-monitor.py (no deploy, no schedule change). Defect 1: a timed-out query is rendered as 0pp (perfectly calibrated) because db_query() imposes a hard 30s timeout and overall_calibration() returns {} which build_report renders as stats.get('overall_bias_pp', 0). Fix: never render an unmeasured metric as a number — emit MEASUREMENT_UNAVAILABLE marker in both the report and the card body, and raise the timeout. Defect 2: MCE formula is an unweighted mean over buckets with n>=5 letting 1-row and 2-row buckets drive the headline; report sample-weighted as headline and keep significant-bucket figure alongside. Defect 3: group cohort by composite_confidence_weights_version and print the split. Verify by running the script with --verbose against the live read-only DB and pasting real output.",
     "summary": "Source-only fix complete and verified live: Overall bias -15.0pp (not 0pp), sample-weighted MCE 15.2pp with unweighted/significant figures alongside, estimator provenance 96.7% conviction alias. No deploy/schedule/DB/trading action.",
     "metadata": {
       "changed_files": [
@@ -1052,7 +1052,7 @@
         "/home/frank/.hermes/scripts/test_calibration_drift_monitor.py"
       ]
     },
-    "description": "ALLOW: real t_ec251392 regression \u2014 a source-only monitor script fix whose title says the monitor 'renders' report output as 0pp must NOT be misclassified as frontend/app work; it routes through the readonly_nonapp lane. Paired negative below proves the same 'renders ... 0pp' wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_ec251392 regression — a source-only monitor script fix whose title says the monitor 'renders' report output as 0pp must NOT be misclassified as frontend/app work; it routes through the readonly_nonapp lane. Paired negative below proves the same 'renders ... 0pp' wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_ec251392-paired-frontend-renders-0pp-negative-blocks",
@@ -1088,5 +1088,25 @@
     "body": "Implement apps/web React route component and page layout for calibration. Create implementation route that ships a dashboard page for calibration/edge evidence with apps/web/src/app/calibration/page.tsx. This is concrete frontend UI work; no running app VERIFY_PASS supplied.",
     "summary": "concrete apps/web route implementation; no running app VERIFY_PASS supplied",
     "description": "BLOCK: paired negative for t_2211f06c; the 'create implementation ... apps/web route' wording attached to concrete frontend route/page work must still require running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_5a334580-gate-scope-fix-forensics-allows",
+    "task_id": "t_5a334580_forensic_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "FIX: scope verify-running-app gate away from non-UI log-forensics cards",
+    "body": "OUTCOME: Remove the false completion blocker where non-UI host/log-forensics cards are forced through the `verify-running-app` gate, using t_2a606755 as the proving fixture, without weakening the UI/runtime verification standard for actual route/page/middleware/UI changes.\n\nEVIDENCE INPUTS:\n- jarvis-os/t_2a606755 completed the required SIGTERM forensics evidence but is blocked because a `verify-running-app` gate was applied to a task that touched no frontend route, page, middleware, layout, UI component, or tRPC call.\n- t_2a606755 comment records direct evidence from executions.db, f052 ABORTED sentinel, scheduler.py, cgroup memory.events/pressure, journalctl, and script inspection; latest_summary states VERIFY_PASS would be fabricated or irrelevant.\n\nACCEPTANCE:\n1. Identify exactly which hook/check/router attached `verify-running-app` to t_2a606755 and why its scope classifier matched a non-UI/log-forensics task.\n2. Propose or implement a narrow classifier fix so `verify-running-app` remains mandatory for tasks touching page/route/middleware/tenant-resolution/layout/UI/tRPC surfaces, but is not required for pure postmortem/log-forensics cards with no app surface.\n3. Re-run the same gate-selection path against t_2a606755 (or a fixture cloned from its title/body) and one known UI-route card to prove: forensics card excludes verify-running-app; UI-route card still includes it.\n4. Comment back on jarvis-os/t_2a606755 with the decision/fix evidence so the card can complete or be re-run under the correct verification tier.\n5. Preserve gates: no minute-loop/no schedule mutation; no provider/model/fallback routing, credentials, spend, live trading, DB/data mutation, production deploy/restart, guardrail weakening, SOUL/skill edits from this card unless separately reviewed and approved.",
+    "summary": "verify-running-app gate-scope/classifier-fix forensics card; quotes UI/frontend/route/middleware/tRPC/verify-running-app surface vocabulary to describe what the gate SHOULD apply to; non-UI log-forensics card with no app surface; classifier returns readonly_nonapp",
+    "description": "ALLOW: gate-scope/classifier-fix forensics card (t_5a334580) quotes the gate's surface vocabulary (UI/frontend/route/middleware/tRPC/verify-running-app) to describe what the gate applies to and names non-UI log-forensics cards as out of scope. It does NOT build or serve a frontend surface. Concrete apps/web work still matches APP_IMPL_PATTERNS and is caught by the paired-frontend negative below."
+  },
+  {
+    "name": "t_5a334580-paired-frontend-gate-scope-negative-blocks",
+    "task_id": "t_5a334580_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "FIX: verify-running-app gate scope for marketplace app",
+    "body": "Implement apps/web marketplace React page and route component. Add frontend route/middleware for the new marketplace page.",
+    "summary": "concrete apps/web route implementation; no running app VERIFY_PASS supplied",
+    "description": "BLOCK: paired negative for t_5a334580; the same gate-scope/fix wording attached to concrete apps/web marketplace page/route implementation must still require running-app VERIFY_PASS."
   }
 ]

@@ -57,7 +57,24 @@ SMOKE_PROMPT = "Reply with exactly the single word OK."
 # How long a single rung probe may take before we call it TIMEOUT.
 PER_RUNG_TIMEOUT_S = int(os.environ.get("FCV_RUNG_TIMEOUT", "120"))
 # Total wall budget so the daily cron never runs away.
-TOTAL_BUDGET_S = int(os.environ.get("FCV_TOTAL_BUDGET", "1800"))
+# 2026-08-13: raised 1800→2700 so a priority prefix (jarvis/sycode) plus a
+# rotated tail can finish on a noisy Nous day. Override with FCV_TOTAL_BUDGET.
+TOTAL_BUDGET_S = int(os.environ.get("FCV_TOTAL_BUDGET", "2700"))
+
+# Always probed first (2026-08-13). Daily rotation of the *tail* left jarvis /
+# sycode-trading SKIPPED whenever the 1800s wall expired on upero/yorkstone.
+# These names must stay live-covered even when the rest of the fleet is rotated.
+PRIORITY_PROFILES = (
+    "jarvis",
+    "jarvis-os-pm",
+    "jarvis-coordinator",
+    "jarvis-voice",
+    "sycode-trading",
+    "sycode-trading-pm",
+    "trading-devops",
+    "research-trading",
+    "fleet-analyst",
+)
 
 # --- Liveness classification -------------------------------------------------
 
@@ -622,17 +639,20 @@ def main(argv: list[str] | None = None) -> int:
         if not profiles:
             print("fleet_chain_validator: no profiles found", file=sys.stderr)
             return 2
-        # Deterministic daily rotation (2026-07-12): under budget exhaustion
-        # the tail of the alphabetical profile list was NEVER probed (every
-        # daily run started at 'builder' and exhausted around the same point,
-        # leaving sycode-*/trading-*/upero-*/yorkstone-* rungs permanently
-        # SKIPPED — a silent coverage hole). Rotating the start offset by day
-        # guarantees every profile is probed within a few days even when one
-        # run's budget cannot cover the whole fleet. Explicit --profile runs
-        # are never rotated.
+        # Deterministic daily rotation (2026-07-12 / 2026-08-13):
+        # Under budget exhaustion the tail of a single alphabetical (or
+        # rotated-from-day-offset) list was SKIPPED. Rotation alone still
+        # left jarvis/sycode unprobed on days the offset started at upero.
+        # Priority prefix is always probed first; only the remainder rotates.
+        # Explicit --profile runs are never reordered.
         if args.profile is None and len(profiles) > 1:
-            offset = datetime.date.today().toordinal() % len(profiles)
-            profiles = profiles[offset:] + profiles[:offset]
+            present = set(profiles)
+            priority = [p for p in PRIORITY_PROFILES if p in present]
+            rest = [p for p in profiles if p not in PRIORITY_PROFILES]
+            if rest:
+                offset = datetime.date.today().toordinal() % len(rest)
+                rest = rest[offset:] + rest[:offset]
+            profiles = priority + rest
         report = run_scan(profiles)
 
     if args.json:

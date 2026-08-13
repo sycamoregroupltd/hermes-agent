@@ -135,13 +135,18 @@ fi
 # After every pristine checkout, refresh the 4 docker bind-mount config files so the
 # deploy-owned copy is always current with origin/main.
 CONFIG_DIR=/home/frank/.hermes/deploy-state/sycode-config
-# Prefer installed path (/usr/local/sbin), fall back to workspace seed script
+# seed-sycode-config.sh is optional. The live gate is deploy_sycodeserver.py
+# preflight-bind-mounts.sh against $TREE. A missing seed must not be invoked
+# (2026-08-13: wrapper still ran bash on a dead worktree path after WARN).
 SEED_SCRIPT="/usr/local/sbin/seed-sycode-config.sh"
-[[ -x "$SEED_SCRIPT" ]] || SEED_SCRIPT="/home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_ef7ed63e/deploy/seed-sycode-config.sh"
-[[ -x "$SEED_SCRIPT" ]] || { echo "[pristine] WARN: seed-sycode-config.sh not found anywhere"; }
-SYCODE_REPO="$TREE" SYCODE_CONFIG_DIR="$CONFIG_DIR" bash "$SEED_SCRIPT" && \
-  echo "[pristine] synced bind-mount configs to $CONFIG_DIR" || \
-  echo "[pristine] WARN: bind-mount config sync had errors"
+[[ -x "$SEED_SCRIPT" ]] || SEED_SCRIPT="/home/frank/.hermes/deploy-state/build-tree/deploy/seed-sycode-config.sh"
+if [[ -x "$SEED_SCRIPT" ]]; then
+  SYCODE_REPO="$TREE" SYCODE_CONFIG_DIR="$CONFIG_DIR" bash "$SEED_SCRIPT" && \
+    echo "[pristine] synced bind-mount configs to $CONFIG_DIR" || \
+    echo "[pristine] WARN: bind-mount config sync had errors"
+else
+  echo "[pristine] seed-sycode-config.sh absent — skip (bind-mount preflight in deploy_sycodeserver.py is the gate)"
+fi
 
 # 3) stage the gitignored runtime env files compose needs (from the shared checkout)
 for f in "${ENV_FILES[@]}"; do

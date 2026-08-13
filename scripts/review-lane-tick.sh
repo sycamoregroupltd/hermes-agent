@@ -49,9 +49,13 @@ for b in sycode-trading jarvis-os upero ai-restaurant; do
   rp=$(reviewer_for "$b")
   [ -d "$HOME/.hermes/profiles/$rp" ] || { echo "REVIEW LANE: reviewer profile $rp missing for $b"; continue; }
 
-  # backpressure: how many review cards for this reviewer are already open?
+  # backpressure: count ONLY in-flight grok-draft REVIEW cards for this reviewer.
+  # 2026-08-13: counting every todo/ready/running card on os-reviewer (14) sat at
+  # MAX_OPEN_REVIEWS=12 and skipped jarvis-os forever, so 5 grok drafts never
+  # got a review card. Unrelated CEO/REVIEW/FIX todos are not this lane's queue.
   open=$(sqlite3 "file:${db}?mode=ro" "SELECT COUNT(*) FROM tasks
-     WHERE assignee='$rp' AND status IN ('todo','ready','running');" 2>/dev/null || echo 0)
+     WHERE assignee='$rp' AND status IN ('todo','ready','running')
+       AND title LIKE 'REVIEW grok draft:%';" 2>/dev/null || echo 0)
   [ "$open" -ge "$MAX_OPEN_REVIEWS" ] && continue
 
   # targets: cards carrying a grok cell output, still blocked, with no review card yet
