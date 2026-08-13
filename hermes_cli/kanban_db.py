@@ -7624,6 +7624,31 @@ _RESPAWN_BLOCKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Provider auth-shaped signals matched against a dead worker's log to decide
+# whether a crash is actually a credential/token wall that retrying can never
+# fix. Unlike ``_RESPAWN_BLOCKER_RE`` (which also matches quota/billing words
+# and is consulted at RESPAWN time to DEFER), this regex is auth-only and is
+# consulted at REAP time to BLOCK on the first run before any retry budget is
+# spent. Pattern-matched purely on observable HTTP status / exit text — never
+# parsed from credentials or secrets.
+_AUTH_FAILURE_RE = re.compile(
+    r"\b(?:401|403)\b|"
+    r"unauthorized|forbidden|not[ _-]?authorized|"
+    r"token[ _-]?(?:expired|invalid|revoked)|"
+    r"session[ _-]?(?:invalid|expired|revoked)|"
+    r"invalid[ _-]?api[ _-]?key|api[ _-]?key[ _-]?(?:invalid|expired|missing)|"
+    r"no[ _-]?access[ _-]?token|access[ _-]?token[ _-]?(?:expired|invalid|missing)|"
+    r"authentication[ _-]?failed|auth[ _-]?(?:error|failed)|"
+    r"credentials?[ _-]?(?:invalid|expired|revoked)",
+    re.IGNORECASE,
+)
+
+# How much of a dead worker's log to scan for auth signals. Startup/auth
+# failures are terminal: the error is printed right before the process exits,
+# so the tail of the log is where the signal lives. Bounding the read keeps
+# the reap path cheap even for long-lived workers with multi-MB logs.
+_AUTH_FAILURE_LOG_TAIL_BYTES = 64 * 1024
+
 # Within this window a completed run counts as "recent proof"; don't re-spawn.
 _RESPAWN_GUARD_SUCCESS_WINDOW = 3600  # 1 hour
 
@@ -7702,6 +7727,17 @@ class DispatchResult:
     (EX_TEMPFAIL sentinel exit) and were released back to ``ready`` WITHOUT
     counting a failure. These never trip the circuit breaker — a long quota
     window just makes the task bounce cheaply until the window clears."""
+    auth_blocked: list[str] = field(default_factory=list)
+    """Task ids auto-blocked by the dispatcher auth-failure fast-path.
+
+    A worker whose exit was NOT rate-limited (no EX_TEMPFAIL sentinel) but
+    whose log shows a provider auth-shaped signal (HTTP 401/403, token
+    expiry, invalid api key, dead session) is a credential wall, not a task
+    failure: retrying burns the whole failure budget and hides the real
+    cause. ``detect_crashed_workers`` BLOCKs these on the FIRST run with an
+    owner-packet naming the provider-profile owner, and does NOT count the
+    failure toward ``consecutive_failures`` (the circuit breaker never
+    trips on a credential wall)."""
     skipped_locked: bool = False
     """True when this tick was skipped because another process already held
     the board's dispatch lock (issue #35240). A losing dispatcher does no
@@ -8475,6 +8511,37 @@ def _protocol_violation_streak(conn: sqlite3.Connection, task_id: str) -> int:
     return streak
 
 
+def _detect_auth_failure(task_id: str, *, board: Optional[str] = None) -> Optional[str]:
+    """Inspect a dead worker's log for a provider auth-shaped failure signal.
+
+    Returns the matched auth signal text (truncated) when the worker's log
+    contains an auth-wall pattern (HTTP 401/403, token expiry/invalidity,
+    invalid api key, dead session, etc.), or ``None`` when no match is found
+    or the log is unreadable/missing.
+
+    The match is PURELY pattern-based on observable HTTP status / exit text —
+    no credential or secret is ever parsed, read, or mutated by this path.
+    This is the dispatcher's reap-time fast-path: it runs once, on the FIRST
+    run that produced an auth-shaped crash, and lets the reaper trip a BLOCK
+    immediately instead of burning the full ``failure_limit`` retry budget
+    on a credential wall that retrying can never clear.
+
+    ``board`` pins log resolution to the board the task lives on (the
+    dispatcher always passes the active board); when omitted the active
+    board is resolved.
+    """
+    log_text = read_worker_log(task_id, tail_bytes=_AUTH_FAILURE_LOG_TAIL_BYTES, board=board)
+    if not log_text:
+        return None
+    match = _AUTH_FAILURE_RE.search(log_text)
+    if match is None:
+        return None
+    signal = match.group(0)
+    # Truncate to keep the owner-packet / DB column bounded; the full log is
+    # still on disk for the profile owner to inspect via ``hermes kanban log``.
+    return signal[:80]
+
+
 def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     """Reclaim ``running`` tasks whose worker PID is no longer alive.
 
@@ -8505,14 +8572,14 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     """
     crashed: list[str] = []
     rate_limited: list[str] = []
-    # Per-crash details collected inside the main txn, used after it
-    # closes to run ``_record_task_failure`` (which needs its own
-    # write_txn so can't nest). ``protocol_violation`` flags the
-    # clean-exit-but-still-running case, which is accounted against its
-    # own bounded violation streak instead of the unified failure
-    # counter (see the post-txn loop below).
-    crash_details: list[tuple[str, int, str, bool, str]] = []
-    # (task_id, pid, claimer, protocol_violation, error_text)
+    auth_blocked: list[str] = []
+    crash_details: list[tuple[str, int, str, bool, str, Optional[str]]] = []
+    # (task_id, pid, claimer, protocol_violation, error_text, auth_signal)
+    # ``auth_signal`` is the auth-shaped text matched against the dead worker's
+    # log (None when no auth signal / log unreadable). When non-None the task
+    # is BLOCKed immediately on this first reap instead of being fed into the
+    # normal failure-budget retry path — a credential wall can never resolve by
+    # retry, so burning failure_limit runs just hides the real cause.
     with write_txn(conn):
         rows = conn.execute(
             "SELECT id, worker_pid, claim_lock, started_at FROM tasks "
@@ -8651,7 +8718,8 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     crashed.append(row["id"])
                     crash_details.append(
                         (row["id"], pid, row["claim_lock"],
-                         protocol_violation, error_text)
+                         protocol_violation, error_text,
+                         _detect_auth_failure(row["id"]))
                     )
     # Outside the main txn: account each crashed task and maybe trip the
     # breaker (the retried task transitions to blocked with a ``gave_up`` event
@@ -8673,10 +8741,32 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     if crash_details:
         # Fingerprint errors to detect systemic failures.
         _fp_counts: dict[str, int] = {}
-        for _, _, _, _, err_text in crash_details:
+        for _, _, _, _, err_text, _auth in crash_details:
             fp = _error_fingerprint(err_text)
             _fp_counts[fp] = _fp_counts.get(fp, 0) + 1
-        for tid, pid, claimer, protocol_violation, error_text in crash_details:
+        for tid, pid, claimer, protocol_violation, error_text, auth_signal in crash_details:
+            # AUTH-FAILURE FAST-PATH (t_e84d3817).
+            # A nonzero_exit whose worker log carries a provider auth-shaped
+            # signal (401/403, token expiry, invalid api key, dead session)
+            # is a credential wall that retrying can never clear. BLOCK it on
+            # the FIRST run — do NOT feed it through the normal
+            # ``_record_task_failure`` retry budget so the task doesn't burn
+            # failure_limit runs only to land as ``gave_up``/blocked with the
+            # real cause buried. ``consecutive_failures`` is left untouched
+            # (stays 0) so the breaker can never trip on a credential wall,
+            # matching the rate-limit path's "not a task failure" semantics.
+            # Only nonzero_exit/signaled/unknown shapes are auth candidates:
+            # a clean_exit protocol violation has no stderr to inspect and is
+            # handled by its own violation-streak path below.
+            if auth_signal is not None and not protocol_violation:
+                _block_auth_failure(
+                    conn, tid,
+                    error=error_text,
+                    auth_signal=auth_signal,
+                    owner=claimer.rsplit(":", 1)[-1] if claimer else None,
+                )
+                auth_blocked.append(tid)
+                continue
             if protocol_violation:
                 streak = _protocol_violation_streak(conn, tid)
                 trow = conn.execute(
@@ -8744,7 +8834,102 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # Same side-channel for rate-limited requeues — these did NOT count a
     # failure and are NOT crashes, so they stay out of the ``crashed`` return.
     detect_crashed_workers._last_rate_limited = rate_limited  # type: ignore[attr-defined]
+    # Side-channel for auth-fast-path BLOCKs: these are crashed (returned in
+    # the public list) AND auto-blocked; surfaced separately so telemetry can
+    # distinguish a credential wall (no failure budget consumed) from a
+    # circuit-breaker trip. ``dispatch_once`` copies this into
+    # ``DispatchResult.auth_blocked``.
+    detect_crashed_workers._last_auth_blocked = auth_blocked  # type: ignore[attr-defined]
     return crashed
+
+
+def _block_auth_failure(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    error: str,
+    auth_signal: str,
+    owner: Optional[str],
+) -> bool:
+    """Block a task on a provider auth-shaped failure, bypassing the retry budget.
+
+    A credential wall (HTTP 401/403, token expiry, invalid api key, dead
+    session) is a property of the provider-profile owner's account, not of the
+    task: retrying can never clear it, so the normal
+    ``_record_task_failure`` circuit breaker (which burns
+    ``failure_limit`` consecutive_failures) would just waste runs and bury
+    the real cause behind a generic ``gave_up``. This function trips the BLOCK
+    on the FIRST reap:
+
+    * sets ``status='blocked'`` + ``block_kind='needs_input'`` (the owner must
+      supply/renew the credential) so ``recompute_ready``'s auto-recover
+      path skips it (``_has_sticky_block`` keys off the ``blocked`` event);
+    * leaves ``consecutive_failures`` UNTOUCHED (stays 0) so the breaker can
+      never trip on a credential wall, mirroring the rate-limit path's
+      "not a task failure" semantics;
+    * stumps ``last_failure_error`` with an owner-packet naming the failed
+      provider/profile owner and the observable signal, so the profile owner
+      lands in the gateway notifier / kanban tail with an exact, actionable
+      handoff;
+    * emits a dedicated ``auth_blocked`` event (not ``gave_up``) so board
+      history reads as "credential wall" rather than "exhausted retries".
+
+    Returns True (always, for symmetry with the breaker trip path) so
+    callers can treat this like any other auto-block.
+
+    This is mechanism-only classification: NO credentials are parsed or
+    mutated, NO DB/data beyond the task's own row is touched, no provider
+    routing / deploy / restart / spend changes. Only the observable exit
+    shape + log pattern is inspected.
+    """
+    owner_packet = (
+        f"PROVIDER AUTH FAILURE — owner action required. "
+        f"provider_profile={owner or '<unknown-assignee>'} "
+        f"signal={auth_signal}. Worker log shows an auth/credential wall "
+        f"(HTTP 401/403, token expiry, invalid api key, or dead session): "
+        f"retrying cannot clear it. Inspect with `hermes kanban log "
+        f"{task_id}` and renew the profile credentials, then unblock "
+        f"with `hermes kanban unblock {task_id}`. "
+        f"underlying_crash={error[:300]}"
+    )
+    with write_txn(conn):
+        conn.execute(
+            "UPDATE tasks SET status = 'blocked', "
+            "block_kind = 'needs_input', "
+            "claim_lock = NULL, claim_expires = NULL, "
+            "worker_pid = NULL, "
+            "last_failure_error = ? WHERE id = ? AND status IN ('ready', 'crashed', 'running')",
+            (owner_packet[:500], task_id),
+        )
+        conn.execute(
+            "UPDATE task_runs SET outcome = 'auth_blocked', "
+            "status = 'auth_blocked' "
+            "WHERE task_id = ? AND ended_at IS NULL",
+            (task_id,),
+        )
+        _append_event(
+            conn, task_id, "auth_blocked",
+            {
+                "reason": owner_packet[:500],
+                "provider_profile_owner": owner,
+                "auth_signal": auth_signal,
+                "underlying_crash": error[:300],
+            },
+        )
+    _fire_kanban_lifecycle_hook(
+        "kanban_task_blocked",
+        task_id,
+        board=get_current_board(),
+        assignee=owner,
+        reason=owner_packet,
+        block_kind="needs_input",
+    )
+    _log.info(
+        "kanban auth-fast-path: blocked %s for provider-profile owner %s "
+        "(signal=%s); consecutive_failures left at 0 (no retry budget consumed)",
+        task_id, owner, auth_signal,
+    )
+    return True
 
 
 def _record_task_failure(
@@ -9363,6 +9548,15 @@ def _dispatch_once_locked(
     )
     if _crash_rate_limited:
         result.rate_limited.extend(_crash_rate_limited)
+    # Auth-failure fast-path BLOCKs (t_e84d3817): credential walls blocked on
+    # the first reap without consuming retry budget. Surfaced alongside
+    # auto_blocked for telemetry/tests; distinct so a credential wall is
+    # never confused with a circuit-breaker trip.
+    _crash_auth_blocked = getattr(
+        detect_crashed_workers, "_last_auth_blocked", []
+    )
+    if _crash_auth_blocked:
+        result.auth_blocked.extend(_crash_auth_blocked)
     result.timed_out = enforce_max_runtime(conn)
     result.promoted = recompute_ready(conn, failure_limit=failure_limit)
 

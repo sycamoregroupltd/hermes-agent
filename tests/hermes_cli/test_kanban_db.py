@@ -1658,3 +1658,309 @@ def test_spawn_failure_trip_stamps_transient_block_kind(kanban_home):
         task = kb.get_task(conn, tid)
         assert task.status == "blocked"
         assert task.block_kind == "transient"
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher auth-failure fast-path (t_e84d3817): a worker that exits
+# non-zero with a provider auth-shaped signal in its log (HTTP 401/403, token
+# expiry, invalid api key, dead session) is a credential wall that retrying
+# can never clear. The reaper must BLOCK on the FIRST run without consuming
+# the failure_limit retry budget, surfacing an owner-packet naming the
+# provider-profile owner.
+# ---------------------------------------------------------------------------
+
+
+def _seed_auth_blocked_log(kanban_home, task_id, log_text):
+    """Write auth-log content to the per-task worker log path the dispatcher
+    reads via ``read_worker_log`` (which resolves through ``worker_logs_dir``).
+
+    Returns the board for the task (used by ``_detect_auth_failure``)."""
+    import hermes_cli.kanban_db as _kb
+
+    board = _kb.get_current_board()
+    log_dir = _kb.worker_logs_dir(board=board)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = _kb.worker_log_path(task_id, board=board)
+    log_path.write_text(log_text, encoding="utf-8")
+    return board
+
+
+def test_auth_failure_fastpath_blocks_on_first_crash_without_budget(
+    kanban_home, monkeypatch,
+):
+    """Acceptance criterion A.
+
+    An auth-shaped worker crash (rc=1, auth-pattern error text in stderr/log)
+    results in an immediate BLOCK + owner-packet, and ``consecutive_failures``
+    stays 0 (NOT bumped toward failure_limit)."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    monkeypatch.setenv("HERMES_KANBAN_CRASH_GRACE_SECONDS", "0")
+
+    board = _kb.get_current_board()
+    with kb.connect(board=board) as conn:
+        host = _kb._claimer_id().split(":", 1)[0]
+        tid = kb.create_task(conn, title="auth-walled", assignee="a")
+        pid = 800001
+
+        # Claim -> open a real run, point claim at this host + dead pid.
+        kb.claim_task(conn, tid, claimer=f"{host}:auth-worker")
+        conn.execute(
+            "UPDATE tasks SET worker_pid=?, consecutive_failures=0 WHERE id=?",
+            (pid, tid),
+        )
+        conn.commit()
+        _kb._record_worker_exit(pid, _exited_status(1))
+
+        auth_log = (
+            "Some startup preamble\n"
+            "Provider API request failed: 401 Unauthorized\n"
+            "token expired\n"
+        )
+        _seed_auth_blocked_log(kanban_home, tid, auth_log)
+
+        crashed = _kb.detect_crashed_workers(conn)
+        # Auth-blocked tasks ARE reclaimed as crashed (PID gone), then re-blocked.
+        assert tid in crashed
+
+        auth_blocked = getattr(_kb.detect_crashed_workers, "_last_auth_blocked", [])
+        assert tid in auth_blocked
+
+        task = _kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.block_kind == "needs_input", (
+            f"auth fast-path must stamp block_kind='needs_input' so the owner "
+            f"intervenes; got {task.block_kind!r}"
+        )
+        assert task.consecutive_failures == 0, (
+            "auth fast-path must NOT consume retry budget; "
+            f"got consecutive_failures={task.consecutive_failures}"
+        )
+        assert task.last_failure_error is not None
+        assert "PROVIDER AUTH FAILURE" in task.last_failure_error
+        assert "signal=" in task.last_failure_error
+        assert "provider_profile=" in task.last_failure_error
+        # The owner-packet names the failed profile owner (assignee).
+        assert "a" in task.last_failure_error
+
+        # A dedicated auth_blocked event exists (not a generic gave_up).
+        events = [
+            r["kind"]
+            for r in conn.execute(
+                "SELECT kind FROM task_events WHERE task_id=?", (tid,)
+            ).fetchall()
+        ]
+        assert "auth_blocked" in events
+        assert "gave_up" not in events, (
+            "auth fast-path must not trip the circuit breaker (no gave_up)"
+        )
+
+        # The run that closed records the crash outcome (the worker DID crash);
+        # the auth_blocked BLOCK is a task-level classification layered on top,
+        # surfaced via the dedicated auth_blocked event (asserted above) and the
+        # owner-packet in last_failure_error — not a re-write of the run outcome.
+        run_outcome = conn.execute(
+            "SELECT outcome FROM task_runs WHERE task_id=?", (tid,)
+        ).fetchone()
+        assert run_outcome is not None
+        assert run_outcome["outcome"] == "crashed"
+        assert task.last_failure_error is not None
+        assert task.last_failure_error[:60].startswith("PROVIDER AUTH FAILURE")
+
+
+def test_rate_limit_exit_unchanged_by_auth_fastpath(
+    kanban_home, monkeypatch,
+):
+    """Acceptance criterion B.
+
+    A rate-limited (rc=75) run is UNCHANGED — still ``rate_limited`` outcome,
+    no failure counted, no fast-path BLOCK."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    monkeypatch.setenv("HERMES_KANBAN_CRASH_GRACE_SECONDS", "0")
+
+    board = _kb.get_current_board()
+    with kb.connect(board=board) as conn:
+        host = _kb._claimer_id().split(":", 1)[0]
+        tid = kb.create_task(conn, title="quota-walled", assignee="a")
+        for i in range(6):
+            pid = 810000 + i
+            kb.claim_task(conn, tid, claimer=f"{host}:rl{i}")
+            conn.execute(
+                "UPDATE tasks SET worker_pid=?, consecutive_failures=0 WHERE id=?",
+                (pid, tid),
+            )
+            conn.commit()
+            # Auth-pattern text MUST NOT trigger the fast-path on a 75 exit:
+            # rate-limited exits go through the rate_limited branch, not the
+            # nonzero_exit branch where the auth log scan runs.
+            _seed_auth_blocked_log(
+                kanban_home, tid,
+                "401 Unauthorized token expired\n",
+            )
+            _kb._record_worker_exit(
+                pid, _exited_status(_kb.KANBAN_RATE_LIMIT_EXIT_CODE)
+            )
+            crashed = _kb.detect_crashed_workers(conn)
+            assert tid not in crashed
+            rl = getattr(_kb.detect_crashed_workers, "_last_rate_limited", [])
+            assert tid in rl
+
+        auth_blocked = getattr(_kb.detect_crashed_workers, "_last_auth_blocked", [])
+        assert tid not in auth_blocked, (
+            "rate-limited runs must never hit the auth fast-path"
+        )
+
+        task = _kb.get_task(conn, tid)
+        assert task.status == "ready"
+        assert task.consecutive_failures == 0
+
+        # Outcome recorded as rate_limited, no auth_blocked / gave_up.
+        rows = conn.execute(
+            "SELECT kind FROM task_events WHERE task_id=?", (tid,)
+        ).fetchall()
+        event_kinds = [r["kind"] for r in rows]
+        assert "auth_blocked" not in event_kinds
+        assert "gave_up" not in event_kinds
+
+        outcomes = [
+            r["outcome"] for r in conn.execute(
+                "SELECT outcome FROM task_runs WHERE task_id=?", (tid,)
+            ).fetchall()
+        ]
+        assert outcomes.count("rate_limited") == 6
+        assert "auth_blocked" not in outcomes
+
+
+def test_generic_nonzero_exit_still_burns_retry_budget(
+    kanban_home, monkeypatch,
+):
+    """Acceptance criterion C.
+
+    A generic ``nonzero_exit`` unrelated to auth still burns the retry
+    budget as before — no regression for real crashes. With
+    ``failure_limit=1`` a single generic crash trips the breaker to
+    ``gave_up``/``blocked`` (NOT via the auth fast-path)."""
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    monkeypatch.setenv("HERMES_KANBAN_CRASH_GRACE_SECONDS", "0")
+
+    board = _kb.get_current_board()
+    with kb.connect(board=board) as conn:
+        host = _kb._claimer_id().split(":", 1)[0]
+        tid = kb.create_task(conn, title="generic-crash", assignee="a")
+        pid = 820001
+
+        kb.claim_task(conn, tid, claimer=f"{host}:gwx")
+        conn.execute(
+            "UPDATE tasks SET worker_pid=?, consecutive_failures=0 WHERE id=?",
+            (pid, tid),
+        )
+        conn.commit()
+        _kb._record_worker_exit(pid, _exited_status(1))
+
+        # Log has NO auth signal — just a generic OOM traceback.
+        _seed_auth_blocked_log(
+            kanban_home, tid,
+            "Traceback (most recent call last):\n"
+            "  File \"x.py\", line 1, in <module>\n"
+            "MemoryError: out of memory\n",
+        )
+
+        crashed = _kb.detect_crashed_workers(conn)
+        assert tid in crashed
+
+        auth_blocked = getattr(_kb.detect_crashed_workers, "_last_auth_blocked", [])
+        assert tid not in auth_blocked
+
+        # Burn the budget with failure_limit=1 (single generic crash trips).
+        tripped = _kb._record_task_failure(
+            conn, tid,
+            error="pid 820001 exited with code 1",
+            outcome="crashed",
+            failure_limit=1,
+            force_trip=True,
+            release_claim=False,
+            end_run=False,
+        )
+        assert tripped is True
+        conn.commit()
+
+        task = _kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.block_kind == "transient"  # circuit-breaker trip, not needs_input
+
+        out = [
+            r["outcome"]
+            for r in conn.execute(
+                "SELECT outcome FROM task_runs WHERE task_id=?", (tid,)
+            ).fetchall()
+        ]
+        assert "auth_blocked" not in out
+
+
+def test_auth_fastpath_blocks_on_first_run_without_four_retries(
+    kanban_home, monkeypatch,
+):
+    """Acceptance criterion D.
+
+    Deterministically simulate the t_4ca5a0a6/t_3df20927 auth-blackhole shape
+    (worker exits rc=1 with auth pattern in stderr) and assert it BLOCKs on
+    the FIRST run with the exact owner-packet, WITHOUT 4 retry runs.
+
+    The auth-blackhole shape (per os-reviewer's APPROVED review metadata) is
+    an auth failure that surfaces ONLY as a plain nonzero_exit whose
+    ``last_failure_error`` ("pid N exited with code 1") does NOT match
+    ``_RESPAWN_BLOCKER_RE`` — so without the fast-path it burns the full
+    failure_limit=4 budget before tripping the breaker. The fast-path must
+    intercept it on run #1.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    monkeypatch.setenv("HERMES_KANBAN_CRASH_GRACE_SECONDS", "0")
+
+    board = _kb.get_current_board()
+    with kb.connect(board=board) as conn:
+        host = _kb._claimer_id().split(":", 1)[0]
+        tid = kb.create_task(conn, title="auth-blackhole", assignee="a")
+        pid = 830001
+
+        kb.claim_task(conn, tid, claimer=f"{host}:blackhole")
+        conn.execute(
+            "UPDATE tasks SET worker_pid=?, consecutive_failures=0 WHERE id=?",
+            (pid, tid),
+        )
+        conn.commit()
+        _kb._record_worker_exit(pid, _exited_status(1))
+
+        _seed_auth_blocked_log(
+            kanban_home, tid,
+            "Nous Portal auth failed — 401 Unauthorized\n"
+            "No access token found for Nous Portal login\n"
+            "token expired\n",
+        )
+
+        # Run #1 only: a single detect_crashed_workers pass.
+        crashed = _kb.detect_crashed_workers(conn)
+        assert tid in crashed
+
+        auth_blocked = getattr(_kb.detect_crashed_workers, "_last_auth_blocked", [])
+        assert tid in auth_blocked
+
+        task = _kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.block_kind == "needs_input"
+        assert task.consecutive_failures == 0
+
+        # Only ONE run exists — the auth-blocked run. No 4-run crash loop.
+        run_count = conn.execute(
+            "SELECT COUNT(*) FROM task_runs WHERE task_id=?", (tid,)
+        ).fetchone()[0]
+        assert run_count == 1, (
+            f"auth fast-path must block on the FIRST run, not burn retry budget; "
+            f"got {run_count} runs"
+        )
