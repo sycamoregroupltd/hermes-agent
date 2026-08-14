@@ -133,6 +133,7 @@ export const ja = defineLocale({
     errors: {
       elevenLabsNeedsKey: 'ElevenLabs STT には ELEVENLABS_API_KEY が必要です。',
       elevenLabsRejectedKey: 'ElevenLabs が API キーを拒否しました (401)。',
+      diskFull: 'ディスク容量不足です — 空きを作ってからもう一度お試しください。',
       gatewayAuthFailed: 'ゲートウェイ認証に失敗しました — API_SERVER_KEY を確認してください。',
       methodNotAllowed:
         'デスクトップバックエンドがそのリクエストを拒否しました (405 Method Not Allowed)。Hermes Desktop を再起動してください。',
@@ -155,6 +156,7 @@ export const ja = defineLocale({
       noSpeechDetected: '音声が検出されませんでした',
       playbackFailed: '音声再生に失敗しました',
       recordingFailed: '音声録音に失敗しました',
+      sayStopToEnd: phrase => `「${phrase}」と言うと音声チャットを終了できます。`,
       transcriptionFailed: '音声文字起こしに失敗しました',
       transcriptionUnavailable: '音声文字起こしはまだ利用できません。',
       tryRecordingAgain: 'もう一度録音してください。',
@@ -267,6 +269,10 @@ export const ja = defineLocale({
         credits: {
           label: 'クレジット通知',
           description: 'クレジットの利用が停止または復旧しました。'
+        },
+        plugin: {
+          label: 'プラグイン通知',
+          description: 'Hermes がバックグラウンドの間に、デスクトッププラグインが通知を送信しました。'
         }
       },
       test: 'テスト通知を送信',
@@ -313,10 +319,19 @@ export const ja = defineLocale({
       uiScaleTitle: 'UI スケール',
       uiScaleDesc: (percent: number) =>
         `アプリ全体の文字と UI を拡大縮小します。Cmd/Ctrl と +、-、0 でも変更できます。現在: ${percent}%`,
+      terminalFontTitle: 'ターミナルフォント',
+      terminalFontDesc:
+        'Desktop のターミナルで使用するインストール済みフォントを選びます。Nerd Font は Powerlevel10k とシェルアイコンを表示できます。空欄では内蔵の JetBrains Mono を使用します。',
+      terminalFontPlaceholder: 'MesloLGS NF または CSS フォントスタック',
+      terminalFontPreview: 'グリフのプレビュー',
+      terminalFontReset: '既定値を使用',
       translucencyTitle: 'ウィンドウの透過',
       translucencyDesc: 'ウィンドウ全体を透過させてデスクトップを表示します。macOS と Windows のみ。',
       backdropTitle: 'チャット背景',
       backdropDesc: '会話の背後に表示される淡い彫像の画像。',
+      reactionsTitle: 'メッセージリアクション',
+      reactionsDesc:
+        'iMessage風の絵文字タップバック — メッセージにリアクションでき、Hermesもあなたのメッセージにリアクションします。',
       embedsTitle: 'インライン埋め込み',
       embedsDesc:
         'リッチプレビューは第三者サイト（YouTube、X など）から読み込まれます。確認は許可するまでプレースホルダーを表示し、常には自動で読み込み、オフはリンクのままにします。',
@@ -731,6 +746,13 @@ export const ja = defineLocale({
       existingToken: value => `既存のトークン ${value}`,
       savedToken: '保存済み',
       pasteSessionToken: 'セッショントークンを貼り付け',
+      plainTextConfirmTitle: 'ゲートウェイトークンを平文で保存しますか？',
+      plainTextConfirmDesc:
+        'このマシンで OS のキーリングサービスが見つからなかったため、トークンはアプリの接続設定ファイルに暗号化されずに保存され、このユーザーとして実行される任意のプロセスから読み取れる状態になります。暗号化して保存するには、GNOME Keyring または KWallet をインストールまたは有効化してください。',
+      plainTextConfirmAction: '平文で保存',
+      plainTextStoredTitle: 'トークンは平文で保存されています',
+      plainTextStoredDesc:
+        'セキュアストレージが利用できないため、保存済みのトークンはこのマシンのアプリの接続設定ファイルに暗号化されずに保存されています。暗号化するには GNOME Keyring または KWallet をインストールまたは有効化してください。',
       testRemote: 'リモートをテスト',
       saveForRestart: '次回起動時のために保存',
       saveAndReconnect: '保存して再接続',
@@ -777,6 +799,8 @@ export const ja = defineLocale({
       sshHermesPathTitle: 'Hermes パス（任意）',
       sshHermesPathDesc: 'リモートの hermes バイナリへのフルパス。空欄 = 自動検出。',
       sshHermesPathPlaceholder: '自動検出',
+      sshRemoteProfileTitle: 'リモートプロファイル（任意）',
+      sshRemoteProfileDesc: 'リモートホスト上のプロファイル名。空欄 = Desktop のプロファイル名を使用。',
       sshTestConnection: 'SSH をテスト',
       sshConnect: '接続',
       sshButtonsHint: '「保存」は次回起動時に適用され、「接続」は今すぐ再接続します。',
@@ -947,6 +971,9 @@ export const ja = defineLocale({
       ready: '準備完了',
       needsSignIn: 'サインインが必要',
       needsSetup: 'セットアップが必要',
+      activeBackend: '使用中',
+      activeBackendHint: 'これが現在アクティブなバックエンドです',
+      useBackend: 'このバックエンドを使う',
       nousIncluded: 'Nous サブスクリプションに含まれています。有効にするには Nous Portal にサインインしてください。',
       nousAuthNeededTitle: 'Nous Portal にサインイン',
       nousAuthNeededMessage: provider =>
@@ -1017,7 +1044,7 @@ export const ja = defineLocale({
     visionModelLink: '設定 → モデル でビジョンモデルを選択',
     toolsetsEnabled: (enabled, total) => `${enabled}/${total} ツールセットが有効`,
     configureToolset: label => `${label} を設定`,
-    toggleToolset: label => `${label} ツールセットを切り替え`,
+    toggleToolset: (label, enabled) => `${label} ツールセットを${enabled ? 'オン' : 'オフ'}にする`,
     skillsLoadFailed: 'スキルの読み込みに失敗しました',
     toolsetsRefreshFailed: 'ツールセットの更新に失敗しました',
     skillEnabled: 'スキルを有効にしました',
@@ -1124,7 +1151,7 @@ export const ja = defineLocale({
       installed: 'インストール済み',
       generatedTag: '生成',
       adoptFailed: 'ペットを採用できませんでした。',
-      toggleFailed: 'ペットを切り替えできませんでした。',
+      toggleFailed: enabled => `ペットを${enabled ? 'オン' : 'オフ'}にできませんでした。`,
       noneAvailable: '利用可能なペットがありません。'
     },
     generatePet: {
@@ -1380,6 +1407,12 @@ export const ja = defineLocale({
     search: 'プロファイルを検索...',
     loading: 'プロファイルを読み込み中...',
     newProfile: '新しいプロファイル',
+    importProfile: 'プロファイルをインポート…',
+    exportProfile: 'プロファイルをエクスポート…',
+    imported: 'プロファイルをインポートしました',
+    exported: 'プロファイルをエクスポートしました',
+    failedImport: 'プロファイルのインポートに失敗しました',
+    failedExport: 'プロファイルのエクスポートに失敗しました',
     allProfiles: 'すべてのプロファイル',
     showAllProfiles: 'すべてのプロファイルを表示',
     switchToProfile: name => `${name} に切り替え`,
@@ -1456,6 +1489,13 @@ export const ja = defineLocale({
     close: 'Cron を閉じる',
     title: 'スケジュール済みジョブ',
     count: count => `${count} 件のジョブ`,
+    modelImpact: {
+      title: 'スケジュール済みジョブの確認が必要です',
+      message: count => `モデル設定を確認するまで、${count} 件のスケジュール済みジョブがスキップされます。`,
+      detailMore: (names, remaining) => `${names}、ほか ${remaining} 件`,
+      review: 'スケジュール済みジョブを確認',
+      saveFailed: 'Hermes はモデルの変更を保存しませんでした。'
+    },
     search: 'Cron ジョブを検索...',
     loading: 'Cron ジョブを読み込み中...',
     states: {
@@ -1649,7 +1689,8 @@ export const ja = defineLocale({
       'new-session': '新しいセッション',
       skills: 'スキルとツール',
       messaging: 'メッセージング',
-      artifacts: 'アーティファクト'
+      artifacts: 'アーティファクト',
+      cron: 'スケジュール済みジョブ'
     },
     searchAria: 'セッションを検索',
     searchPlaceholder: 'セッションを検索…',
@@ -1670,6 +1711,7 @@ export const ja = defineLocale({
     noWorkspace: 'ワークスペースなし',
     projectEmpty: 'セッションはまだありません',
     noSessions: 'セッションはまだありません',
+    noFilterMatches: 'このフィルターに一致するセッションはありません',
     projects: {
       sectionLabel: 'プロジェクト',
       home: 'ホーム',
@@ -1713,6 +1755,9 @@ export const ja = defineLocale({
       baseBranchPlaceholder: 'ブランチを検索…',
       baseBranchNone: 'ブランチが見つかりません',
       startWorkFailed: 'ワークツリーを作成できませんでした',
+      worktreeProjectLabel: 'プロジェクト',
+      worktreeProjectPlaceholder: 'プロジェクトを検索…',
+      worktreeProjectNone: 'フォルダのあるプロジェクトがありません',
       convertBranch: 'ブランチを変換…',
       convertBranchTitle: 'ブランチを変換',
       convertBranchDesc: 'チェックアウト済みのブランチを開くか、空いているブランチのワークツリーを作成します。',
@@ -1721,6 +1766,7 @@ export const ja = defineLocale({
       branchOpenExisting: '開く',
       branchSwitchHome: 'ホームを切替',
       branchCreateWorktree: '新しいワークツリー',
+      branchTrackRemote: 'リモートを追跡',
       branchesLoading: 'ブランチを読み込み中…',
       noBranches: 'ブランチが見つかりません',
       removeWorktree: 'ワークツリーを削除',
@@ -1754,6 +1800,7 @@ export const ja = defineLocale({
       waitingForAnswer: '回答を待っています',
       finishedUnread: '完了 — 未読',
       backgroundRunning: 'バックグラウンドタスク実行中',
+      draftSession: '下書き — 未送信',
       handoffOrigin: platform => `${platform} から引き継ぎ`,
       ownedByProfile: profile => `プロファイル: ${profile}`,
       renamed: '名前を変更しました',
@@ -1773,6 +1820,10 @@ export const ja = defineLocale({
       thisWeek: '今週',
       lastWeek: '先週',
       thisMonth: '今月'
+    },
+    statusDivider: {
+      working: '実行中',
+      done: '完了'
     }
   },
 
@@ -1801,6 +1852,7 @@ export const ja = defineLocale({
       '調整または続行'
     ],
     startVoice: '音声会話を開始',
+    openDirective: '開く',
     queueMessage: 'メッセージをキューに入れる',
     stop: '停止',
     send: '送信',
@@ -1820,6 +1872,9 @@ export const ja = defineLocale({
     voiceDictation: '音声口述',
     speakReplies: '返信を読み上げる',
     stopSpeakingReplies: '返信の読み上げを停止',
+    wakeWordListening: phrase => `ウェイクワード:「${phrase}」— 待機中`,
+    wakeWordOff: phrase => `ウェイクワード:「${phrase}」— オフ`,
+    wakeWordPausedVoice: phrase => `ウェイクワード:「${phrase}」— 音声チャット中は一時停止`,
     lookupLoading: '検索中…',
     lookupNoMatches: '一致なし。',
     lookupTry: '試す',
@@ -1859,6 +1914,7 @@ export const ja = defineLocale({
     editingQueuedInComposer: 'コンポーザーでキュー済みターンを編集中',
     queueEdit: '編集',
     queueSendNext: '次に送信',
+    queueSteer: 'ステア — 現在のターンを今すぐ修正',
     queueSend: '送信',
     queueDelete: '削除',
     queueResume: '再開',
@@ -2371,10 +2427,6 @@ export const ja = defineLocale({
 
   preview: {
     tab: 'プレビュー',
-    closeTab: label => `${label} を閉じる`,
-    closeOthers: '他を閉じる',
-    closeToRight: '右側を閉じる',
-    closeAll: 'すべて閉じる',
     closePane: 'プレビューペインを閉じる',
     loading: 'プレビューを読み込み中',
     unavailable: 'プレビューは利用できません',
@@ -2469,21 +2521,16 @@ export const ja = defineLocale({
     hideHeader: 'ヘッダーを隠す',
     minimize: '最小化',
     restore: '復元',
+    reload: '再読み込み',
     closeOthers: '他を閉じる',
     closeToRight: '右側を閉じる',
     closeAll: 'すべて閉じる',
     newSessionTab: '新しいセッションタブ',
-    split: dir => `${dir}に分割`,
-    move: dir => `${dir}へ移動`,
-    dirUp: '上',
-    dirDown: '下',
-    dirLeft: '左',
-    dirRight: '右',
     pluginDisabled: pluginId => `プラグイン「${pluginId}」を無効化しました`,
     pluginDisabledBody: '設定 → プラグイン で再有効化するとペインが戻ります。',
     missingPane: paneId => `ペインが見つかりません: ${paneId}`,
     editTitle: 'レイアウト',
-    editHint: 'レイアウトを選ぶか、ペインをゾーン間へドラッグ。ゾーンを右クリックで分割。',
+    editHint: 'レイアウトを選ぶか、ペインをゾーン間へドラッグ。',
     reset: 'リセット',
     templates: 'テンプレート',
     custom: 'カスタム',
@@ -2504,7 +2551,8 @@ export const ja = defineLocale({
     layoutNamePlaceholder: fallback => `レイアウト名（${fallback}）`,
     saveApply: '保存して適用',
     notExpressible: 'この配置は互いに噛み合っています（風車型）— 入れ子の分割では表現できません',
-    zoneCount: count => `${count} ゾーン`
+    zoneCount: count => `${count} ゾーン`,
+    tabCount: count => `${count} 個のタブ`
   },
 
   assistant: {
@@ -2526,7 +2574,10 @@ export const ja = defineLocale({
       refresh: '更新',
       moreActions: 'その他のアクション',
       branchNewChat: '新しいチャットでブランチ',
+      react: 'リアクション',
       dismissError: 'エラーを閉じる',
+      filesChanged: count => `${count} 件のファイルを変更`,
+      reviewChanges: 'レビュー',
       readAloudFailed: '読み上げに失敗しました',
       preparingAudio: '音声を準備中...',
       stopReading: '読み上げを停止',
@@ -2595,6 +2646,7 @@ export const ja = defineLocale({
       statusError: 'エラー',
       statusRecovered: '回復しました',
       statusDone: '完了',
+      memoryWriteNoted: 'メモリへの書き込みを記録',
       actions: {
         read: '読み取り完了',
         reading: '読み取り中',
@@ -2788,7 +2840,7 @@ export const ja = defineLocale({
     sidebar: {
       title: 'サイドバー',
       description: 'モバイルサイドバーを表示します。',
-      toggle: 'サイドバーを切り替え'
+      toggle: open => `サイドバーを${open ? '表示' : '非表示'}`
     }
   }
 })

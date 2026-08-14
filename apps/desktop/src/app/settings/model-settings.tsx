@@ -27,6 +27,7 @@ import { useI18n } from '@/i18n'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
 import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@/lib/reasoning-effort'
 import { cn } from '@/lib/utils'
+import { setMainModelAssignment } from '@/store/cron-model-impact'
 import { notifyError } from '@/store/notifications'
 import { startManualLocalEndpoint, startManualOnboarding, startManualProviderOAuth } from '@/store/onboarding'
 
@@ -619,10 +620,9 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
     setError('')
 
     try {
-      const result = await setModelAssignment({
+      const result = await setMainModelAssignment({
         model: selectedModel,
         provider: selectedProvider,
-        scope: 'main',
         ...(selectedProviderRow?.api_url ? { base_url: selectedProviderRow.api_url } : {})
       })
 
@@ -643,6 +643,20 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
     }
   }, [onMainModelChanged, refresh, selectedModel, selectedProvider, selectedProviderRow])
 
+  // Sibling of the applyMainModel endpoint passthrough (#65254): auxiliary
+  // assignments targeting a user-defined provider must carry that provider's
+  // endpoint too, or the backend pins the slot without a base_url and the
+  // aux resolver falls back to the (possibly different, possibly cleared)
+  // main endpoint.
+  const endpointForProvider = useCallback(
+    (provider: string) => {
+      const row = providers.find(entry => entry.slug === provider)
+
+      return row?.api_url ? { base_url: row.api_url } : {}
+    },
+    [providers]
+  )
+
   const setAuxiliaryToMain = useCallback(
     async (task: string) => {
       if (!mainModel) {
@@ -653,7 +667,13 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       setError('')
 
       try {
-        await setModelAssignment({ model: mainModel.model, provider: mainModel.provider, scope: 'auxiliary', task })
+        await setModelAssignment({
+          model: mainModel.model,
+          provider: mainModel.provider,
+          scope: 'auxiliary',
+          task,
+          ...endpointForProvider(mainModel.provider)
+        })
         await refresh()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -661,7 +681,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
         setApplying(false)
       }
     },
-    [mainModel, refresh]
+    [endpointForProvider, mainModel, refresh]
   )
 
   const applyAuxiliaryDraft = useCallback(
@@ -674,7 +694,13 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       setError('')
 
       try {
-        await setModelAssignment({ model: auxDraft.model, provider: auxDraft.provider, scope: 'auxiliary', task })
+        await setModelAssignment({
+          model: auxDraft.model,
+          provider: auxDraft.provider,
+          scope: 'auxiliary',
+          task,
+          ...endpointForProvider(auxDraft.provider)
+        })
         setEditingAuxTask(null)
         await refresh()
       } catch (err) {
@@ -683,7 +709,7 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
         setApplying(false)
       }
     },
-    [auxDraft, refresh]
+    [auxDraft, endpointForProvider, refresh]
   )
 
   const beginAuxiliaryEdit = useCallback(

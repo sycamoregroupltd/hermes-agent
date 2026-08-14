@@ -172,44 +172,12 @@
 }
 .hermes-kanban-dot-triage   { background: #b47dd6; }  /* lilac — fresh/unspecified */
 .hermes-kanban-dot-todo     { background: var(--color-muted-foreground); }
-.hermes-kanban-dot-scheduled { background: #8a8f98; }  /* grey — waiting for time */
 .hermes-kanban-dot-ready    { background: #d4b348; }  /* amber */
 .hermes-kanban-dot-running  { background: #3fb97d; }  /* green */
 .hermes-kanban-dot-blocked  { background: var(--color-destructive, #d14a4a); }
-.hermes-kanban-dot-completed-pending-review { background: #e0953a; }  /* orange — review required */
-.hermes-kanban-dot-review   { background: #8f7dd6; }  /* purple */
+.hermes-kanban-dot-review   { background: #48b0c4; }  /* cyan — awaiting review */
 .hermes-kanban-dot-done     { background: #4a8cd1; }  /* blue */
 .hermes-kanban-dot-archived { background: var(--color-border); }
-
-/* ---- Board stats / reliability strip -------------------------------- */
-
-.hermes-kanban-stats-strip {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  align-self: flex-start;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 0.25rem 0.6rem;
-  background: color-mix(in srgb, var(--color-card) 92%, transparent);
-  color: var(--color-muted-foreground);
-  font-size: 0.75rem;
-}
-.hermes-kanban-stats-strip--warning {
-  border-color: color-mix(in srgb, #e0953a 55%, var(--color-border));
-  background: color-mix(in srgb, #e0953a 10%, var(--color-card));
-  color: var(--color-foreground);
-}
-.hermes-kanban-stats-label {
-  font-weight: 600;
-}
-.hermes-kanban-stats-value {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-weight: 700;
-}
-.hermes-kanban-stats-detail {
-  color: var(--color-muted-foreground);
-}
 
 /* ---- Progress pill (N/M child tasks done) --------------------------- */
 

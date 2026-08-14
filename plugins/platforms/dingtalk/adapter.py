@@ -95,13 +95,37 @@ except Exception:
     tea_util_models = None
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.helpers import MessageDeduplicator
+from gateway.platforms.helpers import MessageDeduplicator, compile_mention_patterns
 from gateway.platforms.base import (
     BasePlatformAdapter,
     MessageEvent,
     MessageType,
     SendResult,
 )
+
+from agent.secret_scope import UnscopedSecretError as _UnscopedSecretError
+from agent.secret_scope import get_secret as _scoped_get_secret
+
+
+def _get_scoped_secret(name, default=None):
+    """Scope-aware credential read with the default-profile startup fallback.
+
+    Secondary profiles construct their adapters under a profile secret
+    scope -- the scope is authoritative and a scoped miss returns ``default``
+    (no cross-profile borrow from ``os.environ``, which may hold another
+    profile's value). The DEFAULT profile's adapter constructs and sends
+    *unscoped* under multiplexing, where a bare ``get_secret`` would raise
+    ``UnscopedSecretError`` and crash this path; there ``os.environ`` is that
+    profile's own value, so fall back to it. Same pattern as the Slack
+    ``SLACK_APP_TOKEN`` read (#59739) and
+    ``gateway/platforms/whatsapp_common.py::_get_wsecret``.
+    """
+    try:
+        val = _scoped_get_secret(name, default)
+    except _UnscopedSecretError:
+        val = os.getenv(name)
+    return val if val is not None else default
+
 
 logger = logging.getLogger(__name__)
 
@@ -138,35 +162,67 @@ EXT_MAP = {
 }
 
 
-def check_dingtalk_requirements() -> bool:
-    """Check if DingTalk dependencies are available and configured.
+def dingtalk_deps_present() -> bool:
+    """PASSIVE probe: are dingtalk-stream/httpx importable right now?
 
-    Lazy-installs dingtalk-stream via ``tools.lazy_deps.ensure("platform.dingtalk")``
-    on first call if not present.
+    Registry ``check_fn`` — called from status displays and config loading,
+    so it must never install anything.  The ACTIVE lazy-installer
+    (``check_dingtalk_requirements``) is registered as ``ensure_deps_fn``
+    and runs from ``create_adapter()`` when this returns False (#79812).
+    Credentials are gated separately via ``is_connected``/``validate_config``.
+    """
+    return DINGTALK_STREAM_AVAILABLE and HTTPX_AVAILABLE
+
+
+def ensure_dingtalk_deps() -> bool:
+    """ACTIVE deps-only installer (registry ``ensure_deps_fn``).
+
+    Lazy-installs dingtalk-stream/httpx and rebinds module globals.
+    Deliberately does NOT check credentials — ``ensure_deps_fn``'s contract
+    is deps-only ("Returns True once deps are importable"); credentials are
+    gated by ``is_connected``/``validate_config``.  Otherwise a platform
+    configured via ``PlatformConfig.extra`` (which ``_is_connected``
+    accepts) would pass enablement, reach ``create_adapter()``, and have
+    the installer veto on env-var grounds before ever installing —
+    re-creating the #79812 deadlock for extra-configured setups.
     """
     global DINGTALK_STREAM_AVAILABLE, dingtalk_stream, ChatbotMessage, CallbackMessage, AckMessage
     global HTTPX_AVAILABLE, httpx
-    if not DINGTALK_STREAM_AVAILABLE or not HTTPX_AVAILABLE:
-        try:
-            from tools.lazy_deps import ensure as _lazy_ensure
-            _lazy_ensure("platform.dingtalk", prompt=False)
-        except Exception:
-            return False
-        try:
-            import dingtalk_stream as _ds
-            from dingtalk_stream import ChatbotMessage as _CM
-            from dingtalk_stream.frames import CallbackMessage as _CBM, AckMessage as _AM
-            import httpx as _httpx
-        except Exception:
-            return False
-        dingtalk_stream = _ds
-        ChatbotMessage = _CM
-        CallbackMessage = _CBM
-        AckMessage = _AM
-        httpx = _httpx
-        DINGTALK_STREAM_AVAILABLE = True
-        HTTPX_AVAILABLE = True
-    if not os.getenv("DINGTALK_CLIENT_ID") or not os.getenv("DINGTALK_CLIENT_SECRET"):
+    if DINGTALK_STREAM_AVAILABLE and HTTPX_AVAILABLE:
+        return True
+    try:
+        from tools.lazy_deps import ensure as _lazy_ensure
+        _lazy_ensure("platform.dingtalk", prompt=False)
+    except Exception:
+        return False
+    try:
+        import dingtalk_stream as _ds
+        from dingtalk_stream import ChatbotMessage as _CM
+        from dingtalk_stream.frames import CallbackMessage as _CBM, AckMessage as _AM
+        import httpx as _httpx
+    except Exception:
+        return False
+    dingtalk_stream = _ds
+    ChatbotMessage = _CM
+    CallbackMessage = _CBM
+    AckMessage = _AM
+    httpx = _httpx
+    DINGTALK_STREAM_AVAILABLE = True
+    HTTPX_AVAILABLE = True
+    return True
+
+
+def check_dingtalk_requirements() -> bool:
+    """Check if DingTalk dependencies are available and configured.
+
+    Lazy-installs dingtalk-stream via :func:`ensure_dingtalk_deps`, then
+    additionally requires credentials.  Kept for setup/status callers that
+    want the combined deps+credentials answer; the registry uses the
+    deps-only :func:`ensure_dingtalk_deps` as ``ensure_deps_fn``.
+    """
+    if not ensure_dingtalk_deps():
+        return False
+    if not os.getenv("DINGTALK_CLIENT_ID") or not _get_scoped_secret("DINGTALK_CLIENT_SECRET"):
         return False
     return True
 
@@ -213,7 +269,7 @@ class DingTalkAdapter(BasePlatformAdapter):
         self._client_id: str = extra.get("client_id") or os.getenv(
             "DINGTALK_CLIENT_ID", ""
         )
-        self._client_secret: str = extra.get("client_secret") or os.getenv(
+        self._client_secret: str = extra.get("client_secret") or _get_scoped_secret(
             "DINGTALK_CLIENT_SECRET", ""
         )
 
@@ -459,28 +515,18 @@ class DingTalkAdapter(BasePlatformAdapter):
                 patterns = loaded
 
         if patterns is None:
-            return []
-        if isinstance(patterns, str):
-            patterns = [patterns]
-        if not isinstance(patterns, list):
-            logger.warning(
-                "[%s] dingtalk mention_patterns must be a list or string; got %s",
-                self.name,
-                type(patterns).__name__,
-            )
+            # Parity with the historical inline implementation: return before
+            # evaluating ``self.name`` (avoids touching adapter attributes on
+            # the no-patterns path).
             return []
 
-        compiled: List[re.Pattern] = []
-        for pattern in patterns:
-            if not isinstance(pattern, str) or not pattern.strip():
-                continue
-            try:
-                compiled.append(re.compile(pattern, re.IGNORECASE))
-            except re.error as exc:
-                logger.warning("[%s] Invalid DingTalk mention pattern %r: %s", self.name, pattern, exc)
-        if compiled:
-            logger.info("[%s] Loaded %d DingTalk mention pattern(s)", self.name, len(compiled))
-        return compiled
+        return compile_mention_patterns(
+            patterns,
+            log_prefix=self.name,
+            platform_label="dingtalk",
+            display_label="DingTalk",
+            logger_=logger,
+        )
 
     def _load_allowed_users(self) -> Set[str]:
         """Load allowed-users list from config.extra or env var.
@@ -1852,7 +1898,7 @@ def _is_connected(config) -> bool:
     extra = getattr(config, "extra", {}) or {}
     return bool(
         (extra.get("client_id") or os.getenv("DINGTALK_CLIENT_ID"))
-        and (extra.get("client_secret") or os.getenv("DINGTALK_CLIENT_SECRET"))
+        and (extra.get("client_secret") or _get_scoped_secret("DINGTALK_CLIENT_SECRET"))
     )
 
 
@@ -1867,7 +1913,8 @@ def register(ctx) -> None:
         name="dingtalk",
         label="DingTalk",
         adapter_factory=_build_adapter,
-        check_fn=check_dingtalk_requirements,
+        check_fn=dingtalk_deps_present,
+        ensure_deps_fn=ensure_dingtalk_deps,
         is_connected=_is_connected,
         validate_config=_is_connected,
         required_env=["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"],

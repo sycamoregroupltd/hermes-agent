@@ -115,6 +115,14 @@ export interface Translations {
     managingProfile?: string;
     currentProfileOption?: string;
     managingProfileBanner?: string;
+    /** NS-656 memory-pressure banner — optional, English fallback. */
+    memoryOomRestartBanner?: string;
+    memoryCriticalBanner?: string;
+    memoryElevatedBanner?: string;
+    /** NS-656 disk-usage banner — optional, English fallback. */
+    diskCriticalBanner?: string;
+    diskElevatedBanner?: string;
+    dismiss?: string;
   };
 
   // ── Status page ──
@@ -162,8 +170,14 @@ export interface Translations {
     title: string;
     history: string;
     overview: string;
+    filterChats: string;
+    filterAutomation: string;
+    filterAll: string;
+    sourceFilter: string;
+    anySource: string;
     searchPlaceholder: string;
     noSessions: string;
+    noSessionsInFilter: string;
     noMatch: string;
     startConversation: string;
     noMessages: string;

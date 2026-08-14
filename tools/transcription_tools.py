@@ -30,12 +30,14 @@ Usage::
 import logging
 import os
 import platform
+import queue
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib.parse import urljoin
@@ -126,7 +128,7 @@ LOCAL_NATIVE_AUDIO_FORMATS = {".wav", ".aiff", ".aif"}
 MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
 
 # Known model sets for auto-correction
-OPENAI_MODELS = {"whisper-1", "gpt-4o-mini-transcribe", "gpt-4o-transcribe"}
+OPENAI_MODELS = {"whisper-1", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "gpt-transcribe"}
 GROQ_MODELS = {"whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"}
 
 # Singleton for the local model — loaded once, reused across calls
@@ -136,6 +138,22 @@ _local_model_name: Optional[str] = None
 # Without it, two concurrent voice messages can both see `_local_model is
 # None` and download/load the whisper model twice (#24767).
 _local_model_lock = threading.Lock()
+
+# --- Idle unload ---------------------------------------------------------------
+# The model singleton above is loaded once and never released — hundreds of MB
+# of RAM/VRAM sit idle between voice messages. On long-running gateway
+# processes (especially with local LLMs competing for the same GPU) this is
+# wasteful. A single long-lived daemon thread checks _last_transcription_time
+# and unloads the model after a configurable idle period, then exits. The next
+# voice message reloads the model and restarts the watcher transparently.
+_last_transcription_time: float = 0.0
+_idle_unload_thread: Optional[threading.Thread] = None
+_idle_unload_stop = threading.Event()
+# Serializes watcher start checks so two concurrent transcriptions can't
+# both observe "no watcher alive" and spawn duplicates.
+_idle_unload_mgmt_lock = threading.Lock()
+
+_IDLE_UNLOAD_CHECK_INTERVAL = 30  # seconds between idle checks
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -214,6 +232,34 @@ def _find_ffmpeg_binary() -> Optional[str]:
     return _find_binary("ffmpeg")
 
 
+# Shared encode profile for every STT-bound m4a we produce (transcode and
+# silence-trim): 16 kHz mono 32 kbps AAC, faststart. One owner — codec or
+# bitrate changes must not drift between the two paths.
+_STT_M4A_ENCODE_ARGS = (
+    "-vn", "-ac", "1", "-ar", "16000",
+    "-c:a", "aac", "-b:a", "32k", "-movflags", "+faststart",
+)
+
+
+def _run_ffmpeg_stt_encode(
+    ffmpeg: str, input_path: str, output_path: str, *, audio_filter: Optional[str] = None
+) -> None:
+    """Run the shared STT m4a encode, optionally with an ``-af`` filter.
+
+    Raises on failure (CalledProcessError / TimeoutExpired) — callers own
+    the error semantics (transcode reports, trim swallows).
+    """
+    command = [ffmpeg, "-y", "-i", input_path]
+    if audio_filter:
+        command += ["-af", audio_filter]
+    command += [*_STT_M4A_ENCODE_ARGS, output_path]
+    subprocess.run(
+        command, check=True, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120,
+        stdin=subprocess.DEVNULL, creationflags=windows_hide_flags(),
+    )
+
+
 def _transcode_audio_for_stt(file_path: str, work_dir: str) -> tuple[Optional[str], Optional[str]]:
     """Transcode ``file_path`` to a compact, broadly-accepted .m4a for STT upload.
 
@@ -228,14 +274,8 @@ def _transcode_audio_for_stt(file_path: str, work_dir: str) -> tuple[Optional[st
     if not ffmpeg:
         return None, "audio needs transcoding for the STT API, but ffmpeg was not found"
     converted_path = os.path.join(work_dir, f"{Path(file_path).stem or 'audio'}-stt.m4a")
-    command = [
-        ffmpeg, "-y", "-i", file_path,
-        "-vn", "-ac", "1", "-ar", "16000",
-        "-c:a", "aac", "-b:a", "32k", "-movflags", "+faststart",
-        converted_path,
-    ]
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, stdin=subprocess.DEVNULL, creationflags=windows_hide_flags())
+        _run_ffmpeg_stt_encode(ffmpeg, file_path, converted_path)
         return converted_path, None
     except subprocess.CalledProcessError as exc:
         details = exc.stderr.strip() or exc.stdout.strip() or str(exc)
@@ -652,13 +692,43 @@ def _terminate_command_stt_process_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def _run_command_stt(command: str, timeout: float) -> subprocess.CompletedProcess:
-    """Run a command-provider shell command with process-tree timeout cleanup.
+def _command_stt_env_passthrough(config: Dict[str, Any]) -> list:
+    """Return the provider's ``env_passthrough`` allowlist (opt-out of scrub).
 
-    Mirrors ``tools.tts_tool._run_command_tts``.
+    Command providers legitimately reference their own API keys in the shell
+    template (curl one-liners). The child env is scrubbed of Hermes secrets by
+    default; ``env_passthrough: [MY_API_KEY, ...]`` copies the named variables
+    back from the parent environment so a trusted template keeps working.
+    Mirrors ``tools.tts_tool._command_provider_env_passthrough``.
+    """
+    raw = config.get("env_passthrough")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def _run_command_stt(
+    command: str,
+    timeout: float,
+    env_passthrough: Optional[list] = None,
+) -> subprocess.CompletedProcess:
+    """Run a command-provider shell command with process-tree idle cleanup.
+
+    Mirrors ``tools.tts_tool._run_command_tts``: ``timeout`` is an IDLE
+    timeout, reset whenever the command emits output on stdout/stderr —
+    a slow-but-alive provider survives, a silently stalled one is killed
+    (same progress-based stuck detection as the TTS runner, #50081).
+    Child env is scrubbed of Hermes secrets (salvage of #56332) while still
+    propagating delegated-child lineage markers when applicable.
     """
     from agent.delegation_context import delegated_child_subprocess_env
+    from tools.environments.local import hermes_subprocess_env
 
+    scrubbed = hermes_subprocess_env(inherit_credentials=False)
+    for key in env_passthrough or []:
+        value = os.environ.get(key)
+        if value is not None:
+            scrubbed[key] = value
     popen_kwargs: Dict[str, Any] = {
         "shell": True,
         "stdout": subprocess.PIPE,
@@ -668,7 +738,7 @@ def _run_command_stt(command: str, timeout: float) -> subprocess.CompletedProces
         # must not raise in the reader threads on non-UTF-8 Windows (#45099).
         "encoding": "utf-8",
         "errors": "replace",
-        "env": delegated_child_subprocess_env(),
+        "env": delegated_child_subprocess_env(scrubbed),
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -676,21 +746,89 @@ def _run_command_stt(command: str, timeout: float) -> subprocess.CompletedProces
         popen_kwargs["start_new_session"] = True
 
     proc = subprocess.Popen(command, **popen_kwargs, stdin=subprocess.DEVNULL)
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        _terminate_command_stt_process_tree(proc)
+    output_queue: "queue.Queue[tuple[str, Optional[str]]]" = queue.Queue()
+    chunks: Dict[str, list] = {"stdout": [], "stderr": []}
+    open_streams = {"stdout", "stderr"}
+
+    def read_stream(name: str, stream: Any) -> None:
+        encoding = getattr(stream, "encoding", None) or "utf-8"
+        read1 = getattr(getattr(stream, "buffer", None), "read1", None)
         try:
-            stdout, stderr = proc.communicate(timeout=1)
-        except Exception:
-            stdout = getattr(exc, "output", None)
-            stderr = getattr(exc, "stderr", None)
-        raise subprocess.TimeoutExpired(
-            command,
-            timeout,
-            output=stdout,
-            stderr=stderr,
-        ) from exc
+            while True:
+                if read1 is None:
+                    chunk = stream.read(65536)
+                else:
+                    data = read1(65536)
+                    chunk = data.decode(encoding, errors="replace")
+                if not chunk:
+                    break
+                output_queue.put((name, chunk))
+        finally:
+            output_queue.put((name, None))
+
+    readers = [
+        threading.Thread(
+            target=read_stream,
+            args=("stdout", proc.stdout),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=read_stream,
+            args=("stderr", proc.stderr),
+            daemon=True,
+        ),
+    ]
+    for reader in readers:
+        reader.start()
+
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    while open_streams:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            break
+        try:
+            name, chunk = output_queue.get(timeout=min(0.05, remaining))
+        except queue.Empty:
+            continue
+        if chunk is None:
+            open_streams.discard(name)
+            continue
+        chunks[name].append(chunk)
+        deadline = time.monotonic() + timeout
+
+    if not timed_out:
+        try:
+            proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+
+    if timed_out:
+        _terminate_command_stt_process_tree(proc)
+        for reader in readers:
+            reader.join(timeout=0.5)
+        while True:
+            try:
+                name, chunk = output_queue.get_nowait()
+            except queue.Empty:
+                break
+            if chunk:
+                chunks[name].append(chunk)
+        stdout = "".join(chunks["stdout"])
+        stderr = "".join(chunks["stderr"])
+        try:
+            raise subprocess.TimeoutExpired(command, timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise subprocess.TimeoutExpired(
+                command,
+                timeout,
+                output=stdout,
+                stderr=stderr,
+            ) from exc
+
+    stdout = "".join(chunks["stdout"])
+    stderr = "".join(chunks["stderr"])
 
     if proc.returncode:
         raise subprocess.CalledProcessError(
@@ -738,6 +876,8 @@ def _transcribe_command_stt(
     config: Dict[str, Any],
     stt_config: Dict[str, Any],
     model_override: Optional[str] = None,
+    language_override: Optional[str] = None,
+    prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Transcribe via a user-declared ``stt.providers.<name>: type: command``.
 
@@ -758,6 +898,12 @@ def _transcribe_command_stt(
     Returns the standard transcribe-response envelope (``success``,
     ``transcript``, ``provider``, ``error``).
     """
+    if prompt:
+        logger.debug(
+            "Command STT provider '%s' does not support transcription "
+            "prompts — proceeding without the prompt.", provider_name,
+        )
+
     command_template = str(config.get("command") or "").strip()
     if not command_template:
         return {
@@ -779,7 +925,8 @@ def _transcribe_command_stt(
     timeout = _get_command_stt_timeout(config)
     output_format = _get_command_stt_output_format(config)
     language = (
-        config.get("language")
+        language_override
+        or config.get("language")
         or _resolve_stt_language(provider_name, stt_config)
         or DEFAULT_COMMAND_STT_LANGUAGE
     )
@@ -802,7 +949,11 @@ def _transcribe_command_stt(
                 audio.name, provider_name,
             )
             try:
-                result = _run_command_stt(command, timeout)
+                result = _run_command_stt(
+                    command,
+                    timeout,
+                    env_passthrough=_command_stt_env_passthrough(config),
+                )
             except subprocess.TimeoutExpired:
                 return {
                     "success": False,
@@ -1028,6 +1179,7 @@ def _dispatch_to_plugin_provider(
     *,
     model: Optional[str] = None,
     language: Optional[str] = None,
+    prompt: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Route the call to a plugin-registered transcription provider, or
     return None.
@@ -1132,11 +1284,19 @@ def _dispatch_to_plugin_provider(
         }
 
     logger.info("Transcribing with plugin STT provider '%s'...", key)
+    # Plugin providers receive the transcription prompt via the ABC's
+    # existing ``**extra`` kwargs — no signature change needed. The key is
+    # only sent when a prompt is actually set so providers that predate it
+    # see byte-identical calls on the no-prompt path.
+    extra_kwargs: Dict[str, Any] = {}
+    if prompt is not None:
+        extra_kwargs["prompt"] = prompt
     try:
         result = plugin_provider.transcribe(
             file_path,
             model=model,
             language=language,
+            **extra_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -1162,6 +1322,142 @@ def _dispatch_to_plugin_provider(
     # Stamp provider if the plugin forgot to.
     result.setdefault("provider", key)
     return result
+
+
+# ---------------------------------------------------------------------------
+# pre_transcription plugin hook (issue #64168 — STT prompt/vocab threading)
+# ---------------------------------------------------------------------------
+
+
+# Fields a pre_transcription hook may mutate. ``file_path`` is deliberately
+# absent — it is read-only; attempts to change it are logged and dropped.
+_PRE_TRANSCRIPTION_MUTABLE_FIELDS = ("prompt", "language", "model")
+
+# Whisper-family models silently use only the final ~224 tokens of the
+# prompt/initial_prompt; longer values waste upload bytes and can trip
+# stricter OpenAI-compatible servers. Enforce the cap client-side for the
+# whisper-family backends: truncate with a warning, never error.
+# Approximation: ~4 characters per token (no tokenizer dependency).
+_WHISPER_PROMPT_TOKEN_CAP = 224
+_PROMPT_CHARS_PER_TOKEN = 4
+# Providers whose prompt parameter feeds a whisper-family model.
+_WHISPER_PROMPT_CAPPED_PROVIDERS = frozenset(
+    {"local", "openai", "groq", "deepinfra"}
+)
+
+
+def _enforce_prompt_length_limit(
+    prompt: Optional[str], provider: str
+) -> Optional[str]:
+    """Truncate *prompt* to the provider's known token cap (fail-open).
+
+    Only whisper-family backends have a documented ~224-token prompt window;
+    other providers (mistral, plugin providers) own their own validation.
+    Truncation keeps the TAIL of the prompt because whisper conditions on
+    the final context window — the most recently appended hints survive.
+    """
+    if not prompt or provider not in _WHISPER_PROMPT_CAPPED_PROVIDERS:
+        return prompt
+    max_chars = _WHISPER_PROMPT_TOKEN_CAP * _PROMPT_CHARS_PER_TOKEN
+    if len(prompt) <= max_chars:
+        return prompt
+    logger.warning(
+        "Transcription prompt is ~%d tokens; whisper-family provider '%s' "
+        "only uses the final ~%d — truncating to the last %d characters.",
+        len(prompt) // _PROMPT_CHARS_PER_TOKEN,
+        provider,
+        _WHISPER_PROMPT_TOKEN_CAP,
+        max_chars,
+    )
+    return prompt[-max_chars:]
+
+
+def _apply_pre_transcription_hook(
+    *,
+    file_path: str,
+    provider: str,
+    model: Optional[str],
+    language: Optional[str],
+    prompt: Optional[str],
+    source: Optional[str],
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Fire the ``pre_transcription`` plugin hook and merge its results.
+
+    Mirrors the ``transform_*`` hook mechanics (``transform_tool_result``):
+    gated on ``has_hook`` so the no-hook dispatch path never builds hook
+    kwargs, and fail-open — any hook-plumbing error leaves the dispatch
+    untouched. ``invoke_hook`` returns results in registration order, and
+    plugin discovery scans plugin directories in sorted order, so multiple
+    plugins' hints compose deterministically (sorted by plugin id, then
+    each plugin's own registration order). Each dict result is applied
+    field-by-field on top of the previous ones, so the last hook to write
+    a field wins (last-writer-wins per field).
+
+    Model values are accepted as-is: the dispatcher has no catalog-level
+    validation today, so a hook-set model flows through the exact same
+    per-backend normalization/auto-correction (``_normalize_local_model``,
+    the Groq/OpenAI cross-corrections) a caller-supplied model would, and
+    otherwise errors at the backend as it would today.
+
+    Returns ``(model, language_override, prompt)``. ``language_override``
+    is ``None`` unless a hook explicitly set ``language`` — backends keep
+    their existing config/env language resolution when no hook overrides
+    it.
+    """
+    try:
+        from hermes_cli.plugins import has_hook, invoke_hook
+
+        # No-hook short-circuit: keep the no-plugin dispatch path
+        # byte-identical (no kwargs built, no invoke_hook call).
+        if not has_hook("pre_transcription"):
+            return model, None, prompt
+
+        hook_results = invoke_hook(
+            "pre_transcription",
+            file_path=file_path,
+            provider=provider,
+            model=model,
+            language=language,
+            prompt=prompt,
+            source=source,
+        )
+        overrides: Dict[str, Any] = {}
+        for hook_result in hook_results:
+            if not isinstance(hook_result, dict):
+                continue
+            for key, value in hook_result.items():
+                if key == "file_path":
+                    # file_path is read-only for hooks — log and drop.
+                    logger.warning(
+                        "pre_transcription hook attempted to change "
+                        "file_path (read-only) — ignoring the attempt."
+                    )
+                    continue
+                if key not in _PRE_TRANSCRIPTION_MUTABLE_FIELDS:
+                    logger.debug(
+                        "pre_transcription hook returned unsupported field "
+                        "%r — ignoring.", key,
+                    )
+                    continue
+                if not isinstance(value, str):
+                    logger.debug(
+                        "pre_transcription hook returned non-string value "
+                        "%r for field %r — ignoring.", value, key,
+                    )
+                    continue
+                overrides[key] = value
+
+        if "model" in overrides:
+            model = overrides["model"]
+        if "prompt" in overrides:
+            # Hook results win over the static ``stt.prompt`` config value —
+            # config is the base, hooks mutate on top. An empty string
+            # clears the config prompt.
+            prompt = overrides["prompt"] or None
+        return model, overrides.get("language") or None, prompt
+    except Exception as _hook_err:  # noqa: BLE001 — hook plumbing is fail-open
+        logger.debug("pre_transcription hook error: %s", _hook_err)
+        return model, None, prompt
 
 
 # ---------------------------------------------------------------------------
@@ -1344,6 +1640,90 @@ def _should_force_faster_whisper_cpu() -> bool:
     return _sysctl_value("hw.optional.arm64") == "1"
 
 
+def _get_idle_unload_seconds(local_cfg: Dict[str, Any]) -> int:
+    """Resolve the idle unload timeout from config.
+
+    0 = never unload (default). Negative values are treated as 0.
+    """
+    try:
+        val = int(local_cfg.get("unload_after_idle_seconds", 0))
+    except (TypeError, ValueError):
+        return 0
+    return max(val, 0)
+
+
+def _unload_local_model() -> None:
+    """Release the cached local whisper model and free its memory.
+
+    Safe to call from any thread. The model lock prevents races with a
+    concurrent transcription that is mid-load.
+    """
+    global _local_model, _local_model_name
+    with _local_model_lock:
+        if _local_model is not None:
+            logger.info(
+                "Unloading local whisper model '%s' after idle timeout",
+                _local_model_name or "unknown",
+            )
+            _local_model = None
+            _local_model_name = None
+
+
+def _start_idle_unload_watcher(timeout_seconds: int) -> None:
+    """Ensure the idle-unload watcher thread is running.
+
+    A single long-lived watcher: started only when none is alive, so the
+    per-transcription cost is one lock + one ``is_alive()`` check — no
+    stop/join/restart churn on the response path. The loop re-reads the
+    configured timeout from config every cycle, so changing
+    ``stt.local.unload_after_idle_seconds`` takes effect within one check
+    interval without a restart. After unloading (or when the timeout is set
+    to 0/never, or the model is already gone) the thread exits; the next
+    transcription restarts it.
+
+    ``timeout_seconds`` seeds the first cycle so a just-written config is
+    honored even if a concurrent config read would race.
+    """
+    global _idle_unload_thread
+    with _idle_unload_mgmt_lock:
+        if _idle_unload_thread is not None and _idle_unload_thread.is_alive():
+            return
+
+        def _watch(initial_timeout=timeout_seconds):
+            timeout = initial_timeout
+            while not _idle_unload_stop.is_set():
+                if _idle_unload_stop.wait(_IDLE_UNLOAD_CHECK_INTERVAL):
+                    break
+                if _local_model is None:
+                    break
+                # Re-read the timeout each cycle: config edits apply without
+                # waiting for the next voice message.
+                try:
+                    timeout = _get_idle_unload_seconds(
+                        _load_stt_config().get("local") or {}
+                    )
+                except Exception:  # noqa: BLE001 - keep the seed value
+                    timeout = initial_timeout
+                if timeout <= 0:
+                    break  # unload disabled mid-flight — stand down
+                idle_for = time.monotonic() - _last_transcription_time
+                if idle_for >= timeout:
+                    _unload_local_model()
+                    break
+
+        _idle_unload_stop.clear()
+        _idle_unload_thread = threading.Thread(
+            target=_watch, name="hermes-stt-idle-unload", daemon=True
+        )
+        _idle_unload_thread.start()
+
+
+def _touch_transcription_time() -> None:
+    """Record transcription activity (resets the idle timer)."""
+    global _last_transcription_time
+    _last_transcription_time = time.monotonic()
+
+
 def _load_local_whisper_model(model_name: str, device: str = "auto", compute_type: str = "auto"):
     """Load faster-whisper with graceful CUDA → CPU fallback.
 
@@ -1390,7 +1770,137 @@ def _load_local_whisper_model(model_name: str, device: str = "auto", compute_typ
         return WhisperModel(model_name, device="cpu", compute_type="int8")
 
 
-def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
+# Silence-hallucination hardening defaults for local faster-whisper.
+# Whisper decodes SOMETHING even from pure silence/noise — often short junk
+# tokens ("You", "Thank you.", other-language phrases). Three layers kill the
+# class at the source (all tunable under ``stt.local``):
+#   1. vad_filter (Silero VAD, bundled with faster-whisper): silence never
+#      reaches the model. ``stt.local.vad: false`` restores raw behavior
+#      (e.g. transcribing music/ambient audio).
+#   2. condition_on_previous_text=False: one hallucinated token can't seed a
+#      run of them; negligible quality cost for voice-note-length audio.
+#   3. Segment confidence gate (see _is_hallucinated_segment): drops segments
+#      the model itself flags as probably-not-speech AND low-confidence.
+_VAD_MIN_SILENCE_MS_DEFAULT = 500
+_NO_SPEECH_PROB_THRESHOLD_DEFAULT = 0.6
+_LOGPROB_THRESHOLD_DEFAULT = -1.0
+
+
+def build_local_transcribe_kwargs(stt_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Build the kwargs for EVERY local faster-whisper ``model.transcribe`` call.
+
+    Single owner for the anti-hallucination hardening — any new local-whisper
+    call site must go through this helper instead of hand-rolling kwargs.
+    """
+    stt_config = stt_config if isinstance(stt_config, dict) else _load_stt_config()
+    local_cfg = stt_config.get("local") or {}
+
+    kwargs: Dict[str, Any] = {
+        "beam_size": 5,
+        # Don't feed the previous window's text back as a prompt: a single
+        # hallucinated token otherwise seeds a self-reinforcing run of them.
+        "condition_on_previous_text": False,
+    }
+
+    vad_enabled = local_cfg.get("vad", True)
+    if vad_enabled is None:
+        vad_enabled = True
+    if bool(vad_enabled):
+        kwargs["vad_filter"] = True
+        try:
+            min_silence_ms = int(
+                local_cfg.get("vad_min_silence_ms", _VAD_MIN_SILENCE_MS_DEFAULT)
+            )
+        except (TypeError, ValueError):
+            min_silence_ms = _VAD_MIN_SILENCE_MS_DEFAULT
+        kwargs["vad_parameters"] = {"min_silence_duration_ms": min_silence_ms}
+    else:
+        kwargs["vad_filter"] = False
+
+    # Push the confidence gate down into faster-whisper itself. Without this the
+    # library's own internal defaults (no_speech_threshold=0.6, log_prob_
+    # threshold=-1.0) drop low-confidence segments BEFORE they reach our
+    # _is_hallucinated_segment post-filter, so the ``stt.local`` threshold knobs
+    # were dead for that first gate. Non-English speech decodes at a lower
+    # avg_logprob, so the English-tuned defaults silently discard whole
+    # utterances. Mapping the same config values through keeps both gates in
+    # sync and makes the knobs actually usable. Defaults are unchanged, so
+    # behavior is identical unless a user tunes them.
+    no_speech_threshold, log_prob_threshold = _confidence_thresholds(local_cfg)
+    kwargs["no_speech_threshold"] = no_speech_threshold
+    kwargs["log_prob_threshold"] = log_prob_threshold
+
+    forced_lang = _resolve_stt_language("local", stt_config)
+    if forced_lang:
+        kwargs["language"] = forced_lang
+
+    initial_prompt = local_cfg.get("initial_prompt")
+    if isinstance(initial_prompt, str) and initial_prompt.strip():
+        kwargs["initial_prompt"] = initial_prompt
+
+    return kwargs
+
+
+def _confidence_thresholds(local_cfg: Dict[str, Any]) -> tuple[float, float]:
+    """Resolve (no_speech_prob, avg_logprob) gate thresholds from config."""
+    try:
+        no_speech = float(
+            local_cfg.get("no_speech_prob_threshold", _NO_SPEECH_PROB_THRESHOLD_DEFAULT)
+        )
+    except (TypeError, ValueError):
+        no_speech = _NO_SPEECH_PROB_THRESHOLD_DEFAULT
+    try:
+        logprob = float(local_cfg.get("logprob_threshold", _LOGPROB_THRESHOLD_DEFAULT))
+    except (TypeError, ValueError):
+        logprob = _LOGPROB_THRESHOLD_DEFAULT
+    return no_speech, logprob
+
+
+def _is_hallucinated_segment(segment: Any, no_speech_threshold: float, logprob_threshold: float) -> bool:
+    """True when a segment is very likely a silence hallucination.
+
+    Conservative AND gate (matches openai-whisper's own heuristic): the model
+    must BOTH think the window is non-speech (high no_speech_prob) AND have
+    decoded it with low confidence (low avg_logprob). Quiet-but-real speech
+    fails one of the two conditions and survives.
+    """
+    no_speech_prob = getattr(segment, "no_speech_prob", None)
+    avg_logprob = getattr(segment, "avg_logprob", None)
+    if no_speech_prob is None or avg_logprob is None:
+        return False
+    try:
+        no_speech_prob = float(no_speech_prob)
+        avg_logprob = float(avg_logprob)
+    except (TypeError, ValueError):
+        # Unknown segment shape (plugin/test doubles) — never drop.
+        return False
+    return no_speech_prob > no_speech_threshold and avg_logprob < logprob_threshold
+
+
+def _join_confident_segments(segments: Any, local_cfg: Dict[str, Any]) -> str:
+    """Join segment texts, dropping probable silence hallucinations."""
+    no_speech_threshold, logprob_threshold = _confidence_thresholds(local_cfg)
+    kept: list[str] = []
+    for segment in segments:
+        if _is_hallucinated_segment(segment, no_speech_threshold, logprob_threshold):
+            logger.debug(
+                "Dropping probable hallucinated segment %r (no_speech_prob=%.3f, avg_logprob=%.3f)",
+                getattr(segment, "text", ""),
+                getattr(segment, "no_speech_prob", float("nan")),
+                getattr(segment, "avg_logprob", float("nan")),
+            )
+            continue
+        kept.append(segment.text.strip())
+    return " ".join(kept).strip()
+
+
+def _transcribe_local(
+    file_path: str,
+    model_name: str,
+    *,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """Transcribe using faster-whisper (local, free)."""
     global _local_model, _local_model_name
 
@@ -1400,10 +1910,18 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
 
     try:
         local_cfg = _load_stt_config().get("local") or {}
+        # Reset the idle timer BEFORE loading/transcribing so the idle-unload
+        # watcher can't count a long in-flight transcription as idle time and
+        # unload mid-use.
+        _touch_transcription_time()
         # Lazy-load the model (downloads on first use, ~150 MB for 'base').
         # Double-checked lock: concurrent voice messages must not both
         # download/load the model (#24767).
-        if _local_model is None or _local_model_name != model_name:
+        # ``model`` is a strong local reference bound under the lock: the idle
+        # watcher may null the module global at any time, but this
+        # transcription keeps using the instance it grabbed.
+        model = _local_model
+        if model is None or _local_model_name != model_name:
             with _local_model_lock:
                 if _local_model is None or _local_model_name != model_name:
                     logger.info("Loading faster-whisper model '%s' (first load downloads the model)...", model_name)
@@ -1418,21 +1936,27 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
                         compute_type=local_cfg.get("compute_type", "auto"),
                     )
                     _local_model_name = model_name
+                model = _local_model
 
-        # Language: stt.local.language > stt.language > env var > auto-detect.
+        if model is None:  # defensive: load failed without raising
+            return {"success": False, "transcript": "", "error": "Local whisper model failed to load"}
+        # Shared hardened kwargs: VAD filter (default on), no cross-window
+        # conditioning, language/initial_prompt resolution — one owner for
+        # every local faster-whisper call site.
         stt_config = _load_stt_config()
         local_config = stt_config.get("local") or {}
-        _forced_lang = _resolve_stt_language("local", stt_config)
-        transcribe_kwargs = {"beam_size": 5}
-        if _forced_lang:
-            transcribe_kwargs["language"] = _forced_lang
-        initial_prompt = local_config.get("initial_prompt")
-        if isinstance(initial_prompt, str) and initial_prompt.strip():
-            transcribe_kwargs["initial_prompt"] = initial_prompt
+        transcribe_kwargs = build_local_transcribe_kwargs(stt_config)
+        # pre_transcription hook overrides win over the config-resolved
+        # values from build_local_transcribe_kwargs.
+        if language:
+            transcribe_kwargs["language"] = language
+        if prompt:
+            # faster-whisper's vocabulary/context hint parameter.
+            transcribe_kwargs["initial_prompt"] = prompt
 
         try:
-            segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = " ".join(segment.text.strip() for segment in segments)
+            segments, info = model.transcribe(file_path, **transcribe_kwargs)
+            transcript = _join_confident_segments(segments, local_config)
         except Exception as exc:
             # CUDA runtime libs sometimes only fail at dlopen-on-first-use,
             # AFTER the model loaded successfully.  Evict the broken cached
@@ -1446,18 +1970,23 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
                 "evicting cached model and retrying on CPU (int8).",
                 exc,
             )
-            _local_model = None
-            _local_model_name = None
             from faster_whisper import WhisperModel
-            _local_model = WhisperModel(model_name, device="cpu", compute_type="int8")
-            _local_model_name = model_name
-            segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = " ".join(segment.text.strip() for segment in segments)
+            model = WhisperModel(model_name, device="cpu", compute_type="int8")
+            with _local_model_lock:
+                _local_model = model
+                _local_model_name = model_name
+            segments, info = model.transcribe(file_path, **transcribe_kwargs)
+            transcript = _join_confident_segments(segments, local_config)
 
         logger.info(
             "Transcribed %s via local whisper (%s, lang=%s, %.1fs audio)",
             Path(file_path).name, model_name, info.language, info.duration,
         )
+
+        _touch_transcription_time()
+        idle_timeout = _get_idle_unload_seconds(local_cfg)
+        if idle_timeout > 0:
+            _start_idle_unload_watcher(idle_timeout)
 
         return {"success": True, "transcript": transcript, "provider": "local"}
 
@@ -1517,8 +2046,20 @@ def _convert_caf_to_wav(file_path: str) -> Optional[str]:
     return None
 
 
-def _transcribe_local_command(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_local_command(
+    file_path: str,
+    model_name: str,
+    *,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """Run the configured local STT command template and read back a .txt transcript."""
+    if prompt:
+        logger.debug(
+            "STT provider 'local_command' does not support transcription "
+            "prompts — proceeding without the prompt."
+        )
+
     command_template = _get_local_command_template()
     if not command_template:
         return {
@@ -1529,8 +2070,11 @@ def _transcribe_local_command(file_path: str, model_name: str) -> Dict[str, Any]
             ),
         }
 
-    # Language: stt.local.language > stt.language > env var > "en" default.
-    language = _resolve_stt_language("local") or DEFAULT_LOCAL_STT_LANGUAGE
+    # Language: hook override > stt.local.language > stt.language > env var
+    # > "en" default.
+    language = (
+        language or _resolve_stt_language("local") or DEFAULT_LOCAL_STT_LANGUAGE
+    )
     normalized_model = _normalize_local_command_model(model_name)
 
     try:
@@ -1545,13 +2089,24 @@ def _transcribe_local_command(file_path: str, model_name: str) -> Dict[str, Any]
                 language=shlex.quote(language),
                 model=shlex.quote(normalized_model),
             )
-            # User-provided templates (env var) may contain shell syntax; auto-detected commands are safe for list mode.
-            use_shell = bool(os.getenv(LOCAL_STT_COMMAND_ENV, "").strip())
-            if use_shell:
-                subprocess.run(command, shell=True, check=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300, stdin=subprocess.DEVNULL, creationflags=windows_hide_flags())
-            else:
-                subprocess.run(shlex.split(command), check=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300, stdin=subprocess.DEVNULL, creationflags=windows_hide_flags())
-            
+            # Scrub Hermes secrets from the child env (sibling path to #56332 /
+            # _run_command_stt — this local-whisper path previously inherited
+            # the full process environment).
+            from tools.environments.local import hermes_subprocess_env
+
+            child_env = hermes_subprocess_env(inherit_credentials=False)
+            subprocess.run(
+                shlex.split(command),
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                stdin=subprocess.DEVNULL,
+                env=child_env,
+                creationflags=windows_hide_flags(),
+            )
 
             txt_files = sorted(Path(output_dir).glob("*.txt"))
             if not txt_files:
@@ -1589,13 +2144,19 @@ def _transcribe_local_command(file_path: str, model_name: str) -> Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_groq(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_groq(
+    file_path: str,
+    model_name: str,
+    *,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """Transcribe using Groq Whisper API (free tier available).
 
-    Honours an optional ISO-639-1 language hint resolved from
-    ``stt.groq.language`` > ``stt.language`` (config.yaml) >
-    ``HERMES_LOCAL_STT_LANGUAGE`` (env). When none is set, Groq
-    Whisper auto-detects.
+    Honours an optional ISO-639-1 language hint resolved from a
+    ``pre_transcription`` hook override > ``stt.groq.language`` >
+    ``stt.language`` (config.yaml) > ``HERMES_LOCAL_STT_LANGUAGE`` (env).
+    When none is set, Groq Whisper auto-detects.
     """
     api_key = _resolve_provider_key("GROQ_API_KEY", "groq")
     if not api_key:
@@ -1609,7 +2170,8 @@ def _transcribe_groq(file_path: str, model_name: str) -> Dict[str, Any]:
         logger.info("Model %s not available on Groq, using %s", model_name, DEFAULT_GROQ_STT_MODEL)
         model_name = DEFAULT_GROQ_STT_MODEL
 
-    language = _resolve_stt_language("groq")
+    # Language: hook override > stt.groq.language > stt.language > env.
+    language = language or _resolve_stt_language("groq")
 
     try:
         from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
@@ -1621,6 +2183,10 @@ def _transcribe_groq(file_path: str, model_name: str) -> Dict[str, Any]:
             }
             if language:
                 create_kwargs["language"] = language
+            if prompt:
+                # Only send the prompt when set so the no-hook, no-config
+                # request stays byte-identical to today's.
+                create_kwargs["prompt"] = prompt
             with open(file_path, "rb") as audio_file:
                 transcription = client.audio.transcriptions.create(
                     file=audio_file,
@@ -1661,6 +2227,8 @@ def _transcribe_openai(
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     provider_label: str = "openai",
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Transcribe via the OpenAI ``audio.transcriptions.create`` SDK shape.
 
@@ -1677,9 +2245,10 @@ def _transcribe_openai(
             return {"success": False, "transcript": "", "error": str(exc)}
         base_url = base_url or fallback_base
 
-    # Language: stt.<provider>.language > stt.language > env > auto-detect.
-    # Explicit language hint improves accuracy for non-English languages.
-    language = _resolve_stt_language(provider_label)
+    # Language: hook override > stt.<provider>.language > stt.language >
+    # env > auto-detect. Explicit language hint improves accuracy for
+    # non-English languages.
+    language = language or _resolve_stt_language(provider_label)
 
     if not _HAS_OPENAI:
         return {"success": False, "transcript": "", "error": "openai package not installed"}
@@ -1709,8 +2278,18 @@ def _transcribe_openai(
                     "response_format": "text" if model_name == "whisper-1" else "json",
                 }
                 if language:
-                    create_kwargs["language"] = language
+                    if model_name == "gpt-transcribe":
+                        # gpt-transcribe replaces the singular ``language``
+                        # field with a ``languages`` list; the API rejects
+                        # requests that send the legacy field.
+                        create_kwargs["extra_body"] = {"languages": [language]}
+                    else:
+                        create_kwargs["language"] = language
                     logger.debug("Using language hint '%s' for OpenAI STT", language)
+                if prompt:
+                    # Only send the prompt when set so the no-hook, no-config
+                    # request stays byte-identical to today's.
+                    create_kwargs["prompt"] = prompt
                 return client.audio.transcriptions.create(**create_kwargs)
 
         try:
@@ -1762,7 +2341,13 @@ def _transcribe_openai(
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_mistral(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_mistral(
+    file_path: str,
+    model_name: str,
+    *,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """Transcribe using Mistral Voxtral Transcribe API.
 
     Uses the ``mistralai`` Python SDK to call ``/v1/audio/transcriptions``.
@@ -1786,10 +2371,15 @@ def _transcribe_mistral(file_path: str, model_name: str) -> Dict[str, Any]:
                     "model": model_name,
                     "file": {"content": audio_file, "file_name": Path(file_path).name},
                 }
-                # Language: stt.mistral.language > stt.language > env > auto.
-                language = _resolve_stt_language("mistral")
+                # Language: hook override > stt.mistral.language >
+                # stt.language > env > auto.
+                language = language or _resolve_stt_language("mistral")
                 if language:
                     complete_kwargs["language"] = language
+                if prompt:
+                    # Only send the prompt when set so the no-hook, no-config
+                    # request stays byte-identical to today's.
+                    complete_kwargs["prompt"] = prompt
                 result = client.audio.transcriptions.complete(**complete_kwargs)
 
             transcript_text = _extract_transcript_text(result)
@@ -1811,7 +2401,13 @@ def _transcribe_mistral(file_path: str, model_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_xai(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_xai(
+    file_path: str,
+    model_name: str,
+    *,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """Transcribe using xAI Grok STT API.
 
     Uses the ``POST /v1/stt`` REST endpoint with multipart/form-data.
@@ -1819,6 +2415,12 @@ def _transcribe_xai(file_path: str, model_name: str) -> Dict[str, Any]:
     Requires ``XAI_API_KEY`` environment variable.
     """
     from tools.xai_http import resolve_xai_http_credentials
+
+    if prompt:
+        logger.debug(
+            "STT provider 'xai' does not support transcription prompts — "
+            "proceeding without the prompt."
+        )
 
     # STT is an API-billed endpoint. Prefer the explicit XAI_API_KEY over the
     # general xAI OAuth/Grok-subscription credential; subscription OAuth may be
@@ -1861,7 +2463,8 @@ def _transcribe_xai(file_path: str, model_name: str) -> Dict[str, Any]:
         ).strip().rstrip("/")
 
     base_url = _resolve_base_url(creds)
-    language = _resolve_stt_language("xai", stt_config) or ""
+    # Language: hook override > stt.xai.language > stt.language > env.
+    language = language or _resolve_stt_language("xai", stt_config) or ""
     # .get("format", True) already defaults to True when the key is absent;
     # is_truthy_value only normalizes truthy/falsy strings from config.
     use_format = is_truthy_value(xai_config.get("format", True))
@@ -1968,8 +2571,20 @@ def _transcribe_xai(file_path: str, model_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_elevenlabs(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_elevenlabs(
+    file_path: str,
+    model_name: str,
+    *,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """Transcribe using ElevenLabs Scribe STT API."""
+    if prompt:
+        logger.debug(
+            "STT provider 'elevenlabs' does not support transcription "
+            "prompts — proceeding without the prompt."
+        )
+
     api_key = _resolve_provider_key("ELEVENLABS_API_KEY", "elevenlabs")
     if not api_key:
         return {"success": False, "transcript": "", "error": "ELEVENLABS_API_KEY not set"}
@@ -1981,7 +2596,8 @@ def _transcribe_elevenlabs(file_path: str, model_name: str) -> Dict[str, Any]:
         or get_env_value("ELEVENLABS_STT_BASE_URL")
         or ELEVENLABS_STT_BASE_URL
     ).strip().rstrip("/")
-    language_code = _resolve_stt_language(
+    # Language: hook override > stt.elevenlabs.language(_code) > stt.language.
+    language_code = language or _resolve_stt_language(
         "elevenlabs", stt_config, extra_keys=("language_code",)
     ) or ""
     tag_audio_events = is_truthy_value(elevenlabs_config.get("tag_audio_events", False))
@@ -2057,7 +2673,13 @@ def _transcribe_elevenlabs(file_path: str, model_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_deepinfra(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_deepinfra(
+    file_path: str,
+    model_name: str,
+    *,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
     """Resolve DeepInfra credentials/model, then delegate to the OpenAI handler.
 
     DeepInfra's STT endpoint is OpenAI-compatible, so the actual SDK
@@ -2102,7 +2724,175 @@ def _transcribe_deepinfra(file_path: str, model_name: str) -> Dict[str, Any]:
         api_key=api_key,
         base_url=base_url,
         provider_label="deepinfra",
+        language=language,
+        prompt=prompt,
     )
+
+
+# ---------------------------------------------------------------------------
+# Cloud pre-upload silence trim
+# ---------------------------------------------------------------------------
+#
+# Local faster-whisper gets Silero VAD (build_local_transcribe_kwargs) so
+# silence never reaches the model. Cloud providers get no such protection:
+# the raw file is uploaded, so every second of silence is paid for twice —
+# once in upload time and once in per-audio-minute billing — and cloud
+# Whisper hallucinates junk tokens on silent stretches exactly like local
+# Whisper did before the VAD hardening.
+#
+# Before uploading to a built-in cloud provider we collapse long pauses with
+# ffmpeg's silenceremove filter, keeping ``stt.cloud_trim_keep_ms`` of every
+# pause so word boundaries and natural pacing survive. The trim is purely
+# best-effort — ANY of these falls back to uploading the original untouched:
+#   - ``stt.cloud_trim_silence: false``
+#   - ffmpeg or ffprobe not installed
+#   - the trim command fails or times out
+#   - the trimmed result is suspiciously empty (mostly-silence clip — the
+#     provider, not a client-side heuristic, decides whether it has speech)
+#   - the trim saves less than ~10% (re-encoding for nothing)
+#
+# Command-type and plugin providers are deliberately NOT trimmed: they may
+# wrap local CLIs that want the original bytes (and may run their own VAD).
+
+_CLOUD_TRIM_THRESHOLD_DB_DEFAULT = -40  # audio below this level counts as silence
+_CLOUD_TRIM_KEEP_MS_DEFAULT = 300  # how much of each pause survives the trim
+_CLOUD_TRIM_MIN_SAVING = 0.10  # use the trimmed file only when >=10% shorter
+_CLOUD_TRIM_MIN_RESULT_SECONDS = 0.3  # all-silence guard floor: never upload ~empty audio
+# Below this duration the trim can't pay for itself: a >=10% saving on a short
+# clip is ~a second of audio, several providers bill a per-request minimum
+# anyway (Groq: 10s), and the encode would sit on the synchronous voice-note
+# response path. Skip the whole pipeline.
+_CLOUD_TRIM_MIN_INPUT_SECONDS = 12.0
+
+# Built-in providers that upload audio to a remote API.
+CLOUD_STT_PROVIDERS = frozenset(BUILTIN_STT_PROVIDERS - {"local", "local_command"})
+
+
+def _find_ffprobe_binary() -> Optional[str]:
+    return _find_binary("ffprobe")
+
+
+def _probe_audio_duration(file_path: str) -> Optional[float]:
+    """Return the audio duration in seconds via ffprobe, or None.
+
+    Canonical sync seconds-probe. ``gateway/run.py._probe_audio_duration``
+    (async, returns a display string) and the Telegram adapter's
+    ``_probe_voice_duration_seconds`` carry local variants of the same
+    ffprobe invocation — keep the command shape in sync.
+    """
+    ffprobe = _find_ffprobe_binary()
+    if not ffprobe:
+        return None
+    command = [
+        ffprobe, "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        file_path,
+    ]
+    try:
+        result = subprocess.run(
+            command, check=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+            stdin=subprocess.DEVNULL, creationflags=windows_hide_flags(),
+        )
+        return float(result.stdout.strip())
+    except Exception:  # noqa: BLE001 - probe is best-effort
+        return None
+
+
+def _cloud_trim_settings(stt_config: Dict[str, Any]) -> tuple[bool, int, int]:
+    """Resolve (enabled, threshold_db, keep_ms) for the cloud silence trim."""
+    cfg = stt_config if isinstance(stt_config, dict) else {}
+    # is_truthy_value: the module's established config-boolean normalizer —
+    # a YAML string "false" must disable, exactly like is_stt_enabled.
+    enabled = is_truthy_value(cfg.get("cloud_trim_silence", True), default=True)
+    try:
+        threshold_db = int(cfg.get("cloud_trim_threshold_db", _CLOUD_TRIM_THRESHOLD_DB_DEFAULT))
+    except (TypeError, ValueError):
+        threshold_db = _CLOUD_TRIM_THRESHOLD_DB_DEFAULT
+    try:
+        keep_ms = int(cfg.get("cloud_trim_keep_ms", _CLOUD_TRIM_KEEP_MS_DEFAULT))
+    except (TypeError, ValueError):
+        keep_ms = _CLOUD_TRIM_KEEP_MS_DEFAULT
+    return enabled, threshold_db, max(keep_ms, 0)
+
+
+def _trim_silence_for_cloud_stt(
+    file_path: str, stt_config: Dict[str, Any]
+) -> Optional[str]:
+    """Return a silence-trimmed copy of *file_path* for cloud upload, or None.
+
+    ``None`` always means "upload the original file": the trim is disabled,
+    the tools are missing, the clip is too short for a trim to pay for
+    itself, the trim failed, the clip is mostly silence, or trimming would
+    not save enough to justify the re-encode. On success the caller owns
+    deleting the returned file's parent directory.
+    """
+    enabled, threshold_db, keep_ms = _cloud_trim_settings(stt_config)
+    if not enabled:
+        return None
+    ffmpeg = _find_ffmpeg_binary()
+    if not ffmpeg:
+        logger.debug("Cloud STT silence trim skipped: ffmpeg not found")
+        return None
+    original_duration = _probe_audio_duration(file_path)
+    if not original_duration or original_duration <= 0:
+        logger.debug("Cloud STT silence trim skipped: could not probe %s", file_path)
+        return None
+    if original_duration < _CLOUD_TRIM_MIN_INPUT_SECONDS:
+        # Short clip: savings can't matter (some providers bill a 10s
+        # minimum per request anyway) — skip the encode entirely.
+        logger.debug(
+            "Cloud STT silence trim skipped for %s: %.1fs is below the %.0fs gate",
+            Path(file_path).name, original_duration, _CLOUD_TRIM_MIN_INPUT_SECONDS,
+        )
+        return None
+
+    keep_seconds = keep_ms / 1000.0
+    # start_periods=1 strips leading silence; stop_periods=-1 collapses every
+    # interior/trailing silence, keeping ``keep_seconds`` of each pause.
+    filter_expr = (
+        f"silenceremove="
+        f"start_periods=1:start_threshold={threshold_db}dB:start_silence={keep_seconds}:"
+        f"stop_periods=-1:stop_threshold={threshold_db}dB:stop_silence={keep_seconds}"
+    )
+    work_dir = tempfile.mkdtemp(prefix="hermes-stt-trim-")
+    trimmed_path = os.path.join(work_dir, f"{Path(file_path).stem or 'audio'}-trimmed.m4a")
+    # Scale the all-silence guard with keep_ms: an output consisting solely
+    # of kept pause must never be uploaded as "speech".
+    min_result_seconds = max(_CLOUD_TRIM_MIN_RESULT_SECONDS, 2 * keep_seconds)
+    keep_result = False
+    try:
+        _run_ffmpeg_stt_encode(ffmpeg, file_path, trimmed_path, audio_filter=filter_expr)
+        trimmed_duration = _probe_audio_duration(trimmed_path)
+        if not trimmed_duration or trimmed_duration < min_result_seconds:
+            # Mostly/all silence. Deciding "no speech" belongs to the
+            # provider, not a client-side dB heuristic — upload the original.
+            logger.debug(
+                "Cloud STT silence trim discarded for %s: trimmed result ~empty (%.2fs)",
+                Path(file_path).name, trimmed_duration or 0.0,
+            )
+            return None
+        if trimmed_duration > original_duration * (1 - _CLOUD_TRIM_MIN_SAVING):
+            logger.debug(
+                "Cloud STT silence trim discarded for %s: saves <%.0f%% (%.1fs -> %.1fs)",
+                Path(file_path).name, _CLOUD_TRIM_MIN_SAVING * 100,
+                original_duration, trimmed_duration,
+            )
+            return None
+        logger.info(
+            "Trimmed silence from %s before cloud STT upload (%.1fs -> %.1fs, -%d%%)",
+            Path(file_path).name, original_duration, trimmed_duration,
+            round((1 - trimmed_duration / original_duration) * 100),
+        )
+        keep_result = True
+        return trimmed_path
+    except Exception as exc:  # noqa: BLE001 - trim is best-effort
+        logger.debug("Cloud STT silence trim failed for %s: %s", file_path, exc)
+        return None
+    finally:
+        if not keep_result:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2110,7 +2900,11 @@ def _transcribe_deepinfra(file_path: str, model_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> Dict[str, Any]:
+def _transcribe_prepared_audio(
+    file_path: str,
+    model: Optional[str] = None,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Transcribe an audio file using the configured STT provider.
 
@@ -2121,6 +2915,9 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
     Args:
         file_path: Absolute path to the audio file to transcribe.
         model:     Override the model. If None, uses config or provider default.
+        source:    Optional caller-surface label (e.g. ``"gateway"``,
+                   ``"voice_mode"``) forwarded to the ``pre_transcription``
+                   plugin hook for observability. Not used for dispatch.
 
     Returns:
         dict with keys:
@@ -2129,6 +2926,15 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
           - "error" (str, optional): Error message if success is False
           - "provider" (str, optional): Which provider was used
     """
+    # Refuse to feed a credential / secret store (auth.json, .env, OAuth
+    # tokens, mcp-tokens/, ...) to an STT provider: an external provider would
+    # ship its plaintext contents to a third-party API. Mirrors the local-input
+    # read guard added to image-gen (587be5b5b) and xAI video-gen (104232979).
+    from agent.file_safety import get_read_block_error
+    blocked = get_read_block_error(file_path)
+    if blocked:
+        return {"success": False, "transcript": "", "error": blocked}
+
     # Apply common path validation before provider resolution so invalid files
     # cannot trigger provider setup or lazy installation. The remote-upload
     # size cap is enforced separately below, only for non-local providers.
@@ -2160,50 +2966,120 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
             return {"success": False, "transcript": "",
                     "error": "CAF audio could not be converted to WAV."}
 
+    # Pre-upload silence trim for built-in cloud providers: local whisper gets
+    # Silero VAD, cloud endpoints get the raw file — collapse long pauses
+    # client-side so silence isn't uploaded, billed, or hallucinated on.
+    # Best-effort: any failure uploads the original untouched.
+    trim_cleanup_dir: Optional[str] = None
+    if provider in CLOUD_STT_PROVIDERS:
+        trimmed = _trim_silence_for_cloud_stt(file_path, stt_config)
+        if trimmed:
+            file_path = trimmed
+            trim_cleanup_dir = os.path.dirname(trimmed)
+
+    try:
+        return _dispatch_stt_provider(file_path, provider, stt_config, model, source)
+    finally:
+        if trim_cleanup_dir:
+            shutil.rmtree(trim_cleanup_dir, ignore_errors=True)
+
+
+def _dispatch_stt_provider(
+    file_path: str,
+    provider: str,
+    stt_config: Dict[str, Any],
+    model: Optional[str] = None,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Route *file_path* to the handler for *provider* (built-in > command > plugin)."""
+    # Optional static transcription prompt (``stt.prompt`` in config.yaml):
+    # vocabulary/context hints threaded to prompt-capable backends.
+    # Ordering: config is the base; pre_transcription hook results mutate on
+    # top, in registration order, so the last hook to set a field wins.
+    prompt = stt_config.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        prompt = None
+
+    # pre_transcription plugin hook — fires after provider resolution and
+    # BEFORE any backend (built-in, command-type, or plugin-registered) is
+    # invoked. Hooks may mutate prompt/language/model; file_path is
+    # read-only. The helper short-circuits on has_hook() so the no-hook
+    # dispatch path stays byte-identical. ``language`` stays None unless a
+    # hook overrides it — backends keep their own config/env resolution.
+    model, language, prompt = _apply_pre_transcription_hook(
+        file_path=file_path,
+        provider=provider,
+        model=model,
+        language=_get_stt_section(stt_config, provider).get("language"),
+        prompt=prompt,
+        source=source,
+    )
+
+    # Whisper-family prompt windows top out around 224 tokens — truncate
+    # (keeping the tail) with a warning rather than erroring or letting a
+    # strict server reject the request.
+    prompt = _enforce_prompt_length_limit(prompt, provider)
+
     if provider == "local":
         local_cfg = stt_config.get("local") or {}
         model_name = _normalize_local_model(
             model or local_cfg.get("model", DEFAULT_LOCAL_MODEL)
         )
-        return _transcribe_local(file_path, model_name)
+        return _transcribe_local(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     if provider == "local_command":
         local_cfg = stt_config.get("local") or {}
         model_name = _normalize_local_command_model(
             model or local_cfg.get("model", DEFAULT_LOCAL_MODEL)
         )
-        return _transcribe_local_command(file_path, model_name)
+        return _transcribe_local_command(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     if provider == "groq":
         groq_cfg = stt_config.get("groq") or {}
         model_name = model or groq_cfg.get("model") or DEFAULT_GROQ_STT_MODEL
-        return _transcribe_groq(file_path, model_name)
+        return _transcribe_groq(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     if provider == "openai":
         openai_cfg = stt_config.get("openai") or {}
         model_name = model or openai_cfg.get("model", DEFAULT_STT_MODEL)
-        return _transcribe_openai(file_path, model_name)
+        return _transcribe_openai(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     if provider == "mistral":
         mistral_cfg = stt_config.get("mistral") or {}
         model_name = model or mistral_cfg.get("model", DEFAULT_MISTRAL_STT_MODEL)
-        return _transcribe_mistral(file_path, model_name)
+        return _transcribe_mistral(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     if provider == "xai":
         # xAI Grok STT doesn't use a model parameter — pass through for logging
         model_name = model or "grok-stt"
-        return _transcribe_xai(file_path, model_name)
+        return _transcribe_xai(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     if provider == "elevenlabs":
         elevenlabs_cfg = stt_config.get("elevenlabs") or {}
         model_name = model or elevenlabs_cfg.get("model_id", DEFAULT_ELEVENLABS_STT_MODEL)
-        return _transcribe_elevenlabs(file_path, model_name)
+        return _transcribe_elevenlabs(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     if provider == "deepinfra":
         di_config = stt_config.get("deepinfra")  # may be None (YAML null)
         di_config = di_config if isinstance(di_config, dict) else {}
         model_name = model or di_config.get("model") or ""
-        return _transcribe_deepinfra(file_path, model_name)
+        return _transcribe_deepinfra(
+            file_path, model_name, language=language, prompt=prompt,
+        )
 
     # User-declared command-type provider
     # (``stt.providers.<name>: type: command``). Fires after the built-in
@@ -2219,6 +3095,8 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
             command_provider_config,
             stt_config,
             model_override=model,
+            language_override=language,
+            prompt=prompt,
         )
 
     # Plugin-registered STT backend (e.g. OpenRouter, SenseAudio,
@@ -2235,7 +3113,7 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
     # forwards ``language`` from there. Top-level ``model`` argument
     # overrides any config-set model.
     plugin_cfg = stt_config.get(provider, {}) if isinstance(stt_config.get(provider), dict) else {}
-    plugin_language = _resolve_stt_language(provider, stt_config)
+    plugin_language = language or _resolve_stt_language(provider, stt_config)
     plugin_model = model or plugin_cfg.get("model")
     plugin_result = _dispatch_to_plugin_provider(
         file_path,
@@ -2243,6 +3121,7 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
         stt_config,
         model=plugin_model,
         language=plugin_language,
+        prompt=prompt,
     )
     if plugin_result is not None:
         return plugin_result
@@ -2271,8 +3150,26 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
     }
 
 
-def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, Any]:
-    """Safely validate, preprocess supported inputs, and dispatch transcription."""
+def transcribe_audio(
+    file_path: str,
+    model: Optional[str] = None,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Safely validate, preprocess supported inputs, and dispatch transcription.
+
+    ``source`` is an optional caller-surface label (e.g. ``"gateway"``,
+    ``"voice_mode"``) forwarded to the ``pre_transcription`` plugin hook for
+    observability. Not used for dispatch.
+    """
+    # Refuse to feed a credential / secret store (auth.json, .env, OAuth
+    # tokens, mcp-tokens/, ...) to an STT provider — before ANY validation or
+    # preprocessing, so the refusal names the real reason rather than a
+    # format error. Mirrors the image-gen / video-gen read guards.
+    from agent.file_safety import get_read_block_error
+    blocked = get_read_block_error(file_path)
+    if blocked:
+        return {"success": False, "transcript": "", "error": blocked}
+
     # Cap .silk sources before the decoder runs (decoder safety). For all
     # other inputs the remote-upload size cap is provider-scoped and enforced
     # in _transcribe_prepared_audio, so local whisper can handle big files.
@@ -2295,7 +3192,7 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
         prepared_error = _validate_audio_file(prepared_path, enforce_size_limit=False)
         if prepared_error:
             return prepared_error
-        return _transcribe_prepared_audio(prepared_path, model)
+        return _transcribe_prepared_audio(prepared_path, model, source)
     finally:
         if cleanup_dir:
             shutil.rmtree(cleanup_dir, ignore_errors=True)

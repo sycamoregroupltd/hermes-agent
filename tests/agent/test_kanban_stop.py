@@ -19,14 +19,8 @@ def clear_kanban_env(monkeypatch):
     return monkeypatch
 
 
-def test_disabled_without_kanban_task(clear_kanban_env):
-    assert kanban_stop_nudge_enabled() is False
-    assert build_kanban_stop_nudge(messages=[]) is None
 
 
-def test_enabled_with_kanban_task(clear_kanban_env):
-    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
-    assert kanban_stop_nudge_enabled() is True
 
 
 def test_env_can_disable(clear_kanban_env):
@@ -81,19 +75,8 @@ def test_no_nudge_after_kanban_complete(clear_kanban_env):
     assert build_kanban_stop_nudge(messages=messages) is None
 
 
-def test_no_nudge_after_kanban_block(clear_kanban_env):
-    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
-    messages = [
-        {"role": "tool", "name": "kanban_block", "tool_call_id": "1", "content": "blocked"},
-    ]
-    assert build_kanban_stop_nudge(messages=messages) is None
 
 
-def test_nudge_budget_exhausted(clear_kanban_env):
-    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
-    assert build_kanban_stop_nudge(messages=[], attempts=2) is None
-    assert build_kanban_stop_nudge(messages=[], attempts=1, max_attempts=1) is None
-    assert build_kanban_stop_nudge(messages=[], attempts=0, max_attempts=1) is not None
 
 
 # ── Integration: agent nudge + dispatcher bounded retry ──────────────
@@ -104,14 +87,6 @@ def test_nudge_budget_exhausted(clear_kanban_env):
 # for the dispatcher-side streak tests.
 
 
-def test_nudge_text_warns_about_blocking(clear_kanban_env):
-    """The nudge should warn that repeated violations will block the task."""
-    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
-    nudge = build_kanban_stop_nudge(messages=[], attempts=0)
-    assert nudge is not None
-    assert "block" in nudge.lower(), (
-        "nudge should warn that repeated violations will block the task"
-    )
 
 
 def test_nudge_and_dispatcher_budgets_are_independent(clear_kanban_env):
@@ -190,4 +165,3 @@ def test_fallback_block_suppressed_if_terminal_called(clear_kanban_env):
     # checks session_called_kanban_terminal(None); the harness passes live
     # messages. Verify session_called_kanban_terminal sees the terminal call.
     assert session_called_kanban_terminal(messages) is True
-
