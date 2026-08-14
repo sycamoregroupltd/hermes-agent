@@ -7892,6 +7892,76 @@ _RESPAWN_GUARD_PR_URL_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Reviewer-routing guard (t_fddfa577)
+# ---------------------------------------------------------------------------
+# A card is a "review card" (REVIEW / REWORK / RISK-VERDICT) when its title
+# leads with a review term or its body carries an explicit review marker.
+# Review cards are dispatched ONLY to terminal-capable reviewer profiles.
+# Routing one to a non-terminal profile makes the worker capability-fail and
+# re-block, producing a recurring re-block cycle (fleet evidence:
+# sycode-trading/t_jarvis_revrouter_20260728 and the 2026-07-28 orchestration
+# health log). The allowlist below is the canonical terminal-capable reviewer
+# set; keep it in sync with scripts/kanban_dedupe_guard.py RULE 6.
+REVIEW_CARD_TITLE_RE = re.compile(
+    r"(?i)^(re[- ]?review|review|rework|verdict|post[- ]state review|terminal review)\b"
+)
+REVIEW_CARD_BODY_RE = re.compile(
+    r"(?i)\b(REVIEW_VERDICT|REWORK_REQUIRED|post[- ]state review|terminal review)\b"
+)
+TERMINAL_CAPABLE_REVIEWER_PROFILES = frozenset({
+    "os-reviewer",
+    "guardian",
+    "platform-reviewer",
+    "devops",
+    "trading-devops",
+    "trading-risk-reviewer",
+})
+# Machine reason string written to the routing_rejected audit entry.
+NON_TERMINAL_REVIEW_REASON = "NON_TERMINAL_PROFILE_FOR_REVIEW_CARD"
+
+
+def is_review_card(title: Optional[str], body: Optional[str] = None) -> bool:
+    """Return True when a task is a review card.
+
+    A task is a review card when its title *leads* with a review term
+    (case-insensitive) or its body carries an explicit review marker
+    (``REVIEW_VERDICT`` / ``REWORK_REQUIRED`` / ``post-state review`` /
+    ``terminal review``). Leading-position title matching avoids false
+    positives on cards like ``IMPLEMENT AFTER REVIEW ...``.
+    """
+    if title and REVIEW_CARD_TITLE_RE.match(title):
+        return True
+    if body and REVIEW_CARD_BODY_RE.search(body):
+        return True
+    return False
+
+
+def classify_review_card_type(
+    title: Optional[str], body: Optional[str] = None
+) -> str:
+    """Bucket a review card into REVIEW / REWORK / RISK-VERDICT for audit.
+
+    Mirrors the spec mapping: ``REVIEW`` → title ``^review``/``^re-review``,
+    ``REWORK`` → title ``^rework`` or body ``REWORK_REQUIRED``, and
+    ``RISK-VERDICT`` → title ``^verdict`` or body ``REVIEW_VERDICT``.
+    """
+    if title:
+        if re.match(r"(?i)^(re[- ]?review|review)\b", title):
+            return "REVIEW"
+        if re.match(r"(?i)^rework\b", title):
+            return "REWORK"
+        if re.match(r"(?i)^verdict\b", title):
+            return "RISK-VERDICT"
+    if body:
+        lowered = body.lower()
+        if "rework_required" in lowered:
+            return "REWORK"
+        if "review_verdict" in lowered:
+            return "RISK-VERDICT"
+    return "REVIEW"
+
+
 @dataclass
 class DispatchResult:
     """Outcome of a single ``dispatch`` pass."""
@@ -7920,6 +7990,14 @@ class DispatchResult:
     operator-actionable failure. Tracked separately so health telemetry
     can distinguish "real stuck" (nothing spawned but spawnable work
     available) from "correctly idle" (nothing spawnable in the queue)."""
+    skipped_nonterminal_review: list[tuple[str, str, str]] = field(default_factory=list)
+    """Review cards (REVIEW / REWORK / RISK-VERDICT) rejected because their
+    assignee is not a terminal-capable reviewer profile, as
+    ``(task_id, target_profile, reason)`` triples where ``reason`` is
+    ``NON_TERMINAL_PROFILE_FOR_REVIEW_CARD``. A routing rejection — the task
+    is never claimed or spawned, so it is NOT a worker failure and does not
+    count toward the spawn-failure breaker. The rejection also writes a
+    ``routing_rejected`` entry to ``task_events`` for the audit trail."""
     skipped_per_profile_capped: list[tuple[str, str, int]] = field(default_factory=list)
     """Tasks deferred this tick because their assignee is already at
     ``kanban.max_in_progress_per_profile`` (#21582). Each entry is
@@ -9665,7 +9743,7 @@ def _dispatch_once_locked(
         )
 
     ready_rows = conn.execute(
-        "SELECT id, assignee FROM tasks "
+        "SELECT id, assignee, title, body FROM tasks "
         "WHERE status = 'ready' AND claim_lock IS NULL "
         "ORDER BY priority DESC, created_at ASC"
     ).fetchall()
@@ -9710,6 +9788,44 @@ def _dispatch_once_locked(
         if max_spawn is not None and running_count + spawned >= max_spawn:
             break
         row_assignee = row["assignee"]
+        # Reviewer-routing guard (t_fddfa577): review cards may only be
+        # dispatched to a terminal-capable reviewer profile. Validate before
+        # claim/spawn — and before the kanban.default_assignee fallback below,
+        # so an unassigned review card is never auto-assigned to a possibly
+        # non-terminal default and spawned. An empty/unset assignee is NOT
+        # terminal-capable, so it is rejected too. A rejected task is a
+        # routing rejection: never claimed, never spawned, never counted as a
+        # spawn failure.
+        effective_assignee = (row_assignee or "").strip() or (
+            _default_assignee or ""
+        ).strip() or None
+        if is_review_card(row["title"], row["body"]):
+            if effective_assignee not in TERMINAL_CAPABLE_REVIEWER_PROFILES:
+                target_profile = effective_assignee or ""
+                result.skipped_nonterminal_review.append(
+                    (row["id"], target_profile, NON_TERMINAL_REVIEW_REASON)
+                )
+                if not dry_run:
+                    try:
+                        with write_txn(conn):
+                            _append_event(
+                                conn, row["id"], "routing_rejected",
+                                {
+                                    "card_id": row["id"],
+                                    "target_profile": target_profile,
+                                    "reason": NON_TERMINAL_REVIEW_REASON,
+                                    "card_type": classify_review_card_type(
+                                        row["title"], row["body"]
+                                    ),
+                                    "board": board,
+                                },
+                            )
+                    except Exception:
+                        _log.debug(
+                            "kanban dispatch: failed to write routing_rejected "
+                            "audit for %s", row["id"], exc_info=True,
+                        )
+                continue
         if not row_assignee:
             # Honour kanban.default_assignee: when the dispatcher hits an
             # unassigned ready task and an operator-configured fallback
