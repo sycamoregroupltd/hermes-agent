@@ -245,8 +245,13 @@ def run_prompt_self_test() -> int:
         return not flag
 
     ok_all = True
-    ok = force_fail(force_missing_resolver) and (expected in prompt)
-    print(f"[expected-clause] {'PASS' if ok else 'FAIL'}")
+    # The card requires the resolver clause to appear EXACTLY once, so a future
+    # prompt rewrite that duplicates (or drops) it is caught. A bare substring
+    # check would pass on a 2x duplication; count == 1 enforces the wording pin.
+    resolver_clause_count = prompt.count(expected)
+    ok = force_fail(force_missing_resolver) and (resolver_clause_count == 1)
+    print(f"[expected-clause] {'PASS' if ok else 'FAIL'}"
+          + (f" (count={resolver_clause_count}, expected 1)" if resolver_clause_count != 1 else ""))
     ok_all = ok_all and ok
 
     ok = force_fail(force_forbidden_present) and (forbidden not in prompt)
