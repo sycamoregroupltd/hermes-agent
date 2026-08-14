@@ -614,6 +614,73 @@ def _resolve_rate_limit_cooldown_seconds() -> int:
     return DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS
 
 
+def _resolve_respawn_guard_event_suppression_seconds() -> int:
+    """Return the respawn_guarded durable-event suppression window in seconds.
+
+    Reads ``HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS`` from the
+    environment; falls back to ``DEFAULT_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS``
+    when absent, empty, non-integer, or negative. A value of 0 disables
+    age-based suppression (identical reasons re-emit every tick — restores the
+    legacy noisy per-tick behaviour for debugging). Mirrors
+    ``_resolve_rate_limit_cooldown_seconds``.
+    """
+    raw = os.environ.get(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", ""
+    ).strip()
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            parsed = -1
+        if parsed >= 0:
+            return parsed
+    return DEFAULT_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS
+
+
+def _should_emit_respawn_guarded_event(
+    conn: sqlite3.Connection,
+    task_id: str,
+    guard_reason: str,
+    *,
+    now: Optional[int] = None,
+) -> bool:
+    """True if a durable respawn_guarded row should be written this tick.
+
+    Observability-only state-transition + bounded-heartbeat throttle. Does NOT
+    affect the spawn-guard decision itself (``check_respawn_guard`` is
+    untouched). Emits when:
+
+    1. No prior respawn_guarded row exists for this task (first entry) — always.
+    2. The last emitted reason differs from ``guard_reason`` (state transition,
+       e.g. recent_success -> active_pr) — always.
+    3. The same reason persists past the suppression window (heartbeat) — emit
+       at most once per window so a long-lived guard stays visible.
+    4. Otherwise (identical reason, inside the window) — suppress the redundant
+       insert.
+
+    Corrupt/legacy payloads fail OPEN (emit) so operators still see the guard.
+    """
+    window = _resolve_respawn_guard_event_suppression_seconds()
+    now_ts = int(time.time()) if now is None else int(now)
+    last = conn.execute(
+        "SELECT payload, created_at FROM task_events "
+        "WHERE task_id = ? AND kind = 'respawn_guarded' "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    if last is None:
+        return True
+    try:
+        last_reason = json.loads(last["payload"] or "{}").get("reason")
+    except Exception:
+        # Fail open on corrupt payload so the guard state stays visible.
+        return True
+    if last_reason != guard_reason:
+        return True
+    age = now_ts - int(last["created_at"] or 0)
+    return age >= window
+
+
 # Worker-context caps so build_worker_context() stays bounded on
 # pathological boards (retry-heavy tasks, comment storms, giant
 # summaries). Values chosen to fit a typical 100k-char LLM prompt with
@@ -7780,6 +7847,20 @@ DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS = 300  # 5 minutes
 # Within this window a GitHub PR URL in a comment blocks re-spawn.
 _RESPAWN_GUARD_PR_WINDOW = 86400  # 24 hours
 
+# Bounded-heartbeat window for the durable respawn_guarded event emitter.
+# The dispatcher ticks once per minute and, without throttling, writes an
+# identical respawn_guarded row per (task, reason) every tick (up to 1,440/day
+# per guarded task). This is pure observability noise: the guard decision is
+# unchanged, only the redundant durable event rows are suppressed. Emit the
+# first event per (task, reason), emit again whenever the reason changes (a
+# state transition), and re-emit at most once per suppression window while the
+# same reason persists so a long-lived guard (e.g. the 24h PR window) stays
+# visible in `hermes kanban tail` instead of going silent for a day.
+# Overridable via ``HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS``
+# (mirrors ``_resolve_rate_limit_cooldown_seconds`` semantics; 0 restores
+# per-tick emission for identical reasons, useful for debugging).
+DEFAULT_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS = 21600  # 6 hours
+
 # Pattern matching a GitHub PR URL in task comments.
 _RESPAWN_GUARD_PR_URL_RE = re.compile(
     r"https?://github\.com/[^/\s]+/[^/\s]+/pull/\d+",
@@ -10370,7 +10451,17 @@ def _dispatch_once_locked(
             # Emit an event so operators can see why the task was
             # skipped when reading `hermes kanban tail` — without
             # this the task appears stuck in ready with no diagnosis.
-            if not dry_run:
+            # The reason is STATE-KEYED from the current (post-t_9799c507)
+            # PR-state-aware guard: `active_pr` means a recent PR comment
+            # resolved to OPEN/unknown (MERGED/CLOSED PRs no longer guard).
+            # Throttle the durable rows: emit the first event per (task,
+            # reason), emit again on reason transition, and re-emit at most
+            # once per suppression window for a persisting reason. The
+            # in-memory `respawn_guarded` telemetry above still fires every
+            # tick; only redundant durable INSERTs are suppressed.
+            if not dry_run and _should_emit_respawn_guarded_event(
+                conn, row["id"], guard_reason
+            ):
                 with write_txn(conn):
                     _append_event(
                         conn, row["id"], "respawn_guarded",

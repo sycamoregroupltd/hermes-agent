@@ -2638,6 +2638,142 @@ def test_dispatch_respawn_guard_emits_event_for_skipped_task(
 
 
 # ---------------------------------------------------------------------------
+# Respawn-guard durable-event throttle (t_1ccac654)
+# ---------------------------------------------------------------------------
+
+def _count_respawn_guarded(conn, task_id: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM task_events "
+        "WHERE task_id = ? AND kind = 'respawn_guarded'",
+        (task_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def _make_active_pr_task(conn, title: str) -> str:
+    """Create a ready task with an OPEN (still-guarded) PR comment."""
+    t = kb.create_task(conn, title=title, assignee="alice")
+    kb.add_comment(
+        conn, t, "worker",
+        "Opened https://github.com/totemx-AI/subsidysmart/pull/99",
+    )
+    return t
+
+
+def test_respawn_guard_event_throttled_same_reason(
+    kanban_home, all_assignees_spawnable, monkeypatch
+):
+    """Identical (task, reason) inside the suppression window: first emit only.
+
+    (t_1ccac654 acceptance — a repeated respawn_guarded event must NOT grow
+    every minute while the card stays guarded.)
+    """
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "3600"
+    )
+    spawned = []
+
+    def fake_spawn(task, workspace):
+        spawned.append(task.id)
+
+    with kb.connect() as conn:
+        t = _make_active_pr_task(conn, "throttle-active-pr")
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            r1 = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+            r2 = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+        n = _count_respawn_guarded(conn, t)
+        status = kb.get_task(conn, t).status
+
+    assert (t, "active_pr") in r1.respawn_guarded
+    assert (t, "active_pr") in r2.respawn_guarded  # in-memory every tick
+    assert n == 1
+    assert t not in spawned
+    assert status == "ready"
+
+
+def test_respawn_guard_event_emits_on_reason_change(
+    kanban_home, all_assignees_spawnable, monkeypatch
+):
+    """A guard-reason transition always emits a fresh event."""
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "3600"
+    )
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="reason-change", assignee="alice")
+        # First reason: recent_success via a completed run.
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO task_runs (task_id, status, outcome, started_at, ended_at) "
+            "VALUES (?, 'done', 'completed', ?, ?)",
+            (t, now - 300, now - 60),
+        )
+        kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        # Clear the success path, then set a blocker_auth failure.
+        conn.execute("DELETE FROM task_runs WHERE task_id = ?", (t,))
+        conn.execute(
+            "UPDATE tasks SET last_failure_error = ? WHERE id = ?",
+            ("unauthorized: invalid api key", t),
+        )
+        kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        events = [
+            e for e in kb.list_events(conn, t) if e.kind == "respawn_guarded"
+        ]
+    assert len(events) == 2
+    assert events[0].payload.get("reason") == "recent_success"
+    assert events[1].payload.get("reason") == "blocker_auth"
+
+
+def test_respawn_guard_event_heartbeat_after_window(
+    kanban_home, all_assignees_spawnable, monkeypatch
+):
+    """Same reason re-emits after the suppression window elapses (heartbeat)."""
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "60"
+    )
+    with kb.connect() as conn:
+        t = _make_active_pr_task(conn, "heartbeat")
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+            assert _count_respawn_guarded(conn, t) == 1
+            # Age the prior event past the window, then tick again.
+            conn.execute(
+                "UPDATE task_events SET created_at = created_at - 120 "
+                "WHERE task_id = ? AND kind = 'respawn_guarded'",
+                (t,),
+            )
+            kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+            assert _count_respawn_guarded(conn, t) == 2
+
+
+def test_respawn_guard_event_throttle_zero_restores_per_tick(
+    kanban_home, all_assignees_spawnable, monkeypatch
+):
+    """Env suppression=0 disables age-based suppression (debug mode)."""
+    monkeypatch.setenv(
+        "HERMES_KANBAN_RESPAWN_GUARD_EVENT_SUPPRESSION_SECONDS", "0"
+    )
+    with kb.connect() as conn:
+        t = _make_active_pr_task(conn, "zero-suppression")
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+            kb.dispatch_once(conn, spawn_fn=lambda task, ws: None)
+        assert _count_respawn_guarded(conn, t) == 2
+
+
+def test_respawn_guard_dry_run_still_no_rows(
+    kanban_home, all_assignees_spawnable
+):
+    """dry_run never writes durable respawn_guarded rows."""
+    with kb.connect() as conn:
+        t = _make_active_pr_task(conn, "dry")
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            res = kb.dispatch_once(conn, dry_run=True)
+        n = _count_respawn_guarded(conn, t)
+    assert (t, "active_pr") in res.respawn_guarded
+    assert n == 0
+
+
+# ---------------------------------------------------------------------------
 # Workspace resolution
 # ---------------------------------------------------------------------------
 
