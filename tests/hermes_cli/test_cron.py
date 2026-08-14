@@ -15,6 +15,14 @@ def tmp_cron_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("cron.jobs.CRON_DIR", tmp_path / "cron")
     monkeypatch.setattr("cron.jobs.JOBS_FILE", tmp_path / "cron" / "jobs.json")
     monkeypatch.setattr("cron.jobs.OUTPUT_DIR", tmp_path / "cron" / "output")
+    # A live ticker heartbeat so `cron create` passes the dead-store gate by
+    # default. Tests that exercise the dead-store gate control the heartbeat
+    # explicitly (see test_cron_dead_store.py).
+    import time
+
+    cron_dir = tmp_path / "cron"
+    cron_dir.mkdir(parents=True, exist_ok=True)
+    (cron_dir / "ticker_heartbeat").write_text(str(time.time()), encoding="utf-8")
     return tmp_path
 
 
@@ -213,7 +221,7 @@ def test_cron_tick_invokes_scheduler_tick_with_verbose(monkeypatch):
     assert calls == [True]
 
 
-def test_cron_create_failure_returns_nonzero(monkeypatch, capsys):
+def test_cron_create_failure_returns_nonzero(tmp_cron_dir, monkeypatch, capsys):
     monkeypatch.setattr(cron_cli, "_cron_api", lambda **kwargs: {"success": False, "error": "boom"})
 
     args = SimpleNamespace(

@@ -98,6 +98,14 @@ TICKER_SUCCESS_FILE = CRON_DIR / "ticker_last_success"
 # drift apart.
 TICKER_INTERVAL_SECONDS = 60
 
+# Default dead-store staleness threshold for ``hermes cron create``: a target
+# cron store whose ``ticker_heartbeat`` is missing or older than this is
+# refused at the registration boundary unless the user passes ``--force``
+# (intentional dead-store registration, e.g. a one-shot maintenance job).
+# Mirrors the fleet invariant guard's threshold (t_4bedf8d5). A plain module
+# constant so operators/tests can tune it without a new env var.
+DEAD_STORE_STALE_SECONDS = 900
+
 # In-process lock protecting load_jobs→modify→save_jobs cycles.
 # Required when tick() runs jobs in parallel threads — without this,
 # concurrent mark_job_run / advance_next_run calls can clobber each other.
@@ -176,6 +184,29 @@ def use_cron_store(home: Union[str, Path]):
             cron_dir=cron_dir,
             jobs_file=cron_dir / "jobs.json",
             output_dir=cron_dir / "output",
+        )
+    )
+    try:
+        yield
+    finally:
+        _cron_store_override.reset(token)
+
+
+@contextlib.contextmanager
+def use_cron_store_dir(cron_dir: Union[str, Path]):
+    """Route cron storage to an explicit store directory (``--store`` target).
+
+    Like :func:`use_cron_store` but takes the store directory itself (the dir
+    that holds ``jobs.json`` and ``ticker_heartbeat``) rather than a profile
+    home, so ``hermes cron create --store <dir>`` can target an arbitrary store
+    path.
+    """
+    resolved = Path(cron_dir).expanduser().resolve()
+    token = _cron_store_override.set(
+        _CronStorePaths(
+            cron_dir=resolved,
+            jobs_file=resolved / "jobs.json",
+            output_dir=resolved / "output",
         )
     )
     try:
@@ -961,6 +992,37 @@ def get_ticker_heartbeat_age() -> Optional[float]:
     """
     store = _current_cron_store()
     return _epoch_file_age(store.cron_dir / "ticker_heartbeat")
+
+
+def get_cron_dir_heartbeat_age(cron_dir: Union[str, Path]) -> Optional[float]:
+    """Seconds since the ticker last looped in an explicitly named store.
+
+    Like :func:`get_ticker_heartbeat_age` but for an arbitrary store directory
+    (e.g. a `--store` target passed to ``hermes cron create``), instead of the
+    process-resolved current store. ``None`` when the heartbeat file is missing
+    or unreadable.
+    """
+    return _epoch_file_age(Path(cron_dir) / "ticker_heartbeat")
+
+
+def dead_store_reason(cron_dir: Union[str, Path], *, stale_seconds: int = DEAD_STORE_STALE_SECONDS) -> Optional[str]:
+    """Return a human-readable reason ``cron_dir`` is a dead store, else ``None``.
+
+    A store is dead when its ``ticker_heartbeat`` is missing/unreadable (never
+    ticked, or the ticker process died) or older than ``stale_seconds``. Used by
+    ``hermes cron create --store`` to refuse registrations into stores with no
+    live ticker, so a job can never be scheduled into a store that will never
+    fire it — the same invariant the dead-store guard (t_4bedf8d5) enforces as a
+    safety net.
+    """
+    age = get_cron_dir_heartbeat_age(cron_dir)
+    if age is None:
+        return f"ticker_heartbeat missing/unreadable in {cron_dir}"
+    if age > stale_seconds:
+        return (
+            f"ticker_heartbeat {int(age)}s stale (>{stale_seconds}s) in {cron_dir}"
+        )
+    return None
 
 
 def get_ticker_success_age() -> Optional[float]:

@@ -115,6 +115,13 @@ class TestCronCreateLifecycleBlock:
         monkeypatch.setattr("cron.jobs.CRON_DIR", tmp_path / "cron")
         monkeypatch.setattr("cron.jobs.JOBS_FILE", tmp_path / "cron" / "jobs.json")
         monkeypatch.setattr("cron.jobs.OUTPUT_DIR", tmp_path / "cron" / "output")
+        # Live ticker heartbeat so the create path reaches the lifecycle guard
+        # rather than being refused earlier by the dead-store gate.
+        import time
+
+        cron_dir = tmp_path / "cron"
+        cron_dir.mkdir(parents=True, exist_ok=True)
+        (cron_dir / "ticker_heartbeat").write_text(str(time.time()), encoding="utf-8")
 
     def test_block_hermes_gateway_restart(self, capsys):
         args = Namespace(
@@ -1075,6 +1082,13 @@ class TestCronCreateLifecycleBlockExtra:
         monkeypatch.setattr("cron.jobs.CRON_DIR", tmp_path / "cron")
         monkeypatch.setattr("cron.jobs.JOBS_FILE", tmp_path / "cron" / "jobs.json")
         monkeypatch.setattr("cron.jobs.OUTPUT_DIR", tmp_path / "cron" / "output")
+        # Live ticker heartbeat so the create path reaches the lifecycle guard
+        # rather than being refused earlier by the dead-store gate.
+        import time
+
+        cron_dir = tmp_path / "cron"
+        cron_dir.mkdir(parents=True, exist_ok=True)
+        (cron_dir / "ticker_heartbeat").write_text(str(time.time()), encoding="utf-8")
 
     def test_cron_nested_wrapper_script_is_scanned(self, tmp_path, capsys, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))

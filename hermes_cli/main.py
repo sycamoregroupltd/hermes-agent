@@ -4704,7 +4704,10 @@ def cmd_cron(args):
     """Cron job management."""
     from hermes_cli.cron import cron_command
 
-    cron_command(args)
+    # Propagate the subcommand's return code so failures (e.g. the dead-store
+    # gate refusing a registration) exit non-zero; main() turns a non-zero
+    # int into sys.exit(rc).
+    return cron_command(args)
 
 
 def cmd_sync(args):

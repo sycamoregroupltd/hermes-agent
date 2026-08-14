@@ -348,23 +348,86 @@ def cron_create(args):
     # raises GatewayLifecycleBlocked, the `cronjob` tool wrapper catches it and
     # returns it as result["error"], and the `if not result.get("success")`
     # branch below prints it in red and exits 1 — same UX as before.
-    result = _cron_api(
-        action="create",
-        schedule=args.schedule,
-        prompt=args.prompt,
-        name=getattr(args, "name", None),
-        deliver=getattr(args, "deliver", None),
-        repeat=getattr(args, "repeat", None),
-        skill=getattr(args, "skill", None),
-        skills=_normalize_skills(getattr(args, "skill", None), getattr(args, "skills", None)),
-        script=getattr(args, "script", None),
-        workdir=getattr(args, "workdir", None),
-        model=getattr(args, "model", None),
-        provider=getattr(args, "model_provider", None),
-        no_agent=getattr(args, "no_agent", False) or None,
-        monitor_script=getattr(args, "monitor_script", None),
-        monitor_url=getattr(args, "monitor_url", None),
+    from cron.jobs import (
+        _current_cron_store,
+        dead_store_reason,
+        update_job,
+        use_cron_store_dir,
     )
+
+    store_dir = getattr(args, "store", None)
+    force = bool(getattr(args, "force", False))
+
+    # Resolve the target store directory: --store overrides, otherwise the
+    # active profile's store. Refuse dead stores at the registration boundary
+    # (the guard t_4bedf8d5 is a safety net, not the primary control).
+    target_store = str(Path(store_dir).expanduser().resolve()) if store_dir else str(
+        _current_cron_store().cron_dir
+    )
+    # The dead-store gate speaks to the BUILT-IN ticker's liveness signal. An
+    # external provider (e.g. Chronos) fires jobs via a NAS-mediated webhook
+    # and intentionally never writes a ticker_heartbeat, so gating on a missing
+    # heartbeat there would refuse every legitimate registration (a false
+    # positive that destroys the feature — same reasoning as
+    # _warn_if_gateway_not_running). Only enforce the gate for the builtin
+    # ticker.
+    reason = None
+    if _active_cron_provider_name() == "builtin":
+        reason = dead_store_reason(target_store)
+    if reason and not force:
+        print(
+            color(
+                f"Refusing to create job in {target_store}: {reason}. "
+                "The cron ticker is not live in that store, so the job would "
+                "never fire. Pass --force to register anyway (e.g. a one-shot "
+                "maintenance job).",
+                Colors.RED,
+            )
+        )
+        return 1
+
+    def _do_create():
+        return _cron_api(
+            action="create",
+            schedule=args.schedule,
+            prompt=args.prompt,
+            name=getattr(args, "name", None),
+            deliver=getattr(args, "deliver", None),
+            repeat=getattr(args, "repeat", None),
+            skill=getattr(args, "skill", None),
+            skills=_normalize_skills(getattr(args, "skill", None), getattr(args, "skills", None)),
+            script=getattr(args, "script", None),
+            workdir=getattr(args, "workdir", None),
+            model=getattr(args, "model", None),
+            provider=getattr(args, "model_provider", None),
+            no_agent=getattr(args, "no_agent", False) or None,
+            monitor_script=getattr(args, "monitor_script", None),
+            monitor_url=getattr(args, "monitor_url", None),
+        )
+
+    # Route the create into the --store target if one was given, and stamp the
+    # dead-store override inside the SAME store context (update_job resolves
+    # the active store, so it must see the --store override too).
+    def _create_and_maybe_stamp():
+        result = _do_create()
+        if not result.get("success"):
+            return result
+        # Record the dead-store override in job metadata when --force bypassed
+        # a dead store, so operators can audit that this job was intentionally
+        # registered into a store with no live ticker.
+        if reason and force:
+            try:
+                update_job(result["job_id"], {"dead_store_override": reason})
+            except Exception:
+                pass  # metadata stamp is best-effort; the job is already created
+        return result
+
+    if store_dir:
+        with use_cron_store_dir(target_store):
+            result = _create_and_maybe_stamp()
+    else:
+        result = _create_and_maybe_stamp()
+
     if not result.get("success"):
         print(color(f"Failed to create job: {result.get('error', 'unknown error')}", Colors.RED))
         return 1
@@ -385,6 +448,8 @@ def cron_create(args):
     if job_data.get("workdir"):
         print(f"  Workdir: {job_data['workdir']}")
     print(f"  Next run: {result['next_run_at']}")
+    if reason and force:
+        print(color(f"  WARNING: created into dead store — {reason}", Colors.YELLOW))
     _warn_if_gateway_not_running()
     return 0
 

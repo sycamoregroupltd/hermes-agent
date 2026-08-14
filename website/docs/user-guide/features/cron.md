@@ -57,6 +57,25 @@ hermes cron create "every 1h" "Use both skills and combine the result" \
   --name "Skill combo"
 ```
 
+#### Dead-store guard
+
+`hermes cron create` refuses to register a job into a cron store whose ticker is
+not live — i.e. the store has no `ticker_heartbeat` file or the heartbeat is
+stale (older than 15 minutes). This closes the class where jobs were silently
+scheduled into stores that never fire them: `cron list` rendered them
+`[active]` while `last_run_at` stayed null forever.
+
+The check is scoped to the built-in ticker (external providers such as Chronos
+fire via a webhook and intentionally never write a heartbeat, so they are
+exempt).
+
+- `--store <dir>` targets an explicit store directory (the dir holding
+  `jobs.json` and `ticker_heartbeat`); by default the active profile's store is
+  used.
+- `--force` bypasses the guard for intentional dead-store registration (e.g. a
+  one-shot maintenance job). The override is recorded in the job's metadata
+  (`dead_store_override`) for auditability, and a warning is printed.
+
 ### Through natural conversation
 
 Ask Hermes normally:

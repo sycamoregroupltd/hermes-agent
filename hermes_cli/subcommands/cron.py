@@ -105,6 +105,24 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         dest="model_provider",
         help="Inference provider paired with --model (e.g. 'openrouter', 'nous').",
     )
+    cron_create.add_argument(
+        "--store",
+        help=(
+            "Target cron store directory (the dir holding jobs.json and "
+            "ticker_heartbeat; default: the active profile's store). The job is "
+            "created there only if the store's ticker is live; a dead store is "
+            "refused unless --force is also passed."
+        ),
+    )
+    cron_create.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Allow creating into a store whose ticker is missing or stale "
+            "(e.g. a one-shot maintenance job). The dead-store override is "
+            "recorded in the job metadata."
+        ),
+    )
 
     # cron edit
     cron_edit = cron_subparsers.add_parser(
