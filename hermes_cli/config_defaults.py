@@ -2423,6 +2423,14 @@ DEFAULT_CONFIG = {
         # Seconds between dispatcher ticks (idle or not). Lower = snappier
         # pickup of newly-ready tasks; higher = less SQL pressure.
         "dispatch_interval_seconds": 60,
+        # Seconds between worker-liveness watchdog sweeps. The dispatcher
+        # reaps dead-pid workers on this sub-tick cadence (reclaiming the
+        # card to ``ready`` or terminal-blocking with a typed
+        # ``harness_defect`` reason + captured stderr) without waiting for
+        # the full ``dispatch_interval_seconds`` tick, so a worker that dies
+        # mid-run no longer leaves its card stuck in invisible blocked
+        # limbo for up to a minute. See ``sweep_worker_liveness`` (t_f9b3dba7).
+        "liveness_interval_seconds": 15,
         # Auto-block after this many consecutive non-success attempts for the
         # same task/profile (spawn_failed, timed_out, or crashed). Reassignment
         # resets the streak for the new profile.

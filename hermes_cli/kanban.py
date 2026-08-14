@@ -2853,6 +2853,11 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
             max_spawn=args.max,
             failure_limit=getattr(args, "failure_limit", kb.DEFAULT_SPAWN_FAILURE_LIMIT),
             on_tick=_on_tick,
+            # Standalone daemon (deprecated — gateway hosts the primary
+            # dispatcher) still honors the liveness watchdog config so the
+            # behaviour matches regardless of which host runs the loop
+            # (t_f9b3dba7).
+            liveness_interval=kb._daemon_liveness_interval(),
         )
     finally:
         if pidfile:

@@ -1264,6 +1264,30 @@ class GatewayKanbanWatchersMixin:
             interval = 60.0
         interval = max(interval, 1.0)  # sanity floor — tighter than this is a footgun
 
+        # Worker-liveness watchdog cadence. The full dispatch tick
+        # (``interval``, default 60s) is throttled by design — spawning,
+        # promoting, and reconcile work is deliberately conservative. But a
+        # worker that dies mid-run must be reclaimed fast: a dead-pid card
+        # sitting in ``running`` for a minute (then auto-blocked with no
+        # visible reason) is the exact "blocked limbo" failure from
+        # t_f9b3dba7. This liveness sweep reaps dead workers on a sub-tick
+        # cadence (default 15s) and reclaims each card back to ``ready`` or
+        # terminal-blocks it as typed ``harness_defect`` with captured
+        # stderr — without waiting for the next full dispatch tick.
+        raw_liveness = kanban_cfg.get("liveness_interval_seconds", 15)
+        try:
+            liveness_interval = float(raw_liveness or 15)
+        except (TypeError, ValueError):
+            logger.warning(
+                "kanban dispatcher: invalid kanban.liveness_interval_seconds=%r; using default 15",
+                raw_liveness,
+            )
+            liveness_interval = 15.0
+        liveness_interval = max(liveness_interval, 1.0)  # sanity floor
+        # Cap the liveness sweep at the full tick interval — a sweep slower
+        # than the dispatch tick would just be redundant work.
+        liveness_interval = min(liveness_interval, interval)
+
         # Read max_spawn config to limit concurrent kanban tasks
         max_spawn = kanban_cfg.get("max_spawn", None)
         if max_spawn is not None:
@@ -1522,6 +1546,37 @@ class GatewayKanbanWatchersMixin:
                 out.append((slug, _tick_once_for_board(slug)))
             return out
 
+        def _sweep_liveness_all_boards() -> None:
+            """Run the worker-liveness watchdog sweep across all boards.
+
+            Lighter than a full dispatch tick: reaps zombies and reclaims
+            dead-pid workers (back to ``ready`` or terminal-blocked as typed
+            ``harness_defect`` with captured stderr) on the sub-tick
+            cadence, so a worker that dies mid-run no longer leaves its card
+            stuck in ``running``→``blocked`` limbo until the next full tick
+            (t_f9b3dba7). Returns nothing — telemetry is per-sweep log noise,
+            deliberately quiet for the common no-dead-worker case.
+            """
+            try:
+                boards = _kb.list_boards(include_archived=False)
+            except Exception:
+                boards = [_kb.read_board_metadata(_kb.DEFAULT_BOARD)]
+            for b in boards:
+                slug = b.get("slug") or _kb.DEFAULT_BOARD
+                try:
+                    crashed, auto_blocked = _kb.sweep_worker_liveness(board=slug)
+                except Exception:
+                    logger.exception(
+                        "kanban dispatcher: worker-liveness sweep failed on board %s",
+                        slug,
+                    )
+                    continue
+                if crashed or auto_blocked:
+                    logger.info(
+                        "kanban dispatcher [%s]: liveness swept crashed=%d auto_blocked=%d",
+                        slug, len(crashed), len(auto_blocked),
+                    )
+
         def _ready_nonempty() -> bool:
             """Cheap probe: is there at least one ready+assigned+unclaimed
             task on ANY board whose assignee maps to a real Hermes profile
@@ -1735,9 +1790,25 @@ class GatewayKanbanWatchersMixin:
 
             # Sleep in 1s slices so shutdown is snappy — otherwise a stop()
             # waits up to `interval` seconds for the current sleep to finish.
+            # While sleeping toward the next full dispatch tick, run the
+            # worker-liveness watchdog sweep on its sub-tick cadence so a
+            # worker that dies mid-run is reclaimed (or terminal-blocked
+            # with a reason) within seconds, not a full tick later.
+            _last_liveness = time.monotonic()
             slept = 0.0
             while slept < interval and self._running:
                 await asyncio.sleep(min(1.0, interval - slept))
                 slept += 1.0
+                if (
+                    self._running
+                    and time.monotonic() - _last_liveness >= liveness_interval
+                ):
+                    _last_liveness = time.monotonic()
+                    try:
+                        await asyncio.to_thread(_sweep_liveness_all_boards)
+                    except Exception:
+                        logger.exception(
+                            "kanban dispatcher: worker-liveness sweep failed"
+                        )
 
         self._release_kanban_dispatcher_lock()

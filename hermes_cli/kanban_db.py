@@ -116,13 +116,23 @@ VALID_INITIAL_STATUSES = {"running", "blocked"}
 #   * ``capability``   — hit a hard wall (no access, missing creds, an action no
 #                        AI agent can perform). Genuinely human-only.
 #   * ``transient``    — a flaky/temporary failure that may clear on retry.
+#   * ``harness_defect`` — the dispatcher/harness itself crashed the worker
+#                        (e.g. repeated ``pid not alive`` deaths from a
+#                        spawn-time config error), NOT a task/capability gap.
+#                        Routed to devops for harness repair, and
+#                        distinguishable from ``capability`` so the board
+#                        does not mislabel a broken spawn as "this task cannot
+#                        be done".
 #
 # ``needs_input`` and ``capability`` are "truly blocked": they go to ``blocked``
 # for a human, and the unblock-loop breaker (see ``block_task`` /
 # ``BLOCK_RECURRENCE_LIMIT``) escalates them to ``triage`` if a cron keeps
 # unblocking them only to have the worker re-block for the same reason.
+# ``harness_defect`` is also a hard block (the card must not auto-loop), but it
+# is typed separately so devops routing / triage can treat it as a harness
+# problem rather than a task problem.
 # ``None`` = legacy/un-typed block (treated as a generic human blocker).
-VALID_BLOCK_KINDS = {"dependency", "needs_input", "capability", "transient"}
+VALID_BLOCK_KINDS = {"dependency", "needs_input", "capability", "transient", "harness_defect"}
 
 # After a task has been blocked, unblocked, and re-blocked this many times for
 # the same (truly-blocked) reason, the unblock-loop breaker stops trusting the
@@ -447,6 +457,26 @@ def _resolve_crash_grace_seconds() -> int:
         if parsed >= 0:
             return parsed
     return DEFAULT_CRASH_GRACE_SECONDS
+
+
+def _daemon_liveness_interval() -> Optional[float]:
+    """Resolve the worker-liveness watchdog cadence for the standalone daemon.
+
+    Reads ``kanban.liveness_interval_seconds`` from config (matching the
+    gateway's ``_kanban_dispatcher_watcher`` default of 15s); returns ``None``
+    when unset/invalid so the caller falls back to no sub-tick sweep. Used by
+    the deprecated ``hermes kanban daemon`` path so its behaviour matches the
+    gateway-hosted dispatcher (t_f9b3dba7).
+    """
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config() or {}
+        kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
+        raw = kanban_cfg.get("liveness_interval_seconds", 15)
+        val = float(raw or 15)
+        return val if val > 0 else None
+    except Exception:
+        return None
 
 
 def _resolve_rate_limit_cooldown_seconds() -> int:
@@ -8721,7 +8751,28 @@ def _protocol_violation_streak(conn: sqlite3.Connection, task_id: str) -> int:
     return streak
 
 
-def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
+def _capture_worker_log_tail(
+    task_id: str, *, board: Optional[str] = None, tail_bytes: int = 4000
+) -> Optional[str]:
+    """Return the tail of a worker's log (which captures stdout+stderr).
+
+    The dispatcher redirects worker stdout/stderr to ``<board>/logs/<task>.log``
+    (``stderr=subprocess.STDOUT`` in ``_default_spawn``), so the tail is the
+    closest available "captured stderr" evidence for a crashed worker. Returns
+    ``None`` when no log exists (task never spawned, or already GC'd) so callers
+    can degrade gracefully. Reads at most ``tail_bytes`` from the end to avoid
+    paging megabytes into a comment/event.
+    """
+    try:
+        return read_worker_log(task_id, tail_bytes=tail_bytes, board=board)
+    except Exception:
+        _log.debug("worker log tail read failed for %s", task_id, exc_info=True)
+        return None
+
+
+def detect_crashed_workers(
+    conn: sqlite3.Connection, board: Optional[str] = None
+) -> list[str]:
     """Reclaim ``running`` tasks whose worker PID is no longer alive.
 
     Appends a ``crashed`` event and restores the task's source phase.
@@ -8756,9 +8807,12 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     # write_txn so can't nest). ``protocol_violation`` flags the
     # clean-exit-but-still-running case, which is accounted against its
     # own bounded violation streak instead of the unified failure
-    # counter (see the post-txn loop below).
-    crash_details: list[tuple[str, int, str, bool, str]] = []
-    # (task_id, pid, claimer, protocol_violation, error_text)
+    # counter (see the post-txn loop below). ``pid_not_alive`` flags the
+    # harness ``unknown``-exit class (dead pid, no reap record): those
+    # hard-block as ``harness_defect`` routed to devops, never
+    # ``capability``.
+    crash_details: list[tuple[str, int, str, bool, str, bool]] = []
+    # (task_id, pid, claimer, protocol_violation, error_text, pid_not_alive)
     # Worker-exit observer payloads (RFC #58548), collected inside the main
     # txn and fired only after every reclaim/accounting txn has committed.
     exited_hook_payloads: list[dict] = []
@@ -8788,6 +8842,10 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
             pid = int(row["worker_pid"])
             kind, code = _classify_worker_exit(pid)
             rate_limited_exit = False
+            # ``pid_not_alive`` is only True for the harness ``unknown``-exit
+            # class (see the else branch below); all other classes leave it
+            # False so the post-txn accounting treats them as before.
+            pid_not_alive = False
             if kind == "clean_exit":
                 # Worker subprocess returned 0 but its task is still
                 # ``running`` in the DB — it exited without calling
@@ -8837,6 +8895,16 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 }
             else:
                 protocol_violation = False
+                # ``unknown`` exit class (dead pid that was never reaped /
+                # never appeared in the reap registry) is the harness
+                # ``pid not alive`` signature: the worker died at spawn time
+                # before producing any handoff (e.g. CLI skill-resolution
+                # crash). It is NOT a task/capability gap — the card must be
+                # re-queued for a retry, and if it keeps dying the same way
+                # the block must be typed ``harness_defect`` (routed to
+                # devops), never ``capability`` (which falsely reads as "this
+                # task cannot be done").
+                pid_not_alive = kind == "unknown"
                 if kind == "nonzero_exit":
                     error_text = f"pid {pid} exited with code {code}"
                 elif kind == "signaled":
@@ -8911,7 +8979,7 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                     crashed.append(row["id"])
                     crash_details.append(
                         (row["id"], pid, row["claim_lock"],
-                         protocol_violation, error_text)
+                         protocol_violation, error_text, pid_not_alive)
                     )
     # Outside the main txn: account each crashed task and maybe trip the
     # breaker (the retried task transitions to blocked with a ``gave_up`` event
@@ -8933,10 +9001,10 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
     if crash_details:
         # Fingerprint errors to detect systemic failures.
         _fp_counts: dict[str, int] = {}
-        for _, _, _, _, err_text in crash_details:
+        for _, _, _, _, err_text, _ in crash_details:
             fp = _error_fingerprint(err_text)
             _fp_counts[fp] = _fp_counts.get(fp, 0) + 1
-        for tid, pid, claimer, protocol_violation, error_text in crash_details:
+        for tid, pid, claimer, protocol_violation, error_text, pid_not_alive in crash_details:
             if protocol_violation:
                 streak = _protocol_violation_streak(conn, tid)
                 trow = conn.execute(
@@ -8985,6 +9053,32 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 continue
             fp = _error_fingerprint(error_text)
             is_systemic = _fp_counts.get(fp, 0) >= 3
+            # ``pid not alive`` deaths are a harness/spawn-time defect, not a
+            # capability gap. When the breaker trips on one, hard-block as
+            # ``harness_defect`` (routed to devops) instead of letting the
+            # generic fallback write ``capability`` — the card says "the
+            # harness crashed the worker", not "this task cannot be done".
+            # Include a captured stderr tail from the worker log so the block
+            # carries the actual crash evidence, not just the pid line.
+            if pid_not_alive:
+                block_kind = "harness_defect"
+                stderr_tail = _capture_worker_log_tail(tid, board=board)
+                block_comment = (
+                    f"AUTO-BLOCK (harness_defect): the worker for this card "
+                    f"died at spawn time on {_fp_counts.get(fp, 0)} run(s) "
+                    f"with a dead-pid crash (\"{error_text[:200]}\") — a "
+                    f"harness/dispatcher defect (e.g. bad --skills config, "
+                    f"profile/skill resolution crash), NOT a task or "
+                    f"capability gap. Route to devops: fix the spawn config "
+                    f"or task payload, then unblock for retry."
+                )
+                if stderr_tail:
+                    block_comment += (
+                        f"\n\nCaptured worker stderr tail:\n{stderr_tail[:2000]}"
+                    )
+            else:
+                block_kind = None
+                block_comment = None
             tripped = _record_task_failure(
                 conn, tid,
                 error=error_text,
@@ -8992,7 +9086,13 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 failure_limit=1 if is_systemic else None,
                 release_claim=False,
                 end_run=False,
-                event_payload_extra={"pid": pid, "claimer": claimer},
+                block_kind=block_kind,
+                block_comment=block_comment,
+                event_payload_extra={
+                    "pid": pid,
+                    "claimer": claimer,
+                    "harness_defect": bool(pid_not_alive),
+                },
             )
             if tripped:
                 auto_blocked.append(tid)
@@ -9027,11 +9127,13 @@ def _record_task_failure(
     error: str,
     *,
     outcome: str,
-    failure_limit: int = None,
+    failure_limit: Optional[int] = None,
     force_trip: bool = False,
     release_claim: bool = False,
     end_run: bool = False,
     event_payload_extra: Optional[dict] = None,
+    block_kind: Optional[str] = None,
+    block_comment: Optional[str] = None,
 ) -> bool:
     """Record a non-success outcome (spawn_failed / crashed / timed_out)
     and maybe trip the circuit breaker.
@@ -9060,6 +9162,21 @@ def _record_task_failure(
     ``event_payload_extra`` merges into the ``gave_up`` event payload
     when the breaker trips, so callers can include outcome-specific
     context (e.g. pid on crash, elapsed on timeout).
+
+    ``block_kind`` / ``block_comment`` are recorded on the task when the
+    breaker trips (status → ``blocked``). Historically the auto-block path
+    left ``block_kind`` NULL and wrote no comment, so every auto-blocked
+    card looked identical to a generic human/legacy block and the *reason*
+    a card was auto-blocked was invisible on the card itself. That hidden
+    reason is exactly what masked the dead-pid harness-defect failure class
+    (t_fc8c903b / t_d1bacc9f / t_f9b3dba7): a spawn-time worker crash
+    (``pid <n> not alive``) was written as a generic ``capability`` block,
+    falsely reading as "this task cannot be done". Callers MAY pass a typed
+    ``block_kind`` (one of :data:`VALID_BLOCK_KINDS`) and a human-readable
+    ``block_comment``; when ``block_kind`` is omitted the dispatcher falls
+    back to ``"capability"`` so the column is never NULL on an auto-block
+    (a NULL block_kind is treated as a generic untyped block, which hid
+    this class).
 
     Resolution order for the effective threshold:
       1. per-task ``max_retries`` if set (nothing else overrides)
@@ -9107,14 +9224,18 @@ def _record_task_failure(
 
         if force_trip or failures >= effective_limit:
             # Trip the breaker.
+            _kind_value = (
+                block_kind if block_kind in VALID_BLOCK_KINDS else "capability"
+            )
             if release_claim:
                 # Spawn path: still running, also clear claim state.
                 conn.execute(
                     "UPDATE tasks SET status = 'blocked', claim_lock = NULL, "
                     "claim_expires = NULL, worker_pid = NULL, "
-                    "consecutive_failures = ?, last_failure_error = ? "
+                    "consecutive_failures = ?, last_failure_error = ?, "
+                    "block_kind = ? "
                     "WHERE id = ? AND status IN ('running', 'ready', 'review')",
-                    (failures, error[:500], task_id),
+                    (failures, error[:500], _kind_value, task_id),
                 )
             else:
                 # Timeout/crash path: source phase already restored with claim
@@ -9122,9 +9243,10 @@ def _record_task_failure(
                 # counter fields.
                 conn.execute(
                     "UPDATE tasks SET status = 'blocked', "
-                    "consecutive_failures = ?, last_failure_error = ? "
+                    "consecutive_failures = ?, last_failure_error = ?, "
+                    "block_kind = ? "
                     "WHERE id = ? AND status IN ('ready', 'review', 'running')",
-                    (failures, error[:500], task_id),
+                    (failures, error[:500], _kind_value, task_id),
                 )
             run_id = None
             if end_run:
@@ -9154,6 +9276,33 @@ def _record_task_failure(
             _append_event(
                 conn, task_id, "gave_up", payload, run_id=run_id,
             )
+            # Record WHY the card was auto-blocked as a comment, so the
+            # reason is visible on the card itself (it was previously NULL
+            # block_kind + no comment, which hid the dead-pid harness-defect
+            # class in t_fc8c903b / t_d1bacc9f / t_f9b3dba7). Prefer an
+            # explicit caller-supplied comment, else a synthesized one
+            # describing the trip. Written directly inside the surrounding
+            # write_txn (no nested txn) so it's atomic with the block
+            # transition.
+            _comment_body = block_comment or (
+                f"AUTO-BLOCK ({_kind_value}): circuit breaker tripped after "
+                f"{failures} failure(s) (trigger_outcome={outcome}, "
+                f"limit_source={limit_source}, "
+                f"effective_limit={effective_limit}). {error[:300]}"
+            )
+            try:
+                conn.execute(
+                    "INSERT INTO task_comments (task_id, author, body, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (task_id, "kanban-dispatcher", _comment_body, int(time.time())),
+                )
+                _append_event(
+                    conn, task_id, "commented",
+                    {"author": "kanban-dispatcher", "len": len(_comment_body)},
+                )
+            except Exception:
+                # Never let a comment-write failure abort the auto-block.
+                _log.debug("auto-block comment write failed", exc_info=True)
             blocked = True
         else:
             # Below threshold.
@@ -9564,6 +9713,54 @@ def dispatch_once(
     return result
 
 
+def sweep_worker_liveness(
+    *, board: Optional[str] = None,
+) -> "tuple[list[str], list[str]]":
+    """Liveness-only watchdog sweep: reclaim dead-pid workers fast.
+
+    Unlike :func:`dispatch_once`, this does NOT spawn new workers, promote
+    parents, or run stale/reconcile passes — it only reaps zombies and runs
+    :func:`detect_crashed_workers`, so a dead worker's card is reclaimed
+    (back to ``ready`` for a retry) or terminal-blocked (typed
+    ``harness_defect`` with captured stderr) within seconds instead of
+    waiting for the next full dispatch tick (default 60s).
+
+    Why this exists (t_f9b3dba7): workers that died mid-run with a dead pid
+    used to sit in ``running`` until the next 60s dispatch tick (plus the
+    30s crash grace) reclaimed them, and when the breaker finally tripped,
+    the auto-block was written with no block_kind and no comment — a card
+    stuck in invisible blocked limbo. This sweep closes both gaps:
+    (a) fast detection on a sub-tick cadence, and (b) a visible,
+    typed auto-block reason with captured worker stderr.
+
+    Runs under the same board-scoped dispatch tick lock as
+    :func:`dispatch_once` so a concurrent full tick and this sweep can never
+    write the same board concurrently (issue #35240). If the lock is held by
+    another dispatcher this sweep returns ``([], [])`` and does nothing —
+    the holder is already reclaiming. Returns ``(crashed_ids, auto_blocked_ids)``.
+    """
+    try:
+        db_path = kanban_db_path(board=board)
+    except Exception:
+        return [], []
+    with _dispatch_tick_lock(db_path) as held:
+        if not held:
+            return [], []
+        reap_worker_zombies()
+        conn = connect(board=board)
+        try:
+            crashed = detect_crashed_workers(conn, board=board)
+            auto_blocked = list(
+                getattr(detect_crashed_workers, "_last_auto_blocked", []) or []
+            )
+            return crashed, auto_blocked
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _dispatch_once_locked(
     conn: sqlite3.Connection,
     *,
@@ -9621,7 +9818,7 @@ def _dispatch_once_locked(
     result.stale = detect_stale_running(
         conn, stale_timeout_seconds=stale_timeout_seconds,
     )
-    result.crashed = detect_crashed_workers(conn)
+    result.crashed = detect_crashed_workers(conn, board=board)
     # detect_crashed_workers stashes protocol-violation auto-blocks on
     # itself so the public list-return stays stable. Pull them into the
     # DispatchResult here so telemetry / tests see the trip.
@@ -10527,6 +10724,7 @@ def run_daemon(
     failure_limit: int = DEFAULT_SPAWN_FAILURE_LIMIT,
     stop_event=None,
     on_tick=None,
+    liveness_interval: Optional[float] = None,
 ) -> None:
     """Run the dispatcher in a loop until interrupted.
 
@@ -10534,6 +10732,12 @@ def run_daemon(
     on SIGINT / SIGTERM so ``hermes kanban daemon`` is systemd-friendly.
     ``stop_event`` (a :class:`threading.Event`) and ``on_tick`` (a
     callable receiving the :class:`DispatchResult`) are test hooks.
+
+    When ``liveness_interval`` is set (and below ``interval``), the daemon
+    also runs :func:`sweep_worker_liveness` on that sub-tick cadence so a
+    worker that dies mid-run is reclaimed (or terminal-blocked with a typed
+    reason + captured stderr) quickly instead of waiting for the next full
+    dispatch tick (t_f9b3dba7).
     """
     import signal
     import threading
@@ -10555,7 +10759,22 @@ def run_daemon(
                 except (ValueError, OSError):
                     pass
 
+    # Resolve the liveness watchdog cadence (default off for the standalone
+    # daemon — the gateway hosts the primary dispatcher — but honored when a
+    # caller passes it). Clamp to [1s, interval] so it can't be slower than
+    # the full tick or tighter than the 1s sleep granularity.
+    _liveness = None
+    if liveness_interval is not None:
+        try:
+            _liveness = float(liveness_interval)
+        except (TypeError, ValueError):
+            _liveness = None
+        if _liveness is not None:
+            _liveness = max(1.0, min(_liveness, interval))
+
+    _last_liveness = 0.0
     while not stop_event.is_set():
+        _started = time.monotonic()
         try:
             with contextlib.closing(connect()) as conn:
                 res = dispatch_once(
@@ -10572,7 +10791,22 @@ def run_daemon(
             # Don't let any single tick kill the daemon.
             import traceback
             traceback.print_exc()
+        if _liveness is not None:
+            _last_liveness = _started
         stop_event.wait(timeout=interval)
+        # While waiting toward the next full tick, run the liveness watchdog
+        # sweep on its sub-tick cadence so dead-pid workers are reclaimed
+        # (or terminal-blocked with a reason) promptly.
+        if _liveness is not None:
+            while not stop_event.is_set() and \
+                    (time.monotonic() - _last_liveness) >= _liveness:
+                _last_liveness += _liveness
+                try:
+                    sweep_worker_liveness()
+                except Exception:
+                    # Never let a sweep kill the daemon.
+                    import traceback
+                    traceback.print_exc()
 
 
 # ---------------------------------------------------------------------------
