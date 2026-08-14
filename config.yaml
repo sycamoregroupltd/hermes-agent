@@ -10,12 +10,39 @@ agent:
   gateway_timeout: 1800
   gateway_timeout_warning: 900
   image_input_mode: auto
-  max_turns: 90
+  max_turns: 500
   restart_drain_timeout: 180
   service_tier: ''
   task_completion_guidance: true
   tool_use_enforcement: true
 approvals:
+  deny:
+    # Live Hermes install is not a working tree. Hooks also enforce this.
+    # Path-qualified only so other repos keep normal git.
+    - "git -C /home/frank/.hermes/hermes-agent checkout*"
+    - "git -C /home/frank/.hermes/hermes-agent reset*"
+    - "git -C /home/frank/.hermes/hermes-agent stash*"
+    - "git -C /home/frank/.hermes/hermes-agent switch*"
+    - "git -C /home/frank/.hermes/hermes-agent pull*"
+    - "git -C /home/frank/.hermes/hermes-agent rebase*"
+    - "git -C ~/.hermes/hermes-agent checkout*"
+    - "git -C ~/.hermes/hermes-agent reset*"
+    - "git -C ~/.hermes/hermes-agent stash*"
+    - "git -C ~/.hermes/hermes-agent switch*"
+    - "git -C ~/.hermes/hermes-agent pull*"
+    - "git -C ~/.hermes/hermes-agent rebase*"
+    - "*cd /home/frank/.hermes/hermes-agent*git checkout*"
+    - "*cd /home/frank/.hermes/hermes-agent*git reset*"
+    - "*cd /home/frank/.hermes/hermes-agent*git stash*"
+    - "*cd /home/frank/.hermes/hermes-agent*git switch*"
+    - "*cd /home/frank/.hermes/hermes-agent*git pull*"
+    - "*cd ~/.hermes/hermes-agent*git checkout*"
+    - "*cd ~/.hermes/hermes-agent*git reset*"
+    - "*cd ~/.hermes/hermes-agent*git stash*"
+    - "*cd ~/.hermes/hermes-agent*git switch*"
+    - "*cd ~/.hermes/hermes-agent*git pull*"
+    - "git push --force*"
+    - "git push -f*"
   cron_mode: deny
   destructive_slash_confirm: true
   mcp_reload_confirm: true
@@ -327,6 +354,8 @@ human_delay:
   mode: 'off'
 kanban:
   auto_decompose: false
+  review_dispatch: true
+  auto_subscribe_on_create: true
   auto_decompose_per_tick: 3
   default_assignee: ''
   default_board: sycode-trading
@@ -513,7 +542,7 @@ tool_loop_guardrails:
     exact_failure: 5
     idempotent_no_progress: 5
     same_tool_failure: 8
-  hard_stop_enabled: false
+  hard_stop_enabled: true
   warn_after:
     exact_failure: 2
     idempotent_no_progress: 2
@@ -567,6 +596,9 @@ updates:
   backup_keep: 5
   non_interactive_local_changes: stash
   pre_update_backup: true
+  # Fleet overlay: origin is Nous. `hermes update` is intercepted by
+  # ~/.local/bin/hermes → ~/.hermes/scripts/hermes-fleet-update.sh
+  # (merge origin/main, never reset --hard). Marker: ~/.hermes/FLEET-OVERLAY
 voice:
   auto_tts: false
   beep_enabled: true
@@ -585,3 +617,9 @@ x_search:
   model: ''
   retries: 2
   timeout_seconds: 180
+
+plugins:
+  enabled:
+    - deadpid-fleet-alert
+    - disk-cleanup
+    - security-guidance

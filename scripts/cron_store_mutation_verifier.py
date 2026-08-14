@@ -13,13 +13,29 @@ Two modes:
                    run after any cron-store mutation, and again before it calls
                    kanban_complete. Exit 1 on mismatch.
 
+  --assert-disabled  Re-read the live store NOW and sweep every job currently
+                   marked enabled=false/state=paused, confirming (a) paused_at
+                   is still set (durable) and (b) no last_run_at newer than the
+                   pause plus a ticker grace — i.e. the paused job has NOT been
+                   silently re-scheduled and run again after its pause. This is
+                   the scheduled post-ticker re-verification gate (t_fcb6141f):
+                   a reviewed scheduler disable is only GREEN once a ticker
+                   cycle has passed and this sweep still reports it paused with
+                   no new run. Silent + exit 0 when healthy; print divergences
+                   + exit 1 on any regression.
+
   --watch          Compare the live store against the git-tracked copy of the
                    SAME file and report jobs whose enabled/state differ. A
                    difference here means the live store and the VC snapshot
                    disagree about schedule state — the exact condition under
                    which a `git checkout --` of this path silently reverts a
                    reviewed pause. Exit 1 when any enabled/state divergence
-                   exists.
+                   exists. NOTE: this mode is git-path-aware — an UNTRACKED
+                   store (gitignored / skip-worktree-free, as all live cron
+                   stores now are since commit 8630119) is SKIP + exit 0, so it
+                   never false-alarms as a "revert-pending RISK" on a store that
+                   is structurally protected from git clobber by not being
+                   tracked at all.
 
 Read-only. Never mutates a cron store, schedule, provider, or credential.
 """
@@ -29,9 +45,25 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 STATE_KEYS = ("enabled", "state", "paused_at")
+# A reviewed pause is "re-scheduled" only when a run lands a real ticker cycle
+# (or more) AFTER paused_at. Sub-second drift (pause recorded microseconds after
+# the final in-flight run) is benign; a 90s grace cleanly separates it from the
+# dangerous "job ran again a full cycle after pause" class.
+DEFAULT_TICKER_GRACE_SECONDS = 90
+
+
+def _parse_ts(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        s = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
 
 
 def load_store(path: Path) -> dict[str, dict]:
@@ -98,6 +130,56 @@ def cmd_assert_state(args) -> int:
     return 0
 
 
+def cmd_assert_disabled(args) -> int:
+    store = Path(args.jobs_file)
+    jobs = load_store(store)
+    problems = []
+    checked = 0
+    for job_id, job in jobs.items():
+        if job.get("enabled") is not False:
+            continue
+        state = str(job.get("state") or "").lower()
+        if state != "paused":
+            # Not a paused disable (e.g. one-shot 'completed' or 'disabled').
+            # Only paused disables carry the durable-pause invariant.
+            continue
+        checked += 1
+        name = job.get("name", "?")
+        paused_raw = job.get("paused_at")
+        paused_at = _parse_ts(paused_raw) if isinstance(paused_raw, str) else None
+        if paused_at is None:
+            problems.append(
+                f"{name} ({job_id}): enabled=false/state=paused but paused_at is "
+                f"missing or unparseable ({paused_raw!r})"
+            )
+            continue
+        last_raw = job.get("last_run_at")
+        last_run = _parse_ts(last_raw) if isinstance(last_raw, str) else None
+        if last_run is not None:
+            # no new run after pause (beyond the benign sub-second race grace)
+            too_late = last_run - paused_at
+            if too_late.total_seconds() > args.ticker_grace_seconds:
+                problems.append(
+                    f"{name} ({job_id}): last_run_at {last_raw} is "
+                    f"{too_late.total_seconds():.0f}s AFTER paused_at "
+                    f"{paused_raw} — job was re-scheduled and ran again "
+                    f"after its reviewed pause (post-ticker re-verify FAILED)"
+                )
+    if not problems:
+        return 0
+    print(
+        f"** CRON_STORE_DISABLED_STATE_DIVERGENCE in {store}: {len(problems)} "
+        f"paused job(s) regressed after re-verify ({checked} paused checked)."
+    )
+    for line in problems:
+        print(f"   - {line}")
+    print(
+        "   The reviewed scheduler disable(s) did NOT stay durable across the "
+        "ticker cycle. Do NOT issue GREEN / complete the reviewed-disable."
+    )
+    return 1
+
+
 def cmd_watch(args) -> int:
     store = Path(args.jobs_file)
     live = load_store(store)
@@ -140,11 +222,13 @@ def main() -> int:
     p.add_argument("--jobs-file", required=True)
     sub = p.add_mutually_exclusive_group(required=True)
     sub.add_argument("--assert-state", action="store_true")
+    sub.add_argument("--assert-disabled", action="store_true")
     sub.add_argument("--watch", action="store_true")
     p.add_argument("--job-id")
     p.add_argument("--expect-enabled", choices=["true", "false"])
     p.add_argument("--expect-state")
     p.add_argument("--expect-paused-at-set", action="store_true")
+    p.add_argument("--ticker-grace-seconds", type=float, default=DEFAULT_TICKER_GRACE_SECONDS)
     p.add_argument("--ref", default="HEAD")
     args = p.parse_args()
 
@@ -152,6 +236,8 @@ def main() -> int:
         if not args.job_id:
             p.error("--assert-state requires --job-id")
         return cmd_assert_state(args)
+    if args.assert_disabled:
+        return cmd_assert_disabled(args)
     return cmd_watch(args)
 
 
