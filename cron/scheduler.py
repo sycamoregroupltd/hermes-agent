@@ -12,9 +12,11 @@ import asyncio
 import atexit
 import concurrent.futures
 import contextvars
+import errno
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -2598,6 +2600,135 @@ def _windows_cron_python_invocation(python_exe: str) -> tuple[str, dict[str, str
     return str(interpreter), env_overlay
 
 
+# ---------------------------------------------------------------------------
+# Script-spawn transient-failure (EAGAIN) retry/backoff
+# ---------------------------------------------------------------------------
+#
+# Root cause of the recurring cron EAGAIN stall (2026-08-14 window
+# t_f8f3935a; archived t_b31b1a77 07-19, t_bf3ef94d 07-14): ``subprocess.run``
+# in ``_run_job_script`` makes a single unretried ``fork()`` syscall. Under
+# concurrent fleet spawn + swap/Committed_AS pressure the kernel answers the
+# fork with ``EAGAIN`` (``[Errno 11] Resource temporarily unavailable``). The
+# ``OSError`` propagated to the generic ``except Exception`` at the bottom of
+# ``_run_job_script`` and the whole no_agent job failed with
+# "Script execution failed: Resource temporarily unavailable" — and its stub
+# output then shadowed the last good report. 39 distinct job_ids were hit in
+# one 18-minute window.
+#
+# The fix lives at the spawn source: ``_run_job_script`` now retries the
+# ``subprocess.run`` a small bounded number of times with exponential
+# backoff (mirroring the fleet's kanban worker-spawn EAGAIN resilience in
+# ``hermes_cli/kanban_db.py``, which fixed the same root cause on the
+# dispatcher spawn path). A transient EAGAIN is absorbed here with NO
+# consecutive-failure increment; the script starts during the same tick once
+# the transient pressure clears, and the job's report is no longer shadowed
+# by a stub.
+
+# How many times to re-attempt the fork after a transient EAGAIN before
+# giving up and letting the normal failure path run. Small on purpose: each
+# retry is a few hundred ms; a truly wedged host should fall through to the
+# error path, not hammer the kernel.
+SCRIPT_SPAWN_EAGAIN_MAX_RETRIES = 5
+# Exponential backoff base (seconds) between fork retries; the actual delay
+# is ``base * (2 ** attempt)`` with a tiny jitter so a fleet of gateways
+# doesn't all re-fork in lockstep.
+SCRIPT_SPAWN_EAGAIN_BACKOFF_BASE_SECONDS = 0.15
+SCRIPT_SPAWN_EAGAIN_BACKOFF_MAX_SECONDS = 4.0
+
+# Transient fork errors that MUST be retried rather than counted as a script
+# failure. ``EAGAIN`` (Errno 11) is the primary one; ``EWOULDBLOCK`` shares
+# its value on Linux but is included for completeness, as are the
+# resource-pressure relatives some kernels surface instead of EAGAIN.
+_SCRIPT_SPAWN_TRANSIENT_ERRNOS = frozenset(
+    {errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+     getattr(errno, "ENOMEM", 12), getattr(errno, "EAGAIN", 11)}
+)
+# Substrings that, if present in a fork failure message, mark it as a
+# transient resource-pressure error (belt-and-braces against platforms where
+# the errno is mangled). ``[Errno 11]`` is the canonical Linux form.
+_SCRIPT_SPAWN_TRANSIENT_ERROR_SUBSTRINGS = (
+    "[errno 11]", "resource temporarily unavailable",
+    "resource deadlock avoided", "cannot allocate memory",
+    "out of memory", "fork:", "clone():",
+)
+
+
+def _script_spawn_is_transient_error(exc: BaseException) -> bool:
+    """True if ``exc`` is a transient fork-pressure failure worth retrying.
+
+    Covers ``EAGAIN`` / ``EWOULDBLOCK`` (the kernel fork/clone-limit answer,
+    including ``[Errno 11] Resource temporarily unavailable``) plus the
+    memory-pressure relatives some kernels surface instead of EAGAIN under
+    swap/Committed_AS pressure.
+    """
+    eno = getattr(exc, "errno", None)
+    if eno is not None and eno in _SCRIPT_SPAWN_TRANSIENT_ERRNOS:
+        return True
+    msg = str(exc).lower()
+    # errno may be absent/garbled on some platforms; fall back to a
+    # substring match on the canonical transient forms.
+    return any(sub in msg for sub in _SCRIPT_SPAWN_TRANSIENT_ERROR_SUBSTRINGS)
+
+
+def _run_job_script_subprocess(argv: list, *, timeout: float, cwd: str, env: dict, **popen_kwargs):
+    """Run a cron script subprocess with bounded transient-EAGAIN retry.
+
+    Wraps the underlying ``subprocess.run`` with bounded exponential-backoff
+    retry on transient fork failures (``EAGAIN`` / ``ENOMEM`` under memory /
+    swap pressure). A transient hit is absorbed here — the fork is re-attempted
+    during the same tick once pressure clears, so the job is not stranded with
+    a stub-failure report.
+
+    Non-transient errors (e.g. ``FileNotFoundError`` for a missing executable,
+    a script ``TimeoutExpired``, a real script exit code) propagate / return
+    immediately so the caller's existing handling runs unchanged.
+    """
+    max_retries = SCRIPT_SPAWN_EAGAIN_MAX_RETRIES
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=cwd,
+                env=env,
+                **popen_kwargs,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            # subprocess.run raises subprocess.TimeoutExpired for script
+            # timeouts, which is NOT a spawn-pressure transient — re-raise so
+            # the caller's TimeoutExpired branch reports the script timeout.
+            if isinstance(exc, subprocess.TimeoutExpired):
+                raise
+            last_exc = exc
+            if not _script_spawn_is_transient_error(exc):
+                # Genuine spawn error (missing executable, bad cwd, etc.) —
+                # do not retry, let the caller's normal failure path handle it.
+                raise
+            if attempt >= max_retries:
+                break
+            # Transient fork-pressure hit: back off and retry. Jitter so a
+            # fleet of gateways doesn't all re-fork in lockstep.
+            delay = min(
+                SCRIPT_SPAWN_EAGAIN_BACKOFF_BASE_SECONDS * (2 ** attempt),
+                SCRIPT_SPAWN_EAGAIN_BACKOFF_MAX_SECONDS,
+            )
+            delay += random.uniform(0, SCRIPT_SPAWN_EAGAIN_BACKOFF_BASE_SECONDS)
+            logger.warning(
+                "cron script spawn EAGAIN (transient fork-pressure Errno %s); "
+                "retry %d/%d after %.2fs backoff",
+                getattr(exc, "errno", "?"), attempt + 1, max_retries, delay,
+            )
+            time.sleep(delay)
+    # Exhausted retries on a still-transient error: surface it so the caller
+    # records it as a script failure — but this is the persistent case now,
+    # not the transient that shadowed reports.
+    assert last_exc is not None
+    raise last_exc
+
+
 def _run_job_script(
     script_path: str,
     workdir: Optional[str] = None,
@@ -2717,10 +2848,8 @@ def _run_job_script(
         # NEVER mutate the Python process cwd — that would leak into
         # concurrent gateway sessions (#69396).
         _script_cwd = workdir or str(path.parent)
-        result = subprocess.run(
+        result = _run_job_script_subprocess(
             argv,
-            capture_output=True,
-            text=True,
             timeout=script_timeout,
             cwd=_script_cwd,
             env=env,

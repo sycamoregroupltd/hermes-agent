@@ -202,6 +202,109 @@ class TestRunJobScript:
         assert "encoding" not in captured["kwargs"]
         assert "errors" not in captured["kwargs"]
 
+    def test_transient_eagain_is_retried_and_succeeds(self, cron_env, monkeypatch):
+        """A transient [Errno 11] EAGAIN on fork must be retried with backoff
+        until it clears, not reported as a script failure (recurring cron
+        EAGAIN stall t_f8f3935a / t_b31b1a77 / t_bf3ef94d)."""
+        import errno as _errno
+        from cron import scheduler as sched_mod
+        from cron.scheduler import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+        sleeps = []
+
+        def fake_run(argv, **kwargs):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise OSError(_errno.EAGAIN, "Resource temporarily unavailable")
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(sched_mod.time, "sleep", sleeps.append)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 3  # two EAGAIN retries, third succeeded
+        assert success is True
+        assert output == "ok"
+        assert len(sleeps) == 2  # backed off between the retries
+
+    def test_persistent_eagain_fails_after_bounded_retries(self, cron_env, monkeypatch):
+        """If EAGAIN persists past the retry budget, the run fails (does not
+        spin forever) and the error names the resource-pressure cause."""
+        import errno as _errno
+        from cron import scheduler as sched_mod
+        from cron.scheduler import _run_job_script, SCRIPT_SPAWN_EAGAIN_MAX_RETRIES
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_run(argv, **kwargs):
+            calls["n"] += 1
+            raise OSError(_errno.EAGAIN, "Resource temporarily unavailable")
+
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(sched_mod.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert success is False
+        assert "Resource temporarily unavailable" in output
+        # bounded: exactly (max_retries + 1) attempts, no infinite spin
+        assert calls["n"] == SCRIPT_SPAWN_EAGAIN_MAX_RETRIES + 1
+
+    def test_nontransient_spawn_error_not_retried(self, cron_env, monkeypatch):
+        """A genuine spawn error (FileNotFoundError) is not retried — it must
+        surface immediately through the normal failure path."""
+        from cron import scheduler as sched_mod
+        from cron.scheduler import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_run(argv, **kwargs):
+            calls["n"] += 1
+            raise FileNotFoundError("no such file")
+
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1  # no retry on a non-transient error
+        assert success is False
+        assert "no such file" in output
+
+    def test_script_timeout_not_retried(self, cron_env, monkeypatch):
+        """A script TimeoutExpired must still report the timeout branch and
+        must NOT be treated as a retryable spawn EAGAIN."""
+        import subprocess as _sp
+        from cron import scheduler as sched_mod
+        from cron.scheduler import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("import time; time.sleep(60)")
+
+        calls = {"n": 0}
+
+        def fake_run(argv, **kwargs):
+            calls["n"] += 1
+            raise _sp.TimeoutExpired(argv, 1.0)
+
+        monkeypatch.setattr(sched_mod.subprocess, "run", fake_run)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1  # timeout is terminal, never retried
+        assert success is False
+        assert "timed out" in output.lower()
+
     def test_emoji_stdout_round_trips_through_script_capture(self, cron_env):
         """Emoji in script stdout must reach the caller intact (#42384).
 
