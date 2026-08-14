@@ -71,6 +71,10 @@ FORCE_INCLUDE = {
     # wrapper too so a DGX rebuild restores the exact copy the live cron runs.
     "profiles/jarvis/scripts/automation-vc-keeper.sh",
     "scripts/cron_live_script_guard.py",
+    # dead-store invariant guard (t_4bedf8d5): track the exact live copy so the
+    # shared-checkout branch-swap hazard (148ade8 revert) can never silently
+    # restore an old/unreviewed version of this watchdog script.
+    "profiles/jarvis/scripts/cron_ticker_invariant_guard.py",
 }
 # Non-live path holding sanitized recovery snapshots of every live cron store
 # (t_6c32b13c: the live stores themselves are untracked + gitignored; a DGX

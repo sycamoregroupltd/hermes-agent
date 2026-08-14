@@ -6760,7 +6760,7 @@
     },
     {
       "id": "b9e411f11a4c",
-      "name": "nous-token-presence",
+      "name": "primary-provider-liveness",
       "prompt": "",
       "skills": [],
       "skill": null,
@@ -6789,7 +6789,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-11T09:35:10.237971+01:00",
-      "deliver": "local",
+      "deliver": "discord:#critical-alerts,telegram",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
@@ -7077,6 +7077,39 @@
       "paused_reason": null,
       "created_at": "2026-08-14T10:05:53.918254+01:00",
       "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "0afe4c31ef9a",
+      "name": "dead-store-invariant-guard",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "cron_ticker_invariant_guard.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
+      },
+      "schedule_display": "*/30 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-14T12:21:04.884249+01:00",
+      "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null

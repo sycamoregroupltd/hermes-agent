@@ -53,38 +53,88 @@ for vault in obsidian-fleet-vault obsidian; do
         "$vault" 2>/dev/null || echo "WARNING: vault backup failed for $vault"
 done
 
-echo "$TS" > "$HOME/fleet-backups/LATEST"
+# LATEST is deliberately NOT written here. It is written ONLY after the off-box push has been
+# VERIFIED (below). Writing it up-front made the restore pointer name a stamp that might never
+# have landed — on 2026-08-14 the push failed and LATEST still advanced to the failed stamp.
+# LATEST means "last backup verified complete off-box", nothing weaker.
 
 # Push off-box (Mac alias from ~/.ssh/config; BatchMode)
 # The rsync EXIT CODE is checked. It previously was not: the script printed "pushed" and then
 # "[SILENT] ... ok" whatever rsync did, so a failed push (e.g. remote disk full) was indistinguishable
 # from a good one. Under the [SILENT] convention that meant a dead backup looked healthy — the same
 # fabricated-success class this whole backup fix exists to kill.
-if ssh mac true 2>/dev/null; then
-    if rsync -a --partial "$HOME/fleet-backups/$TS" "$HOME/fleet-backups/LATEST" mac:dgx-fleet-backups/; then
-        echo "pushed $TS to mac:dgx-fleet-backups/"
+# This host drops ~33% of IPv6 packets, which is the most likely cause of the 2026-08-14
+# "client_loop: send disconnect: Broken pipe" (rsync rc=10). Force IPv4 and keep the link alive.
+SSH_OPTS='ssh -4 -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=20 -o ServerAliveCountMax=6'
+# --partial-dir (not bare --partial): resumable, but partial fragments are parked in a dot-dir
+# instead of sitting in the payload where they masquerade as complete files.
+push_ok=0
+if $SSH_OPTS mac true 2>/dev/null; then
+    if rsync -a --partial --partial-dir=.rsync-partial -e "$SSH_OPTS" \
+            "$HOME/fleet-backups/$TS" mac:dgx-fleet-backups/; then
+        # rsync rc=0 is necessary but NOT sufficient. Assert the remote payload matches the
+        # local one: an empty or truncated remote dir must never be accepted as a backup.
+        l_n=$(find "$DEST" -maxdepth 1 -type f | wc -l)
+        l_kb=$(du -sk "$DEST" | cut -f1)
+        r_raw=$($SSH_OPTS mac "ls -1 dgx-fleet-backups/$TS 2>/dev/null | wc -l; du -sk dgx-fleet-backups/$TS 2>/dev/null | cut -f1" 2>/dev/null)
+        r_n=$(printf '%s\n' "$r_raw" | sed -n 1p | tr -dc '0-9'); r_n=${r_n:-0}
+        r_kb=$(printf '%s\n' "$r_raw" | sed -n 2p | tr -dc '0-9'); r_kb=${r_kb:-0}
+        if [ "$r_n" -ge "$l_n" ] && [ "$r_kb" -ge $(( l_kb * 97 / 100 )) ]; then
+            push_ok=1
+            echo "pushed $TS to mac:dgx-fleet-backups/ (verified ${r_n} files, ${r_kb}KB)"
+        else
+            echo "BACKUP PUSH INCOMPLETE: remote has ${r_n} files/${r_kb}KB vs local ${l_n}/${l_kb}KB — NOT accepted."
+        fi
     else
         rc=$?
         echo "BACKUP PUSH FAILED: rsync exited $rc — $TS exists locally but NOT off-box."
         echo "  Check remote free space: ssh mac df -h \~"
-        exit 1
     fi
 else
     echo "WARNING: mac unreachable — backup is on-box only at $DEST"
-    exit 1
+fi
+
+# The pointer advances ONLY on a verified push, and local/remote are written together so the
+# freshness monitor's local-stamp-then-check-remote logic stays valid.
+if [ "$push_ok" = 1 ]; then
+    echo "$TS" > "$HOME/fleet-backups/LATEST"
+    rsync -a -e "$SSH_OPTS" "$HOME/fleet-backups/LATEST" mac:dgx-fleet-backups/ \
+        || echo "WARNING: payload landed but LATEST pointer push failed for $TS"
 fi
 
 # Retention — BOTH sides. The remote was previously never pruned, which was survivable while the
 # payload was small but is not now: adding the two vault tars took a night from ~0.8G to ~4.6G, and
 # the Mac had 74G free, i.e. ~16 nights to a full disk and a silently failing backup.
 # Remote keeps 7 (≈32G) rather than 14 (≈64G) purely for headroom on that volume.
-find "$HOME/fleet-backups" -maxdepth 1 -type d -name "20*" -mtime +14 -exec rm -rf {} + 2>/dev/null || true
-ssh mac 'find ~/dgx-fleet-backups -maxdepth 1 -type d -name "20*" -mtime +7 -exec rm -rf {} + 2>/dev/null' \
+# Retention is COUNT-based (keep newest N by name), not mtime-based. Directory names are sortable
+# timestamps and are immune to the mtime bulk-touching that let 15 June dirs survive a -mtime +14
+# prune indefinitely. This runs on EVERY path, including a failed push — it used to sit below an
+# `exit 1`, so the nights that most needed pruning were exactly the nights that skipped it.
+prune_keep() {  # $1=dir  $2=keep count  $3=label
+    local victims
+    victims=$(cd "$1" 2>/dev/null && ls -1d 20*/ 2>/dev/null | sed 's#/$##' | sort -r | tail -n +$(( $2 + 1 )))
+    [ -z "$victims" ] && return 0
+    printf '%s\n' "$victims" | while read -r d; do
+        [ -n "$d" ] && rm -rf "${1:?}/${d:?}" && echo "  pruned $3 $d"
+    done
+}
+prune_keep "$HOME/fleet-backups" 14 local
+$SSH_OPTS mac 'cd ~/dgx-fleet-backups 2>/dev/null || exit 0
+    ls -1d 20*/ 2>/dev/null | sed "s#/\$##" | sort -r | tail -n +8 | while read -r d; do
+        [ -n "$d" ] && rm -rf "./${d:?}" && echo "  pruned remote $d"
+    done' 2>/dev/null \
     || echo "WARNING: remote retention prune failed — check ssh mac df -h \~"
 
 # Report remaining remote headroom so exhaustion is visible BEFORE it breaks the backup.
-avail=$(ssh mac "df -g ~ | awk 'NR==2{print \$4}'" 2>/dev/null || echo "")
+avail=$($SSH_OPTS mac "df -g ~ | awk 'NR==2{print \$4}'" 2>/dev/null || echo "")
 if [ -n "$avail" ] && [ "$avail" -lt 20 ] 2>/dev/null; then
     echo "BACKUP REMOTE LOW SPACE: mac has ${avail}G free; a night is ~5G. Prune dgx-fleet-backups or reduce retention."
+fi
+
+# Exit code is the ONLY liveness signal a no-agent cron job propagates — stdout is never parsed.
+# A failed push must reach it, and it must do so AFTER retention has run.
+if [ "$push_ok" != 1 ]; then
+    echo "BACKUP NOT VERIFIED OFF-BOX for $TS — on-box copy remains at $DEST."
+    exit 1
 fi
 echo "[SILENT] nightly backup ok ($TS)"

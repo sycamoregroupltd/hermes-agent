@@ -27,11 +27,41 @@ if [ "$age_h" -gt "$MAX_AGE_H" ]; then
   exit 0
 fi
 
-# Freshness alone is not proof it went OFF-BOX. Confirm the remote copy exists.
-if ssh -o BatchMode=yes -o ConnectTimeout=15 mac true 2>/dev/null; then
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=20 mac "test -e dgx-fleet-backups/$stamp" 2>/dev/null; then
+# Freshness alone is not proof it went OFF-BOX — and PRESENCE is not proof it went off-box INTACT.
+# This check used `test -e dgx-fleet-backups/$stamp`, which an EMPTY DIRECTORY satisfies. On
+# 2026-08-14 the push failed with rsync rc=10 leaving a 0-byte remote directory, and this monitor
+# reported healthy. Existence checks are the cheapest probe to write and cluster exactly where the
+# stakes are highest. Assert CONTENT: file count and bytes, measured against the local copy.
+SSH_OPTS='ssh -4 -o BatchMode=yes -o ConnectTimeout=20'   # -4: this host drops ~33% of IPv6 packets
+MIN_FILES=5             # floor used only when the local copy has already been pruned away
+MIN_KB=4194304          # 4 GiB — a night is ~5G; anything smaller is a truncated payload
+
+if $SSH_OPTS mac true 2>/dev/null; then
+  # One round trip, three facts: does it exist, how many files, how many KB. Existence is probed
+  # SEPARATELY from size so "absent" and "present but empty" produce different alerts — they have
+  # different causes (push never started vs push died mid-transfer).
+  r_raw=$($SSH_OPTS mac "test -d dgx-fleet-backups/$stamp && echo 1 || echo 0; ls -1 dgx-fleet-backups/$stamp 2>/dev/null | wc -l; du -sk dgx-fleet-backups/$stamp 2>/dev/null | cut -f1" 2>/dev/null)
+  r_exists=$(printf '%s\n' "$r_raw" | sed -n 1p | tr -dc '0-9'); r_exists=${r_exists:-0}
+  r_n=$(printf '%s\n' "$r_raw" | sed -n 2p | tr -dc '0-9'); r_n=${r_n:-0}
+  r_kb=$(printf '%s\n' "$r_raw" | sed -n 3p | tr -dc '0-9'); r_kb=${r_kb:-0}
+
+  # Prefer comparing to the local copy (ground truth, self-maintaining as the payload changes);
+  # fall back to absolute floors once local retention has aged it out.
+  local_dir="/home/frank/fleet-backups/$stamp"
+  if [ -d "$local_dir" ]; then
+    want_n=$(find "$local_dir" -maxdepth 1 -type f | wc -l)
+    want_kb=$(( $(du -sk "$local_dir" | cut -f1) * 97 / 100 ))
+  else
+    want_n=$MIN_FILES; want_kb=$MIN_KB
+  fi
+
+  if [ "$r_exists" -eq 0 ]; then
     echo "BACKUP ON-BOX ONLY: local backup '$stamp' is ${age_h}h fresh, but it is NOT present at mac:dgx-fleet-backups/."
     echo "  A backup that never left the machine does not survive the machine."
+  elif [ "$r_n" -lt "$want_n" ] || [ "$r_kb" -lt "$want_kb" ]; then
+    echo "BACKUP OFF-BOX INCOMPLETE: '$stamp' exists at mac:dgx-fleet-backups/ but holds ${r_n} files / ${r_kb}KB (expected >=${want_n} files / >=${want_kb}KB)."
+    echo "  A partial or empty remote copy is NOT a backup — it merely passes an existence check."
+    echo "  Verify: ssh mac 'ls -la dgx-fleet-backups/$stamp; du -sh dgx-fleet-backups/$stamp'"
   fi
 else
   echo "BACKUP OFF-BOX UNVERIFIED: mac is unreachable, so the ${age_h}h-old local backup '$stamp' cannot be confirmed off-box."
