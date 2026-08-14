@@ -433,6 +433,42 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "4dad2695cdad",
+      "name": "jarvis-os-pm-nous-expiry-preflight",
+      "prompt": "Read-only Nous token-expiry preflight for the jarvis-os-pm lane (t_d2a24224). Exits 0 GREEN / 2 WARN / 1 RED(provider-credential). Reduces silently-stranded PM dispatch on Nous token expiry.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "jarvis_os_pm_nous_expiry_preflight.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-14T09:24:46.347075+01:00",
+      "deliver": "discord:1521973787363508325",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }

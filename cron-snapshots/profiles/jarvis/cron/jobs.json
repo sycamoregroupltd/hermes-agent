@@ -7044,6 +7044,42 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "beac684000eb",
+      "name": "now-regime-tape-stamp",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "now_regime_tape_stamp.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-14T10:05:53.918254+01:00",
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }

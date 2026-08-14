@@ -315,14 +315,15 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     r"\bcreate one implementation child\b[\s\S]{0,900}\b(paper[- ]?only|no (app|product|frontend|web) code changes)\b",
     # Diagnostic/dispensation idiom: "route the narrow host-runtime fix",
     # "route a separate reviewed implementation card", "route ... disposition",
-    # "route ... evidence path". Here "route" is a dispatch verb (direct the fix
-    # elsewhere), NOT a "route component" app-surface noun. The broad
-    # APP_IMPL_PATTERNS[1] matches "route ... fix" and falsely classifies
-    # postmortem/log-forensics DIAGNOSE cards as frontend/web (t_2a606755).
-    # This only neutralizes the verb+routed-object idiom; concrete
+    # "route ... evidence path", "route a bounded data-quality remediation card".
+    # Here "route" is a dispatch verb (direct the fix elsewhere), NOT a
+    # "route component" app-surface noun. The broad APP_IMPL_PATTERNS[1]
+    # matches "route ... fix" and falsely classifies postmortem/log-forensics
+    # DIAGNOSE cards as frontend/web (t_2a606755, t_0430e36c). This only
+    # neutralizes the verb+routed-object idiom; concrete
     # "apps/web ... route component/page" still matches APP_IMPL_PATTERNS and
     # CONCRETE_WEB_IMPL_PATTERNS and is caught by paired negative fixtures.
-    r"\broute\s+(the|a|this|that|an)\s+[^.\n]{0,80}\b(narrow|host-runtime|separate|reviewed|next)\b[^.\n]{0,140}\b(fix|implementation card|disposition|evidence path|verdict|implementation)\b",
+    r"\broute\s+(the|a|this|that|an)\s+[^.\n]{0,80}\b(narrow|host-runtime|separate|reviewed|next|bounded)\b[^.\n]{0,140}\b(fix|implementation card|disposition|evidence path|verdict|implementation)\b",
     # Companion: "comment disposition back on <owner>" / "post ... disposition"
     # evidence-back-reference phrasing in DIAGNOSE/forensics cards routes the
     # verdict/disposition rather than implementing a browser route.

@@ -61,7 +61,7 @@ echo "$TS" > "$HOME/fleet-backups/LATEST"
 # from a good one. Under the [SILENT] convention that meant a dead backup looked healthy — the same
 # fabricated-success class this whole backup fix exists to kill.
 if ssh mac true 2>/dev/null; then
-    if rsync -a "$HOME/fleet-backups/$TS" "$HOME/fleet-backups/LATEST" mac:dgx-fleet-backups/; then
+    if rsync -a --partial "$HOME/fleet-backups/$TS" "$HOME/fleet-backups/LATEST" mac:dgx-fleet-backups/; then
         echo "pushed $TS to mac:dgx-fleet-backups/"
     else
         rc=$?

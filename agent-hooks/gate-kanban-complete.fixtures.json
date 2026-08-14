@@ -1108,5 +1108,38 @@
     "body": "Implement apps/web marketplace React page and route component. Add frontend route/middleware for the new marketplace page.",
     "summary": "concrete apps/web route implementation; no running app VERIFY_PASS supplied",
     "description": "BLOCK: paired negative for t_5a334580; the same gate-scope/fix wording attached to concrete apps/web marketplace page/route implementation must still require running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_0430e36c-observability-dq-bounded-route-dispatch-allows",
+    "task_id": "t_0430e36c_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "OBSERVABILITY: fusion calibration DQ gate failures must not be no_anomalies",
+    "body": "OUTCOME: Close the silent observability gap where fusion-calibration-report can emit Data Quality Gates overallStatus=fail while the job-level anomaly bridge says created=false reason=no_anomalies, so Sycode calibration/data-quality failures always have a named consumer. TASK: 1. Reproduce the fusion-calibration report path and inspect the referenced DQ JSON/markdown to identify the four failing gates. 2. Decide the correct consumer: either route a bounded data-quality remediation card for the actual failing gates, or fix the anomaly bridge so overallStatus=fail creates/reuses one deterministic owner packet instead of no_anomalies. 3. Implement only source/test changes or PM routing needed for the observer path; do not mutate DB rows, live trading, schedules, providers, credentials, runtime services, or guardrails from this card. ACCEPTANCE: A future fusion-calibration-report with Data Quality Gates overallStatus=fail cannot silently end as created=false reason=no_anomalies without a named existing owner packet and idempotency key. Gates: paper-only; no live trading, prod DB/data mutation, schedule mutation, provider/model/fallback routing, credentials/secrets, spend, deploy/restart/runtime-service mutation, guardrail/SOUL/skill edits, or minute-loop.",
+    "summary": "Paper-only observability/report-routing fix for fusion calibration DQ gates; changed files are pure-Python backend report parser + anomaly kanban consumer + pytest; no frontend/web/app surface; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "execution/fusion_calibration_report_parser.py",
+        "execution/fusion_calibration_anomaly_kanban.py",
+        "tests/test_fusion_calibration_report_parser.py",
+        "tests/test_fusion_calibration_anomaly_kanban.py"
+      ]
+    },
+    "description": "ALLOW: real t_0430e36c regression — 'route a bounded ... fix' is the dispatch idiom (route the remediation card), not a browser route; observability/report-routing card with pure-Python changed files must not be misclassified as frontend/app. Paired negative below proves the same 'route a bounded ... fix' wording attached to concrete apps/web work still blocks."
+  },
+  {
+    "name": "t_0430e36c-paired-frontend-bounded-route-negative-blocks",
+    "task_id": "t_0430e36c_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "OBSERVABILITY: fusion calibration DQ dashboard route fix",
+    "body": "OBSERVABILITY: close the silent gap where the fusion-calibration DQ dashboard can report Data Quality Gates overallStatus=fail while no anomaly shows. TASK: implement apps/web React dashboard route component and page layout that renders the four failing gates; either route a bounded data-quality remediation card for the actual failing gates, or fix the anomaly bridge UI. This is concrete frontend UI work; no running app VERIFY_PASS supplied.",
+    "summary": "concrete apps/web route/page implementation; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/fusion-calibration-dq/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_0430e36c; the SAME 'route a bounded ... fix' dispatch wording attached to concrete apps/web route/page changed_files must still require running-app VERIFY_PASS."
   }
 ]
