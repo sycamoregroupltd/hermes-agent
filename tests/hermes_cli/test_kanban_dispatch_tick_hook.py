@@ -32,8 +32,19 @@ def kanban_home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def captured_ticks(monkeypatch):
-    """Register a capturing callback for the dispatch tick hook."""
-    mgr = get_plugin_manager()
+    """Register a capturing callback for the dispatch tick hook.
+
+    Re-resolve the current ``hermes_cli.plugins`` module at setup time.
+    Sibling kanban test files (e.g. test_kanban_default_assignee.py,
+    test_kanban_per_profile_cap.py) force-reimport ``hermes_cli.*`` by
+    deleting entries from sys.modules, which replaces the plugin manager
+    that ``_fire_dispatch_tick_hook`` resolves at call time. A module-level
+    ``get_plugin_manager`` would pin a stale manager and the capturing
+    callback would never fire once those files have run — pre-existing
+    isolation failure observed when the dispatcher suite runs together.
+    """
+    import hermes_cli.plugins as plugmod  # noqa: PLC0415
+    mgr = plugmod.get_plugin_manager()
     events: list[dict] = []
     saved = {k: list(v) for k, v in mgr._hooks.items()}
     mgr._hooks.setdefault("on_kanban_dispatch_tick", []).append(
@@ -61,26 +72,40 @@ def test_active_tick_fires_hook_with_outcome_ok(
     result = ok_events[-1]["result"]
     assert any(row[0] == tid for row in result.spawned)
 
+def _current_kb():
+    """Return the CURRENT kanban_db module.
+
+    Sibling test files force-reimport ``hermes_cli.*`` (deleting entries
+    from sys.modules), replacing the module object a module-level import
+    would have pinned. Re-resolving inside the test keeps dispatch and the
+    lock primitive on the same module object the fixture initialized.
+    """
+    import hermes_cli.kanban_db as cur  # noqa: PLC0415
+    return cur
+
+
 def test_tick_hook_fires_after_dispatch_lock_released(kanban_home):
     """The #56066 sweeper finding, as a contract: subscribers run OUTSIDE
     the single-writer critical section. From the callback, acquiring the
     board's dispatch lock must succeed — flock conflicts across file
     descriptors within one process, so this fails if the hook still fires
     while ``dispatch_once`` holds the lock."""
-    db_path = kb.kanban_db_path()
-    mgr = get_plugin_manager()
+    kb_cur = _current_kb()
+    import hermes_cli.plugins as plugmod  # noqa: PLC0415
+    mgr = plugmod.get_plugin_manager()
+    db_path = kb_cur.kanban_db_path()
     saved = {k: list(v) for k, v in mgr._hooks.items()}
     acquired: list[bool] = []
 
     def _probe_lock(**kw):
-        with kb._dispatch_tick_lock(db_path) as held:
+        with kb_cur._dispatch_tick_lock(db_path) as held:
             acquired.append(held)
 
     mgr._hooks.setdefault("on_kanban_dispatch_tick", []).append(_probe_lock)
     try:
-        conn = kb.connect()
+        conn = kb_cur.connect()
         try:
-            kb.dispatch_once(conn, spawn_fn=lambda *a, **k: 1)
+            kb_cur.dispatch_once(conn, spawn_fn=lambda *a, **k: 1)
         finally:
             conn.close()
     finally:
@@ -90,7 +115,9 @@ def test_tick_hook_fires_after_dispatch_lock_released(kanban_home):
 
 def test_misbehaving_subscriber_does_not_break_dispatcher(kanban_home):
     """A hook callback that raises must not break the dispatch tick."""
-    mgr = get_plugin_manager()
+    kb_cur = _current_kb()
+    import hermes_cli.plugins as plugmod  # noqa: PLC0415
+    mgr = plugmod.get_plugin_manager()
     saved = {k: list(v) for k, v in mgr._hooks.items()}
 
     def _boom(**kw):
@@ -98,10 +125,10 @@ def test_misbehaving_subscriber_does_not_break_dispatcher(kanban_home):
 
     mgr._hooks.setdefault("on_kanban_dispatch_tick", []).append(_boom)
     try:
-        conn = kb.connect()
+        conn = kb_cur.connect()
         try:
-            result = kb.dispatch_once(conn, spawn_fn=lambda *a, **k: 1)
-            assert isinstance(result, kb.DispatchResult)
+            result = kb_cur.dispatch_once(conn, spawn_fn=lambda *a, **k: 1)
+            assert isinstance(result, kb_cur.DispatchResult)
         finally:
             conn.close()
     finally:
