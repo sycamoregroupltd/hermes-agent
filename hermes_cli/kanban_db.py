@@ -9709,6 +9709,85 @@ def _record_spawn_failure(
     )
 
 
+def _review_skill_resolvable(
+    profile: str,
+    skill: str = "sdlc-review",
+    *,
+    profile_home: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Return (ok, reason) for whether *skill* resolves for *profile* in the
+    runtime env a review-lane worker would get (profile-scoped HERMES_HOME).
+
+    Review-lane dispatch force-injects ``--skills sdlc-review``. If the
+    assigned profile cannot resolve that skill (missing, or ambiguous
+    local/external collision), the worker dies pre-bind with
+    ``Unknown skill(s): sdlc-review`` and the dispatcher reports a
+    misleading ``pid not alive`` (t_4877f18a class: os-reviewer runs
+    107619/107620, trading-risk-reviewer run 113586). This probe mirrors
+    the worker's resolution sources (profile skills dir + that profile's
+    ``skills.external_dirs``) so the dispatcher can fail closed with an
+    explicit diagnostic instead of spawning a doomed process.
+
+    Returns (True, "") when the skill resolves (or the profile cannot be
+    resolved — defer to the worker's own error), (False, reason) when the
+    skill is definitively absent from every source the worker would search.
+    """
+    try:
+        resolved_home: Optional[str] = profile_home
+        if resolved_home is None:
+            from hermes_cli.profiles import resolve_profile_env
+            resolved_home = resolve_profile_env(profile)
+        if not resolved_home:
+            return True, ""
+        home = Path(resolved_home)
+    except Exception:
+        return True, ""
+    search_dirs = [home / "skills"]
+    try:
+        import yaml
+        cfg_path = home / "config.yaml"
+        if cfg_path.is_file():
+            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            raw_dirs = (cfg.get("skills") or {}).get("external_dirs") or []
+            if isinstance(raw_dirs, str):
+                raw_dirs = [raw_dirs]
+            for raw in raw_dirs:
+                expanded = os.path.expandvars(os.path.expanduser(str(raw)))
+                p = Path(expanded)
+                if not p.is_absolute():
+                    p = home / p
+                search_dirs.append(p)
+    except Exception:
+        pass  # best-effort external dirs; profile skills dir still checked
+    for base in search_dirs:
+        if not base.is_dir():
+            continue
+        # Direct dir match: <base>/<skill>/SKILL.md
+        direct = base / skill
+        if direct.is_dir() and (direct / "SKILL.md").is_file():
+            return True, ""
+        # Categorized dir match: <base>/<category>/<skill>/SKILL.md and any
+        # nested dir whose parent basename equals the skill name.
+        if base.is_dir():
+            for md in base.rglob("SKILL.md"):
+                if md.parent.name == skill:
+                    return True, ""
+                # Frontmatter name match (mirrors skill_view strategy 2).
+                try:
+                    head = md.read_text(encoding="utf-8", errors="replace")[:2048]
+                    fm_match = re.search(r"(?m)^name:\s*(.+?)\s*$", head)
+                    if fm_match and fm_match.group(1).strip().strip("'\"") == skill:
+                        return True, ""
+                except Exception:
+                    continue
+    return False, (
+        f"skill '{skill}' is not resolvable for profile '{profile}' in its "
+        "skills dir or skills.external_dirs (worker would die pre-bind with "
+        "'Unknown skill(s)'). Install the skill for the profile or remove the "
+        "local/external duplicate before review dispatch."
+    )
+
+
 def _set_worker_pid(conn: sqlite3.Connection, task_id: str, pid: int) -> None:
     """Record the spawned child's pid + emit a ``spawned`` event.
 
@@ -10527,6 +10606,19 @@ def _dispatch_once_locked(
         # kanban lifecycle is already injected into every worker's system
         # prompt via KANBAN_GUIDANCE, so this is the only extra skill the
         # review agent needs.
+        if claimed.assignee:
+            ok, reason = _review_skill_resolvable(claimed.assignee)
+            if not ok:
+                # Fail closed with an explicit diagnostic instead of spawning
+                # a worker that dies pre-bind ("Unknown skill(s): sdlc-review")
+                # and surfaces as a misleading "pid not alive" (t_4877f18a).
+                auto = _record_spawn_failure(
+                    conn, claimed.id, f"review-lane skill injection: {reason}",
+                    failure_limit=failure_limit,
+                )
+                if auto:
+                    result.auto_blocked.append(claimed.id)
+                continue
         claimed.skills = ["sdlc-review"]
         _spawn = spawn_fn if spawn_fn is not None else _default_spawn
         try:

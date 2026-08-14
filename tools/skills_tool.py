@@ -203,6 +203,19 @@ def _skill_lookup_path_error(name: str) -> Optional[str]:
     return None
 
 
+def _is_under_dir(path: Path, base: Path) -> bool:
+    """Return True when *path* resolves inside *base*.
+
+    Used for skill collision resolution: when the same bare skill name is
+    found in both the profile-local skills dir and an external dir, the
+    profile-local copy wins (documented local-precedence scan order).
+    """
+    try:
+        return path.resolve().is_relative_to(base)
+    except (ValueError, OSError):
+        return False
+
+
 def load_env() -> Dict[str, str]:
     """Load profile-scoped environment variables from HERMES_HOME/.env."""
     env_path = get_hermes_home() / ".env"
@@ -1179,6 +1192,27 @@ def skill_view(
                 ):
                     _record(None, found_md)
 
+        if len(candidates) > 1:
+            # Prefer the profile-local copy when the same skill also exists
+            # in an external dir. The documented scan order is "local first,
+            # then external dirs (local takes precedence)" — refusing here
+            # turned a harmless local+external duplicate (e.g. sdlc-review
+            # shipped both in the profile and in a shared external dir) into
+            # a pre-bind "Unknown skill(s)" crash for every review-lane
+            # worker (t_4877f18a). Local precedence still preserves the
+            # no-shadowing guarantee (an external skill can never shadow a
+            # local one); only ambiguity WITHIN a tier (two externals, or
+            # two locals) is refused.
+            try:
+                local_base = active_skills_dir.resolve()
+                local_candidates = [
+                    (sd, smd) for sd, smd in candidates
+                    if _is_under_dir(smd, local_base)
+                ]
+            except Exception:
+                local_candidates = []
+            if local_candidates:
+                candidates = local_candidates
         if len(candidates) > 1:
             paths = [str(smd) for _, smd in candidates]
             logging.getLogger(__name__).warning(

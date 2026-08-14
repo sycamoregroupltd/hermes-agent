@@ -4488,6 +4488,72 @@ def test_dispatch_review_spawns_with_correct_skills(
     assert spawned_tasks[0].skills == ["sdlc-review"]
 
 
+def test_dispatch_review_fails_closed_when_injected_skill_unresolvable(
+    kanban_home, all_assignees_spawnable, monkeypatch,
+):
+    """Review-lane spawn must fail closed with an explicit diagnostic when
+    the force-injected sdlc-review skill does not resolve for the assignee
+    profile — instead of spawning a worker that dies pre-bind with
+    ``Unknown skill(s): sdlc-review`` and surfaces as ``pid not alive``
+    (t_4877f18a regression class)."""
+    spawned_tasks = []
+
+    def capture_spawn(task, workspace, board=None):
+        spawned_tasks.append(task)
+        return 42  # fake PID
+
+    monkeypatch.setattr(
+        kb, "_review_skill_resolvable",
+        lambda profile, skill="sdlc-review", **kw: (
+            False, "skill 'sdlc-review' is not resolvable for profile 'alice'"),
+    )
+
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="review me", assignee="alice")
+        _set_task_status(conn, t, "review")
+        res = kb.dispatch_once(conn, spawn_fn=capture_spawn)
+        assert not res.spawned
+        assert not spawned_tasks
+        task = kb.get_task(conn, t)
+        assert task is not None
+        # Failure recorded with the explicit diagnostic (not a bare
+        # workspace/pid error), claim released, back to review for retry.
+        assert task.last_failure_error and "sdlc-review" in task.last_failure_error
+        assert task.claim_lock is None
+
+
+def test_review_skill_resolvable_probe_finds_skill_in_profile_skills_dir(
+    tmp_path, monkeypatch,
+):
+    """The resolvability probe used by review-lane dispatch finds a skill
+    installed in the assignee profile's own skills dir (the normal
+    profile-packaging case)."""
+    home = tmp_path / "profile-home"
+    (home / "skills" / "devops" / "sdlc-review").mkdir(parents=True)
+    (home / "skills" / "devops" / "sdlc-review" / "SKILL.md").write_text(
+        "---\nname: sdlc-review\ndescription: review skill\n---\n# SDLC Review\n"
+    )
+    ok, reason = kb._review_skill_resolvable(
+        "alice", profile_home=str(home))
+    assert ok is True
+    assert reason == ""
+
+
+def test_review_skill_resolvable_probe_missing_skill_reports_diagnostic(
+    tmp_path,
+):
+    """The probe returns a concrete missing-skill diagnostic when the skill
+    is absent from the profile skills dir and no external dirs are
+    configured — the dispatcher turns this into an explicit BLOCK."""
+    home = tmp_path / "profile-home"
+    (home / "skills").mkdir(parents=True)
+    ok, reason = kb._review_skill_resolvable(
+        "alice", profile_home=str(home))
+    assert ok is False
+    assert "sdlc-review" in reason
+    assert "not resolvable" in reason
+
+
 def test_dispatch_review_skips_unassigned(kanban_home):
     """Unassigned review tasks go to skipped_unassigned, not spawned."""
     with kb.connect() as conn:
