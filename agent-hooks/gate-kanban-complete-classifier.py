@@ -270,7 +270,12 @@ APP_IMPL_PATTERNS: PatternList = [
     # dirty git-status paths. WEB_PATTERNS still sees the path; this stricter list
     # only decides whether an allow override may neutralize broad web signals.
     r"(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^.\n]{0,120})(frontend|web|app|dashboard|route|component|page|middleware|layout)([^a-z0-9]|$)",
-    r"(^|[^a-z0-9])(frontend|web|app|dashboard|route|component|page|middleware|layout)([^a-z0-9][^.\n]{0,120})(build|implement|ship|add|create|modify|fix|update)([^a-z0-9]|$)",
+    # Verb-last variant: <app noun> ... <verb>. The verb alternation REQUIRES a
+    # leading boundary (BOL or non-alnum) so "ship" inside "ownership" or "add"
+    # inside "upshot" can never match the verb group. Without the boundary,
+    # "route ... strict human ownership" wedged a static SOUS review card as web
+    # (verb "ship" matched inside "ownership" within 120 chars of noun "route").
+    r"(^|[^a-z0-9])(frontend|web|app|dashboard|route|component|page|middleware|layout)([^a-z0-9][^.\n]{0,120})(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])(route component|page component|app page|web page|page\.tsx|middleware|layout)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^.\n]{0,120})(page|route|component|ui|frontend|app)([^a-z0-9]|$)",
 ]
