@@ -18638,6 +18638,17 @@ def main(
     # Register cleanup for single-query mode (interactive mode registers in run())
     atexit.register(_run_cleanup)
 
+    # Install the kanban worker crash-handler (atexit hook). No-op for
+    # non-kanban processes; for a dispatcher-owned worker it blocks the card
+    # with evidence if the process exits without a terminal kanban signal.
+    # The signal-time block is wired into _signal_handler_q below because
+    # kanban workers take the os._exit() path there, which skips atexit.
+    try:
+        from agent.kanban_crash_handler import install as _install_crash_handler
+        _install_crash_handler()
+    except Exception:
+        pass  # crash handler is best-effort; never block worker startup on it
+
     # Also install signal handlers in single-query / `-q` mode.  Interactive
     # mode registers its own inside HermesCLI.run(), but `-q` runs
     # cli.agent.run_conversation() below and AIAgent spawns worker threads
@@ -18684,6 +18695,14 @@ def main(
         # the flush against any rare blocking-I/O case (the reporter measured
         # flush in <1ms; the alarm is a failsafe, not the common path).
         if os.environ.get("HERMES_KANBAN_TASK"):
+            # Block the card with evidence before the os._exit() below skips
+            # atexit. Best-effort and idempotent; never interferes with the
+            # kernel reclaim that follows.
+            try:
+                from agent.kanban_crash_handler import emit_block_on_signal
+                emit_block_on_signal(signum)
+            except Exception:
+                pass
             try:
                 import signal as _sig_mod
                 if hasattr(_sig_mod, "SIGALRM"):
@@ -18913,9 +18932,25 @@ def main(
                                     _exit_code = _RL_CODE
                                 except Exception:
                                     _exit_code = 1
+                        # Record the exit for the crash-handler atexit hook so
+                        # it can distinguish the provider-quota retry sentinel
+                        # (never block) from a genuine no-terminal exit (block).
+                        try:
+                            from agent.kanban_crash_handler import record_worker_exit as _rec_exit
+                            _rec_exit(
+                                _exit_code,
+                                (result.get("error") if isinstance(result, dict) else None),
+                            )
+                        except Exception:
+                            pass
                         sys.exit(_exit_code)
 
                 # Exit with error code if credentials or agent init fails
+                try:
+                    from agent.kanban_crash_handler import record_worker_exit as _rec_exit
+                    _rec_exit(1, "credentials or agent init failed before run")
+                except Exception:
+                    pass
                 sys.exit(1)
             else:
                 # Single-query mode (`hermes chat -q "…"`): skip the welcome

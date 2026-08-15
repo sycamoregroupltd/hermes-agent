@@ -34,6 +34,7 @@ import os
 from typing import Any, Optional
 
 from agent.redact import redact_sensitive_text
+from agent.kanban_crash_handler import mark_terminal_sent
 from hermes_cli.goals import judge_goal
 from tools.registry import registry, tool_error
 from hermes_cli.config import cfg_get, load_config
@@ -804,6 +805,7 @@ def _handle_complete(args: dict, **kw) -> str:
                     f"could not complete {tid} (unknown id or already terminal)"
                 )
             run = kb.latest_run(conn, tid)
+            mark_terminal_sent()  # terminal signal landed — crash handler stands down
             return _ok(task_id=tid, run_id=run.id if run else None)
         finally:
             conn.close()
@@ -880,6 +882,7 @@ def _handle_block(args: dict, **kw) -> str:
             # Tell the worker where the task actually landed so it doesn't
             # assume it's sitting in 'blocked' when routing sent it elsewhere.
             landed = kb.get_task(conn, tid)
+            mark_terminal_sent()  # terminal signal landed — crash handler stands down
             return _ok(
                 task_id=tid,
                 run_id=run.id if run else None,
@@ -959,6 +962,7 @@ def _handle_request_review(args: dict, **kw) -> str:
                 )
             run = kb.latest_run(conn, tid)
             landed = kb.get_task(conn, tid)
+            mark_terminal_sent()  # terminal signal landed — crash handler stands down
             return _ok(
                 task_id=tid,
                 run_id=run.id if run else None,
@@ -1006,6 +1010,7 @@ def _handle_request_changes(args: dict, **kw) -> str:
                 )
             landed = kb.get_task(conn, tid)
             run = kb.latest_run(conn, tid)
+            mark_terminal_sent()  # terminal signal landed — crash handler stands down
             return _ok(
                 task_id=tid,
                 run_id=run.id if run else None,
