@@ -639,6 +639,15 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
             "triage to break unblock loops. Omit for a generic block."
         ),
     )
+    p_block.add_argument(
+        "--relabel", action="store_true",
+        help=(
+            "Set/correct --kind on a task that is ALREADY blocked, instead "
+            "of transitioning running/ready -> blocked. For retroactive "
+            "classification of blocked cards with block_kind unset. "
+            "Requires --kind; does not accept --kind dependency."
+        ),
+    )
 
     p_schedule = sub.add_parser("schedule", help="Park one or more tasks in Scheduled (waiting on time, not human input)")
     p_schedule.add_argument("task_id")
@@ -2296,13 +2305,36 @@ def _cmd_edit(args: argparse.Namespace) -> int:
 def _cmd_block(args: argparse.Namespace) -> int:
     reason = " ".join(args.reason).strip() if args.reason else None
     kind = getattr(args, "kind", None)
+    relabel = getattr(args, "relabel", False)
+    if relabel and kind is None:
+        print("kanban block: --relabel requires --kind", file=sys.stderr)
+        return 2
     author = _profile_author()
     ids = [args.task_id] + list(getattr(args, "ids", None) or [])
     failed: list[str] = []
     with kb.connect_closing() as conn:
         for tid in ids:
-            if reason:
-                kb.add_comment(conn, tid, author, f"BLOCKED: {reason}")
+            if relabel:
+                try:
+                    ok = kb.relabel_block_kind(conn, tid, kind, reason=reason)
+                except ValueError as exc:
+                    print(f"kanban block --relabel: {exc}", file=sys.stderr)
+                    return 2
+                if not ok:
+                    failed.append(tid)
+                    print(
+                        f"cannot relabel {tid} (not currently blocked)",
+                        file=sys.stderr,
+                    )
+                else:
+                    if reason:
+                        kb.add_comment(
+                            conn, tid, author, f"RELABELED ({kind}): {reason}"
+                        )
+                    print(f"Relabeled {tid} → {kind}" + (f": {reason}" if reason else ""))
+                continue
+            # Mutate first, comment only on success — a failed block_task()
+            # must not leave a "BLOCKED: ..." comment implying it landed.
             if not kb.block_task(
                 conn,
                 tid,
@@ -2313,6 +2345,8 @@ def _cmd_block(args: argparse.Namespace) -> int:
                 failed.append(tid)
                 print(f"cannot block {tid}", file=sys.stderr)
             else:
+                if reason:
+                    kb.add_comment(conn, tid, author, f"BLOCKED: {reason}")
                 # Report where the task actually landed — dependency blocks go
                 # to todo, and a tripped unblock-loop breaker routes to triage.
                 landed = kb.get_task(conn, tid)
