@@ -19800,6 +19800,15 @@ def main(
         # the flush against any rare blocking-I/O case (the reporter measured
         # flush in <1ms; the alarm is a failsafe, not the common path).
         if os.environ.get("HERMES_KANBAN_TASK"):
+            # Emit the crash-handler block BEFORE os._exit(0): os._exit
+            # bypasses atexit, so without this the SIGTERM death would leave
+            # the task running until the dispatcher's next reclaim tick.
+            # Best-effort; must never raise into signal handling.
+            try:
+                from agent.kanban_crash_handler import emit_kanban_crash_block as _emit_crash
+                _emit_crash(note=f"received signal {signum}")
+            except Exception:
+                pass
             try:
                 import signal as _sig_mod
                 if hasattr(_sig_mod, "SIGALRM"):
@@ -19829,6 +19838,20 @@ def main(
             _signal.signal(_signal.SIGHUP, _signal_handler_q)
     except Exception:
         pass  # signal handler may fail in restricted environments
+
+    # Kanban worker crash handler: on a non-graceful exit with no terminal
+    # board signal sent, emit kanban_block(reason=worker_crash_or_protocol_violation)
+    # directly against the board DB so the task reaches a terminal blocked
+    # state with evidence instead of lingering as running/ready residue.
+    # Arm early (before run_conversation) so even a provider-auth / init
+    # failure that exits non-gracefully is caught. SIGKILL and os._exit are
+    # uncatchable in-process; those remain the dispatcher's pid-not-alive
+    # reclaim (see hermes_cli/kanban_db.detect_crashed_workers).
+    try:
+        from agent.kanban_crash_handler import arm_kanban_crash_handler as _arm_crash_handler
+        _arm_crash_handler()
+    except Exception:
+        pass  # crash handler is best-effort; never wedge startup
     
     # Handle single query mode
     if query or image:
@@ -20027,6 +20050,18 @@ def main(
                                         KANBAN_RATE_LIMIT_EXIT_CODE as _RL_CODE,
                                     )
                                     _exit_code = _RL_CODE
+                                    # Tell the crash handler this is a legit
+                                    # provider-quota requeue, NOT a crash — so
+                                    # the atexit hook skips blocking (the
+                                    # dispatcher releases the task to ready
+                                    # without counting a failure).
+                                    try:
+                                        from agent.kanban_crash_handler import (
+                                            mark_rate_limit_exit as _mark_rl,
+                                        )
+                                        _mark_rl()
+                                    except Exception:
+                                        pass
                                 except Exception:
                                     _exit_code = 1
                         sys.exit(_exit_code)

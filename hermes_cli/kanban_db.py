@@ -9191,6 +9191,27 @@ def _record_task_failure(
             _append_event(
                 conn, task_id, "gave_up", payload, run_id=run_id,
             )
+            # Traceable comment on the card so a human (or the board UI / the
+            # unified-health probe) sees WHY the worker auto-blocked, not just
+            # a bare `gave_up` event. The in-process crash handler covers the
+            # catchable non-graceful exits; SIGKILL / os._exit / OOM are
+            # uncatchable in-process and land here via the dispatcher, so this
+            # comment is what keeps THOSE blocked cards traceable. Best-effort;
+            # the event above is the durable record.
+            try:
+                add_comment(
+                    conn,
+                    task_id,
+                    author=(_claimer_id() or "dispatcher"),
+                    body=(
+                        f"[auto-block] worker auto-blocked after "
+                        f"{failures} consecutive failure(s) "
+                        f"(limit {effective_limit}, {limit_source}): {error[:500]}\n"
+                        f"outcome={outcome} — re-dispatch or review to resume."
+                    ),
+                )
+            except Exception:
+                pass  # comment is best-effort; the blocked transition is durable
             blocked = True
         else:
             # Below threshold.
