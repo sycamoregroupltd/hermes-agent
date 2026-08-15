@@ -125,18 +125,38 @@ def create_card(board: str, pm_profile: str, counts: dict[str, int], source: str
     return f"CREATED_OR_EXISTING board={board} task={task_id} assignee={pm_profile} idempotency_key={idempotency_key}"
 
 
+def liveness_line(board: str, reason: str, **extra: Any) -> str:
+    """Deterministic structured liveness marker.
+
+    The unified-health mechanism matrix (jarvis_mechanism_liveness_collect.py)
+    classifies this cron on schedule freshness (last_run_at vs max_age), NOT on
+    output content. But a purely EMPTY stdout on the no-op path is indistinguishable
+    from a silently-dead script to a human/agent reading the output artifact, and it
+    is what produced the historical "silent (empty output)" label. Emit one stable,
+    machine-parseable line per run so every execution carries an explicit liveness
+    signal with a deterministic reason code (t_92444ff6).
+    """
+    parts = [f"PM_TRIAGE_LIVENESS board={board} status=ALIVE reason={reason}"]
+    for k, v in extra.items():
+        parts.append(f"{k}={v}")
+    return " ".join(parts)
+
+
 def run(board: str, pm_profile: str, *, dry_run: bool, source: str, recent_pm_hours: float) -> str:
     with connect_board(board) as con:
         counts = status_counts(con)
         active_total = sum(counts.get(s, 0) for s in ACTIVE_STATUSES)
         if active_total <= 0:
-            return ""
+            return liveness_line(board, "no_active_queue", active_total=0)
         open_triage = recent_open_pm_triage(con, pm_profile)
         if open_triage:
-            return ""
+            return liveness_line(board, "open_triage_covers", open_triage=str(len(open_triage)))
         recent_pm = recent_pm_activity(con, pm_profile, int(recent_pm_hours * 3600))
         if recent_pm:
-            return ""
+            return liveness_line(
+                board, "recent_pm_activity",
+                recent_pm=str(len(recent_pm)), recent_pm_hours=recent_pm_hours,
+            )
         return create_card(board, pm_profile, counts, source, dry_run)
 
 

@@ -527,8 +527,8 @@
       "prompt": "Run a fleet-wide Hermes cron health scan and report only real issues. Do not ask questions. Inspect BOTH the active Jarvis scheduler view and profile-local cron stores under /home/frank/.hermes/profiles/*/cron/jobs.json. Treat profile-local stores as live only when their gateway service is active or ticker_heartbeat is fresh (<10 minutes); otherwise classify as dormant/dead-store cleanup, not active failure. Parse JSON shapes with a top-level jobs list correctly. For every enabled live job, flag non-ok last_status, last_error, last_delivery_error, stale next_run_at, and delivery failures. Also flag report-quality mismatches where the active scheduler view says healthy but a live profile store has an enabled failing job. Explicitly include job id, name, profile/store, status/error, last_run_at, next_run_at, and the recommended plug. If no live issues exist, respond exactly [SILENT]. Never combine [SILENT] with content. Do not create or update cron jobs from inside this cron; it is report-only.",
       "skills": [],
       "skill": null,
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "provider": "nous",
       "base_url": null,
       "script": null,
       "no_agent": false,
@@ -6478,8 +6478,7 @@
       "deliver": "origin",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "drift_alerted": true
+      "workdir": null
     },
     {
       "id": "241f3f5a8005",

@@ -377,6 +377,43 @@ def test_check_kanban_crashes_active_vs_stale():
     assert not any("t_done" in h for h in hits), f"stale leaked into active: {hits}"
 
 
+def test_check_kanban_crashes_isolates_pseudo_assignee_test_artifact():
+    """t_9762d1e7: a crash on a task assigned to a pseudo/test-only profile
+    (e.g. the dead-PID e2e harness's ``worker`` assignee, which cannot be
+    dispatched) is a TEST ARTIFACT leaked onto the board, never a real infra
+    failure. It must count as stale and never drive the verdict to BLOCK."""
+    _restore_real_crash_scan()
+    tmp = Path(tempfile.mkdtemp())
+    boards = tmp / "boards"
+    bd = boards / "jarvis-os"
+    bd.mkdir(parents=True, exist_ok=True)
+    db = bd / "kanban.db"
+    con = sqlite3.connect(str(db))
+    # Real board schema carries an assignee column.
+    con.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT, assignee TEXT)")
+    con.execute("CREATE TABLE task_links (parent_id TEXT, child_id TEXT)")
+    con.execute("CREATE TABLE task_runs "
+                "(id INTEGER PRIMARY KEY, task_id TEXT, outcome TEXT, ended_at INTEGER)")
+    # Two READY tasks with crashed runs in the window:
+    #  - one assigned to pseudo/test profile 'worker' (e2e-deadpid artifact)
+    #  - one assigned to a real profile 'devops' (genuine active crash)
+    for tid, assignee in (("t_e2e_deadpid", "worker"), ("t_real", "devops")):
+        con.execute("INSERT INTO tasks (id, status, assignee) VALUES (?, 'ready', ?)",
+                    (tid, assignee))
+        ended = int(_now_iso(-3).timestamp())
+        con.execute("INSERT INTO task_runs (task_id, outcome, ended_at) VALUES (?, 'crashed', ?)",
+                    (tid, ended))
+    con.commit()
+    con.close()
+    uhealth.BOARDS_DIR = boards
+    count, hits, stale, superseded = uhealth.check_kanban_crashes()
+    assert count == 1, f"expected only the real-assignee crash active, got {count}: {hits}"
+    assert any("t_real" in h for h in hits), f"real-assignee crash missing from active: {hits}"
+    assert not any("t_e2e_deadpid" in h for h in hits), \
+        f"pseudo-assignee test artifact leaked into active hits: {hits}"
+    assert stale == 1, f"expected the pseudo-assignee artifact stale, got {stale}"
+
+
 def test_jarvis_ready_backlog_counts_and_ages():
     tmp = Path(tempfile.mkdtemp())
     now = datetime(2026, 7, 28, tzinfo=timezone.utc)
