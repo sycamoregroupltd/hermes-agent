@@ -14,7 +14,9 @@ Bounds exercised:
 
 from __future__ import annotations
 
+import os
 import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -182,5 +184,71 @@ def test_mark_terminal_sent_wired_into_kanban_complete(kanban_home, crash_state)
     conn = kb.connect()
     try:
         assert kb.get_task(conn, tid).status == "done"
+    finally:
+        conn.close()
+
+
+def test_real_atexit_shutdown_blocks(kanban_home, crash_state):
+    """Regression: the atexit hook must block during REAL interpreter shutdown.
+
+    The prior implementation (PR #27) failed here: its atexit hook lazily
+    imported ``hermes_cli.kanban_db`` while the interpreter was tearing down,
+    which raised ``RuntimeError: can't register atexit after shutdown`` and was
+    swallowed — leaving the card stranded in ``running``. This test spawns a
+    subprocess that arms the handler and dies on an unhandled exception, the
+    real crash path, and asserts the card lands blocked. ``install()``'s eager
+    connect preloads the import chain so the shutdown path reuses cached modules.
+    """
+    import subprocess, textwrap
+
+    kh, kb, tid, run_id = (
+        crash_state["kh"], crash_state["kb"], crash_state["tid"], crash_state["run_id"],
+    )
+    db_path = os.path.join(kanban_home, "kanban", "default", "kanban.db")
+    # Locate the real DB path the isolated board resolved to.
+    conn = kb.connect()
+    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    conn.close()
+
+    script = textwrap.dedent(
+        """
+        import os, sys
+        from agent.kanban_crash_handler import install
+        install()
+        raise RuntimeError("simulated unhandled crash before terminal signal")
+        """
+    )
+    sub_env = dict(os.environ)
+    sub_env.update(
+        {
+            "HERMES_HOME": kanban_home,
+            "HERMES_KANBAN_DB": db_path,
+            "HERMES_KANBAN_TASK": tid,
+            "HERMES_KANBAN_RUN_ID": str(run_id),
+            "PYTHONPATH": os.path.join(os.path.dirname(os.path.dirname(__file__)), ".."),
+        }
+    )
+    for k in ["HERMES_KANBAN_BOARD", "HERMES_KANBAN_WORKSPACES_ROOT"]:
+        sub_env.pop(k, None)
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repo_root,
+        env=sub_env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    # The unhandled exception propagates as rc=1; the handler must still block.
+    assert proc.returncode != 0
+
+    conn = kb.connect()
+    try:
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked", (
+            "real atexit shutdown must block the card (shutdown-import regression)"
+        )
+        bodies = [c.body for c in _comments(kb, conn, tid)]
+        assert any("worker_crash_or_protocol_violation" in b for b in bodies)
     finally:
         conn.close()
