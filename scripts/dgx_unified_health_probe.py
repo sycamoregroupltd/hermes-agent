@@ -49,6 +49,15 @@ BOARDS_DIR = HOME / ".hermes" / "kanban" / "boards"
 JARVIS_OS_KANBAN_DB = BOARDS_DIR / "jarvis-os" / "kanban.db"
 SYCODE_TRADING_KANBAN_DB = BOARDS_DIR / "sycode-trading" / "kanban.db"
 DEVOPS_READY_ASSIGNEES = ("devops",)
+# Pseudo / test-only assignees that are NOT real dispatchable profiles. A
+# task assigned to one of these can never be legitimately dispatched to a real
+# worker, so any crash/gave_up on it is a TEST HARNESS ARTIFACT (e.g. the
+# dead-PID e2e harness that leaks tasks onto the live jarvis-os board with a
+# mock claimer like ``spark-4be3:mock`` and a fake pid), never a real infra
+# failure. Such crashes must never drive the fleet verdict to BLOCK
+# (t_9762d1e7). Verified: ``worker`` has no profile on disk and all active
+# tasks assigned to it are e2e/soak test residue.
+PSEUDO_TEST_ASSIGNEES = ("worker",)
 READY_BACKLOG_TOP_LIMIT = 5
 # oldest_ready_days above this on ANY tracked board degrades PASS -> WARN
 # (t_bf11a0ce): the probe run 2026-08-03 showed a green fleet verdict while
@@ -681,6 +690,7 @@ def check_kanban_crashes() -> tuple[int, list[str], int, list[str]]:
                 rows = cur.execute(
                     "SELECT tr.task_id, tr.outcome, tr.ended_at, "
                     "COALESCE(t.status, 'unknown') AS task_status, "
+                    "COALESCE(t.assignee, '') AS task_assignee, "
                     "EXISTS ("
                     "  SELECT 1 FROM task_links l "
                     "  JOIN tasks p ON p.id = l.parent_id "
@@ -694,9 +704,40 @@ def check_kanban_crashes() -> tuple[int, list[str], int, list[str]]:
                     (cutoff,),
                 ).fetchall()
             except sqlite3.OperationalError:
-                rows = []
-            for task_id, outcome, ended, status, has_done_parent in rows:
+                # Some minimal test/minimal schema boards may lack the
+                # ``tasks.assignee`` column. Fall back to the legacy query
+                # shape (assignee '' => pseudo-test isolation inert) so the
+                # crash scan still works on those boards.
+                try:
+                    rows = cur.execute(
+                        "SELECT tr.task_id, tr.outcome, tr.ended_at, "
+                        "COALESCE(t.status, 'unknown') AS task_status, "
+                        "'' AS task_assignee, "
+                        "EXISTS ("
+                        "  SELECT 1 FROM task_links l "
+                        "  JOIN tasks p ON p.id = l.parent_id "
+                        "  WHERE l.child_id = tr.task_id AND p.status = 'done'"
+                        ") AS has_done_parent "
+                        "FROM task_runs tr "
+                        "LEFT JOIN tasks t ON tr.task_id = t.id "
+                        "WHERE tr.outcome IN ('crashed','gave_up') "
+                        "AND tr.ended_at >= ? "
+                        "ORDER BY tr.ended_at DESC LIMIT 25",
+                        (cutoff,),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    rows = []
+            for task_id, outcome, ended, status, assignee, has_done_parent in rows:
                 if status in ACTIVE_TASK_STATES and not has_done_parent:
+                    # Test-harness isolation (t_9762d1e7): a crash/gave_up on a
+                    # task assigned to a pseudo/test-only profile (e.g. the
+                    # dead-PID e2e harness's ``worker`` assignee, which cannot
+                    # be dispatched) is a TEST ARTIFACT leaked onto the board,
+                    # not a real infra failure. Count it stale so it never
+                    # drives the fleet verdict to BLOCK.
+                    if assignee in PSEUDO_TEST_ASSIGNEES:
+                        stale_count += 1
+                        continue
                     # de-dupe by task_id so one task with several crashed/gave_up
                     # runs in the window is not double-counted.
                     if task_id not in seen_task_ids:
