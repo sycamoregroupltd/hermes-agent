@@ -54,27 +54,63 @@ done
 echo
 log "═══ cron health ═══"
 CRON_OK=true
-if [ -f "/home/frank/.hermes/cron/jobs.json" ]; then
-    total_jobs=$(grep -c '"id"' "/home/frank/.hermes/cron/jobs.json" || echo "0")
-    log "  Cron DB: $total_jobs jobs loaded"
-    # Check gateway is running
-    if [ -f "/home/frank/.hermes/gateway.pid" ]; then
-        gwpid=$(grep -oP '"pid":\s*\K[0-9]+' "/home/frank/.hermes/gateway.pid" || true)
-        if [ -n "$gwpid" ] && kill -0 "$gwpid" 2>/dev/null; then
-            log "  Gateway: RUNNING (pid $gwpid)"
-        else
-            log "  Gateway: STALE (pid $gwpid not alive)"
-            CRON_OK=false
-        fi
+# Live cron/gateway moved to per-profile stores. The legacy
+# /home/frank/.hermes/cron/jobs.json and /home/frank/.hermes/gateway.pid
+# are gone; treating them as authority produced a permanent false
+# "Cron DB: MISSING" + HEALTH: DEGRADED while hermes cron was live.
+cron_store=""
+total_jobs=0
+ok_jobs=0
+for jf in /home/frank/.hermes/profiles/*/cron/jobs.json; do
+    [ -f "$jf" ] || continue
+    # Skip empty/placeholder stores.
+    [ -s "$jf" ] || continue
+    n=$(grep -c '"id"' "$jf" 2>/dev/null || true)
+    n=${n:-0}
+    if [ "$n" -gt "$total_jobs" ]; then
+        total_jobs=$n
+        cron_store=$jf
+    fi
+    c=$(grep -c '"last_status": *"ok"' "$jf" 2>/dev/null || true)
+    ok_jobs=$((ok_jobs + ${c:-0}))
+done
+if [ "$total_jobs" -eq 0 ]; then
+    cron_summary=$(timeout 20 hermes cron status 2>/dev/null || true)
+    if echo "$cron_summary" | grep -qE '[0-9]+ active job'; then
+        total_jobs=$(echo "$cron_summary" | grep -oE '[0-9]+ active job' | head -1 | awk '{print $1}')
+        cron_store="hermes cron status"
+        log "  Cron store: LIVE via hermes cron status ($total_jobs active jobs)"
     else
-        log "  Gateway: NO PID file"
+        log "  Cron store: MISSING (no per-profile jobs.json and hermes cron status unavailable)"
         CRON_OK=false
     fi
-    # Count jobs by last_status
-    ok_jobs=$(grep -c '"last_status":\s*"ok"' "/home/frank/.hermes/cron/jobs.json" || true)
-    log "  Jobs with last_status=ok: $ok_jobs"
 else
-    log "  Cron DB: MISSING"
+    log "  Cron store: $cron_store ($total_jobs jobs; ${ok_jobs} last_status=ok across profile stores)"
+fi
+
+gw_ok=false
+gw_detail=""
+for pf in /home/frank/.hermes/profiles/*/gateway.pid; do
+    [ -f "$pf" ] || continue
+    gwpid=$(grep -oP '"pid":\s*\K[0-9]+' "$pf" 2>/dev/null || true)
+    if [ -n "$gwpid" ] && kill -0 "$gwpid" 2>/dev/null; then
+        prof=$(basename "$(dirname "$pf")")
+        gw_ok=true
+        gw_detail="pid $gwpid ($prof)"
+        break
+    fi
+done
+if ! $gw_ok; then
+    cron_status=$(timeout 20 hermes cron status 2>/dev/null || true)
+    if echo "$cron_status" | grep -qiE 'Gateway is running'; then
+        gw_ok=true
+        gw_detail="hermes cron status reports gateway running"
+    fi
+fi
+if $gw_ok; then
+    log "  Gateway: RUNNING ($gw_detail)"
+else
+    log "  Gateway: NOT DETECTED (checked per-profile pid + hermes cron status)"
     CRON_OK=false
 fi
 
