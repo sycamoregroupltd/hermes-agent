@@ -1377,6 +1377,8 @@ def main(argv: list[str] | None = None):
                     priority=route["priority"] if is_infra_route else 3,
                 )
                 skipped_duplicate += 1
+                if is_infra_route:
+                    infra_operator_routed += 1
                 if is_reopen:
                     reopened += 1
                 if decision["cap_enforced"]:
