@@ -80,9 +80,29 @@ _ATTRIBUTION_RE = re.compile(
 # Short allowlist of author-like tokens that, when followed by a verdict in the
 # SAME clause, indicate the comment author is merely *relaying* another seat's
 # verdict. If the named author is not the comment author, the verdict is quoted.
+# B1 (t_65a0c080): the author-membership check must be WHOLE-TOKEN, never a
+# substring test against the compiled pattern string. A substring test made
+# ``jarvis`` match ``jarvis-os-pm`` / ``jarvis-voice``, so a comment by ``jarvis``
+# that RELAYS another seat's verdict (e.g. "trading-risk-reviewer posts
+# REVIEW_VERDICT=APPROVED") skipped the relay check and was treated as issued by
+# jarvis (quoted-verdict blindness). Build a frozenset of the exact relay-hint
+# author tokens and test membership against that.
+_RELAY_HINT_AUTHORS = frozenset({
+    "trading-risk-reviewer",
+    "os-reviewer",
+    "guardian",
+    "platform-reviewer",
+    "trading-devops",
+    "builder",
+    "nervous-system-engineer",
+    "sycode-trading-pm",
+    "jarvis-os-pm",
+    "jarvis-voice",
+    "worker",
+    "trading-strategy-dev",
+})
 _RELAY_HINT_RE = re.compile(
-    r"\b(trading-risk-reviewer|os-reviewer|guardian|platform-reviewer|trading-devops|"
-    r"builder|nervous-system-engineer|sycode-trading-pm|jarvis-os-pm|worker|trading-strategy-dev)\b",
+    r"\b(?:" + "|".join(re.escape(a) for a in sorted(_RELAY_HINT_AUTHORS)) + r")\b",
     re.I,
 )
 
@@ -103,11 +123,15 @@ def verdict_is_attributed(text: str, author: str, start: int, end: int) -> bool:
     # Bare mention of another reviewer seat adjacent to the verdict phrasing in the
     # same window (e.g. "trading-risk-reviewer REVIEW_VERDICT=APPROVED" written by a
     # third party) without the comment author themselves being that seat.
-    if (author or "").lower() not in _RELAY_HINT_RE.pattern.lower().replace("\\b", ""):
+    # B1 (t_65a0c080): whole-token membership. The author is a named reviewer
+    # seat only if the EXACT author string is in _RELAY_HINT_AUTHORS — never via a
+    # substring of the compiled pattern (that made 'jarvis' match 'jarvis-os-pm').
+    author_key = (author or "").strip().lower()
+    if author_key not in _RELAY_HINT_AUTHORS:
         # author is not one of the named reviewer seats; if the window names a
         # reviewer seat that the comment author is NOT, it is an attribution.
         for m in _RELAY_HINT_RE.finditer(window):
-            if m.group(0).lower() != (author or "").lower():
+            if m.group(0).lower() != author_key:
                 return True
     return False
 
@@ -227,12 +251,14 @@ _GATE_DENIAL_CUES = (
     r"no|not|without|do\s+not|don'?t|free\s+of|den(?:y|ied|ial)|avoid\w*|never|"
     r"unnecessary|exclud\w*|waiv\w*|safe|intact|preserv\w*|unchanged|"
     r"no[- ]?op|non[- ]?gated|out[- ]?of[- ]?scope|"
-    # B-major (t_65a0c080): 'frank-gated' is itself a denial cue -- it means the
-    # action is GATED and requires Frank, i.e. it must NOT auto-complete. The old
-    # cue list treated 'frank-gated' as a safe/non-gated phrase, so a comment like
-    # 'prod deploy - Frank-gated' bypassed the operator gate. 'frank-gated' /
-    # 'frank approval' / 'awaiting frank' are now explicit gate-affirming phrases.
-    r"frank[- ]?gated|frank[- ]?approval|awaiting[- ]?frank|needs[- ]?frank|"
+    # B-major (t_65a0c080): 'frank-gated' / 'frank approval' / 'awaiting frank' /
+    # 'needs frank' are gate-AFFIRMING cues, NOT denial cues — they state that
+    # the action IS gated and REQUIRES Frank. Keeping them here caused a card
+    # like 'prod deploy - Frank-gated' to be treated as a gate-DENIAL (the
+    # 'frank-gated' phrase tripped the denial detector, redacting the 'prod'
+    # noun) and false-PASS to None instead of scoping operator_gated. They are
+    # deliberately NOT in the denial list. Note that 'no frank approval needed'
+    # is still caught because the leading 'no' is itself a denial cue.
     r"operator[- ]?gated|operator[- ]?approval|awaiting[- ]?operator|needs[- ]?operator|"
     r"a3[- ]?gated|a3[- ]?approval"
 )
