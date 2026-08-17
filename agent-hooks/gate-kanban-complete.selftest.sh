@@ -106,6 +106,36 @@ INSERT INTO tasks VALUES (
   'Build frontend route with static QA packet output',
   'Implement apps/web marketplace route component and page layout, then produce a static visual/content QA packet. This changed a concrete page-dependent API path and frontend route, so it must still prove the running route.'
 );
+INSERT INTO tasks VALUES (
+  't_66c7c9a3',
+  'REVIEW-VERDICT source-PR-review',
+  'REVIEW_VERDICT: source-PR-review for another implementation card. Reviewed PR surface mentions dashboard display exposure, dashboard bundle, and metric semantics. This packet is review-only and contains only surface wording.'
+);
+INSERT INTO tasks VALUES (
+  't_cc5a3939',
+  'FOLLOW-UP: Posted REVIEW_VERDICT=APPROVED for PR #70072 — all 4 accepta',
+  'FOLLOW-UP: REVIEW_VERDICT=APPROVED for PR #70072. The reviewed card resolved dashboard display exposure, dashboard bundle, and metric semantics. No implementation steps are included in this ticket.'
+);
+INSERT INTO tasks VALUES (
+  't_cc5a3939_applies',
+  'IMPLEMENT: APPLY reviewed dashboard changes',
+  'Apply the reviewed dashboard changes from source PR #70072 to implement the apps/web dashboard route component and page layout for the frontend experience.'
+);
+INSERT INTO tasks VALUES (
+  't_eea84fb8',
+  'Cron/report CLI output cleanup',
+  'Backend cron/report task updates Hermes CLI/Python worker command list output. It renders metric rows for monitoring output and CLI display only; no browser route, page, component, middleware, layout, or dashboard app surface changed.'
+);
+INSERT INTO tasks VALUES (
+  't_77316e9c',
+  'UPSTREAM GAP: hermes cron create must refuse dead stores (no live ticker_heartbeat)',
+  '`cron list` still renders them [active]. This is CLI list output only, not a browser page render.'
+);
+INSERT INTO tasks VALUES (
+  't_real_dashboard_render_web',
+  'Implement apps/web dashboard render route component',
+  'Implement apps/web dashboard route component and render metric cards on the dashboard page using React and shared UI helpers.'
+);
 INSERT INTO task_comments VALUES (
   't_web_linked_packet',
   'RUNNING_APP_VERIFICATION evidence_packet=t_terminal_packet_001 producer=platform-reviewer terminal_capable=true command="bash /home/frank/.hermes/scripts/verify-running-app.sh http://127.0.0.1:4300 /marketplace upero.localhost"\nVERIFY_PASS /marketplace :: HTTP 200, 39647b, real content\nNote: this packet satisfies only the running-app evidence requirement; reviewer must still provide a separate REVIEW_VERDICT.',
@@ -279,6 +309,18 @@ run_case "frontend-static-packet-route-without-verify-blocks" t_frontend_static_
 run_case "frontend-with-verify-allows" t_webpass allow 'VERIFY_PASS /marketplace :: HTTP 200, real content'
 run_case "frontend-linked-running-app-packet-comment-allows" t_web_linked_packet allow 'REVIEW_VERDICT: APPROVE_WITH_NOTES; running-app evidence is explicitly linked via terminal-capable packet t_terminal_packet_001 in task comments.'
 run_case "frontend-negated-running-app-packet-discussion-blocks" t_web_negated_packet_discussion block 'Implementation worker claims DELEGATED_EVIDENCE_PACKET=self and REVIEW_VERDICT: APPROVE by self; no RUNNING_APP_VERIFICATION packet and no actual VERIFY_PASS evidence supplied.'
+run_case "source-pr-review-dashboard-verdict-allows" t_66c7c9a3 allow 'review-verdict source-PR-review references dashboard display exposure, dashboard bundle, and metric semantics without app implementation.'
+run_classifier_case "source-pr-review-dashboard-verdict-classifier" t_66c7c9a3 readonly_nonapp 'review-verdict source-PR-review references dashboard display exposure, dashboard bundle, and metric semantics without app implementation.'
+run_case "live-shaped-review-verdict-nonapp-allows" t_cc5a3939 allow 'review-verdict follow-up for PR #70072; resolves dashboard display exposure and bundle, metric semantics; no implementation tasks added.'
+run_classifier_case "live-shaped-review-verdict-classifier" t_cc5a3939 readonly_nonapp 'review-verdict follow-up for PR #70072; dashboard display exposure and bundle, metric semantics; no implementation tasks added.'
+run_case "live-shaped-applies-reviewed-dashboard-blocks" t_cc5a3939_applies block 'Apply reviewed dashboard changes from source PR #70072 to apps/web dashboard route component.'
+run_classifier_case "live-shaped-applies-reviewed-dashboard-classifier" t_cc5a3939_applies web 'Apply reviewed dashboard changes from source PR #70072 to apps/web dashboard route component.'
+run_case "cron-report-cli-renders-allows" t_eea84fb8 allow 'Cron/report CLI task renders list output rows for command output, no app runtime surfaces changed.'
+run_classifier_case "cron-report-cli-renders-classifier" t_eea84fb8 not_web 'Cron/report CLI task renders list output rows for command output, no app runtime surfaces changed.'
+run_case "live-shaped-cron-list-renders-allows" t_77316e9c allow 'UPSTREAM GAP: cron list output still renders active items in list, not UI route/page/component.'
+run_classifier_case "live-shaped-cron-list-renders-classifier" t_77316e9c not_web '`cron list` still renders them [active]. This is CLI output.'
+run_case "apps-web-dashboard-render-still-web-blocks" t_real_dashboard_render_web block 'Implementing apps/web dashboard route component with React render path.'
+run_classifier_case "apps-web-dashboard-render-still-web-classifier" t_real_dashboard_render_web web 'Implementing apps/web dashboard route component with React render path.'
 run_case "goal-judge-provider-error-no-override-blocks" t_goal_judge_provider_error_fixture block 'GeminiAPIError/NotFoundError preserved; no override marker; needs terminal evidence/review handoff'
 run_case "goal-judge-provider-error-incomplete-override-blocks" t_goal_judge_incomplete_override_fixture block 'Incomplete override marker; failure lane preserved'
 run_case "goal-judge-provider-error-verified-review-override-allows" t_goal_judge_verified_override_fixture allow 'REVIEW_VERDICT=APPROVED with reviewed task evidence path in metadata; GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE present'

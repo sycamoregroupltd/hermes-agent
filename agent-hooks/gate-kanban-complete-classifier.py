@@ -239,6 +239,9 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     # negative fixture proves the same wording attached to concrete apps/web
     # work still blocks.
     r"\b(monitor|report|script)\b[^\n]{0,120}\brenders?\b[^\n]{0,160}\b(0pp|metric|number|value|output|section|marker|unmeasured|unavailable)\b",
+    # Cron/report/CLI task cards often describe command/list output using
+    # "renders" language; that is report/output phrasing, not browser rendering.
+    r"\b(cli|python|shell|command|script|cron|report)\b[^\n]{0,160}\brenders?\b[^\n]{0,120}\b(output|list|line|item|items|rows?|values?|count|marker|result|results|command)\b",
     # PM planning cards issue concrete-looking PM verbs (route/create/expand)
     # alongside an explicit "create one implementation child" instruction,
     # which the broad APP_IMPL verb+route regex latches onto as app work (false
@@ -333,6 +336,9 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # evidence-back-reference phrasing in DIAGNOSE/forensics cards routes the
     # verdict/disposition rather than implementing a browser route.
     r"\b(comment|post)\s+[^.\n]{0,120}\b(disposition|verdict|evidence path|outcome)\b[^.\n]{0,120}back\b",
+    # Backend cron/report/CLI cards can mention rendered list/output text without
+    # implying a browser route or page implementation.
+    r"\b(cli|python|shell|command|cron|report)\b[^\n]{0,260}\brenders?\b[^\n]{0,120}\b(list|output|rows?|items?|values?|results?|metrics?|markers?|count|section)\b",
 ]
 
 GATE_SCOPE_NONAPP_PATTERNS: PatternList = [
@@ -363,8 +369,8 @@ NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
 ]
 
 SOURCE_REVIEW_PATTERNS: PatternList = [
-    r"\breview_verdict\b",
-    r"\b(?:source task|source review|review source task)\b",
+    r"\breview[-_ ]verdict\b",
+    r"\b(?:source task|source review|review source task|source[-_ ]?pr[-_ ]?review)\b",
 ]
 
 
@@ -603,9 +609,11 @@ def _source_review_without_web(task_part: str, raw: str) -> bool:
     """
     if not _any(SOURCE_REVIEW_PATTERNS, task_part):
         return False
-    # Belt-and-suspenders: no concrete web impl should have snuck through
-    if _any(CONCRETE_WEB_IMPL_PATTERNS, task_part):
-        return False
+    # Quoted source-PR surface nouns (dashboard bundle/exposure, etc.) must
+    # not veto a review-verdict card that has no implementation verb of its
+    # own. t_cc5a3939 / t_66c7c9a3: CONCRETE_WEB_IMPL_PATTERNS matching
+    # quoted dashboard nouns was forcing web. Keep the _has_app_impl veto
+    # so t_patch02-style "applies the reviewed changes" cards stay web.
     if _has_app_impl(task_part):
         return False
     # A goal-judge provider-error quarantine card is NOT a source-review card
@@ -613,8 +621,63 @@ def _source_review_without_web(task_part: str, raw: str) -> bool:
     # REVIEW_VERDICT text must not convert the fail-closed trap into an
     # allow-lane classification; only the strict verified-review override
     # (marker + APPROVED verdict + task-evidence) may do that.
+    # REVIEW_VERDICT text alone is not enough for this allow rule, so policy
+    # quotes like "do not bypass REVIEW_VERDICT" stay classified here if no
+    # explicit source-PR-review context.
     if _goal_judge_provider_error(task_part, raw) and not _verified_review_with_evidence_override(
         task_part, raw
+    ):
+        return False
+    return True
+
+
+def _source_review_verdict_not_web(task_part: str, raw: str) -> bool:
+    """Special-case REVIEW_VERDICT/source-PR-review cards that quote frontend
+    surface nouns but do not alter those surfaces.
+
+    These should stay non-web even when earlier NONAPP_OVERRIDE heuristics match
+    review language (for example "no frontend/web route..." in review context).
+    """
+    if not _any(SOURCE_REVIEW_PATTERNS, task_part):
+        return False
+    if _has_app_impl(task_part):
+        return False
+    source_pr_review_context = (
+        re.search(r"\bsource[-_ ]?pr[-_ ]?review\b", task_part)
+        or re.search(r"\breview[-_ ]verdict\s*[:=]", task_part)
+        or (
+            re.search(r"\breview[-_ ]verdict\b", task_part)
+            and re.search(r"\bsource\b[^\n]{0,120}\breview\b", task_part)
+        )
+    )
+    if not source_pr_review_context:
+        return False
+    if _goal_judge_provider_error(task_part, raw):
+        return False
+    return True
+
+
+def _cron_report_cli_render_not_web(task_part: str, raw: str) -> bool:
+    """Cron/report/CLI cards describing rendered output/list text are report tasks,
+    not frontend implementation tasks.
+    """
+    if _has_app_impl(task_part):
+        return False
+    if not re.search(r"\b(cli|python|shell|command|cron|report)\b", task_part):
+        return False
+    if not (
+        re.search(
+            r"\b(cli|python|shell|command|cron)\b[^\n]{0,220}\brenders?\b[^\n]{0,220}\b(list|output|rows?|items?|values?|count|metric|result|results|section|marker|active|line|lines|item|row|items)\b",
+            task_part,
+        )
+        or re.search(
+            r"\brenders?\b[^\n]{0,220}\b(list|output|rows?|items?|values?|count|metric|result|results|section|marker|active|line|lines|item|row|items)\b[^\n]{0,160}\b(cli|python|shell|command|cron)\b",
+            task_part,
+        )
+        or re.search(
+            r"\b(cli|python|shell|command|cron|report)\b[^\n]{0,240}\b(list|output|rows?|items?|values?|count|metric|result|results|section|marker|active|line|lines|item|row)\b[^\n]{0,240}\brenders?\b",
+            task_part,
+        )
     ):
         return False
     return True
@@ -677,6 +740,18 @@ CONTRACT_TABLE: Sequence[ContractRule] = [
         decision=FRONTEND_WEB_CHANGED_FILES_CATEGORY.decision,
         predicate=_app_impl_needs_verify_pass,
         rationale="concrete app implementation signal detected in task title/body; running-app VERIFY_PASS required by shell hook even without broad web surface keywords",
+    ),
+    ContractRule(
+        name="ALLOW_REVIEW_VERDICT_SOURCE_PR_REVIEW_NOT_WEB",
+        decision="readonly_nonapp",
+        predicate=_source_review_verdict_not_web,
+        rationale="Review-verdict / source-PR-review cards that only quote app nouns must remain non-web for gate routing.",
+    ),
+    ContractRule(
+        name="ALLOW_CRON_REPORT_CLI_RENDER_NOT_WEB",
+        decision="not_web",
+        predicate=_cron_report_cli_render_not_web,
+        rationale="Cron/report/CLI render/list-output phrasing should not imply a browser/runtime surface by default.",
     ),
     ContractRule(
         name="ALLOW_NONAPP_OVERRIDE_ONLY_WITHOUT_APP_IMPL",
