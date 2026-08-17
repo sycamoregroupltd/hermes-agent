@@ -71,6 +71,10 @@ SURFACES = [
      "signal-gated (~150-550/h observed); 3h budget tolerates quiet market stretches"),
     ("signal_journey_events",  "signal_journey_events",    "occurred_at",   3.0,  "alert",
      "event stream for journeys; was frozen 15d once (2026-07-02 lesson)"),
+    ("pro_trader_fills",       "pro_trader_fills",         "ingested_at",   6.0,  "alert",
+     "wallet-shadow cohort fill feed (continuous WS+REST; PR #814 harness); 6h SLO matches WalletShadowFillsFeedStale"),
+    ("wallet_shadow_journeys", "signal_journeys",          "created_at",    3.0,  "alert",
+     "WALLET_SHADOW journey emission (correlation_id LIKE 'wallet-shadow-%'); signal-gated, matches base signal_journeys 3h budget"),
     ("onchain_snapshots",      "onchain_snapshots",        "created_at",    27.0, "alert",
      "daily batch ~00:00-01:10Z; 27h budget = daily cadence + margin"),
     ("stablecoin_flow_hourly", "stablecoin_flow_hourly_v1", "hour_utc",     4.0,  "alert",
@@ -90,11 +94,23 @@ SURFACES = [
      "collector PR #394 (Binance USDM forceOrder WS) producing since 2026-07-29; "
      "consumer PR #928 (FeatureStoreV2). SLO 5h catches a dead collector within a "
      "work-shift while tolerating sparse cascades (register GAP #1 resolved 2026-08-05)."),
+    ("hl_leaderboard_snapshots", "hl_leaderboard_snapshots", "created_at", 36.0, "alert",
+     "daily archive (24h cadence); SLO 36h from created_at (write time), NOT snapshot_date "
+     "date-floor — F2/PR #894; 36h is looser than the 30h WalletShadowLeaderboardSnapshotStale alert"),
 ]
 # data_epoch_registry is certified in the register but has NO freshness SLO:
 # it is event-driven (rows appear when defects are registered). Completeness is
 # governed by policy §3 rule 3, not by a clock. funding_rate_snapshots is empty
 # and superseded by funding_rate_history (register note; not monitored).
+
+# Optional per-surface row filters, applied inside fetch_age_hours. Used for
+# surfaces that are a slice of a shared table (e.g. wallet-shadow journey
+# emission = signal_journeys WHERE correlation_id LIKE 'wallet-shadow-%').
+# Keys must match SURFACES surface names; the value is appended as a raw SQL
+# WHERE clause (constant literals only — never interpolate runtime input).
+SURFACE_FILTERS = {
+    "wallet_shadow_journeys": "correlation_id LIKE 'wallet-shadow-%'",
+}
 
 EMPTY_SENTINEL = -1.0
 
@@ -145,11 +161,15 @@ def is_flat_book():
     return fetch_open_position_count() == 0
 
 
-def fetch_age_hours(table, col):
-    """Return age of max(ts) in hours, EMPTY_SENTINEL if table is empty."""
+def fetch_age_hours(table, col, where=None):
+    """Return age of max(ts) in hours, EMPTY_SENTINEL if table is empty.
+    where: optional SQL WHERE clause for surfaces that are a slice of a
+    shared table (see SURFACE_FILTERS). Constants only — never interpolate
+    runtime input into this clause."""
+    filter_sql = f" WHERE {where}" if where else ""
     sql = (
         f"SELECT COALESCE(EXTRACT(EPOCH FROM (now() - max({col})))/3600.0, {EMPTY_SENTINEL}) "
-        f"FROM public.{table};"
+        f"FROM public.{table}{filter_sql};"
     )
     cmd = [
         "docker", "exec",
@@ -270,6 +290,27 @@ def self_test():
         ("flat-book closing surface reported FLAT (no alert)", status["trade_close_events"] == "FLAT"),
         ("exactly three alerts", len(alerts) == 3),
     ]
+
+    # Config sanity for hl_leaderboard_snapshots (card t_35bd27be, t_84eee812 step 3):
+    # the surface must be REGISTERED with SLO 36h + mode alert, and the ts column
+    # must be created_at (write time), NOT the snapshot_date date-floor (F2/PR #894).
+    surfaces_by_name = {s: (_t, c, sl, m) for s, _t, c, sl, m, _n in SURFACES}
+    hl = surfaces_by_name.get("hl_leaderboard_snapshots")
+    results.append(("hl_leaderboard_snapshots registered with 36h SLO alert",
+                    hl is not None and hl[2] == 36.0 and hl[3] == "alert"))
+    results.append(("hl_leaderboard_snapshots ts column is created_at (not snapshot_date)",
+                    hl is not None and hl[1] == "created_at"))
+
+    # Config sanity for the wallet-shadow surfaces (re-applied from card
+    # t_3f3e7a65): the two LIVE surfaces must be registered with their SLOs,
+    # and the filtered journey slice must have its WHERE filter wired.
+    results.append(("pro_trader_fills registered with 6h SLO alert",
+                    surfaces_by_name.get("pro_trader_fills") == ("pro_trader_fills", "ingested_at", 6.0, "alert")))
+    results.append(("wallet_shadow_journeys registered with 3h SLO alert",
+                    surfaces_by_name.get("wallet_shadow_journeys") == ("signal_journeys", "created_at", 3.0, "alert")))
+    results.append(("wallet_shadow_journeys has a WHERE filter",
+                    "wallet_shadow_journeys" in SURFACE_FILTERS
+                    and "correlation_id LIKE 'wallet-shadow-%'" in SURFACE_FILTERS["wallet_shadow_journeys"]))
     all_ok = all(ok for _, ok in results)
     for name, ok in results:
         print(f"SELF-TEST {'PASS' if ok else 'FAIL'}: {name}")
@@ -292,7 +333,7 @@ def main():
     ages = {}
     try:
         for surface, table, col, _slo, _mode, _note in SURFACES:
-            ages[surface] = fetch_age_hours(table, col)
+            ages[surface] = fetch_age_hours(table, col, SURFACE_FILTERS.get(surface))
     except Exception as e:
         print(f"ERROR surface-freshness monitor: {e}", file=sys.stderr)
         sys.exit(1)
