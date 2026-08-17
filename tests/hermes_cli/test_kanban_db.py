@@ -679,6 +679,94 @@ def test_detect_crashed_workers_detector_gap_coalesces_alert(
         assert len(fired) == 0
 
 
+def test_detector_gap_coalesced_alert_fires_through_real_strict_hook(
+    kanban_home, monkeypatch,
+):
+    """Acceptance #3 E2E: the coalesced ``kanban_failure_alert`` fires through
+    the REAL ``invoke_hook_strict`` → plugin-callback path, not a mocked
+    ``_fire_failure_alert``.
+
+    Regression for the review finding that ``_fire_failure_alert`` imports
+    ``invoke_hook_strict`` from ``hermes_cli.plugins`` — a symbol that did not
+    exist on the landing branch, so the first alert fire after landing would
+    raise ImportError and crash the dispatch tick (t_6a5a8d9e round 2). If this
+    test's import of ``invoke_hook_strict`` fails, the alert path is broken in
+    the landed tree.
+    """
+    import hermes_cli.kanban_db as _kb
+    from hermes_cli.plugins import VALID_HOOKS, get_plugin_manager
+
+    assert "kanban_failure_alert" in VALID_HOOKS, (
+        "kanban_failure_alert must be a registered valid hook"
+    )
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    monkeypatch.setenv("HERMES_KANBAN_CRASH_GRACE_SECONDS", "0")
+    _kb._deadpid_alert_coalesce.clear()
+
+    mgr = get_plugin_manager()
+    saved_hooks = {k: list(v) for k, v in mgr._hooks.items()}
+    received: list[dict] = []
+    mgr._hooks["kanban_failure_alert"] = [lambda **kw: received.append(kw)]
+    try:
+        with kb.connect() as conn:
+            host = _kb._claimer_id().split(":", 1)[0]
+            tids = []
+            for i in range(3):
+                tid = kb.create_task(conn, title=f"gap-e2e-{i}", assignee="a")
+                pid = 74500 + i
+                claimed = kb.claim_task(conn, tid, claimer=f"{host}:w{i}")
+                assert claimed is not None, f"task {tid} was not claimable"
+                conn.execute(
+                    "UPDATE tasks SET worker_pid=? WHERE id=?", (pid, tid)
+                )
+                tids.append(tid)
+            conn.commit()
+
+            crashed = kb.detect_crashed_workers(conn)
+            assert crashed == [], "detector gaps are not crashes"
+            assert len(received) == 1, (
+                f"expected exactly ONE real-hook alert for 3 same-fingerprint "
+                f"gaps, got {len(received)}: {received}"
+            )
+            ev = received[0]
+            assert ev.get("coalesced") is True
+            assert ev.get("window_count") == 3
+            assert ev.get("task_id") == tids[0]
+            assert "DETECTOR GAP" in (ev.get("error") or "")
+            assert ev.get("board") == "default"
+    finally:
+        mgr._hooks = saved_hooks
+
+
+def test_invoke_hook_strict_surfaces_callback_failure():
+    """The strict alert path re-raises a failing relay instead of swallowing it,
+    so a broken alert channel cannot hide a worker-stall storm
+    (t_6a5a8d9e acceptance #3 strict contract).
+    """
+    from hermes_cli.plugins import get_plugin_manager, invoke_hook_strict
+
+    mgr = get_plugin_manager()
+    saved_hooks = {k: list(v) for k, v in mgr._hooks.items()}
+    calls: list[dict] = []
+
+    def good(**_kw):
+        calls.append(_kw)
+        return "ok"
+
+    def boom(**_kw):
+        raise RuntimeError("relay down")
+
+    mgr._hooks["kanban_failure_alert"] = [good, boom]
+    try:
+        with pytest.raises(RuntimeError, match="relay down"):
+            invoke_hook_strict("kanban_failure_alert", task_id="t_x")
+        # The strict path runs callbacks in order and re-raises on first failure.
+        assert len(calls) == 1
+    finally:
+        mgr._hooks = saved_hooks
+
+
 def test_abandoned_popen_handle_is_stolen_by_subprocess_reaper():
     """Documents the ROOT CAUSE of the 100%-NULL ``dispatch_death_reason``.
 

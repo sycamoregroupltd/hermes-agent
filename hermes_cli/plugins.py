@@ -280,9 +280,14 @@ VALID_HOOKS: Set[str] = {
     #   run_id: int | None, profile_name: str.
     # kanban_task_completed adds: summary: str | None.
     # kanban_task_blocked adds:   reason: str | None.
+    # kanban_failure_alert adds:  consecutive_failures: int,
+    #   fingerprint: str, error: str. It is a fleet-level alert surface for
+    #   repeated worker failures and is fired through invoke_hook_strict so
+    #   relay/plugin failures are observable instead of silently swallowed.
     "kanban_task_claimed",
     "kanban_task_completed",
     "kanban_task_blocked",
+    "kanban_failure_alert",
     # Kanban worker-lifecycle, task-mutation, and dispatcher-tick observers
     # (RFC #58548, accepted as the design basis in the #64231 batch
     # disposition; on_kanban_dispatch_tick is the re-port of PR #56066).
@@ -5343,6 +5348,33 @@ class PluginManager:
             self._ensure_event_worker_locked()
             return len(subscriptions)
 
+    def invoke_hook_strict(self, hook_name: str, **kwargs: Any) -> List[Any]:
+        """Call callbacks for *hook_name*, surfacing callback failures.
+
+        Most Hermes hooks are observers and intentionally isolate callback
+        failures. Operational fleet-alert hooks are different: swallowing a
+        failing relay would hide the incident the hook exists to expose. Use
+        this narrow strict path only when the caller wants plugin failure to be
+        logged and re-raised.
+        """
+        kwargs.setdefault("telemetry_schema_version", OBSERVER_SCHEMA_VERSION)
+        callbacks = self._hooks.get(hook_name, [])
+        results: List[Any] = []
+        for cb in callbacks:
+            try:
+                ret = cb(**kwargs)
+                if ret is not None:
+                    results.append(ret)
+            except Exception:
+                logger.warning(
+                    "Strict hook '%s' callback %s raised",
+                    hook_name,
+                    getattr(cb, "__name__", repr(cb)),
+                    exc_info=True,
+                )
+                raise
+        return results
+
     def has_hook(self, hook_name: str) -> bool:
         """Return True when at least one callback is registered for a hook."""
         return bool(self._hooks.get(hook_name))
@@ -5889,6 +5921,15 @@ def render_system_prompt_sections(
 ) -> List[RenderedPluginSystemPromptSection]:
     """Render plugin prompt sections after idempotent plugin discovery."""
     return _ensure_plugins_discovered().render_system_prompt_sections(session_info)
+
+
+def invoke_hook_strict(hook_name: str, **kwargs: Any) -> List[Any]:
+    """Invoke a lifecycle hook and re-raise the first callback failure.
+
+    Use only for operational hooks (e.g. ``kanban_failure_alert``) where a
+    swallowed relay failure would hide the incident the hook exists to expose.
+    """
+    return get_plugin_manager().invoke_hook_strict(hook_name, **kwargs)
 
 
 def invoke_middleware(kind: str, **kwargs: Any) -> List[Any]:
