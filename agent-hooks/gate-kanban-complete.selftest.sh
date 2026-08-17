@@ -136,6 +136,16 @@ INSERT INTO tasks VALUES (
   'Implement apps/web dashboard render route component',
   'Implement apps/web dashboard route component and render metric cards on the dashboard page using React and shared UI helpers.'
 );
+INSERT INTO tasks VALUES (
+  't_17b2b7ed_compound',
+  'IMPLEMENT PM-reroute un-deadlocked verdict-router B1-B4 dry-run repairs',
+  'IMPLEMENT the approved verdict-router B1-B4 dry-run repairs. This card is the PM-rerouted execution of a backend CLI/SQLite script. Also covers router, api-router, message_router, and trade-route helpers. Source and tests only under scripts/.'
+);
+INSERT INTO tasks VALUES (
+  't_17b2b7ed_standalone_route',
+  'Implement apps/web dashboard route component with React',
+  'Implement apps/web dashboard route component and page layout with React. This is concrete frontend UI work.'
+);
 INSERT INTO task_comments VALUES (
   't_web_linked_packet',
   'RUNNING_APP_VERIFICATION evidence_packet=t_terminal_packet_001 producer=platform-reviewer terminal_capable=true command="bash /home/frank/.hermes/scripts/verify-running-app.sh http://127.0.0.1:4300 /marketplace upero.localhost"\nVERIFY_PASS /marketplace :: HTTP 200, 39647b, real content\nNote: this packet satisfies only the running-app evidence requirement; reviewer must still provide a separate REVIEW_VERDICT.',
@@ -321,6 +331,10 @@ run_case "live-shaped-cron-list-renders-allows" t_77316e9c allow 'UPSTREAM GAP: 
 run_classifier_case "live-shaped-cron-list-renders-classifier" t_77316e9c not_web '`cron list` still renders them [active]. This is CLI output.'
 run_case "apps-web-dashboard-render-still-web-blocks" t_real_dashboard_render_web block 'Implementing apps/web dashboard route component with React render path.'
 run_classifier_case "apps-web-dashboard-render-still-web-classifier" t_real_dashboard_render_web web 'Implementing apps/web dashboard route component with React render path.'
+run_case "compound-route-noun-backend-allows" t_17b2b7ed_compound allow 'unittest 56 OK; scripts only'
+run_classifier_case "compound-route-noun-backend-classifier" t_17b2b7ed_compound not_web 'unittest 56 OK; scripts only'
+run_case "standalone-route-app-impl-blocks" t_17b2b7ed_standalone_route block 'apps/web dashboard route component; no VERIFY_PASS'
+run_classifier_case "standalone-route-app-impl-classifier" t_17b2b7ed_standalone_route web 'apps/web dashboard route component'
 run_case "goal-judge-provider-error-no-override-blocks" t_goal_judge_provider_error_fixture block 'GeminiAPIError/NotFoundError preserved; no override marker; needs terminal evidence/review handoff'
 run_case "goal-judge-provider-error-incomplete-override-blocks" t_goal_judge_incomplete_override_fixture block 'Incomplete override marker; failure lane preserved'
 run_case "goal-judge-provider-error-verified-review-override-allows" t_goal_judge_verified_override_fixture allow 'REVIEW_VERDICT=APPROVED with reviewed task evidence path in metadata; GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE present'
