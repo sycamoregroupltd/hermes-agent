@@ -542,9 +542,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:30:55.366133+01:00",
       "paused_reason": null,
       "created_at": "2026-06-24T18:53:04.008047+01:00",
       "deliver": "discord:#fleet-reports",
@@ -578,9 +578,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:30:56.113382+01:00",
       "paused_reason": null,
       "created_at": "2026-06-24T18:53:05.019788+01:00",
       "deliver": "discord:#fleet-reports",
@@ -893,9 +893,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-18T11:57:50.214353+01:00",
       "paused_reason": null,
       "created_at": "2026-06-25T11:48:18.200143+01:00",
       "deliver": "local",
@@ -1236,9 +1236,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:30:57.909891+01:00",
       "paused_reason": null,
       "created_at": "2026-06-27T07:24:25.905413+01:00",
       "deliver": "discord:#quant-reports",
@@ -1616,9 +1616,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:30:58.954885+01:00",
       "paused_reason": null,
       "created_at": "2026-06-30T21:29:36.360914+01:00",
       "deliver": "local",
@@ -1655,9 +1655,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-18T11:57:50.969996+01:00",
       "paused_reason": null,
       "created_at": "2026-06-30T21:31:10.860017+01:00",
       "deliver": "discord:#quant-reports",
@@ -1825,9 +1825,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:30:59.704042+01:00",
       "paused_reason": null,
       "created_at": "2026-07-01T10:13:23.362063+01:00",
       "deliver": "discord:#quant-reports",
@@ -4753,9 +4753,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:31:00.399028+01:00",
       "paused_reason": null,
       "created_at": "2026-07-13T09:01:35.875673+01:00",
       "deliver": "discord:#critical-alerts",
@@ -6269,9 +6269,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:31:01.146716+01:00",
       "paused_reason": null,
       "created_at": "2026-08-03T10:25:49.132475+01:00",
       "deliver": "local",
@@ -6305,10 +6305,10 @@
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-03T11:13:50.160886+01:00",
-      "paused_reason": "dead-pin: script not found: cron_ticker_invariant_guard.py",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
       "created_at": "2026-08-03T10:28:07.962249+01:00",
       "deliver": "discord:#critical-alerts",
       "origin": null,
@@ -6371,9 +6371,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:31:04.059983+01:00",
       "paused_reason": null,
       "created_at": "2026-08-05T12:35:19.611388+01:00",
       "deliver": "origin",
@@ -6404,9 +6404,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:31:05.705438+01:00",
       "paused_reason": null,
       "created_at": "2026-08-05T13:47:20.516320+01:00",
       "deliver": "origin",
@@ -6437,9 +6437,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:31:06.653933+01:00",
       "paused_reason": null,
       "created_at": "2026-08-05T13:47:48.426223+01:00",
       "deliver": "origin",
@@ -6470,9 +6470,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:31:07.364229+01:00",
       "paused_reason": null,
       "created_at": "2026-08-05T13:47:48.466622+01:00",
       "deliver": "origin",
@@ -6539,9 +6539,9 @@
       "repeat": {
         "times": null
       },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-17T12:31:08.176449+01:00",
       "paused_reason": null,
       "created_at": "2026-08-05T18:17:06.694831+01:00",
       "deliver": "local",
