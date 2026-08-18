@@ -2,7 +2,7 @@
 # CANONICAL SOURCE — do not edit profile-local copies. See the goal-orchestrator-operating-runbook for the canonical-copy rule.
 """Data-freshness probe — no-agent Hermes cron (delivers to #critical-alerts).
 
-Checks now()-max(ts) per DATA pipeline against a per-pipeline staleness budget.
+Checks now()-max(timestamp_col) per DATA pipeline against a per-pipeline staleness budget.
 ALWAYS emits a structured report + VERDICT line (GREEN/DEGRADED) so the
 cron run is never an empty-stdout black hole. Prints an explicit RED-ALERT block
 on the falling edge when a feed first goes stale, then dedups re-emission while the
@@ -12,10 +12,11 @@ paths exit non-zero so the cron flags failure and delivery fires.
 Born 2026-07-02: process/cron-liveness monitors were blind to DATA stopping —
 signal_fingerprints stalled ~6d, signal_journey_events sat frozen ~15d, and the
 copy-trade harness scored nothing for ~12h while its process stayed 'alive'. This
-watches whether fresh rows are actually landing. Read-only (SELECT max(ts) only —
-no count(*), which seq-scans 37M-row tables and times out). For very large
-un-indexed tables, uses max(ts) GROUP BY <group_col> to leverage composite
-indexes for an index-only scan.
+watches whether fresh rows are actually landing. Read-only (SELECT max(col) only —
+no count(*), which seq-scans 37M-row tables and times out). signal_pnl_points
+uses the indexed `recorded_at` (DB write time) column instead of `ts` (signal-time)
+to avoid a full sequential scan on the 88GB un-partitioned table (no `ts` index).
+Also writes a structured JSONL record to the health canary log.
 """
 import datetime
 import fcntl
@@ -34,10 +35,15 @@ PG = "sycodetrading-supabase-db"
 # Excluded as EMPTY/deprecated (0 rows on 2026-07-02): liquidation_events,
 # funding_rate_snapshots, market_news (orthogonal-sqlite or dead feeds); and
 # (signal_journey_events was frozen ~15d, root-caused + fixed 2026-07-02 — now watched above.)
+# signal_pnl_points: uses `recorded_at` (indexed DB write-time) instead of `ts`
+# (signal-time). On the 88GB un-partitioned table with NO index on `ts`, max(ts)
+# forces a full seq scan exceeding the statement_timeout. `recorded_at` has a
+# dedicated index (added 2026-07-04), so max(recorded_at) is a sub-second
+# index-only scan. Verified fresh at 2026-08-18T11:26:58Z (t_118b7d5f).
 PIPELINES = {
     "candles":                ("timestamp",   3),
     "signal_journeys":        ("created_at",  3),
-    "signal_pnl_points":      ("ts",          3),
+    "signal_pnl_points":      ("recorded_at", 3),  # indexed DB write-time — see note above
     "oi_snapshots":           ("created_at",  3),
     "signal_trajectory_bars": ("captured_at", 8),
     "funding_rate_history":   ("created_at",  6),
@@ -76,7 +82,7 @@ PAIRED_EXECUTION_TABLES = {
 PAIRED_SIGNAL_FRESH_HOURS = 3
 PAIRED_EXECUTION_STALE_HOURS = 12
 
-EMPTY = -999.0  # sentinel: max(ts) IS NULL -> table empty
+EMPTY = -999.0  # sentinel: max(col) IS NULL -> table empty
 REMIND_SECONDS = int(os.getenv("DATA_FRESHNESS_REMIND_SECONDS", str(24 * 3600)))
 STATE = Path(os.getenv("DATA_FRESHNESS_STATE", "/home/frank/.hermes/profiles/jarvis/cron/state/dgx_data_freshness_probe.first_seen.json"))
 
@@ -173,10 +179,11 @@ def normalize_alert_for_fingerprint(alert):
 # SET LOCAL raises it only for this psql session; does NOT mutate the role or affect
 # other connections/servers. Safe connection-pool-tuning fix authorized by t_c1eed563.
 #
-# Increased from 60s to 300s (2026-08-18) — signal_pnl_points is ~88GB un-partitioned
-# (TimescaleDB extension absent); max(ts) without a dedicated ts index requires a full
-# sequential scan that exceeds 60s. 300s gives headroom while a partitioning migration
-# (phase3) is planned. Subprocess timeout raised to 360s to match.
+# Increased from 60s to 300s (2026-08-18) — signal_fingerprints (~16 GB) lacks
+# an index on created_at; max(created_at) needs a seq scan that previously
+# exceeded 60s (especially under I/O contention from signal_pnl_points's
+# concurrent scan). 300s provides headroom while the A3-gated DDL fix
+# (idx_signal_fingerprints_created_at) is planned. Subprocess timeout 360s.
 PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(300000))
 
 
@@ -188,7 +195,9 @@ PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(300000
 # difference between a 60-300s scan and a sub-second index lookup.
 # Format: table -> group_col (must match a composite index where ts is the 2nd column).
 FAST_QUERY_GROUPBY = {
-    "signal_pnl_points": "journey_id",  # idx_signal_pnl_points_journey_ts (journey_id, ts DESC)
+    # No entries currently — signal_pnl_points uses indexed `recorded_at` instead.
+    # Keep this dict as the escape hatch for future large tables where only a
+    # composite (group_col, ts) index exists and no single-column ts index does.
 }
 
 
@@ -212,11 +221,12 @@ def probe(table, col):
     """max(col) only — no count(*) (that seq-scans huge tables). max IS NULL => empty.
 
     For very large tables lacking a single-column index on `col`, a naive max(col)
-    forces a full sequential scan (88 GB signal_pnl_points). Where a composite index
-    (group_col, col DESC) exists, rewrite as max(col) GROUP BY group_col — the planner
-    uses the composite index for an index-only scan, reading one entry per group
-    instead of every row. Falls back to the plain max(col) query when no fast-path
-    override is configured for this table.
+    forces a full sequential scan. Where a composite index (group_col, col DESC)
+    exists, rewrite as max(col) GROUP BY group_col — the planner uses the composite
+    index for an index-only scan, reading one entry per group instead of every row.
+    Falls back to the plain max(col) query when no fast-path override is configured.
+    signal_pnl_points uses the indexed `recorded_at` column (not `ts`) for O(1) index
+    lookup on the 88GB table.
     """
     if table in FAST_QUERY_GROUPBY:
         group_col = FAST_QUERY_GROUPBY[table]
@@ -428,7 +438,7 @@ def main():
 
     # Loud alert on the falling edge (deduped) for the operator feed.
     if should_emit(alerts):
-        print("RED-ALERT: pipeline(s) past budget (now-max(ts)):")
+        print("RED-ALERT: pipeline(s) past budget (now-max(col)):")
         print("\n".join(alerts))
         print("A process can be 'alive' while its data silently stops — check the owning ingester/cron/collector.")
 
