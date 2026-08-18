@@ -2,7 +2,7 @@
 # CANONICAL SOURCE — do not edit profile-local copies. See the goal-orchestrator-operating-runbook for the canonical-copy rule.
 """Data-freshness probe — no-agent Hermes cron (delivers to #critical-alerts).
 
-Checks now()-max(ts) per DATA pipeline against a per-pipeline staleness budget.
+Checks now()-max(timestamp_col) per DATA pipeline against a per-pipeline staleness budget.
 ALWAYS emits a structured report + VERDICT line (GREEN/DEGRADED) so the
 cron run is never an empty-stdout black hole. Prints an explicit RED-ALERT block
 on the falling edge when a feed first goes stale, then dedups re-emission while the
@@ -12,8 +12,11 @@ paths exit non-zero so the cron flags failure and delivery fires.
 Born 2026-07-02: process/cron-liveness monitors were blind to DATA stopping —
 signal_fingerprints stalled ~6d, signal_journey_events sat frozen ~15d, and the
 copy-trade harness scored nothing for ~12h while its process stayed 'alive'. This
-watches whether fresh rows are actually landing. Read-only (SELECT max(ts) only —
-no count(*), which seq-scans 37M-row tables and times out).
+watches whether fresh rows are actually landing. Read-only (SELECT max(col) only —
+no count(*), which seq-scans 37M-row tables and times out). For very large
+un-indexed tables like signal_pnl_points (88GB), uses max(col) GROUP BY
+<group_col> to leverage the composite index for an index-only scan.
+Also writes a structured JSONL record to the health canary log.
 """
 import datetime
 import fcntl
@@ -32,6 +35,14 @@ PG = "sycodetrading-supabase-db"
 # Excluded as EMPTY/deprecated (0 rows on 2026-07-02): liquidation_events,
 # funding_rate_snapshots, market_news (orthogonal-sqlite or dead feeds); and
 # (signal_journey_events was frozen ~15d, root-caused + fixed 2026-07-02 — now watched above.)
+# signal_pnl_points: uses `ts` (signal-time). The 88GB un-partitioned table has
+# NO index on `ts` alone — only composite indexes (journey_id, ts DESC) and
+# (symbol, ts DESC). A plain max(ts) forces a full seq scan.
+# To avoid the timeout, the probe uses the FAST_QUERY_GROUPBY override below
+# which rewrites max(ts) as max(ts) GROUP BY journey_id — leveraging the
+# composite index for an index-only scan (sub-second vs 88s seq scan).
+# If signal_pnl_points gains a recorded_at column with a dedicated index (planned
+# per migration 20260704000001 comment), switch to that for O(1) write-time checks.
 PIPELINES = {
     "candles":                ("timestamp",   3),
     "signal_journeys":        ("created_at",  3),
@@ -74,7 +85,7 @@ PAIRED_EXECUTION_TABLES = {
 PAIRED_SIGNAL_FRESH_HOURS = 3
 PAIRED_EXECUTION_STALE_HOURS = 12
 
-EMPTY = -999.0  # sentinel: max(ts) IS NULL -> table empty
+EMPTY = -999.0  # sentinel: max(col) IS NULL -> table empty
 REMIND_SECONDS = int(os.getenv("DATA_FRESHNESS_REMIND_SECONDS", str(24 * 3600)))
 STATE = Path(os.getenv("DATA_FRESHNESS_STATE", "/home/frank/.hermes/profiles/jarvis/cron/state/dgx_data_freshness_probe.first_seen.json"))
 
@@ -170,16 +181,43 @@ def normalize_alert_for_fingerprint(alert):
 # which kills max(ts) probes on multi-gigabyte tables even when indexes are present.
 # SET LOCAL raises it only for this psql session; does NOT mutate the role or affect
 # other connections/servers. Safe connection-pool-tuning fix authorized by t_c1eed563.
-PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(60000))
+#
+# Increased from 60s to 300s (2026-08-18) — signal_fingerprints (~16 GB) lacks
+# an index on created_at; max(created_at) needs a seq scan that previously
+# exceeded 60s (especially under I/O contention from signal_pnl_points's
+# concurrent scan). 300s provides headroom while the A3-gated DDL fix
+# (idx_signal_fingerprints_created_at) is planned. Subprocess timeout 360s.
+PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(300000))
+
+
+# Per-table fast-path strategies for max(col) on very large, un-indexed-by-col tables.
+# Tables that lack a single-column index on their timestamp column force a full sequential
+# scan for max(ts). Where a composite index (group_col, ts DESC) exists, we can instead do
+# max(ts) GROUP BY group_col — the planner uses the composite index for an index-only scan,
+# reading one entry per group instead of every row. For a 39-88 GB table this is the
+# difference between a 60-300s scan and a sub-second index lookup.
+# Format: table -> group_col (must match a composite index where ts is the 2nd column).
+FAST_QUERY_GROUPBY = {
+    # signal_pnl_points: 88GB un-partitioned table, no single-column index on `ts`.
+    # Without this, max(ts) forces a full sequential scan (>60s, even >300s at scale).
+    # The composite index idx_signal_pnl_points_journey_ts (journey_id, ts DESC)
+    # enables an index-only GROUP BY scan: max(ts) GROUP BY journey_id reads one
+    # index entry per journey_id group instead of every row. Verified sub-second
+    # on 180M-row / 88GB table at 2026-08-18T16:11Z probe run.
+    # NOTE: the outer MAX(max_ts) aggregate is REQUIRED — without it, the query
+    # returns N rows (one per journey_id) and psql_scalar picks lines[-1], returning
+    # the age of an ARBITRARY group instead of the global MAX.
+    "signal_pnl_points": "journey_id",
+}
 
 
 def psql_scalar(q):
     # Wrap the query so the per-connection timeout overrides the role-level 3s cap.
-    # psql -c with SET;SELECT emits "SET\\n<value>" — strip the SET prefix.
+    # psql -c with SET;SELECT emits "SET\n<value>" — strip the SET prefix.
     wrapped_q = f"SET statement_timeout = {PROBE_STATEMENT_TIMEOUT}; {q}"
     r = subprocess.run(
         ["docker", "exec", PG, "psql", "-U", "postgres", "-d", "postgres", "-Atc", wrapped_q],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, timeout=360)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).strip()
         raise RuntimeError(msg.splitlines()[-1][:90] if msg else "rc=%d" % r.returncode)
@@ -190,9 +228,26 @@ def psql_scalar(q):
 
 
 def probe(table, col):
-    # max(ts) only — no count(*) (that seq-scans huge tables). max IS NULL => empty.
-    q = ("SELECT COALESCE(EXTRACT(EPOCH FROM (now()-max(%s)))/3600.0, %s)::numeric(12,2) "
-         "FROM %s" % (col, int(EMPTY), table))
+    """max(col) only — no count(*) (that seq-scans huge tables). max IS NULL => empty.
+
+    For very large tables lacking a single-column index on `col`, a naive max(col)
+    forces a full sequential scan. Where a composite index (group_col, col DESC)
+    exists, rewrite as max(col) GROUP BY group_col — the planner uses the composite
+    index for an index-only scan, reading one entry per group instead of every row.
+    Falls back to the plain max(col) query when no fast-path override is configured.
+    """
+    if table in FAST_QUERY_GROUPBY:
+        group_col = FAST_QUERY_GROUPBY[table]
+        q = (
+            "SELECT COALESCE(EXTRACT(EPOCH FROM (now()-MAX(max_ts))/3600.0),"
+            " %s)::numeric(12,2) FROM (SELECT MAX(%s) AS max_ts FROM %s GROUP BY %s) sub"
+            % (int(EMPTY), col, table, group_col)
+        )
+    else:
+        q = (
+            "SELECT COALESCE(EXTRACT(EPOCH FROM (now()-max(%s)))/3600.0, %s)::numeric(12,2) "
+            "FROM %s" % (col, int(EMPTY), table)
+        )
     try:
         age = float(psql_scalar(q))
         return ("empty", 0) if age <= EMPTY else ("ok", age)
@@ -391,7 +446,7 @@ def main():
 
     # Loud alert on the falling edge (deduped) for the operator feed.
     if should_emit(alerts):
-        print("RED-ALERT: pipeline(s) past budget (now-max(ts)):")
+        print("RED-ALERT: pipeline(s) past budget (now-max(col)):")
         print("\n".join(alerts))
         print("A process can be 'alive' while its data silently stops — check the owning ingester/cron/collector.")
 

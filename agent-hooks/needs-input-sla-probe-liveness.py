@@ -10,7 +10,12 @@ Exit codes:
   1  — ALARM: heartbeat missing or older than --max-age-hours (sweep absent)
   2  — usage / config error
 
-Typical cron wiring (every 7h, slightly longer than the 6h probe cadence):
+The probe emit is WEEKLY (Monday 08:00 UTC, cron needs-input-sla-probe-emit).
+The default max-age is 8 days (192h) so a healthy week between sweeps does NOT
+alarm, while a missed week is caught on the second week. A monitor can still
+run frequently (e.g. every 7h) — it simply reports OK between digestives.
+
+Typical cron wiring:
   needs-input-sla-probe-liveness.py --heartbeat /tmp/needs-input-sla-probe.heartbeat
 If it exits 1, alert Frank / the owning profile.
 """
@@ -23,7 +28,11 @@ import os
 import sys
 
 DEFAULT_HEARTBEAT = "/tmp/needs-input-sla-probe.heartbeat"
-DEFAULT_MAX_AGE_HOURS = 7  # probe runs every 6h; 7h allows one missed sweep
+# The probe emit is now WEEKLY (Monday 08:00 UTC). The liveness monitor must
+# tolerate a week between sweeps: max-age is set to 8 days (allows one full
+# missed weekly sweep to still alarm on the second week without false alarms
+# between digestives). Tighter values would fire on every healthy week.
+DEFAULT_MAX_AGE_HOURS = 8 * 24  # 192h — one weekly sweep + one missed-week grace
 
 
 def main() -> int:

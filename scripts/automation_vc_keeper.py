@@ -56,7 +56,7 @@ DENY_PARTS = {
     ".tmp-backups",
 }
 DENY_NAMES = {"auth.json", ".env"}
-DENY_SUFFIXES = (".db", ".bak")
+DENY_SUFFIXES = (".db", ".bak", ".orig", ".pre")
 DENY_CONTAINS = ("/memories/", "/sessions/", "/logs/", "/cache/")
 # Keep both the root keeper and the devops-profile dispatch wrapper durable on the
 # automation branch. The wrapper is referenced by the devops cron job (cron script

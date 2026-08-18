@@ -2,3 +2,5 @@ context_lengths:
   deepseek-v4-pro@https://ollama.com/v1/: 524288
   gpt-5.5@https://chatgpt.com/backend-api/codex/: 272000
   nvidia/nemotron-3-ultra-550b-a55b@https://inference-api.nousresearch.com/v1: 512288
+  kimi-k3@https://ollama.com: 1048576
+  qwen/qwen3.7-flash@https://inference-api.nousresearch.com/v1: 1000000
