@@ -221,8 +221,8 @@ def probe(table, col):
     if table in FAST_QUERY_GROUPBY:
         group_col = FAST_QUERY_GROUPBY[table]
         q = (
-            "SELECT COALESCE(EXTRACT(EPOCH FROM (now()-max_ts))/3600.0, %s)::numeric(12,2) "
-            "FROM (SELECT MAX(%s) AS max_ts FROM %s GROUP BY %s) sub"
+            "SELECT COALESCE(EXTRACT(EPOCH FROM (now()-MAX(max_ts))/3600.0),"
+            " %s)::numeric(12,2) FROM (SELECT MAX(%s) AS max_ts FROM %s GROUP BY %s) sub"
             % (int(EMPTY), col, table, group_col)
         )
     else:
