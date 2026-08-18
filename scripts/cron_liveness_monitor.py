@@ -36,6 +36,13 @@ BEHAVIOR:
     period and the (period + grace) liveness threshold.
   - Emits one MISSED line per job with no proof of a completed run within the
     threshold (covers the silent-death and no-recorded-run classes).
+  - SKIPS every job in a profile whose owning cron store is under an active
+    operator emergency stop (`hermes pause`, ESTOP sentinel at
+    `~/.hermes/profiles/<p>/ESTOP` or `*.ESTOP`, or `$HERMES_HOME/ESTOP` for the
+    root store). Those profiles are reported as SUSPENDED (excluded) — an
+    intentional operator pause, not a silent-writer-death — so no breach card is
+    minted while the pause is in effect (task t_6c2abedd). The monitor returns
+    to normal MISSED detection for those jobs once the sentinel is lifted.
   - Emits SCRIPT_MISSING lines for enabled recurring jobs whose script does
     not resolve in either the profile-local or global scripts dir (pre-flight
     for the 'Script not found' class that silently fails every tick).
@@ -151,11 +158,40 @@ def script_resolves(profile: str, job: dict) -> bool:
     return bool(global_p.exists() and global_p.is_file())
 
 
-def check_store(cron_dir: Path, findings: list[dict], scanned: list[str]) -> None:
+def profile_estop_active(cron_dir: Path) -> bool:
+    """Is the profile owning this cron store under an active operator ESTOP?
+
+    `hermes pause` writes a profile-local sentinel at the owning profile's
+    HERMES_HOME (`~/.hermes/profiles/<p>/ESTOP`, or `$HERMES_HOME/ESTOP` for the
+    root store) and suppresses cron dispatch at the scheduler tick layer
+    (estop.py fail-safe, `check_paused("cron", ...)`). It does NOT set per-job
+    `state=paused`, so the old job-level filter below missed it. We match the
+    exact `ESTOP` name plus any `*.ESTOP` variant, fail-safe toward "paused"
+    (a corrupt/unreadable sentinel still counts via existence).
+    """
+    is_root = (cron_dir == HERMES_HOME / "cron")
+    if is_root:
+        candidates = [HERMES_HOME / "ESTOP"]
+    else:
+        prof_dir = cron_dir.parent
+        candidates = [prof_dir / "ESTOP"] + sorted(prof_dir.glob("*.ESTOP"))
+    return any(p.exists() for p in candidates)
+
+
+def check_store(cron_dir: Path, findings: list[dict], scanned: list[str],
+                suspended: list[str]) -> None:
     jobs, profile = load_enabled_jobs(cron_dir)
     if not jobs:
         return
     if profile is None:
+        return
+    if profile_estop_active(cron_dir):
+        # Operator emergency stop in effect for this profile — every enabled job
+        # is deliberately SUSPENDED (cron dispatch suppressed at the tick layer),
+        # not silently dead. Exclude the whole store so no MISSED / SCRIPT_MISSING
+        # breach card is minted while the pause is active.
+        if profile not in suspended:
+            suspended.append(profile)
         return
     exec_db = cron_dir / "executions.db"
     con = _exec_connection(exec_db) if exec_db.exists() else None
@@ -217,16 +253,29 @@ def check_store(cron_dir: Path, findings: list[dict], scanned: list[str]) -> Non
         age = (t - proof).total_seconds() if proof is not None else None
 
         created = parse_dt(job.get("created_at"))
-        # Suppress for two non-defeat cases:
+        next_run = parse_dt(job.get("next_run_at"))
+        # Suppress for non-defeat cases:
         #  (a) too young to judge (created < MIN_JOB_AGE) and never fired, OR
         #  (b) younger than its own first due-window (age < period) — a job whose
         #      first scheduled occurrence has not yet come due cannot be "missed".
+        #  (c) LOW-FREQUENCY GUARD: the scheduler has pushed next_run_at into the
+        #      future relative to now. A stale last_run with a future next_run
+        #      means the next occurrence has not yet come due — the job is healthy
+        #      and waiting, not missed (verified 2026-08-11: jarvis monthly jobs
+        #      last fired Aug 1 but next_run_at is Sept 1; the scheduler recomputes
+        #      next_run only on fire, so a healthy low-freq job looks stale here).
         if created is not None and proof is None and (t - created) < MIN_JOB_AGE:
             scanned.append(f"{profile}/{name}")
             continue  # never fired and not old enough to be due yet
         if created is not None and proof is None and (t - created) < threshold:
             scanned.append(f"{profile}/{name}")
             continue  # first occurrence not yet due
+        if proof is None and next_run is not None and next_run > t:
+            scanned.append(f"{profile}/{name}")
+            continue  # next occurrence hasn't come due yet (low-frequency / monthly job)
+        if proof is not None and next_run is not None and next_run > t and age is not None and age <= threshold.total_seconds():
+            scanned.append(f"{profile}/{name}")
+            continue  # healthy low-freq job: last run within threshold AND next is future
 
         if proof is None or age is None or age > threshold.total_seconds():
             if proof is None:
@@ -256,9 +305,10 @@ def check_store(cron_dir: Path, findings: list[dict], scanned: list[str]) -> Non
         con.close()
 
 
-def run_scan() -> tuple[list[dict], list[str]]:
+def run_scan() -> tuple[list[dict], list[str], list[str]]:
     findings: list[dict] = []
     scanned: list[str] = []
+    suspended: list[str] = []
     cron_dirs = sorted(HERMES_HOME.glob("profiles/*/cron")) + [HERMES_HOME / "cron"]
     seen: set[str] = set()
     for cron_dir in cron_dirs:
@@ -268,8 +318,8 @@ def run_scan() -> tuple[list[dict], list[str]]:
         if real in seen:
             continue
         seen.add(real)
-        check_store(cron_dir, findings, scanned)
-    return findings, scanned
+        check_store(cron_dir, findings, scanned, suspended)
+    return findings, scanned, suspended
 
 
 def _selftest() -> int:
@@ -315,8 +365,8 @@ def _selftest() -> int:
     con.execute("INSERT INTO executions VALUES ('x','other-job','builtin','p',1,NULL,'completed','2026-08-01T00:00:00+00:00',NULL,NULL,NULL)")
     con.commit(); con.close()
 
-    f, scanned = [], []
-    check_store(store, f, scanned)
+    f, scanned, suspended = [], [], []
+    check_store(store, f, scanned, suspended)
     misses = [x for x in f if x["class"] == "MISSED"]
     if misses:
         failures.append(f"healthy evicted daily job should NOT be MISSED, got {misses}")
@@ -324,8 +374,8 @@ def _selftest() -> int:
     # 4. Truly stale job (no completed exec, stale last_run) -> MISSED.
     jobs[0]["last_run_at"] = (_dt.now(timezone.utc) - timedelta(days=3)).isoformat()
     (store / "jobs.json").write_text(json.dumps({"jobs": jobs, "updated_at": _dt.now(timezone.utc).isoformat()}))
-    f2, _ = [], []
-    check_store(store, f2, [])
+    f2, _, _ = [], [], []
+    check_store(store, f2, [], [])
     misses2 = [x for x in f2 if x["class"] == "MISSED"]
     if not misses2:
         failures.append("stale daily job should be MISSED")
@@ -337,18 +387,76 @@ def _selftest() -> int:
                  "last_run_at": (_dt.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
                  "last_status": "error"})
     (store / "jobs.json").write_text(json.dumps({"jobs": jobs, "updated_at": _dt.now(timezone.utc).isoformat()}))
-    f3, _ = [], []
-    check_store(store, f3, [])
+    f3, _, _ = [], [], []
+    check_store(store, f3, [], [])
     sm = [x for x in f3 if x["class"] == "SCRIPT_MISSING"]
     if not sm:
         failures.append("missing-script job should be SCRIPT_MISSING")
+
+    # 6. ESTOP skip (task t_6c2abedd): a profile store under an active operator
+    #    ESTOP must be reported SUSPENDED (excluded), never MISSED; once the
+    #    sentinel is lifted, MISSED detection returns.
+    import tempfile as _tf2
+    home2 = Path(_tf2.mkdtemp())
+    _orig_home = HERMES_HOME
+    try:
+        globals()["HERMES_HOME"] = home2
+        pdir = home2 / "profiles" / "estopprofile"
+        store2 = pdir / "cron"
+        store2.mkdir(parents=True)
+        jobs2 = [{
+            "id": "stale-job", "name": "stale-estop", "enabled": True,
+            "state": "scheduled",
+            "schedule": {"kind": "interval", "minutes": 60},
+            "created_at": "2026-06-01T00:00:00+01:00",
+            "last_run_at": (_dt.now(timezone.utc) - timedelta(days=3)).isoformat(),
+            "last_status": "ok",
+        }]
+        (store2 / "jobs.json").write_text(
+            json.dumps({"jobs": jobs2, "updated_at": _dt.now(timezone.utc).isoformat()}))
+
+        # (a) control: no sentinel -> stale job is MISSED, not suspended.
+        fA, scA, susA = [], [], []
+        check_store(store2, fA, scA, susA)
+        if not [x for x in fA if x["class"] == "MISSED"]:
+            failures.append("stale job in non-ESTOP profile should be MISSED")
+        if susA:
+            failures.append("no sentinel -> should not be SUSPENDED")
+
+        # (b) exact ESTOP sentinel -> SUSPENDED, zero MISSED.
+        (pdir / "ESTOP").write_text('{"reason":"operator test"}')
+        fB, scB, susB = [], [], []
+        check_store(store2, fB, scB, susB)
+        if [x for x in fB if x["class"] == "MISSED"]:
+            failures.append("ESTOP'd profile must NOT emit MISSED")
+        if "estopprofile" not in susB:
+            failures.append("ESTOP'd profile should be recorded as SUSPENDED")
+
+        # (c) *.ESTOP variant name also suspends.
+        (pdir / "ESTOP").unlink()
+        (pdir / "variant.ESTOP").write_text("x")
+        fC, scC, susC = [], [], []
+        check_store(store2, fC, scC, susC)
+        if [x for x in fC if x["class"] == "MISSED"] or "estopprofile" not in susC:
+            failures.append("*.ESTOP variant should also SUSPEND")
+
+        # (d) resume (lift sentinel) -> MISSED restored (acceptance #3).
+        (pdir / "variant.ESTOP").unlink()
+        fD, scD, susD = [], [], []
+        check_store(store2, fD, scD, susD)
+        if not [x for x in fD if x["class"] == "MISSED"]:
+            failures.append("after resume, stale job should be MISSED again")
+        if "estopprofile" in susD:
+            failures.append("after resume, profile should NOT be SUSPENDED")
+    finally:
+        globals()["HERMES_HOME"] = _orig_home
 
     if failures:
         print("SELFTEST_FAIL")
         for fl in failures:
             print(" -", fl)
         return 1
-    print("SELFTEST_PASS union_liveness=ok eviction_handled=ok script_missing=ok")
+    print("SELFTEST_PASS union_liveness=ok eviction_handled=ok script_missing=ok estop_skip=ok")
     return 0
 
 
@@ -356,14 +464,18 @@ def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if "--selftest" in argv:
         return _selftest()
-    findings, scanned = run_scan()
+    findings, scanned, suspended = run_scan()
     stamp = _now().strftime("%Y-%m-%dT%H:%MZ")
     if "--json" in argv:
         print(json.dumps({
             "monitor": "cron-liveness", "stamp": stamp,
-            "grace_h": GRACE_H, "scanned": len(scanned), "findings": findings,
+            "grace_h": GRACE_H, "scanned": len(scanned),
+            "suspended_profiles": suspended, "findings": findings,
         }, sort_keys=True))
     else:
+        if suspended:
+            print(f"  NOTE: {len(suspended)} profile(s) under active ESTOP — skipped: "
+                  f"{', '.join(sorted(suspended))}")
         if findings:
             print(f"CRON LIVENESS {stamp} — {len(findings)} finding(s) across {len(scanned)} enabled recurring job(s) scanned:")
             for f in findings:
