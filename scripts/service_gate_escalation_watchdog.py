@@ -69,6 +69,24 @@ and ``rate-limited`` now means "escalation-eligible but over budget" rather than
 SourceExistenceCache (one task-id query per board) so classifying every
 candidate does not cost one SQLite connection each.
 
+Weekly-digest routing (kanban t_b50df0ef / t_b400dc8c): per-task FRANK
+ESCALATION minting/heartbeating for needs_input-blocked sources is STOPPED.
+Those sources are the weekly Frank A3 digest's backlog (evidence: 5 escalation
+cards blocked 363-833h, all still open, zero decisions), and child A
+(needs-input-sla-probe weekly mode) carries them with APPROVE/DEFER/CLOSE
+stubs. The watchdog keeps escalating ONLY the narrow keep-set of genuine NEW
+critical R3 gates — real-time security/credential/live-trading incidents whose
+delay to the weekly cadence is unacceptable. The keep-set is a POSITIVE
+predicate (is_critical_r3_keep): a needs_input source keeps per-task
+escalation only when its block reason/title carries an explicit critical-
+incident marker AND its block episode is fresh (within CRITICAL_R3_FRESH_HOURS,
+one weekly digest cycle). Everything else routes to the digest with a counter,
+and existing open escalation cards for digest-routed sources simply stop
+receiving heartbeats (they are historical artifacts for digest execution to
+disposition; the watchdog never auto-closes them). A daily count-only census
+line (once per UTC day, DB-backed dedupe on the escalation board, silent when
+zero) keeps the watchdog's own liveness observable.
+
 Silent (empty stdout) when nothing needs escalation — watchdog pattern.
 
 Usage:
@@ -127,6 +145,69 @@ MAX_ESCALATIONS_PER_24H = 4
 
 # Title patterns that trigger escalation (case-insensitive substring match)
 TITLE_PATTERNS = ["SERVICE-GATE", "APPROVAL REQUIRED"]
+
+# --- Keep-set: genuine NEW critical R3 gates (kanban t_b400dc8c) ----------
+# Strategy t_b50df0ef stopped per-task FRANK ESCALATION for needs_input
+# sources; those go to the weekly Frank A3 digest. The ONLY exceptions that
+# keep per-task escalation are GENUINE NEW CRITICAL R3 gates — real-time
+# security / credential / live-trading incidents whose delay to a weekly
+# cadence is unacceptable. The keep-set is deliberately NARROW:
+#
+#   1. The block reason/title must carry an explicit critical-incident marker
+#      (not a generic "needs approval" phrase). Markers are POSITIVE and
+#      grounded in the live 2026-08-18 evidence (Groq key cleartext,
+#      MLflow SSRF/GHSA, DQSH paper-mode -> live promotion, BINANCE secret-key
+#      rotation). An unknown/absent reason NEVER matches -> digest.
+#   2. The block episode must be FRESH (within CRITICAL_R3_FRESH_HOURS, one
+#      weekly digest cycle). An old critical card is still digest backlog —
+#      the digest re-lists it weekly with an APPROVE stub, and per-task
+#      escalation demonstrably failed on the 363-833h noise class.
+#
+# Storm caps, orphan guard, parked exclusion and the rate limiter still apply
+# to every keep-set escalation below (requirement 4 of t_b400dc8c).
+CRITICAL_R3_FRESH_HOURS = int(os.environ.get("CRITICAL_R3_FRESH_HOURS", "168"))
+
+# (regex, marker-name) pairs. Matched against the concatenation of the block
+# reason text and the task title (case-insensitive). Each pair must be an
+# EXPLICIT incident signature; a bare "Frank approval" or "needs_input" never
+# matches, so the default route stays "weekly digest".
+CRITICAL_R3_MARKERS: list[tuple[str, str]] = [
+    # Real-time SECURITY incidents: vulnerability ids/words, breach, exploit,
+    # SSRF, CVE, GHSA advisory, intrusion/exfiltration/ransomware. "breach"
+    # requires a security/data qualifier — the fleet's "SLA breach" metric
+    # cards must NOT match (that is the noise class, t_b400dc8c).
+    (r"\b(vulnerab\w*|(security|data)[ _-]?breach\w*|exploit\w*|ssrf|"
+     r"cve[- ]?\d{4}|ghsa-|intrusion|exfil\w*|ransom\w*)\b", "security-vulnerability"),
+    (r"\bsecurity\b.{0,60}\b(incident|breach|vulnerab\w*|compromis\w*|"
+     r"exploit\w*)\b", "security-incident"),
+    # CREDENTIAL incidents: rotation/leak/expiry/compromise of keys, secrets,
+    # tokens, passwords.
+    (r"\b(api[ _-]?key|secret[ _-]?key|credential\w*|secret\w*|token\w*|"
+     r"password\w*)\b.{0,60}\b(rotat\w*|leak\w*|expos\w*|compromis\w*|"
+     r"expir\w*|revok\w*|cleartext)\b", "credential-incident"),
+    (r"\b(rotat\w*|leak\w*|expos\w*|compromis\w*|expir\w*|revok\w*|cleartext)\b"
+     r".{0,60}\b(api[ _-]?key|secret[ _-]?key|credential\w*|secret\w*|token\w*|"
+     r"password\w*)\b", "credential-incident-rev"),
+    # LIVE-TRADING incidents: paper-mode -> live promotion, live order/position
+    # risk, execution/liquidation failures.
+    (r"\b(live[ _-]?trad\w*|live[ _-]?mode|live[ _-]?order\w*|position\w*|"
+     r"liquidation|execution)\b.{0,60}\b(incident|fail\w*|error|risk|breach|"
+     r"halt\w*|outage|promot\w*|activ\w*)\b", "live-trading-incident"),
+    (r"\b(promot\w*|activ\w*)\b.{0,60}\b(live[ _-]?trad\w*|live[ _-]?mode|"
+     r"production|mutat\w*)\b", "live-trading-promotion"),
+]
+_CRITICAL_R3_COMPILED = [
+    (re.compile(p, re.IGNORECASE | re.DOTALL), name)
+    for p, name in CRITICAL_R3_MARKERS
+]
+
+# Daily census (kanban t_b400dc8c): the watchdog is now silent by design for
+# the digest-routed noise class, so its own liveness needs one observable
+# heartbeat per day — a count-only line, silent when zero. Dedupe is
+# DB-backed on the escalation board's task_events (kind='census',
+# payload={"date": "YYYY-MM-DD", ...}) so no fragile external state file.
+CENSUS_EVENT_KIND = "census"
+CENSUS_SYNTHETIC_TASK_ID = "__service-gate-census__"
 
 
 # --- Block-cause classifier (kanban t_aec5a53c) -----------------------------
@@ -281,6 +362,46 @@ def classify_block_cause(reason_text: str | None,
     if infra_sig:
         return INFRA, infra_sig
     return HUMAN, "no-infra-signature"
+
+
+def is_critical_r3_keep(
+    reason_text: str | None,
+    title: str | None,
+    block_hours: float,
+) -> tuple[bool, str]:
+    """Return ``(keep, marker)`` for a needs_input source (kanban t_b400dc8c).
+
+    ``keep=True`` means this source stays on the per-task FRANK ESCALATION
+    path because it is a GENUINE NEW critical R3 gate. ``marker`` names the
+    matched critical-incident signature (or ``"not-critical"``).
+
+    Narrow keep-set contract (see module docstring):
+      * The block reason or task title must carry an explicit critical-incident
+        marker — a real-time security / credential / live-trading signature.
+        A bare approval request, "needs_input", or "Frank gate" never matches.
+      * The block episode must be FRESH: ``block_hours < CRITICAL_R3_FRESH_HOURS``
+        (default 168h = one weekly digest cycle). Old critical backlog is still
+        digest material — per-task escalation demonstrably failed on it, and
+        the weekly digest re-lists it with an APPROVE stub.
+
+    Fail-safe direction: everything unknown/absent/non-matching returns
+    ``(False, ...)`` → the source routes to the weekly digest, exactly the
+    approved strategy. A critical incident is never silently dropped — the
+    digest carries it; the only cost of a miss is up to one week of latency.
+    """
+    if block_hours >= CRITICAL_R3_FRESH_HOURS:
+        return False, f"stale-block-{block_hours:.1f}h"
+
+    text = " ".join(
+        part for part in (reason_text or "", title or "") if part
+    ).strip()
+    if not text:
+        return False, "no-reason-or-title"
+
+    for rx, name in _CRITICAL_R3_COMPILED:
+        if rx.search(text):
+            return True, name
+    return False, "not-critical"
 
 
 def latest_block_reason(db_path: Path, task_id: str) -> tuple[str | None, str | None, str]:
@@ -1068,6 +1189,67 @@ def _record_event(
         )
 
 
+# --- Daily census (kanban t_b400dc8c) --------------------------------------
+# The watchdog is silent by design for digest-routed needs_input sources. To
+# keep its own liveness observable, emit ONE count-only census line per UTC
+# day, deduped DB-backed on the escalation board's task_events (kind='census',
+# payload={"date": "YYYY-MM-DD", ...}) — no fragile external state file. The
+# census is silent when zero digest-routed candidates were seen (watchdog
+# pattern), and the record write is best-effort: a schema/DB failure must
+# never abort the run, and it only suppresses the census line (the census is
+# observability, not a gate).
+
+
+def _census_date_key(ts: int) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _census_emitted_today(ts: int) -> bool:
+    """True when a census event for today already exists on the escalation board."""
+    esc_db = KANBAN_DIR / ESCALATION_BOARD / "kanban.db"
+    if not esc_db.is_file():
+        return False
+    date_key = _census_date_key(ts)
+    try:
+        conn = sqlite3.connect(f"file:{esc_db}?mode=ro", uri=True)
+        row = conn.execute(
+            "SELECT 1 FROM task_events WHERE task_id = ? AND kind = ? "
+            "AND payload LIKE ? LIMIT 1",
+            (CENSUS_SYNTHETIC_TASK_ID, CENSUS_EVENT_KIND,
+             f"%{date_key}%"),
+        ).fetchone()
+        conn.close()
+        return row is not None
+    except sqlite3.Error:
+        return True  # unreadable -> fail closed: do NOT re-spam a census line
+
+
+def _record_census(ts: int, digest_routed: int, kept_critical: int) -> None:
+    """Best-effort DB marker so the census line emits once per UTC day."""
+    esc_db = KANBAN_DIR / ESCALATION_BOARD / "kanban.db"
+    if not esc_db.is_file():
+        return
+    payload = json.dumps({
+        "date": _census_date_key(ts),
+        "digest_routed": digest_routed,
+        "kept_critical": kept_critical,
+    })
+    try:
+        conn = sqlite3.connect(str(esc_db))
+        conn.execute(
+            "INSERT INTO task_events (task_id, kind, payload, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (CENSUS_SYNTHETIC_TASK_ID, CENSUS_EVENT_KIND, payload, ts),
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        print(
+            f"WARN: could not record census event: {e}",
+            file=sys.stderr,
+        )
+
+
 def heartbeat_existing_escalation(
     existing_id: str,
     board: str,
@@ -1236,6 +1418,14 @@ def main(argv: list[str] | None = None):
     # and never suppress a human gate.
     skipped_infra_deferred = 0
     infra_operator_routed = 0
+    # kanban t_b400dc8c: digest-routing counters. `skipped_digest_routed`
+    # counts needs_input sources routed to the weekly Frank A3 digest instead
+    # of per-task escalation (the approved noise-class stop). `kept_critical`
+    # counts needs_input sources that match the narrow critical-R3 keep-set
+    # and keep per-task escalation (genuine NEW security/credential/live-
+    # trading incidents whose delay to a weekly cadence is unacceptable).
+    skipped_digest_routed = 0
+    kept_critical = 0
 
     # Criterion 4: startup self-check. Warns for every board dir missing its
     # kanban.db and returns only the live boards, mirroring _find_boards() in
@@ -1345,6 +1535,32 @@ def main(argv: list[str] | None = None):
                 skipped_infra_deferred += 1
                 continue
 
+            # kanban t_b400dc8c: weekly-digest routing for the noise class.
+            # needs_input sources no longer get per-task Frank escalation —
+            # they route to the weekly Frank A3 digest (child A emitter). The
+            # ONLY exception is the narrow critical-R3 keep-set: genuine NEW
+            # security/credential/live-trading incidents whose delay to a
+            # weekly cadence is unacceptable. Everything else is counted and
+            # skipped BEFORE the rate limiter, so digest-routed sources never
+            # consume the escalation budget. Infra lanes above are unchanged
+            # (they never page Frank). Existing open escalation cards for a
+            # digest-routed source simply stop receiving heartbeats — they are
+            # historical artifacts the digest execution will disposition.
+            if task.get("block_kind") == "needs_input" and route["route"] == "frank":
+                keep, marker = is_critical_r3_keep(
+                    reason_text, task.get("title"), block_hours
+                )
+                if dry_run:
+                    print(
+                        f"DIGEST-DECISION {board}/{task_id} keep={keep} "
+                        f"marker={marker} block_hours={block_hours:.1f}h",
+                        file=sys.stderr,
+                    )
+                if not keep:
+                    skipped_digest_routed += 1
+                    continue
+                kept_critical += 1
+
             # Rate limit: governs escalation CREATION and heartbeats, i.e. every
             # write path below. Deliberately evaluated after classification.
             if escalated >= MAX_ESCALATIONS_PER_RUN:
@@ -1407,6 +1623,8 @@ def main(argv: list[str] | None = None):
 
     summary = (
         f"service-gate-escalation: {escalated} escalated, "
+        f"{skipped_digest_routed} digest-routed (needs_input -> weekly A3), "
+        f"{kept_critical} kept-critical (R3 keep-set), "
         f"{skipped_duplicate} duplicate (heartbeated in place), "
         f"{skipped_recent} under threshold, "
         f"{skipped_escalation_tasks} escalation tasks skipped, "
@@ -1426,6 +1644,18 @@ def main(argv: list[str] | None = None):
         # silent-unless-actionable contract only applies to real cron fires.
         print(f"DRY-RUN {summary}")
         return
+
+    # Daily census (kanban t_b400dc8c): the watchdog is now silent by design
+    # for digest-routed needs_input sources, so emit ONE count-only line per
+    # UTC day when there is anything digest-routed to report. DB-backed dedupe
+    # (task_events kind='census') keeps it to one line/day; silent when zero.
+    if skipped_digest_routed > 0 and not _census_emitted_today(now):
+        _record_census(now, skipped_digest_routed, kept_critical)
+        print(
+            f"census: {skipped_digest_routed} needs_input sources routed to "
+            f"weekly Frank A3 digest (per-task escalation stopped); "
+            f"{kept_critical} kept-critical R3 keep-set candidates still escalate"
+        )
 
     # Only print to stdout if the run actually changed something (watchdog
     # pattern). Retiring an orphan is a real state change and worth reporting,
