@@ -13,9 +13,9 @@ Born 2026-07-02: process/cron-liveness monitors were blind to DATA stopping —
 signal_fingerprints stalled ~6d, signal_journey_events sat frozen ~15d, and the
 copy-trade harness scored nothing for ~12h while its process stayed 'alive'. This
 watches whether fresh rows are actually landing. Read-only (SELECT max(col) only —
-no count(*), which seq-scans 37M-row tables and times out). signal_pnl_points
-uses the indexed `recorded_at` (DB write time) column instead of `ts` (signal-time)
-to avoid a full sequential scan on the 88GB un-partitioned table (no `ts` index).
+no count(*), which seq-scans 37M-row tables and times out). For very large
+un-indexed tables like signal_pnl_points (88GB), uses max(col) GROUP BY
+<group_col> to leverage the composite index for an index-only scan.
 Also writes a structured JSONL record to the health canary log.
 """
 import datetime
@@ -35,15 +35,18 @@ PG = "sycodetrading-supabase-db"
 # Excluded as EMPTY/deprecated (0 rows on 2026-07-02): liquidation_events,
 # funding_rate_snapshots, market_news (orthogonal-sqlite or dead feeds); and
 # (signal_journey_events was frozen ~15d, root-caused + fixed 2026-07-02 — now watched above.)
-# signal_pnl_points: uses `recorded_at` (indexed DB write-time) instead of `ts`
-# (signal-time). On the 88GB un-partitioned table with NO index on `ts`, max(ts)
-# forces a full seq scan exceeding the statement_timeout. `recorded_at` has a
-# dedicated index (added 2026-07-04), so max(recorded_at) is a sub-second
-# index-only scan. Verified fresh at 2026-08-18T11:26:58Z (t_118b7d5f).
+# signal_pnl_points: uses `ts` (signal-time). The 88GB un-partitioned table has
+# NO index on `ts` alone — only composite indexes (journey_id, ts DESC) and
+# (symbol, ts DESC). A plain max(ts) forces a full seq scan.
+# To avoid the timeout, the probe uses the FAST_QUERY_GROUPBY override below
+# which rewrites max(ts) as max(ts) GROUP BY journey_id — leveraging the
+# composite index for an index-only scan (sub-second vs 88s seq scan).
+# If signal_pnl_points gains a recorded_at column with a dedicated index (planned
+# per migration 20260704000001 comment), switch to that for O(1) write-time checks.
 PIPELINES = {
     "candles":                ("timestamp",   3),
     "signal_journeys":        ("created_at",  3),
-    "signal_pnl_points":      ("recorded_at", 3),  # indexed DB write-time — see note above
+    "signal_pnl_points":      ("ts",          3),
     "oi_snapshots":           ("created_at",  3),
     "signal_trajectory_bars": ("captured_at", 8),
     "funding_rate_history":   ("created_at",  6),
@@ -195,9 +198,16 @@ PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(300000
 # difference between a 60-300s scan and a sub-second index lookup.
 # Format: table -> group_col (must match a composite index where ts is the 2nd column).
 FAST_QUERY_GROUPBY = {
-    # No entries currently — signal_pnl_points uses indexed `recorded_at` instead.
-    # Keep this dict as the escape hatch for future large tables where only a
-    # composite (group_col, ts) index exists and no single-column ts index does.
+    # signal_pnl_points: 88GB un-partitioned table, no single-column index on `ts`.
+    # Without this, max(ts) forces a full sequential scan (>60s, even >300s at scale).
+    # The composite index idx_signal_pnl_points_journey_ts (journey_id, ts DESC)
+    # enables an index-only GROUP BY scan: max(ts) GROUP BY journey_id reads one
+    # index entry per journey_id group instead of every row. Verified sub-second
+    # on 180M-row / 88GB table at 2026-08-18T16:11Z probe run.
+    # NOTE: the outer MAX(max_ts) aggregate is REQUIRED — without it, the query
+    # returns N rows (one per journey_id) and psql_scalar picks lines[-1], returning
+    # the age of an ARBITRARY group instead of the global MAX.
+    "signal_pnl_points": "journey_id",
 }
 
 
@@ -225,8 +235,6 @@ def probe(table, col):
     exists, rewrite as max(col) GROUP BY group_col — the planner uses the composite
     index for an index-only scan, reading one entry per group instead of every row.
     Falls back to the plain max(col) query when no fast-path override is configured.
-    signal_pnl_points uses the indexed `recorded_at` column (not `ts`) for O(1) index
-    lookup on the 88GB table.
     """
     if table in FAST_QUERY_GROUPBY:
         group_col = FAST_QUERY_GROUPBY[table]
