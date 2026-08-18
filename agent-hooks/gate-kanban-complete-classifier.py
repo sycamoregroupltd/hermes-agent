@@ -272,7 +272,13 @@ APP_IMPL_PATTERNS: PatternList = [
     # Bare apps/web is not concrete implementation here: repo hygiene cards quote
     # dirty git-status paths. WEB_PATTERNS still sees the path; this stricter list
     # only decides whether an allow override may neutralize broad web signals.
-    r"(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^.\n]{0,120})(frontend|web|app|dashboard|route|component|page|middleware|layout)([^a-z0-9]|$)",
+    # Noun-side leading boundary (t_17b2b7ed): require a real word break before
+    # the app noun so "route" cannot match inside compound nouns (router,
+    # reroute, pm-reroute, verdict-router, api-router, message_router,
+    # trade-route, unblocker-route). Hyphen/underscore count as word chars.
+    # Mirror of the t_660a588a verb-boundary fix. Standalone "route"/"routes"
+    # still match.
+    r"(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^.\n]{0,120})(^|[^a-z0-9_-])(frontend|web|app|dashboard|routes?|component|page|middleware|layout)([^a-z0-9]|$)",
     # Verb-last variant: <app noun> ... <verb>. The verb alternation REQUIRES a
     # leading boundary (BOL or non-alnum) so "ship" inside "ownership" or "add"
     # inside "upshot" can never match the verb group. Without the boundary,

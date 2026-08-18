@@ -1172,5 +1172,67 @@
       ]
     },
     "description": "BLOCK: paired negative for t_660a588a — the SAME 'ownership ... route/domain' wording attached to concrete apps/web route/page work must still require running-app VERIFY_PASS. Proves the verb-boundary fix does not weaken BLOCK_WEB_SURFACE / BLOCK_APP_IMPL for genuinely web cards."
+  },
+  {
+    "name": "t_17b2b7ed-e04df764-compound-route-allows",
+    "task_id": "t_17b2b7ed_e04df764_fixture",
+    "expected": "allow",
+    "expected_class": "not_web",
+    "title": "IMPLEMENT (PM-reroute, un-deadlocked): verdict-router B1-B4 dry-run repairs \u2014 os-reviewer approved research plan",
+    "body": "IMPLEMENT the os-reviewer-approved verdict-router B1-B4 dry-run repairs. This card is the PM-rerouted execution of a deadlocked child: Python CLI/SQLite script work only (scripts/verdict_router.py, scripts/test_verdict_router.py). Sentinel stays absent; router remains dry-run. No browser surface is served.",
+    "summary": "unittest test_verdict_router 56/56 OK; scripts/verdict_router.py + scripts/test_verdict_router.py only; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "scripts/verdict_router.py",
+        "scripts/test_verdict_router.py"
+      ]
+    },
+    "description": "ALLOW: live-shaped t_e04df764 regression \u2014 verb implement plus substring route inside PM-reroute,/verdict-router classified the backend CLI card as web because APP_IMPL_PATTERNS[0] noun group lacked a leading boundary. After the noun-boundary fix this payload must classify not_web."
+  },
+  {
+    "name": "t_17b2b7ed-compound-route-nouns-allows",
+    "task_id": "t_17b2b7ed_compound_nouns_fixture",
+    "expected": "allow",
+    "expected_class": "not_web",
+    "title": "IMPLEMENT backend message_router and api-router timeout handling",
+    "body": "Fix reroute and trade-route helpers in the Python CLI. Add unit tests for the message_router and api-router timeout path. Source and tests only under scripts/; no browser surface is served.",
+    "summary": "python3 -m unittest scripts/test_message_router.py OK; scripts only; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "scripts/message_router.py",
+        "scripts/test_message_router.py"
+      ]
+    },
+    "description": "ALLOW: compound nouns containing route (router, reroute, api-router, message_router, trade-route) must not classify as app-impl/web after APP_IMPL_PATTERNS[0] gains a leading noun boundary."
+  },
+  {
+    "name": "t_17b2b7ed-paired-standalone-route-negative-blocks",
+    "task_id": "t_17b2b7ed_standalone_route_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Implement apps/web dashboard route component with React",
+    "body": "Implement apps/web dashboard route component and page layout with React. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "concrete apps/web route implementation; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/dashboard/route/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_17b2b7ed \u2014 standalone word route on a real apps/web dashboard card must still classify web and require running-app VERIFY_PASS. Proves the noun-boundary fix does not drop genuine app-impl detections."
+  },
+  {
+    "name": "t_17b2b7ed-paired-standalone-routes-negative-blocks",
+    "task_id": "t_17b2b7ed_standalone_routes_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Implement routes for the customer checkout flow",
+    "body": "Implement routes so customers can complete checkout. This is concrete app routing work and no running app VERIFY_PASS is supplied.",
+    "summary": "concrete standalone routes implementation; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/checkout/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_17b2b7ed \u2014 standalone word routes (not a compound noun) must still classify as app-impl/web."
   }
 ]
