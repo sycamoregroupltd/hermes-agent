@@ -24,6 +24,16 @@ The boot snapshot could not generate. Treat ALL live-state as UNKNOWN and VERIFY
 asserting or acting. Re-run manually: bash ~/.hermes/scripts/seat-live-state.sh"
 fi
 
+# Session compounding pointer (cache, not live state). Keep this block short.
+LAST_RECAP="$(ls -1t /home/frank/.grok/memory/*/sessions/*.md /home/frank/.grok/memory/sessions/*.md 2>/dev/null | head -1)"
+SNAP="${SNAP}
+━━ SESSION COMPOUNDING ━━
+Durable Sycode recaps: /home/frank/obsidian/sycode-trading/learnings/ (template: templates/session-recap.md)
+Home: /home/frank/obsidian/sycode-trading/Sycode-Trading-Home.md
+Domain map (code): docs/architecture/01_DOMAIN_MAP.md
+Grok last memory stub: ${LAST_RECAP:-none}
+Live board/SHA/positions: re-derive only (this snapshot above). Never trust a recap for those."
+
 if command -v jq >/dev/null 2>&1; then
   jq -n --arg c "$SNAP" \
     '{suppressOutput:true, hookSpecificOutput:{hookEventName:"SessionStart", additionalContext:$c}}'
