@@ -2318,13 +2318,19 @@ def _cmd_complete(args: argparse.Namespace) -> int:
                 failed.append(tid)
                 continue
 
-            if not kb.complete_task(
-                conn, tid,
-                result=args.result,
-                summary=summary,
-                metadata=metadata,
-                expected_run_id=_worker_run_id_for(tid),
-            ):
+            try:
+                completed = kb.complete_task(
+                    conn, tid,
+                    result=args.result,
+                    summary=summary,
+                    metadata=metadata,
+                    expected_run_id=_worker_run_id_for(tid),
+                )
+            except kb.WorkspaceDeliveryError as exc:
+                failed.append(tid)
+                print(f"kanban: {exc}", file=sys.stderr)
+                continue
+            if not completed:
                 failed.append(tid)
                 # Surface the ACTUAL status instead of the factually false
                 # "unknown id or terminal state" string. A card in `triage`

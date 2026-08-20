@@ -772,6 +772,11 @@ def _handle_complete(args: dict, **kw) -> str:
                     created_cards=created_cards,
                     expected_run_id=_worker_run_id(tid),
                 )
+            except kb.WorkspaceDeliveryError as workspace_err:
+                return tool_error(
+                    f"kanban_complete blocked: {workspace_err}. Your task is "
+                    f"still in-flight and the workspace was not changed."
+                )
             except kb.ArtifactPreservationError as artifact_err:
                 return tool_error(
                     f"kanban_complete could not preserve the declared artifacts: "

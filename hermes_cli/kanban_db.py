@@ -6488,6 +6488,114 @@ class ArtifactPreservationError(RuntimeError):
     """Raised when a declared scratch deliverable cannot be preserved."""
 
 
+class WorkspaceDeliveryError(RuntimeError):
+    """Raised when a Git-backed task workspace is unsafe to close.
+
+    The payload contains reason codes and counts only. Changed file names and
+    contents are deliberately never collected or written to the board.
+    """
+
+    def __init__(self, task_id: str, issues: list[dict[str, Any]]):
+        self.task_id = task_id
+        self.issues = list(issues)
+        details = ", ".join(
+            f"{item['code']}={item['count']}" if item.get("count") is not None
+            else str(item["code"])
+            for item in issues
+        )
+        super().__init__(
+            f"completion blocked for Git workspace ({details}); restore a valid "
+            f"branch/worktree and remote, commit and push the task work, then "
+            f"retry. No files were discarded"
+        )
+
+
+def _git_workspace_delivery_issues(task: Task) -> list[dict[str, Any]]:
+    """Return fail-closed delivery issues for a Git-backed task workspace.
+
+    ``scratch`` workspaces are intentionally excluded: they are artifact
+    staging areas, not source-control delivery surfaces. ``dir`` workspaces
+    are checked when they resolve inside Git; non-Git directories retain their
+    existing completion semantics. Explicit ``worktree`` tasks must resolve to
+    an inspectable Git worktree.
+    """
+    kind = task.workspace_kind or "scratch"
+    if kind not in {"worktree", "dir"}:
+        return []
+    if not task.workspace_path:
+        return [{"code": "workspace_path_missing"}]
+    path = Path(task.workspace_path).expanduser()
+    if not path.is_dir():
+        return [{"code": "workspace_missing"}]
+
+    def probe(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(f"git probe failed with exit {result.returncode}")
+        return result
+
+    try:
+        inside = probe("rev-parse", "--is-inside-work-tree", check=False)
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            if kind == "dir":
+                return []
+            return [{"code": "not_a_git_worktree"}]
+
+        issues: list[dict[str, Any]] = []
+        branch = probe("symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+        if branch.returncode != 0:
+            issues.append({"code": "detached_head"})
+
+        status = probe("status", "--porcelain=v1", "--untracked-files=all")
+        dirty_count = len([line for line in status.stdout.splitlines() if line])
+        if dirty_count:
+            issues.append({"code": "dirty_worktree", "count": dirty_count})
+
+        remotes = [line for line in probe("remote").stdout.splitlines() if line.strip()]
+        if not remotes:
+            issues.append({"code": "no_remote"})
+        else:
+            unpushed = probe("rev-list", "--count", "HEAD", "--not", "--remotes")
+            unpushed_count = int(unpushed.stdout.strip() or "0")
+            if unpushed_count:
+                issues.append({"code": "unpushed_commits", "count": unpushed_count})
+        return issues
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+        return [{"code": "git_inspection_failed"}]
+
+
+def _enforce_workspace_delivery_gate(
+    conn: sqlite3.Connection,
+    task_id: str,
+) -> None:
+    task = get_task(conn, task_id)
+    if task is None:
+        return
+    issues = _git_workspace_delivery_issues(task)
+    if not issues:
+        return
+    with write_txn(conn):
+        _append_event(
+            conn,
+            task_id,
+            "completion_blocked_workspace_delivery",
+            {
+                "workspace_kind": task.workspace_kind,
+                "issues": issues,
+                "discarded": False,
+            },
+        )
+    raise WorkspaceDeliveryError(task_id, issues)
+
+
 def complete_task(
     conn: sqlite3.Connection,
     task_id: str,
@@ -6536,6 +6644,11 @@ def complete_task(
     # final write transaction below to close the parent-reopen race.
     if not _parents_satisfied(conn, task_id):
         return False
+
+    # Source-delivery gate: no completion surface (worker tool, CLI, dashboard,
+    # or direct DB caller) may silently strand Git work. The check happens
+    # before artifact staging and before the terminal state transaction.
+    _enforce_workspace_delivery_gate(conn, task_id)
 
     # Gate: verify created_cards BEFORE the main write txn. A rejected
     # completion still needs an auditable event, so we emit it in a
