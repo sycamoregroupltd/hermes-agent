@@ -10,7 +10,7 @@ ACP="${BUZZ_ACP_BIN:-/home/frank/buzz-lab/target/ci/buzz-acp}"
 export PATH="/home/frank/.local/bin:/home/frank/.npm-global/bin:/home/frank/.hermes/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Admitted private-channel peers (hex pubs). Owner (if known) is extra via --agent-owner.
-ALLOW="b4da325bd611f1e80ebe10481a4f9d8b7b39a0d6ba71a0ea21a245ace9c8069d,8cb7ee76dd3c84aee1908452b99b2d0e2b891ec459eae2b2a4655b1bbafd7325,908802a4cd4944211c4be873648c2e7851df2d36b693133850073dacf67dccc1,1dda2df938f98f541885683df97b1a9c1139bc194da308b7c4866c703695375f,79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+ALLOW="b4da325bd611f1e80ebe10481a4f9d8b7b39a0d6ba71a0ea21a245ace9c8069d,8cb7ee76dd3c84aee1908452b99b2d0e2b891ec459eae2b2a4655b1bbafd7325,908802a4cd4944211c4be873648c2e7851df2d36b693133850073dacf67dccc1,1dda2df938f98f541885683df97b1a9c1139bc194da308b7c4866c703695375f,79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798,37eb3db34429f1b2d0b1822da183b0114bdb1b00820d356aabd6fd767e692126,4ae39b715cf37d4499026bc5b03520f73a93595f60b646398daddfbaa95918a4"
 
 # Optional human owner pubkey (64-hex). Do not invent one.
 OWNER_FILE="$IDENT/owner.pub"
