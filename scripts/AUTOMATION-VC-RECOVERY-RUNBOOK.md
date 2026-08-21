@@ -3,7 +3,7 @@ title: "Hermes Fleet Automation Version-Control & Recovery Runbook"
 type: runbook
 status: active
 created: 2026-07-13
-updated: 2026-08-18
+updated: 2026-08-21
 confidence: high
 tags: [fleet-durability, version-control, recovery, automation, devops, keeper]
 sources:
@@ -29,7 +29,7 @@ sources:
 > not written contiguously here because they would trip this repo's own pre-commit
 > secret scan (the keeper script composes those literals at runtime for the same
 > reason). Obsidian `[[wikilinks]]` resolve only inside the vault.
-> Snapshot refreshed: 2026-08-18 (task `t_8fa25595`).
+> Snapshot refreshed: 2026-08-21 (task `t_8fa25595`).
 
 
 # Hermes Fleet Automation Version-Control & Recovery Runbook (off-host snapshot)
@@ -43,9 +43,16 @@ remote. A disk loss or accidental rm destroyed recovery. Now version-controlled 
 - Repo root = `/home/frank/.hermes` itself (was already a git repo; coverage extended, not nested).
 - Branch: `fleet/automation-vc`. First commit `2d2e9aaa6d8a665403fe93c8dc673611818ae083`.
 - Remote: PRIVATE GitHub `sycamoregroupltd/hermes-dgx-fleet-automation` (git@github.com:sycamoregroupltd/hermes-dgx-fleet-automation.git).
-- Tracked: `scripts/*.py|*.sh|*.md` (258 files), `profiles/*/cron/jobs.json` (24 crontabs),
-  depth-1 `profiles/*/scripts/*.py|*.sh` (the cron scripts that actually run — task t_4b7afeac),
-  and the previously-tracked non-secret config (`config.yaml`, `SOUL.md`, `cron/jobs.json`, `agent-hooks/*`, etc.).
+- Tracked: `scripts/*.py|*.sh|*.md` (258 files), depth-1 `profiles/*/scripts/*.py|*.sh`
+  (the cron scripts that actually run — task t_4b7afeac), and the previously-tracked
+  non-secret config (`config.yaml`, `SOUL.md`, `agent-hooks/*`, etc.).
+- Live cron stores (`cron/jobs.json`, `profiles/*/cron/jobs.json`) are **NOT tracked**
+  since 2026-08-03 (task t_6c32b13c): they are mutable scheduler runtime state, so a
+  checkout can never rewrite them to a stale committed snapshot. The automation-vc
+  branch keeps only the last historical snapshot from before that date; new job
+  definitions are not synced off-host (restore live stores from the fleet backup
+  routine — recovery step 3). See
+  [[Evidence/task-evidence/2026-08-03-t_6c32b13c-untrack-live-cron-stores]].
 
 ## What is excluded (by design)
 
@@ -81,9 +88,10 @@ was not a validated secret. The `.gitignore` deny list for these files was remov
 1. `git clone git@github.com:sycamoregroupltd/hermes-dgx-fleet-automation.git ~/hermes-recovery && git checkout fleet/automation-vc`
 2. Restore automation: `rsync -a --exclude='.git' scripts/ /home/frank/.hermes/scripts/` and the tracked
    profile cron scripts `rsync -a --exclude='.git' profiles/<profile>/scripts/ /home/frank/.hermes/profiles/<profile>/scripts/`
-   for each profile present on the branch, then per-profile crontabs. `profiles/devops/scripts/` MUST be
+   for each profile present on the branch. `profiles/devops/scripts/` MUST be
    restored — the devops cron `fbdcfa8e6ab8` (`automation-vc-keeper`) references the wrapper there, so
    without it the keeper silently stops running after a rebuild (task t_84980841 finding).
+   Live cron stores are NOT on the branch since t_6c32b13c — restore them from the fleet backup routine.
 3. Restore NON-versioned secrets/state (`auth.json`, `.env`, `*.db`, profile runtime) from the fleet backup routine — NOT from this repo.
 4. Restart cron jobs / gateway via standard fleet procedure.
 
@@ -114,11 +122,18 @@ by the live repo *or* by `origin/fleet/automation-vc`, plus the two `FORCE_INCLU
 files above. Allowed:
 
 - root config: `.gitignore`, `config.yaml`, `profile.yaml`, `SOUL.md`,
-  `shell-hooks-allowlist.json`, `context_length_cache.yaml`, `cron/jobs.json`
+  `shell-hooks-allowlist.json`, `context_length_cache.yaml`
 - `scripts/*.py|*.sh|*.md` (depth 1 only)
 - `agent-hooks/*` (depth 1 only)
-- `profiles/*/cron/jobs.json` (every profile crontab)
 - `profiles/devops/scripts/automation-vc-keeper.sh`
+
+**Cron stores are intentionally NOT in the allowlist since 2026-08-03 (t_6c32b13c).**
+The live repo no longer tracks them (`git rm --cached` + `.gitignore`), and
+`is_allowed()` denies both `cron/jobs.json` and `profiles/*/cron/jobs.json`, so the
+keeper can no longer sync scheduler runtime state to the branch. The branch keeps the
+last historical snapshots; deletions are never auto-staged. If a future operator wants
+off-host job-DEFINITION backups again, sync a normalized (volatile-stripped) export to
+a different path — do not re-allow the live store paths.
 
 **Known allowlist gap (open, 2026-08-01).** `.gitignore` re-includes *every* depth-1
 `profiles/*/scripts/*.py|*.sh` (task t_4b7afeac), but the keeper's `is_allowed()` permits only
@@ -243,6 +258,21 @@ had already synced some), classified each file, and ran `--include-untracked` af
   Run the step-1 dry-run before any future broad sync and re-classify new drift — the manifest
   changes as the fleet evolves.
 
+**Broad drift reconciled pass 2 (2026-08-21, task t_8fa25595).** Residual drift after the
+08-18 pass was reviewed and synced again with `--include-untracked`:
+- 9 files committed+pushed as `f507104` (7cc63d7..f507104): refreshed off-host runbook snapshot
+  (`scripts/AUTOMATION-VC-RECOVERY-RUNBOOK.md`, previously absent from the branch), newer
+  monitors/guards created since 08-18 (`check_alert_rules_can_fire.py`, `vacuum-freeze-xid.sh`,
+  `land_fk_indexes.sh`, `verify-sycode-backup-integrity.sh`, `grok-session-end-recap.sh`,
+  `buzz-hermes.sh`), the live `buzz-acp-run.sh` content, and the sanitized jarvis cron snapshot.
+- The other 40 of 49 dry-run untracked candidates were already byte-identical on the branch
+  (synced 08-18) — no-op, not re-committed.
+- 0 secrets: keeper staged secret scan clean, branch-wide `git grep` zero hits, per-file
+  independent scan of the committed set clean.
+- Verified: remote SHA == pushed HEAD `f507104`, repo PRIVATE via `gh api`, master builder's
+  in-flight branch (`fix/t_b400dc8c-watchdog-digest-routing`) untouched.
+- Convention unchanged: review the dry-run manifest, exclude WIP/secret, then `--include-untracked`.
+
 ### Caveats — do not skip these
 
 - **Never `git push --force`** (or `--force-with-lease`) to `fleet/automation-vc`. It is the
@@ -251,15 +281,25 @@ had already synced some), classified each file, and ran `--include-untracked` af
 - **Never commit secrets.** Never `git add -f` a denied path, never disable the pre-commit hook,
   and never delete a pattern from the scan to get a commit through. The `.gitignore` deny list for
   the 5 remediated scripts is empty *because they were fixed*, not because the rule was relaxed.
-- **Never `git checkout -- <a live cron store>`, `git restore`, `git reset --hard`, or `git stash`
-  in `~/.hermes`.** `profiles/*/cron/jobs.json` is a live mutable scheduler state file that is also
-  git-tracked — a byte-level revert silently undoes reviewed pauses and runtime state. This caused
-  three independent state reverts on 2026-07-31. The tracked stores now carry `skip-worktree` as
-  protection, but that bit is a **local index bit** and does not survive a fresh clone or index
-  rebuild. See [[Evidence/2026-07-31-cron-store-vc-checkout-reverts-reviewed-pause-t_d450cf24]] and
-  [[Evidence/2026-07-31-t_3c33bc49-last-run-at-drift-git-clobber-root-cause]].
-- **Do not hand-edit the branch copy of a cron store.** Change it live via `hermes cron` and let the
-  keeper sync it, otherwise the live store and the branch fight each other.
+- **Live cron stores are UNTRACKED since 2026-08-03 (t_6c32b13c).** `profiles/*/cron/jobs.json`
+  and `cron/jobs.json` are mutable scheduler runtime state; git no longer tracks them, so a
+  branch/commit checkout of a post-fix branch cannot rewrite them. The pre-fix commands that
+  caused three state reverts on 2026-07-31 (`git checkout -- <a live cron store>`,
+  `git restore <store>`) now fail harmlessly ("pathspec did not match any file(s) known to git")
+  because the paths have no index entry. The earlier `skip-worktree` protection is **void** —
+  the 07-31 "25/25 protected" certification was falsified on 2026-08-03 (0 files carry the `S`
+  bit today; a reviewed pause was silently reverted again) — do not reintroduce skip-worktree as
+  the protection mechanism. Residual (documented): a checkout to a PRE-FIX branch that still
+  tracks a store will silently overwrite the ignored store with that branch's committed snapshot
+  (git treats ignored files as disposable on checkout). Transition mitigation: land the removal
+  commit (e3feaae) on the integration branch so circulating branches stop tracking stores; the
+  weekly re-fire loop and mid-flight-snapshot reverts are gone once no post-fix checkout can
+  restore a stale `next_run_at`. See
+  [[Evidence/2026-07-31-cron-store-vc-checkout-reverts-reviewed-pause-t_d450cf24]] and
+  [[Evidence/task-evidence/2026-08-03-t_6c32b13c-untrack-live-cron-stores]].
+- **Do not re-add live cron stores to git.** The keeper no longer syncs them (t_6c32b13c); the branch
+  copies are historical snapshots only. Change schedule state live via `hermes cron`; the live store
+  is the only scheduler truth.
 - **Keep the repo PRIVATE.** Verify with `gh api repos/sycamoregroupltd/hermes-dgx-fleet-automation --jq .private`
   after any repo-settings change.
 - **Do not extend `is_allowed()` without a matching `.gitignore` re-include** (and vice versa).

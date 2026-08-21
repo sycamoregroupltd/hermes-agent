@@ -5880,7 +5880,7 @@
       "context_from": null,
       "created_at": "2026-08-03T10:25:48.724169+01:00",
       "deliver": "all",
-      "enabled": true,
+      "enabled": false,
       "enabled_toolsets": [
         "terminal"
       ],
@@ -5890,7 +5890,7 @@
       "name": "arena-insert-liveness-monitor (t_a20174c0)",
       "no_agent": true,
       "origin": null,
-      "paused_at": null,
+      "paused_at": "2026-08-21T16:58:50.464866+01:00",
       "paused_reason": null,
       "prompt": "No-agent Sycode Trading arena insert-liveness watchdog for kanban task t_a20174c0. Run /home/frank/.hermes/profiles/jarvis/scripts/arena-insert-liveness-monitor.sh every 15 minutes. The wrapper runs /home/frank/.bun/bin/bun run server/scripts/arena-insert-liveness-monitor.ts with --max-age-minutes=30 from /home/frank/.hermes/profiles/jarvis/scripts/arena-liveness-monitor (durable extracted copy of origin/feat/arena-insert-liveness-monitor:server/scripts/arena-insert-liveness-monitor.ts @ 8cb31d187; NOT the missing /home/frank/sycode-trading/.worktrees/arena-liveness-monitor). DATABASE_URL host 127.0.0.1:5432/postgres (not supabase-db). Exit code handling: 0 healthy/silent; 1 stale or unreachable alert; 2 config/runtime error alert. SELECT-only monitor; no DDL, no DB writes, no deploy, no live trading.",
       "provider": null,
@@ -5907,7 +5907,7 @@
       "script": "arena-insert-liveness-monitor.sh",
       "skill": null,
       "skills": [],
-      "state": "scheduled",
+      "state": "paused",
       "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
     },
     {

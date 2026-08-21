@@ -48,7 +48,18 @@ PIPELINES = {
     "signal_journeys":        ("created_at",  3),
     "signal_pnl_points":      ("ts",          3),
     "oi_snapshots":           ("created_at",  3),
-    "signal_trajectory_bars": ("captured_at", 8),
+    # signal_trajectory_bars: sparse-by-design FORENSIC OHLC store. TrajectoryCaptureService
+    # persists bars only when includeFullBars = isStage5bProofMode() || decision.reason==='EXECUTED'
+    # || Math.random() < FORENSIC_OHLC_SAMPLE_RATE (1%). With proofMode OFF and the paper desk
+    # predominantly emitting EXPIRED journeys (recurrence t_c799394b / diagnosis t_1cd1ea54,
+    # 2026-08-21), max(captured_at) ages past any tight budget BY DESIGN while the trajectory
+    # ANALYSIS pipeline is healthy (signal_journeys.trajectory_captured_at fresh; signal_journeys
+    # created_at watch below is fresh). Budget raised to forensic cadence (96h) so a GENUINE
+    # bars-persistence failure (producer dead >96h) stays visible without false-stale alerts.
+    # Do NOT switch this to max(signal_journeys.trajectory_captured_at): that column has NO index
+    # and max() over the 42GB signal_journeys seq-scans (cost 2.1M) on every probe run — the exact
+    # trap this probe's FAST_QUERY_GROUPBY was built to avoid.
+    "signal_trajectory_bars": ("captured_at", 96),
     "funding_rate_history":   ("created_at",  6),
     "signal_fingerprints":    ("created_at", 36),
     "signal_journey_events":  ("recorded_at",  6),  # emission fixed 2026-07-02 (was frozen 15d); recorded_at = DB write time (best "is data landing" signal). No created_at column exists on this table.
