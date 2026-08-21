@@ -7544,6 +7544,42 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "197bcb74834e",
+      "name": "sycode-backup-integrity-verify",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "verify-sycode-backup-integrity.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 12 * * *",
+        "display": "0 12 * * *"
+      },
+      "schedule_display": "0 12 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-21T11:19:51.160553+01:00",
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }
