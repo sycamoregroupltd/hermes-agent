@@ -31,7 +31,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "f1956871c01a",
@@ -64,7 +65,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "35ea8eccdfb1",
@@ -132,7 +134,8 @@
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading"
+      "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading",
+      "failure_streak": 0
     },
     {
       "id": "ac9fd7e91dac",
@@ -198,7 +201,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "5c14c760b7df",
@@ -264,7 +268,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "e2a237c4e703",
@@ -297,7 +302,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "604a198683fc",
@@ -363,7 +369,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "0ead099b5eac",
@@ -432,7 +439,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 11
     },
     {
       "id": "4dad2695cdad",
@@ -468,7 +476,8 @@
       "deliver": "discord:1521973787363508325",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 15
     }
   ]
 }

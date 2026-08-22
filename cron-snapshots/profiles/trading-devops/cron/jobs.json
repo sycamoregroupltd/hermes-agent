@@ -31,7 +31,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "c7643a8a45c2",
@@ -64,7 +65,8 @@
       "deliver": "telegram",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "8718bedd960e",
@@ -99,7 +101,8 @@
       "enabled_toolsets": [
         "terminal"
       ],
-      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/scripts"
+      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/scripts",
+      "failure_streak": 6
     },
     {
       "id": "fceaac399fab",
@@ -135,7 +138,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "346ee72bf166",
@@ -171,7 +175,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "94ac95e4d217",
@@ -207,7 +212,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 1
     },
     {
       "id": "5be00afb4791",
@@ -243,7 +249,8 @@
       "deliver": "discord:#fleet-reports",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "020fd6120021",
@@ -279,7 +286,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "380fc4a8b1d1",
@@ -315,7 +323,8 @@
       "deliver": "discord:#critical-alerts",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 3
     },
     {
       "id": "0adadec2b5c7",

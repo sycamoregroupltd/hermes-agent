@@ -12,19 +12,6 @@ fixtures and changed-files-aware tests in gate-kanban-complete.fixtures.json,
 proving the same allow wording still blocks when attached to concrete frontend
 work or app-surface changed_files metadata.
 
-TERMINAL-BY-APPROVE LOCK-GATE (t_6334ff49):
-A card that carries an approval marker (anchored REVIEW_VERDICT=APPROVED verdict
-comment, or a landed kanban_complete run) is TERMINAL once its status is
-done/archived. A later transition out of done/archived to a regressable status
-(blocked/todo/running/ready/scheduled) is allowed ONLY if a reviewer re-open
-comment matching REOPEN_COMMENT_RE (re-open|reopen|re-blocked) is present after
-the latest landed event; otherwise the transition is rejected/flagged (requires
-reviewer+reason). Existing non-approved transition behavior is preserved
-(classify_terminal_transition returns "noop"). This mirrors the fleet-writable
-observation half scripts/kanban-approve-block-lockgate.py. The full
-dispatcher-level transition guard is upstream-PR-only (G2); only the
-kanban_complete (done) terminal rule is hook-gateable fleet-locally.
-
 VERIFICATION_MATRIX
 - store: /home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py
 - liveness: python3 /home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py < /dev/null
@@ -34,7 +21,6 @@ VERIFICATION_MATRIX
 """
 from __future__ import annotations
 
-import argparse
 import re
 import sys
 import json
@@ -352,6 +338,22 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # "apps/web ... route component/page" still matches APP_IMPL_PATTERNS and
     # CONCRETE_WEB_IMPL_PATTERNS and is caught by paired negative fixtures.
     r"\broute\s+(the|a|this|that|an)\s+[^.\n]{0,80}\b(narrow|host-runtime|separate|reviewed|next|bounded)\b[^.\n]{0,140}\b(fix|implementation card|disposition|evidence path|verdict|implementation)\b",
+    # Article-less dispatch idiom (t_c5cfa962; repro t_431e9b88): "route
+    # implementation + independent review", "route review", "route the fix",
+    # "route disposition", "route a reviewed implementation/card". The
+    # article-ful negation above requires an article + adjective qualifier, so
+    # this bare form ("fix is needed, route implementation") slipped through:
+    # APP_IMPL_PATTERNS[0] matched verb-first "fix ... route" and wedged a
+    # backend/infra diagnosis+review card as web. Here "route" is a dispatch
+    # verb (direct the fix/review to a builder), NOT an app-route noun. The
+    # negation fires ONLY when a dispatch/review object directly follows
+    # "route"; a lookahead blocks it when a surface noun follows, so
+    # "route implementation page/component" and "apps/web route
+    # implementation" are never neutralized. Concrete apps/web route/page work
+    # still matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS and is caught
+    # by the paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS
+    # "apps/web"/"app route").
+    r"\broute\s+(implementation|review|independent\s+review|disposition|the\s+fix|a\s+reviewed\s+(?:implementation|card))\b(?!\s+(?:component|page|layout|middleware|handler|ui|frontend|app|dashboard|route)\b)",
     # Companion: "comment disposition back on <owner>" / "post ... disposition"
     # evidence-back-reference phrasing in DIAGNOSE/forensics cards routes the
     # verdict/disposition rather than implementing a browser route.
@@ -406,127 +408,6 @@ SOURCE_REVIEW_PATTERNS: PatternList = [
     r"\breview[-_ ]verdict\b",
     r"\b(?:source task|source review|review source task|source[-_ ]?pr[-_ ]?review)\b",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Terminal-by-approve lock-gate (t_6334ff49).
-#
-# A card that carries an approval marker (an anchored REVIEW_VERDICT=APPROVED
-# verdict comment, or a landed kanban_complete run) is TERMINAL once its status
-# is done/archived. A later transition out of done/archived to a regressable
-# status (blocked/todo/running/ready/scheduled) is allowed ONLY if a reviewer
-# re-open comment matching REOPEN_COMMENT_RE is present after the latest landed
-# event; otherwise the transition is rejected/flagged (requires reviewer+reason).
-#
-# This mirrors the fleet-writable observation half
-# scripts/kanban-approve-block-lockgate.py and its anchored _APPROVAL_APPROVED_RE
-# (also mirrored from hermes_cli/kanban_db.py). The full dispatcher-level
-# transition guard is upstream-PR-only (G2); only the kanban_complete (done)
-# terminal rule is hook-gateable fleet-locally. Existing non-approved transition
-# behavior is preserved (classify_terminal_transition returns noop when no
-# approval marker is present).
-# ---------------------------------------------------------------------------
-
-LANDED_STATUSES: frozenset = frozenset({"done", "archived"})
-REGRESSABLE_STATUSES: frozenset = frozenset(
-    {"todo", "ready", "blocked", "running", "scheduled", "in_progress"}
-)
-REOPEN_COMMENT_RE = re.compile(r"re-open|reopen|re-blocked", re.IGNORECASE)
-
-# Anchored approval verdict: require the marker at a line start (optionally after
-# list/quote punctuation) and ignore markers inside fenced code blocks, so a
-# quoted/cited/prose occurrence never marks the card approved.
-_APPROVAL_APPROVED_RE = re.compile(
-    r"^\s*(?:[-*>]\s*)?REVIEW_VERDICT\s*[:=]\s*APPROVED\b",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-TERMINAL_VERDICT_TERMINAL = "terminal"
-TERMINAL_VERDICT_REGRESS_BLOCKED = "regress_blocked"
-TERMINAL_VERDICT_REGRESS_ALLOWED = "regress_allowed"
-TERMINAL_VERDICT_NOOP = "noop"
-
-TERMINAL_VERDICT_LABELS = {
-    TERMINAL_VERDICT_TERMINAL: (
-        "card is in done/archived with an approval marker -> TERMINAL; "
-        "no regression without a reviewer re-open"
-    ),
-    TERMINAL_VERDICT_REGRESS_BLOCKED: (
-        "approval marker present; transition out of done/archived without a "
-        "reviewer re-open comment -> rejected/flagged (requires reviewer+reason)"
-    ),
-    TERMINAL_VERDICT_REGRESS_ALLOWED: (
-        "approval marker present; transition out of done/archived allowed "
-        "because a reviewer re-open comment (re-open|reopen|re-blocked) after "
-        "the latest landed event is present"
-    ),
-    TERMINAL_VERDICT_NOOP: (
-        "no approval marker (or not relevant) -> existing non-approved "
-        "transition behavior preserved"
-    ),
-}
-
-
-def _strip_fenced_code(text: str) -> str:
-    """Drop fenced code blocks (``` or ~~~) so a verdict cited inside a code span
-    cannot be mistaken for the comment author's own approval verdict. Mirrors the
-    lockgate detector."""
-    out_lines: list[str] = []
-    in_fence = False
-    fence_marker: str | None = None
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if not in_fence:
-            if stripped.startswith("```") or stripped.startswith("~~~"):
-                in_fence = True
-                fence_marker = stripped[:3]
-                continue
-            out_lines.append(line)
-        else:
-            if fence_marker and stripped.startswith(fence_marker):
-                in_fence = False
-                fence_marker = None
-                continue
-    return "\n".join(out_lines)
-
-
-def has_approval_marker(text: str) -> bool:
-    """True when ``text`` carries an anchored REVIEW_VERDICT=APPROVED verdict line
-    (fenced-code-aware). A landed kanban_complete run is an additional approval
-    marker that callers pass separately (see classify_terminal_transition)."""
-    if not text:
-        return False
-    return bool(_APPROVAL_APPROVED_RE.search(_strip_fenced_code(text)))
-
-
-def has_reopen_comment(text: str) -> bool:
-    """True when ``text`` contains a reviewer re-open comment matching
-    REOPEN_COMMENT_RE (re-open|reopen|re-blocked)."""
-    if not text:
-        return False
-    return bool(REOPEN_COMMENT_RE.search(text))
-
-
-def classify_terminal_transition(
-    *,
-    current_status: str,
-    has_approval: bool,
-    has_reopen_after_landed: bool,
-) -> str:
-    """Decide the terminal-by-approve verdict for a card / status transition.
-
-    Returns one of TERMINAL_VERDICT_TERMINAL / _REGRESS_BLOCKED /
-    _REGRESS_ALLOWED / _NOOP. Preserves existing non-approved transition
-    behavior: without an approval marker the verdict is NOOP regardless of
-    status, so consumers fall through to their normal handling.
-    """
-    if not has_approval:
-        return TERMINAL_VERDICT_NOOP
-    if current_status in LANDED_STATUSES:
-        return TERMINAL_VERDICT_TERMINAL
-    if has_reopen_after_landed:
-        return TERMINAL_VERDICT_REGRESS_ALLOWED
-    return TERMINAL_VERDICT_REGRESS_BLOCKED
 
 
 FRONTEND_WEB_TASK_CATEGORY = TaskTypeCategory(
@@ -961,50 +842,7 @@ def classify(raw: str) -> str:
     return "not_web"
 
 
-def _main_terminal(argv: list[str]) -> int:
-    """CLI: classify a card's terminal-by-approve transition verdict."""
-    parser = argparse.ArgumentParser(
-        prog="gate-kanban-complete-classifier.py terminal",
-        description="Classify a card's terminal-by-approve transition verdict.",
-    )
-    parser.add_argument("--status", required=True, help="current card status")
-    parser.add_argument(
-        "--approval",
-        action="store_true",
-        help="card carries an approval marker (REVIEW_VERDICT=APPROVED or landed kanban_complete)",
-    )
-    parser.add_argument(
-        "--reopen",
-        action="store_true",
-        help="reviewer re-open comment (re-open|reopen|re-blocked) exists after the latest landed event",
-    )
-    parser.add_argument("--verbose", action="store_true", help="also print the human-readable label")
-    opts = parser.parse_args(argv)
-    verdict = classify_terminal_transition(
-        current_status=opts.status,
-        has_approval=opts.approval,
-        has_reopen_after_landed=opts.reopen,
-    )
-    print(verdict)
-    if opts.verbose:
-        print(TERMINAL_VERDICT_LABELS[verdict])
-    return 0
-
-
-def _main_has_approval() -> int:
-    """CLI: read text on stdin, print 1 if it carries an anchored
-    REVIEW_VERDICT=APPROVED verdict line, else 0. Used by the completion hook to
-    decide the hook-gateable kanban_complete (done) terminal rule."""
-    print("1" if has_approval_marker(sys.stdin.read()) else "0")
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = sys.argv[1:] if argv is None else list(argv)
-    if args and args[0] in ("--terminal", "terminal"):
-        return _main_terminal(args[1:])
-    if args and args[0] in ("--has-approval", "has-approval"):
-        return _main_has_approval()
+def main() -> int:
     print(classify(sys.stdin.read()))
     return 0
 

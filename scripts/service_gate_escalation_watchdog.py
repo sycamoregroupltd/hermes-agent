@@ -46,17 +46,20 @@ retired and parks them as blocked/transient with ONE explanatory comment,
 instead of heartbeating an orphan forever. Mirrors the existing-path filter in
 scripts/blocked-state-dispatch-guard.py::_find_boards.
 
-Parked-source exclusion (kanban t_5956838b): a blocked source can be parked in
-an explicit non-dispatchable state by its board owner with the canonical
-comment marker ``PARKED: awaiting-absent-seat`` (orchestrator disposition,
-jarvis seat 2026-08-03). A parked source is waiting on a seat that does not
-exist on this host (e.g. Frank's signed macOS Blender on an aarch64 DGX) — no
-agent here can ever clear it, so every re-fire is noise with zero new
-information. The exclusion is a POSITIVE predicate: only the explicit parked
-marker suppresses a source. A genuinely stalled source with a reachable owner
-still escalates. The check is fail-safe: an unreadable/missing task_comments
-table yields an empty parked set (no suppression), preserving pre-existing
-behavior for that board.
+Parked-source exclusion (kanban t_5956838b / t_7024c661): a blocked source
+can be parked in an explicit non-dispatchable state by its board owner with
+the canonical comment marker ``PARKED: awaiting-absent-seat`` (orchestrator
+disposition, jarvis seat 2026-08-03), or by the master orchestrator with a
+load-shed park marker ``PARKED-BY-MASTER-ORCHESTRATOR`` / ``DO-NOT-AUTO-
+UNBLOCK`` (kanban t_7024c661). A parked source is waiting on a seat that does
+not exist on this host (e.g. Frank's signed macOS Blender on an aarch64 DGX),
+or is under an explicit master-orchestrator load-shed park released only by
+master decision — no agent here can clear it, so every re-fire is noise with
+zero new information. The exclusion is a POSITIVE predicate: only an explicit
+parked marker suppresses a source. A genuinely stalled source with a reachable
+owner still escalates. The check is fail-safe: an unreadable/missing
+task_comments table yields an empty parked set (no suppression), preserving
+pre-existing behavior for that board.
 
 Classification-before-budget (kanban t_4e8c2620): the per-candidate loop now
 evaluates the block-age threshold and the orphan existence check BEFORE the
@@ -628,33 +631,74 @@ def check_configured_boards() -> list[str]:
     return live
 
 
-def get_parked_source_ids(db_path: Path) -> set[str]:
-    """Return ids of tasks carrying the canonical parked marker.
+# Parked-source markers. ``awaiting`` is the original orchestrator seat
+# disposition (kanban t_5956838b, jarvis seat 2026-08-03). ``master-
+# orchestrator`` is the load-shed park the master orchestrator writes with an
+# explicit DO-NOT-AUTO-UNBLOCK (kanban t_7024c661) — reversible by master
+# decision only. Both mean the source is in a deliberate, non-dispatchable
+# parked state and must NOT auto-escalate. The exclusion is a POSITIVE
+# predicate: only one of these explicit markers suppresses a source — never a
+# blanket age cap.
+_MARKER_AWAITING = "PARKED: awaiting-absent-seat"
+_MARKER_MASTER = "PARKED-BY-MASTER-ORCHESTRATOR"
+_MARKER_DONT_AUTO = "DO-NOT-AUTO-UNBLOCK"
 
-    A source parked with ``PARKED: awaiting-absent-seat`` in a comment is
-    waiting on a seat that does not exist on this host (orchestrator
-    disposition, jarvis seat 2026-08-03; kanban t_5956838b). No agent can
-    ever clear it, so re-escalating is noise. This is a POSITIVE predicate:
-    only the explicit marker suppresses a source — never a blanket age cap.
+
+def _parked_markers(db_path: Path) -> dict[str, str]:
+    """Return {task_id: category} for every task carrying a parked marker.
+
+    category is 'awaiting' (``PARKED: awaiting-absent-seat``) or
+    'master-orchestrator' (``PARKED-BY-MASTER-ORCHESTRATOR`` /
+    ``DO-NOT-AUTO-UNBLOCK`` — the master-orchestrator load-shed park, kanban
+    t_7024c661). A task may match on several comments; 'awaiting' wins only
+    when a comment carries that exact marker, otherwise 'master-orchestrator'.
+
+    Fail-safe: an unreadable or schema-less DB (no task_comments table)
+    yields an EMPTY dict, i.e. no suppression, preserving pre-existing
+    behavior for that board. An unreadable comments table must not silently
+    silence genuine escalations.
+    """
+    if not db_path.is_file():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        rows = conn.execute(
+            "SELECT DISTINCT task_id, "
+            "CASE WHEN body LIKE ? THEN 'awaiting' "
+            "ELSE 'master-orchestrator' END AS cat "
+            "FROM task_comments "
+            "WHERE body LIKE ? OR body LIKE ? OR body LIKE ?",
+            (
+                f"%{_MARKER_AWAITING}%",
+                f"%{_MARKER_AWAITING}%",
+                f"%{_MARKER_MASTER}%",
+                f"%{_MARKER_DONT_AUTO}%",
+            ),
+        ).fetchall()
+        conn.close()
+        return {r[0]: r[1] for r in rows}
+    except sqlite3.Error:
+        return {}
+
+
+def get_parked_source_ids(db_path: Path) -> set[str]:
+    """Return ids of tasks carrying a canonical parked marker.
+
+    A source is parked when a comment carries ``PARKED: awaiting-absent-seat``
+    (waiting on a seat that does not exist on this host — orchestrator
+    disposition, jarvis seat 2026-08-03; kanban t_5956838b) OR
+    ``PARKED-BY-MASTER-ORCHESTRATOR`` / ``DO-NOT-AUTO-UNBLOCK`` (master-
+    orchestrator load-shed park, kanban t_7024c661). No agent can clear these
+    without an explicit release, so re-escalating is noise. This is a POSITIVE
+    predicate: only an explicit marker suppresses a source — never a blanket
+    age cap.
 
     Fail-safe: an unreadable or schema-less DB (no task_comments table)
     yields an EMPTY set, i.e. no suppression, preserving pre-existing
     behavior for that board. An unreadable comments table must not silently
     silence genuine escalations.
     """
-    if not db_path.is_file():
-        return set()
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        rows = conn.execute(
-            "SELECT DISTINCT task_id FROM task_comments "
-            "WHERE body LIKE ?",
-            ("%PARKED: awaiting-absent-seat%",),
-        ).fetchall()
-        conn.close()
-        return {r[0] for r in rows}
-    except sqlite3.Error:
-        return set()
+    return set(_parked_markers(db_path))
 
 
 def get_blocked_tasks(db_path: Path) -> list[dict]:
@@ -1449,35 +1493,34 @@ def main(argv: list[str] | None = None):
         boards_scanned += 1
 
         tasks = get_blocked_tasks(db_path)
-        # Parked-source exclusion (kanban t_5956838b): identify sources parked
-        # as awaiting-absent-seat so they are skipped with a counter, not
-        # escalated. The raw query returns everything; exclusion + counting
-        # lives here so --dry-run proves it both ways.
-        parked_ids = set()
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            rows = conn.execute(
-                "SELECT DISTINCT task_id FROM task_comments "
-                "WHERE body LIKE ?",
-                ("%PARKED: awaiting-absent-seat%",),
-            ).fetchall()
-            conn.close()
-            parked_ids = {r[0] for r in rows}
-        except sqlite3.Error:
-            pass  # unreadable/missing comments table -> empty set, no suppression
+        # Parked-source exclusion (kanban t_5956838b / t_7024c661): identify
+        # sources parked awaiting-absent-seat OR by master-orchestrator load-shed
+        # so they are skipped with a counter, not escalated. The raw query
+        # returns everything; exclusion + counting lives here so --dry-run
+        # proves it both ways. Fail-safe (empty dict on unreadable/missing
+        # comments table) => no suppression, preserved by _parked_markers().
+        parked_by_marker = _parked_markers(db_path)
         for task in tasks:
             if is_escalation_task(board, task):
                 skipped_escalation_tasks += 1
                 continue
 
             task_id = task["id"]
-            if task_id in parked_ids:
+            if task_id in parked_by_marker:
                 skipped_parked += 1
-                print(
-                    f"SKIP parked source {board}/{task_id}: "
-                    f"awaiting-absent-seat (parked, non-dispatchable)",
-                    file=sys.stderr,
-                )
+                if parked_by_marker[task_id] == "master-orchestrator":
+                    print(
+                        f"SKIP parked source {board}/{task_id}: "
+                        f"master-orchestrator load-shed (DO-NOT-AUTO-UNBLOCK, "
+                        f"non-dispatchable)",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"SKIP parked source {board}/{task_id}: "
+                        f"awaiting-absent-seat (parked, non-dispatchable)",
+                        file=sys.stderr,
+                    )
                 continue
 
             task_created = task["created_at"]

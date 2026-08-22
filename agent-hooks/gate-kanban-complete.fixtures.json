@@ -1261,57 +1261,28 @@
     "description": "BLOCK: paired negative for t_90c5e1e0; the 'paper-sleeve route' phrase attached to concrete apps/web route/page work with app-surface changed_files must still require running-app VERIFY_PASS."
   },
   {
-    "name": "terminal-a-approve-done-stays-terminal-allows",
-    "task_id": "t_terminal_a_approve_done_fixture",
+    "name": "t_c5cfa962-articleless-route-impl-dispatch-allows",
+    "task_id": "t_c5cfa962_fixture",
     "expected": "allow",
-    "terminal": {
-      "status": "done",
-      "approval": true,
-      "reopen": false,
-      "expected_verdict": "terminal"
-    },
-    "title": "Approve->done terminal: approved landed card stays terminal without re-open",
-    "body": "A card that carries an approval marker (anchored REVIEW_VERDICT=APPROVED, or a landed kanban_complete run) is TERMINAL once its status is done/archived. This card is done with an approval marker; a redundant completion or a later completion attempt must remain accepted WITHOUT any reviewer re-open comment. No frontend/web route, page, component, middleware, layout, tRPC, browser, or app runtime surface is touched.",
-    "summary": "approve->done terminal: card is done with approval marker; completion accepted without re-open; no running app VERIFY_PASS supplied because this maps to the terminal-by-approve verdict lane",
-    "metadata": {
-      "changed_files": []
-    },
-    "description": "ALLOW+TERMINAL (a): an approved, landed card whose status is done/archived must classify as TERMINAL via classify_terminal_transition — accepted without any reviewer re-open. This is the required fixture (a) from the A3 packet; it asserts the exact terminal-by-approve verdict signal from the classifier."
+    "expected_class": "not_web",
+    "title": "REVIEW: cron stale-direct WARN diagnosis",
+    "body": "Diagnose the stale-direct WARN on the cron row. If a code/config fix is needed, route implementation + independent review; do not restart gateway. This is a backend/infra diagnosis and review card.",
+    "summary": "backend/infra diagnosis and review only; cron row evidence recorded; no running app VERIFY_PASS supplied",
+    "description": "ALLOW: real t_c5cfa962 regression (repro t_431e9b88) \u2014 the article-less dispatch idiom 'route implementation + independent review' is a dispatch verb (direct the fix to a builder), NOT an app-route noun. Without the negation, APP_IMPL_PATTERNS verb-first matched 'fix ... route' and wedged a backend diagnosis card as web. Paired negative below proves the same wording attached to concrete apps/web route-component work still blocks."
   },
   {
-    "name": "terminal-b-done-blocked-no-reopen-rejected-blocks",
-    "task_id": "t_terminal_b_done_blocked_no_reopen_fixture",
-    "expected": "allow",
-    "terminal": {
-      "status": "blocked",
-      "approval": true,
-      "reopen": false,
-      "expected_verdict": "regress_blocked"
-    },
-    "title": "Done->blocked without a reviewer re-open comment is rejected/flagged",
-    "body": "A card that carries an approval marker (anchored REVIEW_VERDICT=APPROVED, or a landed kanban_complete run) is TERMINAL once its status is done/archived. This approved landed card is later transitioned to blocked WITHOUT any reviewer re-open comment. The transition must be rejected/flagged with reviewer+reason (the reviewer who approved, plus the reason recorded on the card). No frontend/web route, page, component, middleware, layout, tRPC, browser, or app runtime surface is touched.",
-    "summary": "done->blocked WITHOUT reviewer re-open comment: silent relapse rejected/flagged (requires reviewer+reason); no running app VERIFY_PASS supplied because this maps to the terminal-by-approve verdict lane",
+    "name": "t_c5cfa962-paired-frontend-articleless-route-impl-negative-blocks",
+    "task_id": "t_c5cfa962_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Implement frontend stale-direct route component",
+    "body": "Implement apps/web React route component and page layout for the stale-direct fix dashboard. If a code/config fix is needed, route implementation + independent review; do not restart gateway. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "concrete apps/web route implementation; no running app VERIFY_PASS supplied",
     "metadata": {
-      "changed_files": []
+      "changed_files": [
+        "apps/web/src/app/stale-direct/page.tsx"
+      ]
     },
-    "description": "BLOCK+TERMINAL (b): an approved landed card transitioned out of done/archived to blocked without a reviewer re-open comment must classify as REGRESS_BLOCKED via classify_terminal_transition — rejected/flagged (requires reviewer+reason). This is the required fixture (b) from the A3 packet; it asserts the exact rejection/flag signal from the classifier."
-  },
-  {
-    "name": "terminal-c-done-blocked-with-reopen-allowed",
-    "task_id": "t_terminal_c_done_blocked_with_reopen_fixture",
-    "expected": "allow",
-    "terminal": {
-      "status": "blocked",
-      "approval": true,
-      "reopen": true,
-      "expected_verdict": "regress_allowed"
-    },
-    "title": "Done->blocked WITH a reviewer re-open comment matching re-open|reopen|re-blocked is allowed",
-    "body": "A card that carries an approval marker (anchored REVIEW_VERDICT=APPROVED, or a landed kanban_complete run) is TERMINAL once its status is done/archived. This approved landed card is later transitioned to blocked WITH a reviewer re-open comment matching the regex re-open|reopen|re-blocked, timestamped after the latest landed event. The transition is allowed. No frontend/web route, page, component, middleware, layout, tRPC, browser, or app runtime surface is touched.",
-    "summary": "done->blocked WITH reviewer re-open comment (re-open|reopen|re-blocked) after the latest landed event: transition allowed; no running app VERIFY_PASS supplied because this maps to the terminal-by-approve verdict lane",
-    "metadata": {
-      "changed_files": []
-    },
-    "description": "ALLOW+TERMINAL (c): an approved landed card transitioned out of done/archived to blocked WITH a reviewer re-open comment matching re-open|reopen|re-blocked must classify as REGRESS_ALLOWED via classify_terminal_transition. This is the required fixture (c) from the A3 packet; it asserts the exact allowed-transition signal from the classifier."
+    "description": "BLOCK: paired negative for t_c5cfa962 \u2014 the SAME article-less 'route implementation + independent review' dispatch wording attached to concrete apps/web route/page work with app-surface changed_files must still require running-app VERIFY_PASS."
   }
 ]

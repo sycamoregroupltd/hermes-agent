@@ -50,18 +50,11 @@ dbs=()
 if [ -n "$board" ]; then dbs=("$kanban_root/kanban/boards/$board/kanban.db"); else
   for d in "$kanban_root"/kanban/boards/*/kanban.db; do dbs+=("$d"); done
 fi
-title=""; body=""; status=""
+title=""; body=""
 for db in "${dbs[@]}"; do
   [ -f "$db" ] || continue
-  row=$(sqlite3 -separator $'\x1f' "$db" "SELECT status, title, COALESCE(body,'') FROM tasks WHERE id='$tid'" 2>/dev/null)
-  if [ -n "$row" ]; then
-    status="${row%%$'\x1f'*}"
-    rest="${row#*$'\x1f'}"
-    title="${rest%%$'\x1f'*}"
-    body="${rest#*$'\x1f'}"
-    dbfound="$db"
-    break
-  fi
+  row=$(sqlite3 -separator $'\x1f' "$db" "SELECT title, COALESCE(body,'') FROM tasks WHERE id='$tid'" 2>/dev/null)
+  [ -n "$row" ] && { title="${row%%$'\x1f'*}"; body="${row#*$'\x1f'}"; dbfound="$db"; break; }
 done
 [ -n "$title$body" ] || allow   # task not found -> fail open
 
@@ -130,18 +123,6 @@ class=$(printf '%s\n---BODY---\n%s\n---COMMENTS---\n%s\n---INPUT---\n%s' "$title
 if [[ "$title${body}${comments}${input_text}" =~ ([Gg]oal[-_ ]?[Jj]udge|[Gg]oal[-_ ]?mode).*([Gg]emini|[N]ot[Ff]ound|provider[-_ ]?error) ]]; then
   if [ "$class" != "readonly_nonapp" ]; then
     goal_judge_provider_error_block "Task title/body/comments indicate goal-judge provider error for task $tid"
-  fi
-fi
-# Terminal-by-approve lock-gate (t_6334ff49). A card already in done/archived
-# that carries an approval marker (anchored REVIEW_VERDICT=APPROVED, or a landed
-# kanban_complete run) is TERMINAL. Allow (fail-open) so a redundant completion
-# cannot silently re-gate or regress an already-landed approved card. This is the
-# hook-gateable "kanban_complete (done)" half of the lock-gate; the
-# dispatcher-level done->blocked transition guard is upstream-PR-only (G2).
-# Preserves non-approved behavior: no approval marker -> no terminal override.
-if [ "$status" = "done" ] || [ "$status" = "archived" ]; then
-  if [ "$(printf '%s' "$comments" | python3 "$classifier" --has-approval 2>/dev/null || true)" = "1" ]; then
-    allow
   fi
 fi
 [ "$class" = "readonly_nonapp" ] && allow
