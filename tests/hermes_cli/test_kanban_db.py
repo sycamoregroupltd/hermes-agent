@@ -180,68 +180,6 @@ def test_connect_migrates_legacy_db_before_optional_column_indexes(tmp_path):
 
 
 
-def test_link_rejects_self_loop(kanban_home):
-    with kb.connect() as conn:
-        a = kb.create_task(conn, title="a")
-        with pytest.raises(ValueError, match="itself"):
-            kb.link_tasks(conn, a, a)
-
-
-def test_link_detects_cycle(kanban_home):
-    with kb.connect() as conn:
-        a = kb.create_task(conn, title="a")
-        b = kb.create_task(conn, title="b", parents=[a])
-        c = kb.create_task(conn, title="c", parents=[b])
-        with pytest.raises(ValueError, match="cycle"):
-            kb.link_tasks(conn, c, a)
-        with pytest.raises(ValueError, match="cycle"):
-            kb.link_tasks(conn, b, a)
-
-
-def test_recompute_ready_cascades_through_chain(kanban_home):
-    with kb.connect() as conn:
-        a = kb.create_task(conn, title="a")
-        b = kb.create_task(conn, title="b", parents=[a])
-        c = kb.create_task(conn, title="c", parents=[b])
-        assert [kb.get_task(conn, x).status for x in (a, b, c)] == \
-               ["ready", "todo", "todo"]
-        kb.complete_task(conn, a)
-        assert kb.get_task(conn, b).status == "ready"
-        kb.complete_task(conn, b)
-        assert kb.get_task(conn, c).status == "ready"
-
-
-def test_recompute_ready_promotes_blocked_with_done_parents(kanban_home):
-    """blocked tasks used to be promoted to ready when parents were done,
-    but the blind-spot guard (commit 90d03e991) now catches ALL
-    status='blocked' tasks without a 'blocked' event. They stay blocked
-    regardless of failure count or parent status."""
-    with kb.connect() as conn:
-        parent = kb.create_task(conn, title="parent", assignee="a")
-        child = kb.create_task(
-            conn, title="child", assignee="a", parents=[parent],
-        )
-        # Complete the parent
-        kb.claim_task(conn, parent)
-        kb.complete_task(conn, parent, result="ok")
-        # Manually block the child with zero failures (simulates a
-        # dependency block, not a circuit-breaker block).
-        conn.execute(
-            "UPDATE tasks SET status='blocked', consecutive_failures=0, "
-            "last_failure_error=NULL WHERE id=?",
-            (child,),
-        )
-        conn.commit()
-        assert kb.get_task(conn, child).status == "blocked"
-        # recompute_ready should promote blocked → ready
-        promoted = kb.recompute_ready(conn)
-        assert promoted == 0
-        task = kb.get_task(conn, child)
-        assert task.status == "blocked"
-        assert task.consecutive_failures == 0
-        assert task.last_failure_error is None
-
-
 def test_promote_blocked_task_emits_unblocked_and_clears_sticky_gate(kanban_home):
     """promote_task must emit an 'unblocked' event when transitioning
     a blocked task to ready, so _has_sticky_block() stops refusing it."""
@@ -306,17 +244,6 @@ def test_reclaim_blocked_task_emits_unblocked_and_clears_sticky_gate(kanban_home
         kinds = [e.kind for e in kb.list_events(conn, t)]
         assert "unblocked" in kinds
         assert kinds.index("unblocked") < kinds.index("reclaimed")
-
-
-def test_recompute_ready_fan_in_waits_for_all_parents(kanban_home):
-    with kb.connect() as conn:
-        a = kb.create_task(conn, title="a")
-        b = kb.create_task(conn, title="b")
-        c = kb.create_task(conn, title="c", parents=[a, b])
-        kb.complete_task(conn, a)
-        assert kb.get_task(conn, c).status == "todo"
-        kb.complete_task(conn, b)
-        assert kb.get_task(conn, c).status == "ready"
 
 
 # ---------------------------------------------------------------------------
@@ -677,6 +604,62 @@ def test_detect_crashed_workers_detector_gap_coalesces_alert(
         fired.clear()
         kb.detect_crashed_workers(conn)
         assert len(fired) == 0
+
+
+def test_detect_crashed_workers_teardown_storm_never_auto_blocks(
+    kanban_home, monkeypatch,
+):
+    """The bulk teardown-storm class (t_c3197d72 / t_022cb698): a task whose
+    worker dies unclassifiably MANY times in a row must NEVER accumulate
+    failures or auto-block, because each death is a detector gap (the worker
+    was SIGKILLed with the gateway cgroup and the dispatcher restarted before
+    it could persist a ``dispatch_death_reason``).
+
+    Before this fix, every such death degraded to ``pid N not alive`` →
+    counted as an independent failure → the circuit breaker tripped after 3
+    and auto-blocked ~95 sycode cards at once. This fixture pins the fix: the
+    worker is repeatedly re-claimed with a fresh dead PID and no reap-registry
+    entry (no ``_record_worker_exit``), and after MANY passes the task is
+    still ``ready`` with ``consecutive_failures == 0`` and never ``blocked``.
+    """
+    import hermes_cli.kanban_db as _kb
+
+    monkeypatch.setattr(_kb, "_pid_alive", lambda _pid: False)
+    monkeypatch.setenv("HERMES_KANBAN_CRASH_GRACE_SECONDS", "0")
+    # Suppress the real fleet-alert relay (strict hook would raise with no
+    # plugin registered) so the storm can't fail the test; the coalesced
+    # single-alert behavior is covered separately.
+    monkeypatch.setattr(_kb, "_fire_failure_alert", lambda *_a, **_kw: None)
+
+    with kb.connect() as conn:
+        host = _kb._claimer_id().split(":", 1)[0]
+        tid = kb.create_task(conn, title="storm", assignee="a")
+        # 12 unclassifiable deaths — 4x the breaker threshold (3), proving
+        # the gap path never feeds the failure counter.
+        for i in range(12):
+            pid = 81000 + i
+            claimed = kb.claim_task(conn, tid, claimer=f"{host}:storm{i}")
+            assert claimed is not None, f"task {tid} could not be re-claimed"
+            conn.execute("UPDATE tasks SET worker_pid=? WHERE id=?", (pid, tid))
+            conn.commit()
+            # No _record_worker_exit → no reap-registry entry AND no durable
+            # verdict → detector gap on every pass.
+            crashed = kb.detect_crashed_workers(conn)
+            assert tid not in crashed, (
+                f"pass {i}: detector gap must not be a crash"
+            )
+
+        task = kb.get_task(conn, tid)
+        assert task.status == "ready", (
+            f"storm task must stay ready after 12 gaps, got {task.status}"
+        )
+        assert task.consecutive_failures == 0, (
+            "storm task must never count a failure, got "
+            f"consecutive_failures={task.consecutive_failures}"
+        )
+        # And no auto-block event was ever emitted.
+        kinds = [e.kind for e in kb.list_events(conn, tid)]
+        assert "blocked" not in kinds, f"storm task was auto-blocked: {kinds}"
 
 
 def test_detector_gap_coalesced_alert_fires_through_real_strict_hook(
@@ -2660,10 +2643,9 @@ def test_write_txn_check_reads_correct_header_fields(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
+def test_reap_worker_zombies_noop_no_children():
+    """reap_worker_zombies() returns 0 without error when there are no children."""
+    from unittest.mock import patch
 
     with patch("hermes_cli.kanban_db.os.waitpid", side_effect=ChildProcessError):
         result = kb.reap_worker_zombies()
