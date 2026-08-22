@@ -293,6 +293,76 @@ def _get_default_hermes_home() -> Path:
     return get_default_hermes_root()
 
 
+# Directory (under the hermes root) where full-home backup snapshots live.
+# ``hermes update`` and fleet operators write timestamped snapshots here, each
+# holding ``profiles/<name>/config.yaml`` for every profile that existed at
+# snapshot time. Used as the restore source when a profile is re-created
+# without a config.yaml (see _restore_config_on_recreate).
+_BACKUPS_DIR_NAME = "backups"
+
+
+def _iter_backup_config_candidates(
+    canon: str,
+) -> list[tuple[Path, float]]:
+    """Return (snapshot_config, mtime) for every backup snapshot of ``canon``.
+
+    Scans ``<default_home>/backups/*/profiles/<canon>/config.yaml`` (and the
+    same layout under ``<default_home>/backups/<snapshot>/profiles/`` for
+    pre-update-style directory snapshots). Sorted newest-first by mtime.
+    Best-effort: a missing/unreadable snapshot is skipped, never raised.
+    """
+    from hermes_constants import get_default_hermes_root
+
+    root = get_default_hermes_root()
+    backups_root = root / _BACKUPS_DIR_NAME
+    if not backups_root.is_dir():
+        return []
+    out: list[tuple[Path, float]] = []
+    for snap_dir in backups_root.iterdir():
+        if not snap_dir.is_dir():
+            continue
+        candidate = snap_dir / "profiles" / canon / "config.yaml"
+        if not candidate.is_file():
+            continue
+        try:
+            out.append((candidate, candidate.stat().st_mtime))
+        except OSError:
+            continue
+    out.sort(key=lambda pair: pair[1], reverse=True)
+    return out
+
+
+def _restore_config_on_recreate(profile_dir: Path, canon: str) -> bool:
+    """Restore a known-good config.yaml when re-creating a profile.
+
+    A dispatcher/gateway/relay process sometimes re-creates a profile dir on
+    demand (fresh ``create_profile`` with no clone). The fresh path seeds
+    ``SOUL.md``, ``.env`` and subdirectories but intentionally does NOT write
+    ``config.yaml`` — so a seat that relied on its profile's own config (MCP
+    servers, ``platform_toolsets``, model pin) silently wakes tool-less. If a
+    previous snapshot of this profile's ``config.yaml`` exists in the hermes
+    backup store, restore the most recent one so the re-created profile keeps
+    its configured surface.
+
+    Returns True when a config was restored (callers log/verify), False when
+    there is nothing to restore. Never raises — a missing/corrupt backup must
+    not block profile creation.
+    """
+    candidates = _iter_backup_config_candidates(canon)
+    if not candidates:
+        return False
+    try:
+        shutil.copy2(candidates[0][0], profile_dir / "config.yaml")
+    except OSError:
+        return False
+    try:
+        os.chmod(str(profile_dir / "config.yaml"), 0o600)
+    except OSError:
+        pass  # best-effort — profile creation must not fail over mode bits
+    return True
+
+
+
 def _get_active_profile_path() -> Path:
     """Return the path to the sticky active_profile file."""
     return _get_default_hermes_home() / "active_profile"
@@ -1208,6 +1278,23 @@ def create_profile(
             soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
         except Exception:
             pass  # best-effort — don't fail profile creation over this
+
+    # Restore a known-good config.yaml when re-creating a profile.
+    #
+    # A dispatcher/gateway/relay process can re-create a profile dir on demand
+    # via the fresh (non-clone) path above, which seeds SOUL.md/.env/subdirs but
+    # NOT config.yaml — so a seat that relied on its own config (MCP servers,
+    # platform_toolsets, model pin) silently wakes tool-less. If a previous
+    # snapshot of this profile's config.yaml exists in the hermes backup store,
+    # restore it so the re-created profile keeps its configured surface.
+    # Reversible: delete the restored file to revert to a fresh profile.
+    if not (profile_dir / "config.yaml").exists():
+        if _restore_config_on_recreate(profile_dir, canon):
+            logger.info(
+                "Restored config.yaml for profile '%s' from backup snapshot "
+                "(profile dir re-created without a config).",
+                canon,
+            )
 
     # Write the opt-out marker so seed_profile_skills() and `hermes update`'s
     # all-profile sync loop both skip this profile for bundled-skill seeding.

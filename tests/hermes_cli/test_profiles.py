@@ -152,6 +152,68 @@ class TestCreateProfile:
         assert (profile_dir / "SOUL.md").read_text() == "Be helpful."
 
 
+    def test_fresh_recreate_restores_config_from_backup(self, profile_env):
+        """A re-created profile dir must restore its known-good config.yaml.
+
+        Regression for the arena seat wipe: a dispatcher/gateway/relay process
+        re-creates profile dirs on demand via the fresh (non-clone) create path,
+        which seeds SOUL.md/.env but NOT config.yaml — dropping MCP servers,
+        platform_toolsets, and the model pin. The fix restores the most recent
+        backup snapshot of the profile's config.yaml on create.
+        """
+        from hermes_cli.profiles import _restore_config_on_recreate
+
+        tmp_path = profile_env
+        default_home = tmp_path / ".hermes"
+        # A backup snapshot of the profile exists (as the arena's known-good
+        # trader config does under ~/.hermes/backups/<snapshot>/profiles/<name>/).
+        snap = default_home / "backups" / "native-0.20-20260814T123106Z" / "profiles" / "trader-1"
+        snap.mkdir(parents=True)
+        known_good = (
+            "model:\n"
+            "  provider: nous\n"
+            "  default: deepseek/deepseek-v4-flash-0731\n"
+            "toolsets:\n"
+            "  - terminal\n"
+            "  - file\n"
+            "  - skills\n"
+            "  - kanban\n"
+            "mcp_servers:\n"
+            "  sycode-market:\n"
+            "    url: http://127.0.0.1:8646/mcp\n"
+            "    enabled: true\n"
+            "platform_toolsets:\n"
+            "  cli:\n"
+            "    - file\n"
+            "    - kanban\n"
+        )
+        (snap / "config.yaml").write_text(known_good)
+
+        # Fresh create (no clone) — the exact path that wiped config.yaml.
+        profile_dir = create_profile("trader-1", no_alias=True)
+        assert (profile_dir / "config.yaml").exists(), (
+            "re-created profile must restore config.yaml from the backup snapshot"
+        )
+        restored = yaml.safe_load((profile_dir / "config.yaml").read_text())
+        assert restored["mcp_servers"]["sycode-market"]["url"] == "http://127.0.0.1:8646/mcp"
+        assert restored["platform_toolsets"]["cli"] == ["file", "kanban"]
+
+        # The helper itself agrees (idempotent, no backup -> False).
+        assert _restore_config_on_recreate(profile_dir, "trader-1") is True
+
+    def test_fresh_recreate_without_backup_stays_tool_less(self, profile_env):
+        """No backup snapshot -> fresh profile keeps the tool-less default.
+
+        A brand-new profile name (or one that was never backed up) must NOT
+        gain a config.yaml from nowhere; only an actual prior snapshot is a
+        legitimate restore source.
+        """
+        tmp_path = profile_env
+        profile_dir = create_profile("brandnew", no_alias=True)
+        assert not (profile_dir / "config.yaml").exists()
+        assert (profile_dir / "SOUL.md").exists()
+        assert (profile_dir / ".env").exists()
+
 
 
 
