@@ -443,6 +443,11 @@ class TestBaseExceptionThroughOwnerFencedFlow:
             patch("agent.secret_scope.reset_secret_scope"),
             patch("cron.scheduler.run_job", side_effect=run_side_effect),
             patch("cron.scheduler.heartbeat_fire_claim", return_value=True),
+            # The job dict is a fake not present in any store; the pre-run
+            # runnability fence (t_d0104339) would see no claim and abort
+            # before run_job. This class tests the BaseException path only,
+            # so fence the fake world like the rest of the test.
+            patch("cron.scheduler.fire_claim_fence"),
         )
 
     def test_cancelled_error_records_failure_and_reraises(self):
@@ -450,8 +455,8 @@ class TestBaseExceptionThroughOwnerFencedFlow:
 
         import cron.scheduler as sched
 
-        p1, p2, p3, p4, p5, p6 = self._patches(asyncio.CancelledError())
-        with p1, p2, p3, p4, p5, p6, \
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(asyncio.CancelledError())
+        with p1, p2, p3, p4, p5, p6, p7, \
              patch("cron.scheduler.mark_job_run", return_value=True) as mock_mark, \
              patch("cron.scheduler.finish_execution") as mock_finish:
             try:
@@ -469,8 +474,8 @@ class TestBaseExceptionThroughOwnerFencedFlow:
     def test_keyboard_interrupt_records_failure_and_reraises(self):
         import cron.scheduler as sched
 
-        p1, p2, p3, p4, p5, p6 = self._patches(KeyboardInterrupt())
-        with p1, p2, p3, p4, p5, p6, \
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(KeyboardInterrupt())
+        with p1, p2, p3, p4, p5, p6, p7, \
              patch("cron.scheduler.mark_job_run", return_value=True) as mock_mark, \
              patch("cron.scheduler.finish_execution"):
             try:
@@ -490,8 +495,8 @@ class TestBaseExceptionThroughOwnerFencedFlow:
 
         import cron.scheduler as sched
 
-        p1, p2, p3, p4, p5, p6 = self._patches(asyncio.CancelledError())
-        with p1, p2, p3, p4, p5, p6, \
+        p1, p2, p3, p4, p5, p6, p7 = self._patches(asyncio.CancelledError())
+        with p1, p2, p3, p4, p5, p6, p7, \
              patch("cron.scheduler.mark_job_run", return_value=False) as mock_mark, \
              patch("cron.scheduler.finish_execution"):
             try:
