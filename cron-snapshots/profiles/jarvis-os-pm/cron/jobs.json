@@ -235,7 +235,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 1
     },
     {
       "id": "986e25e53c03",
@@ -440,7 +441,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 11
+      "failure_streak": 22
     },
     {
       "id": "4dad2695cdad",
@@ -477,7 +478,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 15
+      "failure_streak": 0
     }
   ]
 }

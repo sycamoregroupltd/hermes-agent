@@ -93,7 +93,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -124,7 +125,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -204,7 +206,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -235,7 +238,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -728,7 +732,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -872,7 +877,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": "/home/frank/.hermes/scripts"
+      "workdir": "/home/frank/.hermes/scripts",
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1323,7 +1329,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1566,7 +1573,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -2228,7 +2236,8 @@
         "sycode-codebase"
       ],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2502,7 +2511,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2569,7 +2579,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -2988,7 +2999,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3401,7 +3413,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3506,7 +3519,8 @@
         "gap-plugging"
       ],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3981,7 +3995,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4279,7 +4294,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4655,7 +4671,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 6
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4755,7 +4771,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 4
+      "failure_streak": 8
     },
     {
       "base_url": null,
@@ -5417,7 +5433,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5483,7 +5500,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6023,7 +6041,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6850,7 +6869,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 1
+      "failure_streak": 5
     },
     {
       "base_url": null,
@@ -6886,7 +6905,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/scripts",
-      "failure_streak": 4
+      "failure_streak": 9
     },
     {
       "base_url": null,
@@ -6922,7 +6941,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7212,7 +7232,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 17
+      "failure_streak": 32
     },
     {
       "base_url": null,
@@ -7690,7 +7710,8 @@
       "deliver": "telegram",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     }
   ]
 }

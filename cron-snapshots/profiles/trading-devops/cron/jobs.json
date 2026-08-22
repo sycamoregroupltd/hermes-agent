@@ -102,7 +102,7 @@
         "terminal"
       ],
       "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/scripts",
-      "failure_streak": 6
+      "failure_streak": 0
     },
     {
       "id": "fceaac399fab",
@@ -213,7 +213,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 1
+      "failure_streak": 0
     },
     {
       "id": "5be00afb4791",
@@ -324,7 +324,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 3
+      "failure_streak": 0
     },
     {
       "id": "0adadec2b5c7",

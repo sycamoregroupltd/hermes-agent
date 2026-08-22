@@ -32,7 +32,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/sycode-wt/candle-full-universe"
+      "workdir": "/home/frank/sycode-wt/candle-full-universe",
+      "failure_streak": 1
     },
     {
       "id": "493f2d7f179b",
@@ -103,7 +104,8 @@
         "file",
         "skills"
       ],
-      "workdir": "/home/frank"
+      "workdir": "/home/frank",
+      "failure_streak": 4
     },
     {
       "id": "327083e3a0b0",
