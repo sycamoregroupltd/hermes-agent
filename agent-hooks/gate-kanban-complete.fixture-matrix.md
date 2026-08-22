@@ -28,10 +28,10 @@ Tests should assert two layers when `expected_class` is present:
 | `t_17b2b7ed-e04df764-compound-route-allows` / `t_17b2b7ed-compound-route-nouns-allows` | Live-shaped IMPLEMENT (PM-reroute) verdict-router B1-B4 backend CLI/SQLite card, plus titles containing compound nouns router / reroute / api-router / message_router / trade-route; changed_files are scripts/*.py | `not_web` | ordinary command/unittest evidence; not frontend `verify-running-app.sh` | `allow` when script/unittest evidence is supplied | Real regression: APP_IMPL_PATTERNS[0] noun group had no leading boundary, so verb implement/fix/update plus substring route inside compound nouns classified backend cards as web. |
 | `t_17b2b7ed-paired-standalone-route-negative-blocks` / `t_17b2b7ed-paired-standalone-routes-negative-blocks` | Concrete Implement apps/web dashboard route component with React and standalone-word Implement routes for the customer checkout flow | `web` | existing frontend running-app verification gate | `block` until real running-app VERIFY_PASS evidence is supplied | Paired negatives for the noun-boundary fix; real standalone route/routes app-impl work must still require running-app VERIFY_PASS. |
 
-## Terminal-by-approve lock-gate (t_6334ff49)
+## Terminal-by-approve lock-gate (t_6334ff49 / t_a7d76178)
 
 Independent of the web/readonly_nonapp/not_web task-type classification above, the
-classifier also exposes a deterministic terminal-by-approve verdict via
+classifier exposes a deterministic terminal-by-approve verdict via
 `classify_terminal_transition` / `gate-kanban-complete-classifier.py --terminal`:
 
 | Fixture | current_status | approval marker | reviewer re-open after landed | Expected verdict | Why |
@@ -49,6 +49,23 @@ redundant completion cannot silently re-gate or regress it. The anchored
 approval detection (fenced-code-aware) and the re-open regex are mirrored from
 `scripts/kanban-approve-block-lockgate.py`. The full dispatcher-level
 done→blocked transition guard is upstream-PR-only (G2).
+
+The A3 packet also requires three corpus fixtures (a/b/c), asserted by the
+selftest fixture-corpus loop via each fixture's `terminal` sub-object
+`{status, approval, reopen, expected_verdict}`:
+
+| Fixture | `terminal` status | approval marker | reviewer re-open | Expected verdict | Why |
+|---|---|---|---|---|---|
+| `terminal-a-approve-done-stays-terminal-allows` | `done` | yes | no | `terminal` | (a) approve→done stays terminal; accepted without re-open |
+| `terminal-b-done-blocked-no-reopen-rejected-blocks` | `blocked` | yes | no | `regress_blocked` | (b) done→blocked WITHOUT a reviewer re-open is rejected/flagged (reviewer+reason) |
+| `terminal-c-done-blocked-with-reopen-allowed` | `blocked` | yes | yes | `regress_allowed` | (c) done→blocked WITH a reviewer re-open matching `re-open\|reopen\|re-blocked` is allowed |
+
+The web-gate layer for these fixtures is only the hook `expected: allow` (the cards
+touch no frontend/web/app surface, so the hook allows and no `expected_class` is
+asserted); the exact terminal rejection/allow signal lives in the
+`terminal.expected_verdict`. The maintenance-contract block in the selftest asserts
+all three required fixtures are present with the exact verdict, so the terminal
+corpus cannot silently lose coverage.
 
 ## Assertion names tests should use
 
