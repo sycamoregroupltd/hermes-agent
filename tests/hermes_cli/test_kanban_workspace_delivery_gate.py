@@ -159,3 +159,89 @@ def test_non_git_dir_keeps_existing_completion_semantics(
     with kb.connect() as conn:
         task_id = create_git_task(conn, directory, kind="dir")
         assert kb.complete_task(conn, task_id, summary="non-git artifact") is True
+
+
+def test_discard_wip_stashes_dirty_work_records_what_and_completes(
+    board: Path, pushed_repo: Path
+) -> None:
+    # Dirty tracked + untracked work, including a secret-named file whose
+    # CONTENTS must never reach the board payload.
+    (pushed_repo / "tracked.txt").write_text("changed on branch\n", encoding="utf-8")
+    secret_name = "credentials.env"
+    secret_contents = "SUPER-SECRET-VALUE-7f3a9c"
+    (pushed_repo / secret_name).write_text(secret_contents + "\n", encoding="utf-8")
+
+    with kb.connect() as conn:
+        task_id = create_git_task(conn, pushed_repo)
+        assert kb.complete_task(
+            conn, task_id, summary="abandoned approach", discard_wip=True
+        ) is True
+        assert kb.get_task(conn, task_id).status == "done"
+
+        event = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? "
+            "AND kind = 'workspace_wip_discarded' "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        assert event is not None, "discard trail event must be recorded"
+        payload = json.loads(event["payload"])
+        assert payload["discarded"] is True
+        assert payload.get("stash_ref")
+        assert set(payload["discarded_paths"]) == {"tracked.txt", secret_name}
+        # The board records WHAT was discarded (path names + stash ref), never
+        # file contents.
+        assert secret_contents not in event["payload"]
+
+    # The stash actually set the work aside (recoverable) and left the tree clean.
+    assert (pushed_repo / "tracked.txt").read_text(encoding="utf-8") == "initial\n"
+    assert not (pushed_repo / secret_name).exists()
+    stash_list = git(pushed_repo, "stash", "list")
+    assert "kanban discard" in stash_list.stdout
+
+
+def test_discard_wip_resets_unpushed_commits_records_ref_and_completes(
+    board: Path, pushed_repo: Path
+) -> None:
+    (pushed_repo / "tracked.txt").write_text("local only\n", encoding="utf-8")
+    git(pushed_repo, "add", "tracked.txt")
+    git(pushed_repo, "commit", "-m", "abandoned local commit")
+
+    with kb.connect() as conn:
+        task_id = create_git_task(conn, pushed_repo)
+        assert kb.complete_task(
+            conn, task_id, summary="abandoned", discard_wip=True
+        ) is True
+        assert kb.get_task(conn, task_id).status == "done"
+
+        event = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? "
+            "AND kind = 'workspace_wip_discarded' "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        assert event is not None
+        payload = json.loads(event["payload"])
+        assert payload["discarded"] is True
+        assert payload.get("backup_ref") == f"refs/kanban-discard/{task_id}"
+        assert len(payload["unpushed_commits"]) == 1
+
+    # The unpushed commit is preserved under the backup ref and the branch is
+    # back on its pushed upstream.
+    assert git(pushed_repo, "rev-parse", f"refs/kanban-discard/{task_id}").returncode == 0
+    assert (pushed_repo / "tracked.txt").read_text(encoding="utf-8") == "initial\n"
+
+
+def test_discard_wip_cannot_override_unfixable_state(
+    board: Path, pushed_repo: Path
+) -> None:
+    # Detached HEAD is not fixable by discarding WIP: the override must still
+    # block and record the unfixable issue.
+    git(pushed_repo, "checkout", "--detach")
+    with kb.connect() as conn:
+        task_id = create_git_task(conn, pushed_repo)
+        with pytest.raises(kb.WorkspaceDeliveryError) as caught:
+            kb.complete_task(conn, task_id, summary="detached", discard_wip=True)
+        assert caught.value.discarded is True
+        assert caught.value.issues == [{"code": "detached_head"}]
+        assert kb.get_task(conn, task_id).status == "triage"
