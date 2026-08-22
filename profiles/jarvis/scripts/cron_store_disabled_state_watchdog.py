@@ -8,7 +8,11 @@ paused job is still durably paused; prints + exits 1 on a regression, which
 the cron scheduler delivers as an alert.
 
 A reviewed scheduler disable is only GREEN once a ticker cycle has passed
-and this sweep still reports the job paused with no new run after the pause.
+and this sweep still reports the job paused with no run CLAIMED after the
+pause (t_24a685ed). The verifier keys the regression test on a run's
+claimed_at from the executions ledger, not last_run_at — so a run that was
+in-flight at pause time (claimed before paused_at, finished after) is benign
+and does NOT alert. `--selftest` exercises that in-flight-vs-regressed rule.
 """
 import subprocess
 import sys
@@ -18,7 +22,20 @@ VERIFIER = "/home/frank/.hermes/scripts/cron_store_mutation_verifier.py"
 STORE_GLOB = "/home/frank/.hermes/profiles/*/cron/jobs.json"
 
 
+def run_selftest() -> int:
+    """Delegate to the verifier's --selftest fixture (in-flight vs regressed)."""
+    r = subprocess.run(
+        [sys.executable, VERIFIER, "--selftest"],
+        capture_output=True, text=True,
+    )
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    return r.returncode
+
+
 def main() -> int:
+    if "--selftest" in sys.argv[1:]:
+        return run_selftest()
     stores = sorted(Path("/home/frank/.hermes/profiles").glob("*/cron/jobs.json"))
     if not stores:
         print("WARN: no live cron stores found under profiles/", file=sys.stderr)
