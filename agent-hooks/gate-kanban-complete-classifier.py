@@ -239,6 +239,18 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     # negative fixture proves the same wording attached to concrete apps/web
     # work still blocks.
     r"\b(monitor|report|script)\b[^\n]{0,120}\brenders?\b[^\n]{0,160}\b(0pp|metric|number|value|output|section|marker|unmeasured|unavailable)\b",
+    # Cron/report/CLI task cards often describe command/list output using
+    # "renders" language; that is report/output phrasing, not browser rendering.
+    r"\b(cli|python|shell|command|script|cron|report)\b[^\n]{0,160}\brenders?\b[^\n]{0,120}\b(output|list|line|item|items|rows?|values?|count|marker|result|results|command)\b",
+    # PM planning cards issue concrete-looking PM verbs (route/create/expand)
+    # alongside an explicit "create one implementation child" instruction,
+    # which the broad APP_IMPL verb+route regex latches onto as app work (false
+    # positive). When the body pairs that with a paper-only safety clause, it is
+    # a PM routing/delegation instruction, not frontend implementation. Concrete
+    # apps/web work still matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS
+    # and is caught by paired negatives; this override only relaxes the false
+    # positive on PM planning + paper-only safety wording.
+    r"\bcreate one implementation child\b[\s\S]{0,900}\b(paper[- ]?only|no (app|product|frontend|web) code changes|no [\s\S]{0,80}(route|page|component|middleware|layout|ui|trpc|browser)[\s\S]{0,200}(is changed|changed|touched|modified))\b",
 ]
 
 FLEET_SLO_NONAPP_PATTERNS: PatternList = [
@@ -260,8 +272,19 @@ APP_IMPL_PATTERNS: PatternList = [
     # Bare apps/web is not concrete implementation here: repo hygiene cards quote
     # dirty git-status paths. WEB_PATTERNS still sees the path; this stricter list
     # only decides whether an allow override may neutralize broad web signals.
-    r"(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^.\n]{0,120})(frontend|web|app|dashboard|route|component|page|middleware|layout)([^a-z0-9]|$)",
-    r"(^|[^a-z0-9])(frontend|web|app|dashboard|route|component|page|middleware|layout)([^a-z0-9][^.\n]{0,120})(build|implement|ship|add|create|modify|fix|update)([^a-z0-9]|$)",
+    # Noun-side leading boundary (t_17b2b7ed): require a real word break before
+    # the app noun so "route" cannot match inside compound nouns (router,
+    # reroute, pm-reroute, verdict-router, api-router, message_router,
+    # trade-route, unblocker-route). Hyphen/underscore count as word chars.
+    # Mirror of the t_660a588a verb-boundary fix. Standalone "route"/"routes"
+    # still match.
+    r"(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^.\n]{0,120})(^|[^a-z0-9_-])(frontend|web|app|dashboard|routes?|component|page|middleware|layout)([^a-z0-9]|$)",
+    # Verb-last variant: <app noun> ... <verb>. The verb alternation REQUIRES a
+    # leading boundary (BOL or non-alnum) so "ship" inside "ownership" or "add"
+    # inside "upshot" can never match the verb group. Without the boundary,
+    # "route ... strict human ownership" wedged a static SOUS review card as web
+    # (verb "ship" matched inside "ownership" within 120 chars of noun "route").
+    r"(^|[^a-z0-9])(frontend|web|app|dashboard|route|component|page|middleware|layout)([^a-z0-9][^.\n]{0,120})(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])(route component|page component|app page|web page|page\.tsx|middleware|layout)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^.\n]{0,120})(page|route|component|ui|frontend|app)([^a-z0-9]|$)",
 ]
@@ -295,6 +318,85 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     r"\bprofile-local config/checklist/tool-path repair\b[^\n.]{0,180}\bfrontend/web reviewers can run required gates\b",
     r"\bpaired frontend negative\b[^\n.]{0,160}\b(still )?blocks?\b[^\n.]{0,160}\bapps/web\b",
     r"\bapps/web\b[^\n.]{0,160}\b(still )?blocks?\b[^\n.]{0,160}\bwithout verify_pass\b",
+    # PM planning cards issue concrete-looking PM verbs (route/create/expand)
+    # alongside an explicit "create one implementation child" instruction,
+    # which the broad APP_IMPL verb+route regex latches onto as app work. When
+    # the body pairs that with a paper-only / no-app safety clause it is a PM
+    # routing/delegation instruction, not frontend implementation. Concrete
+    # apps/web work still matches APP_IMPL_PATTERNS and is caught by the paired
+    # negative fixture; this negation only relaxes the false positive on PM
+    # planning cards.
+    r"\bcreate one implementation child\b[\s\S]{0,900}\b(paper[- ]?only|no (app|product|frontend|web) code changes)\b",
+    # Diagnostic/dispensation idiom: "route the narrow host-runtime fix",
+    # "route a separate reviewed implementation card", "route ... disposition",
+    # "route ... evidence path", "route a bounded data-quality remediation card".
+    # Here "route" is a dispatch verb (direct the fix elsewhere), NOT a
+    # "route component" app-surface noun. The broad APP_IMPL_PATTERNS[1]
+    # matches "route ... fix" and falsely classifies postmortem/log-forensics
+    # DIAGNOSE cards as frontend/web (t_2a606755, t_0430e36c). This only
+    # neutralizes the verb+routed-object idiom; concrete
+    # "apps/web ... route component/page" still matches APP_IMPL_PATTERNS and
+    # CONCRETE_WEB_IMPL_PATTERNS and is caught by paired negative fixtures.
+    r"\broute\s+(the|a|this|that|an)\s+[^.\n]{0,80}\b(narrow|host-runtime|separate|reviewed|next|bounded)\b[^.\n]{0,140}\b(fix|implementation card|disposition|evidence path|verdict|implementation)\b",
+    # Article-less dispatch idiom (t_c5cfa962; repro t_431e9b88): "route
+    # implementation + independent review", "route review", "route the fix",
+    # "route disposition", "route a reviewed implementation/card". The
+    # article-ful negation above requires an article + adjective qualifier, so
+    # this bare form ("fix is needed, route implementation") slipped through:
+    # APP_IMPL_PATTERNS[0] matched verb-first "fix ... route" and wedged a
+    # backend/infra diagnosis+review card as web. Here "route" is a dispatch
+    # verb (direct the fix/review to a builder), NOT an app-route noun. The
+    # negation fires ONLY when a dispatch/review object directly follows
+    # "route"; a lookahead blocks it when a surface noun follows, so
+    # "route implementation page/component" and "apps/web route
+    # implementation" are never neutralized. Concrete apps/web route/page work
+    # still matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS and is caught
+    # by the paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS
+    # "apps/web"/"app route").
+    r"\broute\s+(implementation|review|independent\s+review|disposition|the\s+fix|a\s+reviewed\s+(?:implementation|card))\b(?!\s+(?:component|page|layout|middleware|handler|ui|frontend|app|dashboard|route)\b)",
+    # Companion: "comment disposition back on <owner>" / "post ... disposition"
+    # evidence-back-reference phrasing in DIAGNOSE/forensics cards routes the
+    # verdict/disposition rather than implementing a browser route.
+    r"\b(comment|post)\s+[^.\n]{0,120}\b(disposition|verdict|evidence path|outcome)\b[^.\n]{0,120}back\b",
+    # Backend cron/report/CLI cards can mention rendered list/output text without
+    # implying a browser route or page implementation.
+    r"\b(cli|python|shell|command|cron|report)\b[^\n]{0,260}\brenders?\b[^\n]{0,120}\b(list|output|rows?|items?|values?|results?|metrics?|markers?|count|section)\b",
+    # "No implementation/promotion/paper-sleeve route unless ... paper-only /
+    # read-only" safety-clause idiom (t_90c5e1e0; recurrence of the documented
+    # t_77316e9c false-positive class). APP_IMPL_PATTERNS[0] has no leading verb
+    # boundary, so it matched "implement" inside "implementation" then bare
+    # "route" and classed a paper-only edge-discovery/research card as web. Here
+    # "route" is a dispatch/safety noun ("no ... route to promotion/paper-sleeve"),
+    # NOT a browser/API route surface. The negation fires ONLY when the "no
+    # <implementation|promotion|paper-sleeve> ... route(s)" construction is
+    # present AND an explicit paper-only/read-only/no-implementation qualifier
+    # appears within a bounded window after it, so a positive "implement ... route"
+    # instruction is never neutralized. The window is multi-line bounded
+    # ([\\s\\S]{0,360}) so the qualifier may sit on a LATER LINE within the same
+    # card's safety framing (t_63ac495e: "SAFETY GATES: paper-only" bullet ~270
+    # chars after the route clause) while still being capped against crossing
+    # unrelated sections of a long card. Concrete apps/web route/page work still
+    # matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS and is caught by the
+    # paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS "app route").
+    r"\bno\s+(?:implementation|promotion|paper[- ]?sleeve)(?:[/,]\s*(?:implementation|promotion|paper[- ]?sleeve)){0,3}\s*/?\s*\broutes?\b[\s\S]{0,360}\b(?:paper[- ]?only|read[- ]?only|no[ -]implementation)\b",
+]
+
+GATE_SCOPE_NONAPP_PATTERNS: PatternList = [
+    # Cards that fix/scope the verify-running-app completion gate itself (often
+    # "FIX:"-titled, e.g. t_5a334580 "scope verify-running-app gate away from
+    # non-UI log-forensics cards"). They quote the gate's surface vocabulary
+    # (UI, frontend, route, middleware, layout, trpc, apps/web) to state what
+    # the gate SHOULD apply to, and name forensics/non-UI cards as what it
+    # should NOT. That describes the gate — it does not build or serve a
+    # frontend surface. Concrete web implementation (apps/web, react pages/
+    # routes/components) still wins via has_concrete_web_impl in the caller,
+    # and app-surface changed_files is still caught by the rule-1
+    # BLOCK_APP_CHANGED_FILES backstop. Paired negative fixtures prove a real
+    # frontend card that also mentions the gate still blocks.
+    r"\b(verify[- ]?running[- ]app|running[- ]app|verify_pass|app[- ]verification)\b[^\n.]{0,120}\b(scope|scoping|gate|classifier|false[ -]?positive|non[- ]?app)\b",
+    r"\b(verify[- ]?running[- ]app|running[- ]app|app[- ]verification)\b[^\n.]{0,200}\b(forensic|non[- ]?ui|log[- ]forensic|postmortem|diagnos)\b",
+    r"\b(scope|scoping)\b[^\n.]{0,120}\b(verify[- ]?running[- ]app|running[- ]app|app[- ]verification)\b[^\n.]{0,160}\bgate\b",
+    r"\bnon[- ]?ui\b[^\n.]{0,120}\b(verify[- ]?running[- ]app|running[- ]app|app[- ]verification)\b",
 ]
 
 NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
@@ -307,8 +409,8 @@ NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
 ]
 
 SOURCE_REVIEW_PATTERNS: PatternList = [
-    r"\breview_verdict\b",
-    r"\b(?:source task|source review|review source task)\b",
+    r"\breview[-_ ]verdict\b",
+    r"\b(?:source task|source review|review source task|source[-_ ]?pr[-_ ]?review)\b",
 ]
 
 
@@ -401,7 +503,17 @@ def _has_app_impl(task_part: str) -> bool:
         and not has_concrete_web_impl
     )
     has_app_impl = raw_app_impl and not review_completion_gate_nonapp
-    if re.search(r"^\s*review:[^\n]{0,300}", task_part):
+    # verify-running-app gate-scope/classifier-fix cards (often "FIX:"-titled)
+    # quote the gate's surface vocabulary to say what the gate applies to, but
+    # do not build or serve a frontend surface. They are NOT app implementation.
+    # Concrete web implementation (apps/web, react pages/routes) still wins via
+    # has_concrete_web_impl, and app-surface changed_files is still caught by
+    # the rule-1 BLOCK_APP_CHANGED_FILES backstop. This closes the gap where a
+    # gate-fix card (t_5a334580) was itself blocked as `web` by APP_IMPL_PATTERNS
+    # matching "implement a narrow classifier fix ... page/route/middleware".
+    if _any(GATE_SCOPE_NONAPP_PATTERNS, task_part) and not has_concrete_web_impl:
+        return False
+    if re.search(r"^\s*review:", task_part):
         # The title starts with "review:". Check if this is about completion-gate
         # repair (not app impl) vs. actual frontend review. Concrete app
         # implementation signals win: a review-prefixed card that itself says to
@@ -537,9 +649,11 @@ def _source_review_without_web(task_part: str, raw: str) -> bool:
     """
     if not _any(SOURCE_REVIEW_PATTERNS, task_part):
         return False
-    # Belt-and-suspenders: no concrete web impl should have snuck through
-    if _any(CONCRETE_WEB_IMPL_PATTERNS, task_part):
-        return False
+    # Quoted source-PR surface nouns (dashboard bundle/exposure, etc.) must
+    # not veto a review-verdict card that has no implementation verb of its
+    # own. t_cc5a3939 / t_66c7c9a3: CONCRETE_WEB_IMPL_PATTERNS matching
+    # quoted dashboard nouns was forcing web. Keep the _has_app_impl veto
+    # so t_patch02-style "applies the reviewed changes" cards stay web.
     if _has_app_impl(task_part):
         return False
     # A goal-judge provider-error quarantine card is NOT a source-review card
@@ -547,8 +661,63 @@ def _source_review_without_web(task_part: str, raw: str) -> bool:
     # REVIEW_VERDICT text must not convert the fail-closed trap into an
     # allow-lane classification; only the strict verified-review override
     # (marker + APPROVED verdict + task-evidence) may do that.
+    # REVIEW_VERDICT text alone is not enough for this allow rule, so policy
+    # quotes like "do not bypass REVIEW_VERDICT" stay classified here if no
+    # explicit source-PR-review context.
     if _goal_judge_provider_error(task_part, raw) and not _verified_review_with_evidence_override(
         task_part, raw
+    ):
+        return False
+    return True
+
+
+def _source_review_verdict_not_web(task_part: str, raw: str) -> bool:
+    """Special-case REVIEW_VERDICT/source-PR-review cards that quote frontend
+    surface nouns but do not alter those surfaces.
+
+    These should stay non-web even when earlier NONAPP_OVERRIDE heuristics match
+    review language (for example "no frontend/web route..." in review context).
+    """
+    if not _any(SOURCE_REVIEW_PATTERNS, task_part):
+        return False
+    if _has_app_impl(task_part):
+        return False
+    source_pr_review_context = (
+        re.search(r"\bsource[-_ ]?pr[-_ ]?review\b", task_part)
+        or re.search(r"\breview[-_ ]verdict\s*[:=]", task_part)
+        or (
+            re.search(r"\breview[-_ ]verdict\b", task_part)
+            and re.search(r"\bsource\b[^\n]{0,120}\breview\b", task_part)
+        )
+    )
+    if not source_pr_review_context:
+        return False
+    if _goal_judge_provider_error(task_part, raw):
+        return False
+    return True
+
+
+def _cron_report_cli_render_not_web(task_part: str, raw: str) -> bool:
+    """Cron/report/CLI cards describing rendered output/list text are report tasks,
+    not frontend implementation tasks.
+    """
+    if _has_app_impl(task_part):
+        return False
+    if not re.search(r"\b(cli|python|shell|command|cron|report)\b", task_part):
+        return False
+    if not (
+        re.search(
+            r"\b(cli|python|shell|command|cron)\b[^\n]{0,220}\brenders?\b[^\n]{0,220}\b(list|output|rows?|items?|values?|count|metric|result|results|section|marker|active|line|lines|item|row|items)\b",
+            task_part,
+        )
+        or re.search(
+            r"\brenders?\b[^\n]{0,220}\b(list|output|rows?|items?|values?|count|metric|result|results|section|marker|active|line|lines|item|row|items)\b[^\n]{0,160}\b(cli|python|shell|command|cron)\b",
+            task_part,
+        )
+        or re.search(
+            r"\b(cli|python|shell|command|cron|report)\b[^\n]{0,240}\b(list|output|rows?|items?|values?|count|metric|result|results|section|marker|active|line|lines|item|row)\b[^\n]{0,240}\brenders?\b",
+            task_part,
+        )
     ):
         return False
     return True
@@ -611,6 +780,18 @@ CONTRACT_TABLE: Sequence[ContractRule] = [
         decision=FRONTEND_WEB_CHANGED_FILES_CATEGORY.decision,
         predicate=_app_impl_needs_verify_pass,
         rationale="concrete app implementation signal detected in task title/body; running-app VERIFY_PASS required by shell hook even without broad web surface keywords",
+    ),
+    ContractRule(
+        name="ALLOW_REVIEW_VERDICT_SOURCE_PR_REVIEW_NOT_WEB",
+        decision="readonly_nonapp",
+        predicate=_source_review_verdict_not_web,
+        rationale="Review-verdict / source-PR-review cards that only quote app nouns must remain non-web for gate routing.",
+    ),
+    ContractRule(
+        name="ALLOW_CRON_REPORT_CLI_RENDER_NOT_WEB",
+        decision="not_web",
+        predicate=_cron_report_cli_render_not_web,
+        rationale="Cron/report/CLI render/list-output phrasing should not imply a browser/runtime surface by default.",
     ),
     ContractRule(
         name="ALLOW_NONAPP_OVERRIDE_ONLY_WITHOUT_APP_IMPL",
