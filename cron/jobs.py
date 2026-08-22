@@ -798,18 +798,25 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
         minutes = schedule.get("minutes")
         if minutes is None:
             return None
+        offset = _schedule_offset_minutes(schedule)
         if last_run_at:
             try:
                 last = _ensure_aware(datetime.fromisoformat(last_run_at))
+                # The anchor already sits on the offset phase grid (it was
+                # computed with the offset applied on a previous cycle), so
+                # advance by the raw interval only. Re-applying the offset here
+                # would double-count it and drift the effective period to
+                # minutes+offset, a cumulative per-tick phase shift (t_aafa78ce).
                 next_run = last + timedelta(minutes=minutes)
             except Exception:
                 next_run = now + timedelta(minutes=minutes)
+                if offset:
+                    next_run = next_run + timedelta(minutes=offset)
         else:
-            # First run is now + interval
+            # First run anchors the phase: now + interval, then the offset once.
             next_run = now + timedelta(minutes=minutes)
-        offset = _schedule_offset_minutes(schedule)
-        if offset:
-            next_run = next_run + timedelta(minutes=offset)
+            if offset:
+                next_run = next_run + timedelta(minutes=offset)
         return next_run.isoformat()
 
     elif kind == "cron":
