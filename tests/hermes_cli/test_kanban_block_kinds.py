@@ -17,6 +17,7 @@ forever. The fix gives ``block_task`` a typed ``kind`` and a persistent
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import pytest
@@ -200,3 +201,152 @@ def test_block_without_kind_is_backward_compatible(kanban_home: Path) -> None:
         t = kb.get_task(conn, tid)
         assert t.status == "blocked"
         assert t.block_kind is None
+
+
+# ---------------------------------------------------------------------------
+# t_e2b2c116: hermes kanban block --kind on already-blocked tasks
+# ---------------------------------------------------------------------------
+
+
+def _blocked_task_no_kind(conn, title="t"):
+    """Create a task and drive it to blocked with block_kind left NULL."""
+    tid = _running_task(conn, title=title)
+    assert kb.block_task(conn, tid, reason="legacy, unclassified")
+    t = kb.get_task(conn, tid)
+    assert t.status == "blocked"
+    assert t.block_kind is None
+    return tid
+
+
+def test_block_kind_on_already_blocked_null_kind(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        before = kb.get_task(conn, tid)
+        assert kb.relabel_block_kind(conn, tid, "transient", reason="crash-casualty")
+        after = kb.get_task(conn, tid)
+        assert after.status == "blocked"
+        assert after.block_kind == "transient"
+        assert after.block_recurrences == before.block_recurrences
+        assert after.claim_lock == before.claim_lock
+        assert after.worker_pid == before.worker_pid
+        assert after.current_run_id == before.current_run_id
+
+
+def test_block_kind_corrects_existing_kind(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+        kb.block_task(conn, tid, reason="x", kind="needs_input")
+        assert kb.relabel_block_kind(conn, tid, "capability", reason="reclass")
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked"
+        assert t.block_kind == "capability"
+
+
+def test_relabel_fails_when_not_blocked(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+        assert kb.get_task(conn, tid).status == "running"
+        assert not kb.relabel_block_kind(conn, tid, "capability")
+        assert kb.get_task(conn, tid).block_kind is None
+        todo = kb.create_task(conn, title="todo-card", assignee="worker")
+        assert not kb.relabel_block_kind(conn, todo, "transient")
+
+
+def test_relabel_rejects_dependency_kind(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        with pytest.raises(ValueError):
+            kb.relabel_block_kind(conn, tid, "dependency")
+        assert kb.get_task(conn, tid).block_kind is None
+
+
+def test_relabel_emits_block_relabeled_event(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        assert kb.relabel_block_kind(conn, tid, "transient", reason="crash-casualty")
+        events = [e for e in kb.list_events(conn, tid) if e.kind == "block_relabeled"]
+        assert events, "expected a block_relabeled event"
+        payload = events[-1].payload or {}
+        assert payload.get("prev_kind") is None
+        assert payload.get("kind") == "transient"
+        assert payload.get("reason") == "crash-casualty"
+
+
+def test_cli_block_kind_on_already_blocked(kanban_home: Path, capsys) -> None:
+    """Public CLI is `block --kind` — no extra --relabel flag required."""
+    from hermes_cli import kanban as kanban_cli
+
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+
+    ns = argparse.Namespace(
+        task_id=tid, reason=["crash-casualty"], ids=None, kind="transient",
+    )
+    rc = kanban_cli._cmd_block(ns)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Relabeled" in out and tid in out
+
+    with kb.connect_closing() as conn:
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked"
+        assert t.block_kind == "transient"
+        comments = kb.list_comments(conn, tid)
+        assert any("RELABELED" in (c.body or "") for c in comments)
+        assert not any("BLOCKED: crash-casualty" in (c.body or "") for c in comments)
+
+
+def test_cli_block_without_kind_on_already_blocked_fails(kanban_home: Path, capsys) -> None:
+    from hermes_cli import kanban as kanban_cli
+
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+
+    ns = argparse.Namespace(
+        task_id=tid, reason=["should not stick"], ids=None, kind=None,
+    )
+    rc = kanban_cli._cmd_block(ns)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert f"cannot block {tid}" in err
+
+    with kb.connect_closing() as conn:
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked"
+        assert t.block_kind is None
+
+
+def test_cli_block_kind_running_still_transitions(kanban_home: Path, capsys) -> None:
+    from hermes_cli import kanban as kanban_cli
+
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+
+    ns = argparse.Namespace(
+        task_id=tid, reason=["needs human"], ids=None, kind="needs_input",
+    )
+    rc = kanban_cli._cmd_block(ns)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Blocked" in out and tid in out
+
+    with kb.connect_closing() as conn:
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked"
+        assert t.block_kind == "needs_input"
+
+
+def test_cli_block_kind_dependency_on_already_blocked_rejected(kanban_home: Path, capsys) -> None:
+    from hermes_cli import kanban as kanban_cli
+
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+
+    ns = argparse.Namespace(
+        task_id=tid, reason=["nope"], ids=None, kind="dependency",
+    )
+    rc = kanban_cli._cmd_block(ns)
+    assert rc == 2
+    assert "dependency" in capsys.readouterr().err
+    with kb.connect_closing() as conn:
+        assert kb.get_task(conn, tid).block_kind is None
