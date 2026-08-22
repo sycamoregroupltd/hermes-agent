@@ -47,8 +47,13 @@ def main() -> int:
             capture_output=True, text=True,
         )
         out = r.stdout.strip()
+        err = r.stderr.strip()
         if out:
-            print(out)  # verifier prints on divergence; healthy is silent
+            print(out)  # verifier prints on divergence/unverifiable; healthy is silent
+        elif err and r.returncode != 0:
+            # No stdout but a warning/error and a non-zero exit — surface it so a
+            # failing gate is never silently swallowed (fail-visibly, t_fcb6141f).
+            print(err, file=sys.stderr)
         if r.returncode != 0:
             any_regression = True
     return 1 if any_regression else 0

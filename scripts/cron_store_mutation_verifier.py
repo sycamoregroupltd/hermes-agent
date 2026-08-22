@@ -26,10 +26,12 @@ Two modes:
                    NOT flagged. This is the scheduled post-ticker re-verification
                    gate (t_fcb6141f / t_24a685ed): a reviewed scheduler disable
                    is only GREEN once a ticker cycle has passed and this sweep
-                   still reports it paused with no post-pause claim. Silent +
-                   exit 0 when healthy; print divergences + exit 1 on any
-                   regression. A missing executions ledger degrades to a WARN
-                   (no post-pause claims verifiable) rather than a false alert.
+                   still reports it paused with no post-pause claim. Exit 0
+                   (silent) when healthy; exit 1 (stdout divergences) on any
+                   regression; exit 2 (stdout UNVERIFIABLE) when >=1 paused job
+                   must be checked but the executions ledger is missing or
+                   unreadable — fail-visibly so the gate is never GREEN when it
+                   cannot actually check (t_fcb6141f invariant).
 
   --selftest       Build a throwaway store + executions ledger with one
                    in-flight-at-pause job (claimed before pause, finished after)
@@ -276,6 +278,19 @@ def cmd_assert_disabled(args) -> int:
                 f"its reviewed pause (post-ticker re-verify FAILED)"
             )
     if not problems:
+        if executions is None and checked > 0:
+            # Fail-visibly (t_fcb6141f): never GREEN when the gate cannot
+            # actually check. With >=1 paused job to verify but no readable
+            # ledger, we cannot confirm none were re-scheduled post-pause —
+            # that is UNVERIFIABLE, not healthy. Distinct exit code 2 so callers
+            # can tell "unverifiable" from a hard regression (exit 1).
+            print(
+                f"** CRON_STORE_DISABLED_STATE_UNVERIFIABLE in {store}: {checked} "
+                f"paused job(s) cannot be verified against a missing or unreadable "
+                f"executions ledger ({store.with_name('executions.db')}). Treat as "
+                f"NON-GREEN — investigate the ledger before issuing GREEN."
+            )
+            return 2
         return 0
     print(
         f"** CRON_STORE_DISABLED_STATE_DIVERGENCE in {store}: {len(regressed_ids)} "
@@ -396,15 +411,52 @@ def cmd_selftest() -> int:
         out = buf.getvalue()
         flags_regressed = "run-regressed" in out
         flags_inflight = "run-inflight" in out
-        if rc != 0 and flags_regressed and not flags_inflight:
-            print("SELFTEST PASS: truly-regressed flagged; in-flight-at-pause NOT flagged.")
+
+        # Fixture 3: a store with a paused job but NO executions ledger. The
+        # disabled-state gate must be UNVERIFIABLE (rc=2, non-GREEN), never a
+        # silent exit-0 — fail-visibly when the truth source is missing.
+        no_ledger_dir = tmp / "no-ledger"
+        no_ledger_dir.mkdir()
+        nl_jobs = no_ledger_dir / "jobs.json"
+        nl_jobs.write_text(
+            json.dumps(
+                {
+                    "jobs": [
+                        {
+                            "id": "paused-no-ledger", "name": "fixture-noledger",
+                            "enabled": False, "state": "paused",
+                            "paused_at": "2026-08-22T12:00:00+01:00",
+                            "schedule": {"kind": "interval", "minutes": 5},
+                        }
+                    ]
+                }
+            )
+        )
+        args2 = types.SimpleNamespace(
+            jobs_file=str(nl_jobs), claim_window_seconds=None,
+            ticker_grace_seconds=DEFAULT_TICKER_GRACE_SECONDS,
+        )
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            rc2 = cmd_assert_disabled(args2)
+        out2 = buf2.getvalue()
+        unverifiable = "CRON_STORE_DISABLED_STATE_UNVERIFIABLE" in out2
+
+        if (
+            rc != 0 and flags_regressed and not flags_inflight
+            and rc2 == 2 and unverifiable
+        ):
+            print(
+                "SELFTEST PASS: truly-regressed flagged; in-flight-at-pause NOT "
+                "flagged; missing-ledger store UNVERIFIABLE (rc=2, non-GREEN)."
+            )
             return 0
         print("SELFTEST FAIL:")
+        print(f"in-flight-vs-regressed: rc={rc} flags_regressed={flags_regressed} "
+              f"flags_inflight={flags_inflight}")
         print(out)
-        print(
-            f"classification: rc={rc} flags_regressed={flags_regressed} "
-            f"flags_inflight={flags_inflight}"
-        )
+        print(f"missing-ledger: rc={rc2} unverifiable={unverifiable}")
+        print(out2)
         return 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
