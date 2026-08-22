@@ -755,6 +755,28 @@ def _compute_grace_seconds(schedule: dict) -> int:
     return MIN_GRACE
 
 
+def _schedule_offset_minutes(schedule: Dict[str, Any]) -> Optional[int]:
+    """Return the sanitized ``offset_minutes`` jitter/phase for a schedule.
+
+    Adds an optional deterministic phase offset to a job's computed next run so
+    jobs that would otherwise fire on the same tick (e.g. many "every 1h" jobs
+    colliding on the TERMINAL_CWD readers-writer lock) get spread apart.
+
+    Sanitization rule (never raises): non-numeric or negative values are
+    ignored and fall back to no offset. A value of ``0`` is a valid no-op.
+    ``bool`` is rejected (it is an ``int`` subclass) because it is not a real
+    minute count.
+    """
+    offset = schedule.get("offset_minutes")
+    if offset is None:
+        return None
+    if isinstance(offset, bool) or not isinstance(offset, (int, float)):
+        return None
+    if offset < 0:
+        return None
+    return int(offset)
+
+
 def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None) -> Optional[str]:
     """
     Compute the next run time for a schedule.
@@ -776,15 +798,25 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
         minutes = schedule.get("minutes")
         if minutes is None:
             return None
+        offset = _schedule_offset_minutes(schedule)
         if last_run_at:
             try:
                 last = _ensure_aware(datetime.fromisoformat(last_run_at))
+                # The anchor already sits on the offset phase grid (it was
+                # computed with the offset applied on a previous cycle), so
+                # advance by the raw interval only. Re-applying the offset here
+                # would double-count it and drift the effective period to
+                # minutes+offset, a cumulative per-tick phase shift (t_aafa78ce).
                 next_run = last + timedelta(minutes=minutes)
             except Exception:
                 next_run = now + timedelta(minutes=minutes)
+                if offset:
+                    next_run = next_run + timedelta(minutes=offset)
         else:
-            # First run is now + interval
+            # First run anchors the phase: now + interval, then the offset once.
             next_run = now + timedelta(minutes=minutes)
+            if offset:
+                next_run = next_run + timedelta(minutes=offset)
         return next_run.isoformat()
 
     elif kind == "cron":
@@ -812,6 +844,9 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
                 base_time = now
         cron = croniter(expr, base_time)
         next_run = cron.get_next(datetime)
+        offset = _schedule_offset_minutes(schedule)
+        if offset:
+            next_run = next_run + timedelta(minutes=offset)
         return next_run.isoformat()
 
     return None
