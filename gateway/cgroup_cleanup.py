@@ -51,8 +51,34 @@ def _read_cgroup_pids(cgroup_path: str) -> list[int]:
     return pids
 
 
+def _is_kanban_worker(pid: int) -> bool:
+    """Return True if ``pid`` is an in-flight kanban dispatcher worker.
+
+    The dispatcher spawns workers with ``HERMES_KANBAN_TASK`` in their
+    environment (``_default_spawn``). ``ExecStopPost`` runs after the
+    gateway's main process has exited; any surviving child carrying that
+    env var is a worker the dispatcher is still waiting on — it must NOT be
+    SIGKILLed by the cgroup teardown, or the gateway restart kills every
+    in-flight task at once (the bulk teardown race, t_c3197d72 /
+    t_022cb698). Detection reads ``/proc/<pid>/environ`` (same-user, so
+    readable); any read failure is treated as not-a-worker so we never
+    refuse to reap on a permissions quirk.
+    """
+    try:
+        env = Path(f"/proc/{int(pid)}/environ").read_bytes()
+    except OSError:
+        return False
+    return b"HERMES_KANBAN_TASK=" in env
+
+
 def reap_cgroup(cgroup_path: str | None = None) -> int:
-    """SIGKILL every PID in the cgroup other than the caller. Returns the count killed."""
+    """SIGKILL every PID in the cgroup other than the caller.
+
+    Skips in-flight kanban workers (``_is_kanban_worker``): those are
+    dispatcher children that must survive a gateway restart so their tasks
+    are not auto-blocked by the teardown race (t_022cb698). Returns the
+    count killed.
+    """
     if cgroup_path is None:
         cgroup_path = _own_cgroup_path()
     if not cgroup_path:
@@ -61,6 +87,8 @@ def reap_cgroup(cgroup_path: str | None = None) -> int:
     killed = 0
     for pid in _read_cgroup_pids(cgroup_path):
         if pid == own:
+            continue
+        if _is_kanban_worker(pid):
             continue
         try:
             os.kill(pid, signal.SIGKILL)  # windows-footgun: ok — Linux-only (reads /proc, /sys/fs/cgroup; runs from a systemd unit)

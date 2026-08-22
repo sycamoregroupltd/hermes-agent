@@ -3533,7 +3533,14 @@ Restart=always
 RestartSec=5
 RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}
 RestartPreventExitStatus={GATEWAY_FATAL_CONFIG_EXIT_CODE}
-KillMode=mixed
+# KillMode=process: only the gateway's MAIN process is SIGKILLed on stop,
+# NOT the whole cgroup. In-flight kanban dispatcher workers are spawned as
+# start_new_session children living in this unit's cgroup; KillMode=control-group
+# / mixed would SIGKILL them all at once (the bulk teardown race, t_c3197d72 /
+# t_022cb698). process + the ExecStopPost cgroup_cleanup's kanban-worker skip
+# lets those workers survive a gateway restart. The ExecStopPost still reaps
+# orphaned non-worker helpers, so the original #37454 safety net is preserved.
+KillMode=process
 KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 $MAINPID
 ExecStopPost=-{python_path} -m gateway.cgroup_cleanup
@@ -3571,7 +3578,12 @@ Restart=always
 RestartSec=5
 RestartForceExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}
 RestartPreventExitStatus={GATEWAY_FATAL_CONFIG_EXIT_CODE}
-KillMode=mixed
+# KillMode=process: only the gateway's MAIN process is SIGKILLed on stop,
+# NOT the whole cgroup. In-flight kanban dispatcher workers live in this
+# unit's cgroup and must survive a restart (bulk teardown race t_c3197d72 /
+# t_022cb698); the ExecStopPost cgroup_cleanup's kanban-worker skip keeps
+# the #37454 orphan-helper safety net intact.
+KillMode=process
 KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 $MAINPID
 ExecStopPost=-{python_path} -m gateway.cgroup_cleanup

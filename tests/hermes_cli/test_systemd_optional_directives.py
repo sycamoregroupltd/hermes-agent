@@ -36,6 +36,37 @@ RestartSteps=5
         assert "RestartSec=5" in result
 
 
+class TestKillModeProcess:
+    """t_022cb698: gateway units must use KillMode=process so in-flight kanban
+    dispatcher workers survive a gateway restart (the bulk teardown race),
+    NOT KillMode=mixed/control-group which SIGKILLs the whole cgroup."""
+
+    def test_generated_user_unit_uses_killmode_process(self):
+        from hermes_cli.gateway import generate_systemd_unit
+
+        unit = generate_systemd_unit(system=False)
+        assert "KillMode=process\n" in unit, (
+            "user gateway unit must use KillMode=process so kanban workers "
+            "survive a restart"
+        )
+        assert "KillMode=mixed" not in unit.splitlines()
+        assert "KillMode=control-group" not in unit.splitlines()
+        assert "gateway.cgroup_cleanup" in unit
+
+    def test_generated_system_unit_uses_killmode_process(self):
+        from hermes_cli.gateway import generate_systemd_unit
+
+        unit = generate_systemd_unit(system=True)
+        assert "KillMode=process\n" in unit, (
+            "system gateway unit must use KillMode=process so kanban workers "
+            "survive a restart"
+        )
+        assert "KillMode=mixed" not in unit.splitlines()
+        assert "KillMode=control-group" not in unit.splitlines()
+        assert "gateway.cgroup_cleanup" in unit
+
+
+
 
 
 
