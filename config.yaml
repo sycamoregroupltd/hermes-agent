@@ -93,51 +93,51 @@ auxiliary:
     api_key: ''
     base_url: ''
     extra_body: {}
-    model: gpt-5.5
-    provider: openai-codex
+    model: tencent/hy3:free
+    provider: nous
     timeout: 60
   skills_hub:
     api_key: ''
     base_url: ''
     extra_body: {}
-    model: gpt-5.5
-    provider: openai-codex
+    model: tencent/hy3:free
+    provider: nous
     timeout: 30
   title_generation:
     api_key: ''
     base_url: ''
     extra_body: {}
-    model: gpt-5.5
-    provider: openai-codex
+    model: tencent/hy3:free
+    provider: nous
     timeout: 30
   triage_specifier:
     api_key: ''
     base_url: ''
     extra_body: {}
-    model: gpt-5.5
-    provider: openai-codex
+    model: tencent/hy3:free
+    provider: nous
     timeout: 120
   tts_audio_tags:
     api_key: ''
     base_url: ''
     extra_body: {}
-    model: gpt-5.5
-    provider: openai-codex
+    model: tencent/hy3:free
+    provider: nous
     timeout: 30
   vision:
     api_key: ''
     base_url: ''
     download_timeout: 30
     extra_body: {}
-    model: gpt-5.5
-    provider: openai-codex
+    model: tencent/hy3:free
+    provider: nous
     timeout: 120
   web_extract:
     api_key: ''
     base_url: ''
     extra_body: {}
-    model: gpt-5.5
-    provider: openai-codex
+    model: tencent/hy3:free
+    provider: nous
     timeout: 360
 bedrock:
   discovery:
@@ -219,15 +219,15 @@ dashboard:
 delegation:
   api_key: ''
   api_mode: ''
-  base_url: ''
+  base_url: https://inference-api.nousresearch.com/v1
   child_timeout_seconds: 0
   inherit_mcp_toolsets: true
   max_concurrent_children: 3
   max_iterations: 50
   max_spawn_depth: 1
-  model: gpt-5.5
+  model: deepseek/deepseek-v4-flash-0731
   orchestrator_enabled: true
-  provider: openai-codex
+  provider: nous
   reasoning_effort: ''
   subagent_auto_approve: false
 discord:

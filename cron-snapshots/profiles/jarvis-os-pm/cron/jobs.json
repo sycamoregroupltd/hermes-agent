@@ -40,8 +40,8 @@
       "prompt": "Script-only cross-PM learning fabric fan-out (kanban t_65a992ed). cross-pm-fanout.sh propagates 'new' lessons from shared-memory/lessons/ onto target PM boards as lightweight pointer comments, then lesson-archive.py rotates superseded/oldest lessons to keep <=100 active. Script-only (no_agent); model/provider pinned to gpt-5.5/openai-codex to honour the error-learner 429 free-tier guard so high-frequency cross-PM jobs never compete with interactive free-model traffic.",
       "skills": [],
       "skill": null,
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
+      "model": null,
+      "provider": null,
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
@@ -441,7 +441,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 22
+      "failure_streak": 33
     },
     {
       "id": "4dad2695cdad",

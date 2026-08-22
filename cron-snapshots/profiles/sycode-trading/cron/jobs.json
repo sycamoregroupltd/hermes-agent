@@ -8,10 +8,10 @@
         "obsidian-knowledge-management"
       ],
       "skill": "obsidian-knowledge-management",
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
-      "provider_snapshot": null,
-      "model_snapshot": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
       "script": null,
       "no_agent": false,
       "context_from": null,
@@ -71,15 +71,15 @@
     {
       "id": "5eea5079ff74",
       "name": "sycode-trading-board-triage",
-      "prompt": "Hourly Sycode-Trading board triage cron session. You are running as the sycode-trading-pm profile from cron, not as a kanban worker; do not call kanban_complete or kanban_block unless HERMES_KANBAN_TASK is explicitly set for this run.\n\nCONTEXT-BUDGET CONTRACT (t_afdeceb5 repair): do not dump/read the full blocked board, full comments for many cards, or full skill/reference files unless a durable write is actually needed. First get compact board counts and candidate IDs with read-only SQLite or concise kanban CLI. Inspect at most 8 candidate cards per run and only enough fields/comments/runs to decide. Prefer compact terminal/SQLite summaries over large kanban_show payloads. If more work remains, stop with a partial ACTION/LEFT report rather than growing context.\n\nPurpose: prevent board-local freezes between daily north-star sweeps by making PM-judgment triage decisions on the live Sycode-Trading kanban board. This job was installed by jarvis-os kanban task t_369f9abe after sycode-trading-pm's gateway went live in t_77bb4837.\n\nSafety boundary: PAPER-ONLY governance. Do not perform live trading, create/modify trade_intents, deploy or restart production services, edit/copy/rotate credentials or provider auth, alter billing/spend, or run irreversible DB/data operations. Escalate those critical-list/A3-shaped items instead of acting. Before treating something as needing Frank, check /home/frank/uaa-rules/delegated-authority.md and /home/frank/uaa-rules/approvals-registry.md.\n\nRequired scope each run:\n1. Read the live Sycode-Trading board at /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db plus relevant task comments/events/runs before acting; do not rely on stale summaries.\n2. Scan blocked and review-required cards for unactioned REVIEW_VERDICT / guardian / risk-review handoffs. When the evidence is approval and the action is within PM delegated paper-only authority, record a `delegated:` comment with exact verdict task/comment evidence and unblock/promote the work. When verdict evidence says CHANGES_REQUESTED or gates failed, leave blocked and route a concrete rework card/comment rather than approving.\n3. Interplay with deterministic verdict-router companion card t_2afc2c67: if that router has landed and is active, do not duplicate deterministic verdict acting here; drop routine verdict-unblock duty and keep only judgment triage, deadlock diagnosis, dependency hygiene, and A3 escalation. Until it lands, this hourly job may act on clearly evidenced verdicts as a PM backstop.\n4. Verify there are no dependency cycles in the board graph. If a cycle is found, document the exact edge set and route/resolve only if the safe correction is obvious and reversible; otherwise escalate with a blocked/card comment.\n5. Promote dependency-released todo work when all parents are done and the task is otherwise ready; prefer the Hermes kanban CLI/tooling over direct SQLite writes for mutations.\n6. Escalate anything A3-shaped / Frank-critical (money, live trading, credentials/secrets, production deploys, irreversible data ops, new spend) to the NEEDS-FRANK surface (STATUS.md and/or Sycode-Trading-Home.md) and leave the card blocked; do not act on it.\n7. Persist significant governance/triage decisions to /home/frank/obsidian/quant-team/ with task IDs and evidence links. Keep noise low: if no action is needed, output exactly [SILENT].\n\nOutput contract: one line per action taken and one line per item intentionally left blocked/escalated. If no blocked/review/dependency work needed action and no cycle was found, output exactly [SILENT].",
+      "prompt": "Hourly Sycode-Trading board triage cron session. You are running as the sycode-trading-pm profile from cron, not as a kanban worker; do not call kanban_complete or kanban_block unless HERMES_KANBAN_TASK is explicitly set for this run.\n\nCONTEXT-BUDGET CONTRACT (t_afdeceb5 repair): do not dump/read the full blocked board, full comments for many cards, or full skill/reference files unless a durable write is actually needed. First get compact board counts and candidate IDs with read-only SQLite or concise kanban CLI. Inspect at most 8 candidate cards per run and only enough fields/comments/runs to decide. Prefer compact terminal/SQLite summaries over large kanban_show payloads. If more work remains, stop with a partial ACTION/LEFT report rather than growing context.\n\nPurpose: prevent board-local freezes between daily north-star sweeps by making PM-judgment triage decisions on the live Sycode-Trading kanban board. This job was installed by jarvis-os kanban task t_369f9abe after sycode-trading-pm's gateway went live in t_77bb4837.\n\nSafety boundary: PAPER-ONLY governance. Do not perform live trading, create/modify trade_intents, deploy or restart production services, edit/copy/rotate credentials or provider auth, alter billing/spend, or run irreversible DB/data operations. Escalate those critical-list/A3-shaped items instead of acting. Before treating something as needing Frank, check /home/frank/uaa-rules/delegated-authority.md and /home/frank/uaa-rules/approvals-registry.md.\n\nRequired scope each run:\n1. Read the live Sycode-Trading board at /home/frank/.hermes/kanban/boards/sycode-trading/kanban.db plus relevant task comments/events/runs before acting; do not rely on stale summaries.\n2. Scan blocked and review-required cards for unactioned REVIEW_VERDICT / guardian / risk-review handoffs. When the evidence is approval and the action is within PM delegated paper-only authority, record a `delegated:` comment with exact verdict task/comment evidence and unblock/promote the work. When verdict evidence says CHANGES_REQUESTED or gates failed, leave blocked and route a concrete rework card/comment rather than approving.\n3. Interplay with deterministic verdict-router companion card t_2afc2c67: if that router has landed and is active, do not duplicate deterministic verdict acting here; drop routine verdict-unblock duty and keep only judgment triage, deadlock diagnosis, dependency hygiene, and A3 escalation. Until it lands, this hourly job may act on clearly evidenced verdicts as a PM backstop.\n4. Verify there are no dependency cycles in the board graph. If a cycle is found, document the exact edge set and route/resolve only if the safe correction is obvious and reversible; otherwise escalate with a blocked/card comment.\n5. Promote dependency-released todo work when all parents are done and the task is otherwise ready; prefer the Hermes kanban CLI/tooling over direct SQLite writes for mutations.\n6. Escalate anything A3-shaped / Frank-critical (money, live trading, credentials/secrets, production deploys, irreversible data ops, new spend) to the NEEDS-FRANK surface (STATUS.md and/or Sycode-Trading-Home.md) and leave the card blocked; do not act on it.\n7. Persist significant governance/triage decisions to /home/frank/obsidian/quant-team/ with task IDs and evidence links. Keep noise low: if no action is needed, output exactly [SILENT].\n\nOutput contract: one line per action taken and one line per item intentionally left blocked/escalated. If no blocked/review/dependency work needed action and no cycle was found, output exactly [SILENT].\n\n8. FINAL STEP (mandatory, every run): publish exactly ONE DONE line via the session-bus event bridge so this hourly triage is visible on the orchestrator-sync intent card t_058ad294:\n   /home/frank/obsidian-fleet-vault/Orchestration/sessions/bin/session-bus.sh event \\\n     --author sycode-trading-pm \\\n     --text \"DONE sycode-trading board triage: blocked=<n> review=<n> todo=<n> ready=<n> touched=<card_ids_or_none>\"\n   Put the queue counts you observed this run and the exact card ids you touched or intentionally left blocked/escalated. Publish it even when the run was a no-op (touched=none), because a missing DONE heartbeat is exactly what makes the liveness bridge misreport the mechanism (t_a4f6263c / KEP-7). Use the session-bus.sh path verbatim with --author sycode-trading-pm; do not use kanban_complete/kanban_block for this event.\n\nOutput contract: one line per action taken and one line per item intentionally left blocked/escalated. Always publish the DONE session-bus event (step 8) and include its confirmation line in your output. If no blocked/review/dependency work needed action and no cycle was found, still publish the DONE event and otherwise output exactly [SILENT].",
       "skills": [
         "obsidian-knowledge-management"
       ],
       "skill": "obsidian-knowledge-management",
-      "model": "gpt-5.5",
-      "provider": "openai-codex",
-      "provider_snapshot": null,
-      "model_snapshot": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
       "script": null,
       "no_agent": false,
       "context_from": null,
@@ -105,7 +105,7 @@
         "skills"
       ],
       "workdir": "/home/frank",
-      "failure_streak": 4
+      "failure_streak": 0
     },
     {
       "id": "327083e3a0b0",
@@ -303,7 +303,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "171790695c94",

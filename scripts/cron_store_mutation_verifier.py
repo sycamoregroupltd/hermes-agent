@@ -15,14 +15,29 @@ Two modes:
 
   --assert-disabled  Re-read the live store NOW and sweep every job currently
                    marked enabled=false/state=paused, confirming (a) paused_at
-                   is still set (durable) and (b) no last_run_at newer than the
-                   pause plus a ticker grace — i.e. the paused job has NOT been
-                   silently re-scheduled and run again after its pause. This is
-                   the scheduled post-ticker re-verification gate (t_fcb6141f):
-                   a reviewed scheduler disable is only GREEN once a ticker
-                   cycle has passed and this sweep still reports it paused with
-                   no new run. Silent + exit 0 when healthy; print divergences
-                   + exit 1 on any regression.
+                   is still set (durable) and (b) no run was CLAIMED (scheduler
+                   dispatch) after paused_at plus one claim window (≈ the job's
+                   scheduler interval) — i.e. the paused job has NOT been
+                   silently re-scheduled and run again after its pause. The
+                   regression test is on the run's claimed_at (from the parallel
+                   executions.db ledger), NOT on last_run_at (which is the run's
+                   FINISH time): a run that was claimed before paused_at and only
+                   finished after it (in-flight at pause time) is benign and is
+                   NOT flagged. This is the scheduled post-ticker re-verification
+                   gate (t_fcb6141f / t_24a685ed): a reviewed scheduler disable
+                   is only GREEN once a ticker cycle has passed and this sweep
+                   still reports it paused with no post-pause claim. Exit 0
+                   (silent) when healthy; exit 1 (stdout divergences) on any
+                   regression; exit 2 (stdout UNVERIFIABLE) when >=1 paused job
+                   must be checked but the executions ledger is missing or
+                   unreadable — fail-visibly so the gate is never GREEN when it
+                   cannot actually check (t_fcb6141f invariant).
+
+  --selftest       Build a throwaway store + executions ledger with one
+                   in-flight-at-pause job (claimed before pause, finished after)
+                   and one truly regressed job (claimed a full interval after
+                   pause); assert the former is NOT flagged and the latter IS.
+                   Exit 0 on correct classification, 1 otherwise.
 
   --watch          Compare the live store against the git-tracked copy of the
                    SAME file and report jobs whose enabled/state differ. A
@@ -43,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime
@@ -54,6 +70,80 @@ STATE_KEYS = ("enabled", "state", "paused_at")
 # the final in-flight run) is benign; a 90s grace cleanly separates it from the
 # dangerous "job ran again a full cycle after pause" class.
 DEFAULT_TICKER_GRACE_SECONDS = 90
+# When a paused job's scheduler interval cannot be derived from its schedule
+# (non-interval / unrecognised cron expression), fall back to this post-pause
+# claim window. A run must be CLAIMED (scheduler dispatch) more than this far
+# after paused_at to count as a regression; a run claimed before pause and only
+# FINISHING after it (in-flight at pause time) is benign.
+DEFAULT_CLAIM_WINDOW_SECONDS = 900.0
+
+
+def _estimate_interval_seconds(schedule: dict | None, default: float) -> float:
+    """Best-effort scheduler interval (seconds) for a job's schedule dict.
+
+    The regression window for a paused job is one full scheduler interval: a run
+    claimed within that window of the pause is the benign boundary/in-flight
+    race, while a claim more than a full cycle later is a genuine re-schedule.
+    """
+    sched = schedule or {}
+    if sched.get("kind") == "interval" and sched.get("minutes"):
+        return float(sched["minutes"]) * 60
+    expr = (sched.get("expr") or sched.get("display") or "").strip()
+    if not expr:
+        return default
+    parts = expr.split()
+    if len(parts) != 5:
+        return default
+    minute, hour, dom, month, dow = parts
+    if minute in ("0", "*") and hour.startswith("*/") and hour[2:].isdigit():
+        n = int(hour[2:])
+        if n > 0:
+            return n * 3600
+    if hour == "*" and minute.startswith("*/") and minute[2:].isdigit():
+        n = int(minute[2:])
+        if n > 0:
+            return n * 60
+    if minute == "0" and hour.isdigit() and dom == "*" and month == "*":
+        if dow == "*":
+            return 86400.0
+        if dow.isdigit():
+            return 604800.0
+    return default
+
+
+def _load_executions(store: Path) -> dict[str, list[dict]] | None:
+    """Load the parallel executions ledger for a cron store (jobs.json sidecar).
+
+    The ledger lives next to the store as <dir>/executions.db and is the only
+    authoritative source of per-run claimed_at/started_at/finished_at. Returns
+    {job_id: [run dicts]} or None when the ledger is missing/unreadable.
+    """
+    exdb = store.with_name("executions.db")
+    if not exdb.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{exdb}?mode=ro", uri=True, timeout=10)
+        try:
+            rows = conn.execute(
+                "SELECT job_id, id, status, claimed_at, started_at, finished_at "
+                "FROM executions"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    out: dict[str, list[dict]] = {}
+    for jid, eid, status, claimed, started, finished in rows:
+        out.setdefault(jid, []).append(
+            {
+                "id": eid,
+                "status": status,
+                "claimed_at": claimed,
+                "started_at": started,
+                "finished_at": finished,
+            }
+        )
+    return out
 
 
 def _parse_ts(value: str) -> datetime | None:
@@ -133,7 +223,15 @@ def cmd_assert_state(args) -> int:
 def cmd_assert_disabled(args) -> int:
     store = Path(args.jobs_file)
     jobs = load_store(store)
+    executions = _load_executions(store)
+    if executions is None:
+        print(
+            f"WARN: no executions ledger ({store.with_name('executions.db')}); "
+            f"cannot verify post-pause claims for {len(jobs)} job(s) in {store}",
+            file=sys.stderr,
+        )
     problems = []
+    regressed_ids = set()
     checked = 0
     for job_id, job in jobs.items():
         if job.get("enabled") is not False:
@@ -153,22 +251,49 @@ def cmd_assert_disabled(args) -> int:
                 f"missing or unparseable ({paused_raw!r})"
             )
             continue
-        last_raw = job.get("last_run_at")
-        last_run = _parse_ts(last_raw) if isinstance(last_raw, str) else None
-        if last_run is not None:
-            # no new run after pause (beyond the benign sub-second race grace)
-            too_late = last_run - paused_at
-            if too_late.total_seconds() > args.ticker_grace_seconds:
-                problems.append(
-                    f"{name} ({job_id}): last_run_at {last_raw} is "
-                    f"{too_late.total_seconds():.0f}s AFTER paused_at "
-                    f"{paused_raw} — job was re-scheduled and ran again "
-                    f"after its reviewed pause (post-ticker re-verify FAILED)"
-                )
+        claim_window = args.claim_window_seconds
+        if claim_window is None:
+            claim_window = _estimate_interval_seconds(job.get("schedule"), DEFAULT_CLAIM_WINDOW_SECONDS)
+        exes = (executions or {}).get(job_id, [])
+        # A paused job "regressed" only when a run was CLAIMED (scheduler
+        # dispatch) strictly after paused_at + one claim window (≈ scheduler
+        # interval). A run that merely FINISHED after paused_at but was claimed
+        # before it — in-flight at pause time — is benign and must NOT alert.
+        regressed = []
+        for e in exes:
+            claimed = _parse_ts(e["claimed_at"])
+            if claimed is None:
+                continue
+            delta = (claimed - paused_at).total_seconds()
+            if delta > claim_window:
+                regressed.append((delta, e["claimed_at"], e["started_at"],
+                                  e["finished_at"], e["id"]))
+        for delta, claimed_raw, started_raw, finished_raw, run_id in sorted(regressed):
+            regressed_ids.add(job_id)
+            problems.append(
+                f"{name} ({job_id}): run {run_id} claimed_at {claimed_raw} "
+                f"(started {started_raw or '?'}, finished {finished_raw or '?'}) "
+                f"is {delta:.0f}s AFTER paused_at {paused_raw} (claim window "
+                f"{claim_window:.0f}s) — job was re-scheduled and ran again after "
+                f"its reviewed pause (post-ticker re-verify FAILED)"
+            )
     if not problems:
+        if executions is None and checked > 0:
+            # Fail-visibly (t_fcb6141f): never GREEN when the gate cannot
+            # actually check. With >=1 paused job to verify but no readable
+            # ledger, we cannot confirm none were re-scheduled post-pause —
+            # that is UNVERIFIABLE, not healthy. Distinct exit code 2 so callers
+            # can tell "unverifiable" from a hard regression (exit 1).
+            print(
+                f"** CRON_STORE_DISABLED_STATE_UNVERIFIABLE in {store}: {checked} "
+                f"paused job(s) cannot be verified against a missing or unreadable "
+                f"executions ledger ({store.with_name('executions.db')}). Treat as "
+                f"NON-GREEN — investigate the ledger before issuing GREEN."
+            )
+            return 2
         return 0
     print(
-        f"** CRON_STORE_DISABLED_STATE_DIVERGENCE in {store}: {len(problems)} "
+        f"** CRON_STORE_DISABLED_STATE_DIVERGENCE in {store}: {len(regressed_ids)} "
         f"paused job(s) regressed after re-verify ({checked} paused checked)."
     )
     for line in problems:
@@ -217,21 +342,148 @@ def cmd_watch(args) -> int:
     return 1
 
 
+def cmd_selftest() -> int:
+    """Fixture verifying the claimed_at-vs-finished_at regression rule.
+
+    Builds a throwaway store + executions ledger containing (a) one in-flight-at-
+    pause job (run CLAIMED before paused_at, only FINISHED after it) which must
+    NOT be flagged, and (b) one truly regressed job (run CLAIMED a full interval
+    after paused_at) which MUST be flagged. Exits 0 only on correct classification.
+    """
+    import contextlib
+    import io
+    import shutil
+    import tempfile
+    import types
+
+    tmp = Path(tempfile.mkdtemp(prefix="cronstore-selftest-"))
+    try:
+        jobs_file = tmp / "jobs.json"
+        exdb = tmp / "executions.db"
+        jobs = {
+            "jobs": [
+                {
+                    "id": "in-flight-at-pause", "name": "fixture-inflight",
+                    "enabled": False, "state": "paused",
+                    "paused_at": "2026-08-22T12:00:00+01:00",
+                    "last_run_at": "2026-08-22T12:03:00+01:00",
+                    "schedule": {"kind": "interval", "minutes": 5},
+                },
+                {
+                    "id": "truly-regressed", "name": "fixture-regressed",
+                    "enabled": False, "state": "paused",
+                    "paused_at": "2026-08-22T12:00:00+01:00",
+                    "last_run_at": "2026-08-22T13:05:00+01:00",
+                    "schedule": {"kind": "interval", "minutes": 5},
+                },
+            ],
+            "updated_at": "2026-08-22T15:00:00+01:00",
+        }
+        jobs_file.write_text(json.dumps(jobs))
+        conn = sqlite3.connect(exdb)
+        conn.execute(
+            "CREATE TABLE executions (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, "
+            "source TEXT, process_id TEXT, pid INTEGER, process_started_at INTEGER, "
+            "status TEXT, claimed_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, "
+            "error TEXT)"
+        )
+        rows = [
+            # in-flight at pause: claimed 11:57 (< paused 12:00), finished 12:03 (> pause)
+            ("run-inflight", "in-flight-at-pause", "cron", "p", 1, None, "completed",
+             "2026-08-22T11:57:00+01:00", "2026-08-22T11:58:00+01:00",
+             "2026-08-22T12:03:00+01:00", None),
+            # truly regressed: claimed 13:00, a full interval (3600s) after pause
+            ("run-regressed", "truly-regressed", "cron", "p", 2, None, "completed",
+             "2026-08-22T13:00:00+01:00", "2026-08-22T13:00:00+01:00",
+             "2026-08-22T13:05:00+01:00", None),
+        ]
+        conn.executemany("INSERT INTO executions VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+        conn.commit()
+        conn.close()
+
+        args = types.SimpleNamespace(
+            jobs_file=str(jobs_file), claim_window_seconds=None,
+            ticker_grace_seconds=DEFAULT_TICKER_GRACE_SECONDS,
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cmd_assert_disabled(args)
+        out = buf.getvalue()
+        flags_regressed = "run-regressed" in out
+        flags_inflight = "run-inflight" in out
+
+        # Fixture 3: a store with a paused job but NO executions ledger. The
+        # disabled-state gate must be UNVERIFIABLE (rc=2, non-GREEN), never a
+        # silent exit-0 — fail-visibly when the truth source is missing.
+        no_ledger_dir = tmp / "no-ledger"
+        no_ledger_dir.mkdir()
+        nl_jobs = no_ledger_dir / "jobs.json"
+        nl_jobs.write_text(
+            json.dumps(
+                {
+                    "jobs": [
+                        {
+                            "id": "paused-no-ledger", "name": "fixture-noledger",
+                            "enabled": False, "state": "paused",
+                            "paused_at": "2026-08-22T12:00:00+01:00",
+                            "schedule": {"kind": "interval", "minutes": 5},
+                        }
+                    ]
+                }
+            )
+        )
+        args2 = types.SimpleNamespace(
+            jobs_file=str(nl_jobs), claim_window_seconds=None,
+            ticker_grace_seconds=DEFAULT_TICKER_GRACE_SECONDS,
+        )
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            rc2 = cmd_assert_disabled(args2)
+        out2 = buf2.getvalue()
+        unverifiable = "CRON_STORE_DISABLED_STATE_UNVERIFIABLE" in out2
+
+        if (
+            rc != 0 and flags_regressed and not flags_inflight
+            and rc2 == 2 and unverifiable
+        ):
+            print(
+                "SELFTEST PASS: truly-regressed flagged; in-flight-at-pause NOT "
+                "flagged; missing-ledger store UNVERIFIABLE (rc=2, non-GREEN)."
+            )
+            return 0
+        print("SELFTEST FAIL:")
+        print(f"in-flight-vs-regressed: rc={rc} flags_regressed={flags_regressed} "
+              f"flags_inflight={flags_inflight}")
+        print(out)
+        print(f"missing-ledger: rc={rc2} unverifiable={unverifiable}")
+        print(out2)
+        return 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="cron-store mutation verifier")
-    p.add_argument("--jobs-file", required=True)
+    p.add_argument("--jobs-file", required=False)
     sub = p.add_mutually_exclusive_group(required=True)
     sub.add_argument("--assert-state", action="store_true")
     sub.add_argument("--assert-disabled", action="store_true")
     sub.add_argument("--watch", action="store_true")
+    sub.add_argument("--selftest", action="store_true")
     p.add_argument("--job-id")
     p.add_argument("--expect-enabled", choices=["true", "false"])
     p.add_argument("--expect-state")
     p.add_argument("--expect-paused-at-set", action="store_true")
     p.add_argument("--ticker-grace-seconds", type=float, default=DEFAULT_TICKER_GRACE_SECONDS)
+    p.add_argument("--claim-window-seconds", type=float, default=None,
+                   help="post-pause claim window (s); defaults to one scheduler interval per job")
     p.add_argument("--ref", default="HEAD")
     args = p.parse_args()
 
+    if args.selftest:
+        return cmd_selftest()
+    if not args.jobs_file:
+        p.error("--jobs-file is required for --assert-state/--assert-disabled/--watch")
     if args.assert_state:
         if not args.job_id:
             p.error("--assert-state requires --job-id")

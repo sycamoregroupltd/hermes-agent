@@ -20,7 +20,11 @@ from typing import Any
 HERMES_HOME = Path("/home/frank/.hermes")
 BOARDS = HERMES_HOME / "kanban" / "boards"
 ACTIVE_STATUSES = ("blocked", "todo", "scheduled", "ready")
-OPEN_STATUSES = ("blocked", "todo", "scheduled", "ready", "running")
+# Statuses that make a PM TRIAGE card a live covering signal. "blocked" is
+# deliberately EXCLUDED: a blocked covering card is a stuck/dead mechanism, not
+# coverage (t_a4f6263c / KEP-7). A blocked card alone must never count as open
+# triage, and must surface as DEAD instead.
+COVERING_STATUSES = ("todo", "ready", "running", "scheduled")
 
 
 def utc_today() -> str:
@@ -42,7 +46,7 @@ def status_counts(con: sqlite3.Connection) -> dict[str, int]:
 
 
 def recent_open_pm_triage(con: sqlite3.Connection, pm_profile: str) -> list[dict[str, Any]]:
-    placeholders = ",".join("?" for _ in OPEN_STATUSES)
+    placeholders = ",".join("?" for _ in COVERING_STATUSES)
     rows = con.execute(
         f"""
         SELECT id, title, status, assignee, created_at
@@ -53,7 +57,30 @@ def recent_open_pm_triage(con: sqlite3.Connection, pm_profile: str) -> list[dict
         ORDER BY created_at DESC
         LIMIT 5
         """,
-        (pm_profile, *OPEN_STATUSES),
+        (pm_profile, *COVERING_STATUSES),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def recent_blocked_pm_triage(con: sqlite3.Connection, pm_profile: str) -> list[dict[str, Any]]:
+    """PM TRIAGE cards that exist but are BLOCKED.
+
+    These are a stuck/dead covering signal: they are NOT open triage (see
+    COVERING_STATUSES) and must not be treated as coverage. When the only
+    covering card is blocked and there is no recent PM activity, the bridge
+    reports DEAD instead of ALIVE or of minting a replacement card (t_a4f6263c).
+    """
+    rows = con.execute(
+        """
+        SELECT id, title, status, assignee, created_at
+        FROM tasks
+        WHERE assignee = ?
+          AND status = 'blocked'
+          AND title LIKE 'PM TRIAGE VISIBILITY:%'
+        ORDER BY created_at DESC
+        LIMIT 5
+        """,
+        (pm_profile,),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -125,7 +152,7 @@ def create_card(board: str, pm_profile: str, counts: dict[str, int], source: str
     return f"CREATED_OR_EXISTING board={board} task={task_id} assignee={pm_profile} idempotency_key={idempotency_key}"
 
 
-def liveness_line(board: str, reason: str, **extra: Any) -> str:
+def liveness_line(board: str, reason: str, *, status: str = "ALIVE", **extra: Any) -> str:
     """Deterministic structured liveness marker.
 
     The unified-health mechanism matrix (jarvis_mechanism_liveness_collect.py)
@@ -135,8 +162,12 @@ def liveness_line(board: str, reason: str, **extra: Any) -> str:
     is what produced the historical "silent (empty output)" label. Emit one stable,
     machine-parseable line per run so every execution carries an explicit liveness
     signal with a deterministic reason code (t_92444ff6).
+
+    status is ALIVE except when the mechanism is demonstrably stuck: a covering PM
+    triage card that is BLOCKED with no recent PM activity yields status=DEAD so a
+    human/agent intervenes instead of treating the dead card as coverage (t_a4f6263c).
     """
-    parts = [f"PM_TRIAGE_LIVENESS board={board} status=ALIVE reason={reason}"]
+    parts = [f"PM_TRIAGE_LIVENESS board={board} status={status} reason={reason}"]
     for k, v in extra.items():
         parts.append(f"{k}={v}")
     return " ".join(parts)
@@ -148,6 +179,9 @@ def run(board: str, pm_profile: str, *, dry_run: bool, source: str, recent_pm_ho
         active_total = sum(counts.get(s, 0) for s in ACTIVE_STATUSES)
         if active_total <= 0:
             return liveness_line(board, "no_active_queue", active_total=0)
+        # Live covering signal: an open (todo/ready/running/scheduled) PM triage
+        # card, OR a PM comment on the board in the last --recent-pm-hours.
+        # Blocked cards are NOT covering (see COVERING_STATUSES).
         open_triage = recent_open_pm_triage(con, pm_profile)
         if open_triage:
             return liveness_line(board, "open_triage_covers", open_triage=str(len(open_triage)))
@@ -156,6 +190,15 @@ def run(board: str, pm_profile: str, *, dry_run: bool, source: str, recent_pm_ho
             return liveness_line(
                 board, "recent_pm_activity",
                 recent_pm=str(len(recent_pm)), recent_pm_hours=recent_pm_hours,
+            )
+        # A covering card exists but is BLOCKED with no fresh PM activity: the
+        # mechanism is dead. Report DEAD (fail visibly) and do NOT mint a
+        # replacement card while the blocked one is unresolved.
+        blocked = recent_blocked_pm_triage(con, pm_profile)
+        if blocked:
+            return liveness_line(
+                board, "blocked_covering", status="DEAD",
+                blocked=str(len(blocked)), open_triage="0",
             )
         return create_card(board, pm_profile, counts, source, dry_run)
 

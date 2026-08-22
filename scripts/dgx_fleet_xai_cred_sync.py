@@ -52,8 +52,8 @@ VENV_PY = f'{HERMES_AGENT}/venv/bin/python'
 PROF = '/home/frank/.hermes/profiles'
 JARVIS_HOME = f'{PROF}/jarvis'
 GLOBAL = '/home/frank/.hermes/auth.json'
-POOL_KEYS = ('xai-oauth', 'xai', 'openai-codex', 'nous')   # credential_pool entries to push
-PROVIDER_KEYS = ('xai-oauth', 'openai-codex', 'nous')      # providers[] sections to mirror
+POOL_KEYS = ('xai-oauth', 'xai', 'nous')   # credential_pool entries to push
+PROVIDER_KEYS = ('xai-oauth', 'nous')      # providers[] sections to mirror
 
 # Minimum nous runway to push to the fleet. MUST stay comfortably above the 7-min cron
 # cadence so a pushed token cannot expire before the next sync replaces it.

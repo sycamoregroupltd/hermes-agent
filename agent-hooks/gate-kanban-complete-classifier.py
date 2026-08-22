@@ -370,11 +370,15 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # NOT a browser/API route surface. The negation fires ONLY when the "no
     # <implementation|promotion|paper-sleeve> ... route(s)" construction is
     # present AND an explicit paper-only/read-only/no-implementation qualifier
-    # appears within 240 chars after it, so a positive "implement ... route"
-    # instruction is never neutralized. Concrete apps/web route/page work still
+    # appears within a bounded window after it, so a positive "implement ... route"
+    # instruction is never neutralized. The window is multi-line bounded
+    # ([\\s\\S]{0,360}) so the qualifier may sit on a LATER LINE within the same
+    # card's safety framing (t_63ac495e: "SAFETY GATES: paper-only" bullet ~270
+    # chars after the route clause) while still being capped against crossing
+    # unrelated sections of a long card. Concrete apps/web route/page work still
     # matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS and is caught by the
     # paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS "app route").
-    r"\bno\s+(?:implementation|promotion|paper[- ]?sleeve)(?:[/,]\s*(?:implementation|promotion|paper[- ]?sleeve)){0,3}\s*/?\s*\broutes?\b[^.\n]{0,240}\b(?:paper[- ]?only|read[- ]?only|no[ -]implementation)\b",
+    r"\bno\s+(?:implementation|promotion|paper[- ]?sleeve)(?:[/,]\s*(?:implementation|promotion|paper[- ]?sleeve)){0,3}\s*/?\s*\broutes?\b[\s\S]{0,360}\b(?:paper[- ]?only|read[- ]?only|no[ -]implementation)\b",
 ]
 
 GATE_SCOPE_NONAPP_PATTERNS: PatternList = [

@@ -136,7 +136,8 @@ def test_silent_when_no_active_tasks():
     add_task(root, "t_done", "Finished", status="done")
     add_task(root, "t_arch", "Archived", status="archived")
     out = vis.run("sycode-trading", "sycode-trading-pm", dry_run=False, source="test", recent_pm_hours=6.0)
-    assert out == ""
+    assert out.startswith("PM_TRIAGE_LIVENESS")
+    assert "status=ALIVE" in out and "reason=no_active_queue" in out
 
 
 def test_silent_when_open_pm_triage_card():
@@ -150,7 +151,8 @@ def test_silent_when_open_pm_triage_card():
         status="todo",
     )
     out = vis.run("sycode-trading", "sycode-trading-pm", dry_run=False, source="test", recent_pm_hours=6.0)
-    assert out == ""
+    assert out.startswith("PM_TRIAGE_LIVENESS")
+    assert "status=ALIVE" in out and "reason=open_triage_covers" in out
 
 
 def test_silent_when_recent_pm_activity():
@@ -158,7 +160,72 @@ def test_silent_when_recent_pm_activity():
     add_task(root, "t_ready", "Active work", status="ready")
     add_comment(root, "t_ready", "sycode-trading-pm", age_h=1.0)
     out = vis.run("sycode-trading", "sycode-trading-pm", dry_run=False, source="test", recent_pm_hours=6.0)
-    assert out == ""
+    assert out.startswith("PM_TRIAGE_LIVENESS")
+    assert "status=ALIVE" in out and "reason=recent_pm_activity" in out
+
+
+def test_dead_when_only_blocked_covering_card():
+    # KEP-7 / t_a4f6263c: a BLOCKED PM TRIAGE card is NOT coverage. With an
+    # active queue, a blocked covering card, and no recent PM comment, the bridge
+    # must print DEAD (fail visibly) and must NOT mint a replacement card.
+    root = make_root()
+    add_task(root, "t_ready", "Active work", status="ready")
+    add_task(
+        root,
+        "t_vis",
+        "PM TRIAGE VISIBILITY: sycode-trading active queue review 2026-08-03",
+        assignee="sycode-trading-pm",
+        status="blocked",
+    )
+    fake = patch_subprocess()
+    out = vis.run("sycode-trading", "sycode-trading-pm", dry_run=False, source="test", recent_pm_hours=6.0)
+    assert out.startswith("PM_TRIAGE_LIVENESS"), out
+    assert "status=DEAD" in out and "reason=blocked_covering" in out, out
+    assert not fake.commands, "blocked-only coverage must NOT fire the create path"
+
+
+def test_alive_when_blocked_card_but_fresh_pm_comment():
+    # A blocked covering card with recent PM activity is still alive: the PM is
+    # actively triaging, so report ALIVE recent_pm_activity, not DEAD.
+    root = make_root()
+    add_task(root, "t_ready", "Active work", status="ready")
+    add_task(
+        root,
+        "t_vis",
+        "PM TRIAGE VISIBILITY: sycode-trading active queue review 2026-08-03",
+        assignee="sycode-trading-pm",
+        status="blocked",
+    )
+    add_comment(root, "t_ready", "sycode-trading-pm", age_h=1.0)
+    fake = patch_subprocess()
+    out = vis.run("sycode-trading", "sycode-trading-pm", dry_run=False, source="test", recent_pm_hours=6.0)
+    assert "status=ALIVE" in out and "reason=recent_pm_activity" in out, out
+    assert not fake.commands
+
+
+def test_open_covering_wins_over_blocked():
+    # When an open covering card exists alongside a blocked one, report ALIVE
+    # open_triage_covers (open coverage is a stronger signal than a blocked card).
+    root = make_root()
+    add_task(root, "t_ready", "Active work", status="ready")
+    add_task(
+        root,
+        "t_vis",
+        "PM TRIAGE VISIBILITY: sycode-trading active queue review 2026-08-03",
+        assignee="sycode-trading-pm",
+        status="blocked",
+    )
+    add_task(
+        root,
+        "t_vis2",
+        "PM TRIAGE VISIBILITY: sycode-trading active queue review 2026-08-04",
+        assignee="sycode-trading-pm",
+        status="ready",
+    )
+    fake = patch_subprocess()
+    out = vis.run("sycode-trading", "sycode-trading-pm", dry_run=False, source="test", recent_pm_hours=6.0)
+    assert "status=ALIVE" in out and "reason=open_triage_covers" in out, out
+    assert not fake.commands
 
 
 def test_dry_run_prints_intent_without_writing():
