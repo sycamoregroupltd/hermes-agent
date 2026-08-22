@@ -313,6 +313,36 @@ def audit() -> tuple[list[dict], list[str], list[str]]:
                 })
         except OSError:
             pass
+    # CONTROL: the PATH-level git wrapper (t_041d138a) must be installed ahead of
+    # /usr/bin/git and match its source, so a worker branch-swap in the live tree is
+    # refused even though git 2.43 cannot abort a checkout via hooks. ~/.local/bin is
+    # prepended to worker PATH by ~/.fleet_path.sh, so a drift here re-opens the gap.
+    wrapper_src = REPO / "scripts" / "git-live-checkout-guard.sh"
+    wrapper_install = REPO.parent / ".local" / "bin" / "git"
+    if not wrapper_install.exists() or not os.access(wrapper_install, os.X_OK):
+        violations.append({
+            "job_id": "<control>",
+            "job_name": "git-live-checkout-guard-wrapper",
+            "profile": "<root>",
+            "script": str(wrapper_install),
+            "store": "<control>",
+            "reason": "CONTROL: live git-checkout guard wrapper missing or not executable "
+                      "(expected at ~/.local/bin/git)",
+        })
+    elif wrapper_src.exists():
+        try:
+            if hashlib.sha256(wrapper_install.read_bytes()).digest() != hashlib.sha256(wrapper_src.read_bytes()).digest():
+                violations.append({
+                    "job_id": "<control>",
+                    "job_name": "git-live-checkout-guard-wrapper",
+                    "profile": "<root>",
+                    "script": str(wrapper_install),
+                    "store": "<control>",
+                    "reason": "CONTROL: live git-checkout guard wrapper source drift "
+                              "(installed ~/.local/bin/git differs from scripts/git-live-checkout-guard.sh)",
+                })
+        except OSError:
+            pass
     return violations, sorted(set(v["reason"] for v in violations)), errors
 
 
@@ -351,6 +381,25 @@ def referenced_paths() -> tuple[list[Path], list[str]]:
             except ValueError:
                 continue
             paths.append(resolved)
+    # Static live-critical manifest (t_041d138a, 2026-08-11): seat-invoked scripts
+    # that are NOT cron-wired but must survive a worker branch-switch (the gap that
+    # wiped the experiment-factory launchers). One repo-relative path per line, '#'
+    # comments ignored. Missing manifest is fine (no extra protection, no error).
+    manifest = REPO / "live-critical-paths.txt"
+    if manifest.exists():
+        try:
+            for line in manifest.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                resolved = (REPO / line).expanduser().resolve()
+                try:
+                    resolved.relative_to(REPO)
+                except ValueError:
+                    continue
+                paths.append(resolved)
+        except OSError as exc:
+            errors.append(f"live-critical-paths manifest unreadable: {exc}")
     return paths, errors
 
 

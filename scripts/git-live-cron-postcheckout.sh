@@ -130,6 +130,24 @@ if root.exists():
         data = None
     if data is not None:
         scan(REPO, data, paths)
+# Defense-in-depth (t_041d138a): union the static live-critical manifest so the
+# EMBEDDED fallback protects seat launchers too when the python fast-path is
+# unavailable. Same semantics as scripts/cron_untracked_script_guard.py.
+manifest = REPO / "live-critical-paths.txt"
+if manifest.exists():
+    try:
+        for line in manifest.read_text().splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            resolved = (REPO / line).expanduser().resolve()
+            try:
+                resolved.relative_to(REPO)
+                paths.append(str(resolved))
+            except ValueError:
+                pass
+    except OSError:
+        pass
 for p in sorted(set(paths)):
     print(p)
 PY
