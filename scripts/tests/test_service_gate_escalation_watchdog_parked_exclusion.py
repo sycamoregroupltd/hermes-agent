@@ -40,6 +40,12 @@ Also asserts:
                               yields an empty parked set (no suppression), so
                               an unreadable comments table cannot silently
                               silence genuine escalations.
+  E  master-orchestrator park a blocked SERVICE-GATE source carrying the
+                              'PARKED-BY-MASTER-ORCHESTRATOR ... DO-NOT-AUTO-
+                              UNBLOCK' marker (master-orchestrator load-shed
+                              park, kanban t_7024c661) is skipped and counted
+                              under skipped_parked, and NO escalation/heartbeat/
+                              reopen card is created for it.
 """
 import contextlib
 import glob
@@ -144,6 +150,32 @@ def add_blocked_source(db: Path, tid: str, title: str, parked: bool):
     conn.close()
 
 
+def add_master_parked_source(db: Path, tid: str, title: str):
+    """Blocked SERVICE-GATE source task parked by master-orchestrator load-shed.
+
+    Carries the ``PARKED-BY-MASTER-ORCHESTRATOR ... DO-NOT-AUTO-UNBLOCK``
+    comment marker (kanban t_7024c661) — must be skipped and counted under
+    skipped_parked, and must NEVER auto-escalate/reopen a card.
+    """
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "INSERT INTO tasks (id, title, body, assignee, status, priority, "
+        "created_by, created_at, block_kind, consecutive_failures) "
+        "VALUES (?, ?, ?, ?, 'blocked', 3, 'tester', ?, 'needs_input', 0)",
+        (tid, title, f"Source task {tid} body", "capability-builder", T0),
+    )
+    conn.execute(
+        "INSERT INTO task_comments (task_id, author, body, created_at) "
+        "VALUES (?, 'master-orchestrator', "
+        "'PARKED-BY-MASTER-ORCHESTRATOR dgx-hermes-orchestrator-71 load-shed "
+        "DO-NOT-AUTO-UNBLOCK. Release only by master decision. Reversible: "
+        "unblock.', ?)",
+        (tid, NOW - 3600),
+    )
+    conn.commit()
+    conn.close()
+
+
 def build_fixture(root: Path, src_id: str, parked: bool, other_src_id: str):
     make_board(root, "jarvis-os")
     src_board = root / "ai-restaurant"
@@ -166,6 +198,17 @@ def build_critical_fixture(root: Path, src_id: str):
         src_id,
         "CRITICAL R3: SERVICE-GATE api key exposed cleartext",
         False,
+    )
+
+
+def build_master_parked_fixture(root: Path, src_id: str):
+    """Board with one master-orchestrator load-shed parked source (t_7024c661)."""
+    make_board(root, "jarvis-os")
+    src_db = make_board(root, "ai-restaurant")
+    add_master_parked_source(
+        src_db,
+        src_id,
+        "SERVICE-GATE master load-shed parked source",
     )
 
 
@@ -258,6 +301,35 @@ def main():
             "D: schema-less board yields empty parked set (no suppression)",
             parked == set(),
             repr(parked),
+        )
+
+    print("=== Scenario E: master-orchestrator parked source skipped, never escalated ===")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "boards"
+        build_master_parked_fixture(root, "t_masterpark001")
+        mod.KANBAN_DIR = root
+        buf = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            mod.main(["--dry-run"])
+        check(
+            "E: master-orchestrator parked source skipped and counted",
+            "SKIP parked source ai-restaurant/t_masterpark001: "
+            "master-orchestrator load-shed" in err.getvalue()
+            and "1 parked sources skipped" in buf.getvalue(),
+            repr(err.getvalue() + "\n" + buf.getvalue()),
+        )
+        check(
+            "E: no escalation/reopen for master-parked source",
+            "DRY-RUN would ESCALATE: ai-restaurant/t_masterpark001"
+            not in err.getvalue(),
+            repr(err.getvalue()),
+        )
+        check(
+            "E: get_parked_source_ids includes master-parked source",
+            mod.get_parked_source_ids(root / "ai-restaurant" / "kanban.db")
+            == {"t_masterpark001"},
+            repr(mod.get_parked_source_ids(root / "ai-restaurant" / "kanban.db")),
         )
 
     print()
