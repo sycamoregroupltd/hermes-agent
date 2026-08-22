@@ -139,6 +139,45 @@ def _check_kanban_orchestrator_mode() -> bool:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+def _is_true_dispatcher_worker(tid: str) -> bool:
+    """Return True only when THIS process is the worker the dispatcher spawned.
+
+    Defense-in-depth belt for ``_default_task_id``. Env-only inheritance — a cron
+    subprocess spawned from a worker, or any future spawn boundary that is not
+    scrubbed — copies every ``HERMES_KANBAN_*`` var, so the env alone cannot
+    prove dispatcher ownership once the in-process ContextVar marker is lost
+    across a process boundary. The one fact a child cannot fake is its own pid:
+    the dispatcher durably records ``worker_pid`` for the claimed task, and only
+    the genuine worker process carries that pid.
+
+    Fail CLOSED on a definitive mismatch (the task records a worker that is not
+    this process). Fail open only when no worker pid is recorded at all
+    (legacy/manual setups that predate ``worker_pid`` tracking) — the env-scrub
+    primary defense still covers the known cron-spawn path, and a real dispatcher
+    worker's DB always carries a recorded ``worker_pid`` for the env-inheritance
+    attack case.
+    """
+    import os
+
+    try:
+        kb, conn = _connect()
+        try:
+            task = kb.get_task(conn, tid)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception:
+        return False
+    if task is None:
+        return False
+    if task.worker_pid is None:
+        # No recorded worker to contradict this process; cannot prove a mismatch.
+        return True
+    return task.worker_pid == os.getpid()
+
+
 def _default_task_id(arg: Optional[str]) -> Optional[str]:
     """Resolve ``task_id`` arg or fall back to the env var the dispatcher set."""
     if arg:
@@ -150,7 +189,14 @@ def _default_task_id(arg: Optional[str]) -> Optional[str]:
         # worker's task id as an implicit default.
         return None
     env_tid = os.environ.get("HERMES_KANBAN_TASK")
-    return env_tid or None
+    if not env_tid:
+        return None
+    if not _is_true_dispatcher_worker(env_tid):
+        # Belt: only the genuinely dispatcher-spawned worker process may default
+        # to its task. An env-inheriting child (e.g. a cron subprocess) is not
+        # the recorded worker for this task, so it must not close it implicitly.
+        return None
+    return env_tid
 
 
 def _worker_run_id(task_id: str) -> Optional[int]:

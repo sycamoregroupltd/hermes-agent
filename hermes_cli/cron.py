@@ -45,7 +45,31 @@ def _normalize_skills(single_skill=None, skills: Optional[Iterable[str]] = None)
 def _cron_api(**kwargs):
     from tools.cronjob_tools import cronjob as cronjob_tool
 
-    return json.loads(cronjob_tool(**kwargs))
+    if (kwargs.get("action") or "").strip().lower() != "run":
+        return json.loads(cronjob_tool(**kwargs))
+
+    # ``hermes cron run <job>`` is frequently spawned as a subprocess from
+    # inside a kanban worker (the worker triggers a background cron). That CLI
+    # process inherits the worker's HERMES_KANBAN_* identity. The in-process
+    # run_job ContextVar marker protects the job's own agent, but any subprocess
+    # the job's agent spawns loses the marker and would be misread as that
+    # worker — letting it default ``kanban_complete`` to the worker's task and
+    # overwrite real results (incident t_d2b2a0b5). Strip the identity vars for
+    # the duration of the run (this CLI process is dedicated to it and exits
+    # after), so neither the job agent nor its children can inherit the worker's
+    # kanban identity. Restore in ``finally`` so in-process callers (tests,
+    # embedding apps) are not tainted.
+    import os as _os
+
+    from agent.delegation_context import KANBAN_ENV_KEYS
+
+    saved = {
+        key: _os.environ.pop(key) for key in KANBAN_ENV_KEYS if key in _os.environ
+    }
+    try:
+        return json.loads(cronjob_tool(**kwargs))
+    finally:
+        _os.environ.update(saved)
 
 
 def _active_cron_provider_name() -> str:

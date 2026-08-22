@@ -46,13 +46,47 @@ def _clear_kanban_detect_cache():
 
 
 @pytest.fixture()
-def worker_env(monkeypatch):
-    """Simulate running inside a dispatcher-spawned kanban worker."""
-    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_worker_real_task")
-    monkeypatch.setenv("HERMES_KANBAN_WORKSPACE", "/tmp/ws")
+def worker_env(monkeypatch, tmp_path):
+    """Simulate running inside a dispatcher-spawned kanban worker.
+
+    Creates a real temp board with a task claimed by THIS process (worker_pid =
+    current pid), so the dispatcher-ownership belt in ``_default_task_id`` passes
+    for the genuine worker. Tests that need the env-inheriting-child shape
+    re-point ``worker_pid`` (or the claim_lock) before calling the tool.
+    """
+    import os
+
+    from pathlib import Path
+
+    from hermes_cli import kanban_db as kb
+
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_KANBAN_HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    db_path = kb.kanban_db_path(board="default")
+    kb._INITIALIZED_PATHS.discard(str(db_path.resolve()))
+    kb.init_db()
+
+    host = kb._claimer_id().split(":", 1)[0]
+    lock = f"{host}:{os.getpid()}"
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="worker", assignee="capability-builder")
+        kb.claim_task(conn, tid, claimer=lock)
+        kb._set_worker_pid(conn, tid, os.getpid())
+
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    monkeypatch.setenv(
+        "HERMES_KANBAN_WORKSPACES_ROOT",
+        str(home / "kanban" / "boards" / "default" / "workspaces"),
+    )
+    monkeypatch.setenv("HERMES_KANBAN_TASK", tid)
+    monkeypatch.setenv("HERMES_KANBAN_WORKSPACE", str(tmp_path / "ws"))
     monkeypatch.setenv("HERMES_KANBAN_RUN_ID", "42")
-    monkeypatch.setenv("HERMES_KANBAN_CLAIM_LOCK", "lock-abc")
-    monkeypatch.setenv("HERMES_KANBAN_BOARD", "team-alpha")
+    monkeypatch.setenv("HERMES_KANBAN_CLAIM_LOCK", lock)
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "default")
+    return {"tid": tid, "claim_lock": lock}
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +195,8 @@ class TestKanbanGatesRespectContext:
         from agent.delegation_context import non_dispatcher_owned_context
         from tools import kanban_tools
 
-        assert kanban_tools._default_task_id(None) == "t_worker_real_task"
+        # Genuine worker: defaulting resolves to the claimed task.
+        assert kanban_tools._default_task_id(None) == worker_env["tid"]
         with non_dispatcher_owned_context():
             assert kanban_tools._default_task_id(None) is None
 
@@ -172,6 +207,36 @@ class TestKanbanGatesRespectContext:
 
         with non_dispatcher_owned_context():
             assert kanban_tools._default_task_id("t_explicit") == "t_explicit"
+
+    def test_default_task_id_refused_when_worker_pid_mismatch(self, worker_env):
+        """Belt: an env-inheriting child (not the recorded worker) must NOT
+        default to the worker's task, even with every HERMES_KANBAN_* set."""
+        import os
+
+        from hermes_cli import kanban_db as kb
+        from tools import kanban_tools
+
+        # Re-point the recorded worker to a different pid — the shape of a cron
+        # subprocess that inherited the worker's env but is a separate process.
+        with kb.connect() as conn:
+            kb._set_worker_pid(conn, worker_env["tid"], os.getpid() + 1)
+
+        assert kanban_tools._default_task_id(None) is None
+
+    def test_default_task_id_allows_when_worker_pid_unrecorded(self, worker_env):
+        """Belt fail-open: when no worker_pid is recorded (legacy/manual setup),
+        the env-scrub primary defense still applies and defaulting is not broken."""
+        from hermes_cli import kanban_db as kb
+        from tools import kanban_tools
+
+        with kb.connect() as conn:
+            conn.execute(
+                "UPDATE tasks SET worker_pid = NULL WHERE id = ?",
+                (worker_env["tid"],),
+            )
+            conn.commit()
+
+        assert kanban_tools._default_task_id(None) == worker_env["tid"]
 
     def test_skill_environment_gate(self, worker_env):
         from agent.delegation_context import non_dispatcher_owned_context
@@ -338,7 +403,7 @@ class TestRunJobKanbanIsolation:
         assert success is False
         assert is_dispatcher_owned_worker_context() is True
         # And the env survived the failure too.
-        assert os.environ.get("HERMES_KANBAN_BOARD") == "team-alpha"
+        assert os.environ.get("HERMES_KANBAN_BOARD") == "default"
 
     def test_concurrent_jobs_do_not_corrupt_worker_identity(
         self, monkeypatch, worker_env
@@ -372,6 +437,150 @@ class TestRunJobKanbanIsolation:
             k: v for k, v in os.environ.items() if k.startswith("HERMES_KANBAN_")
         }
         assert after == before, "worker identity must survive concurrent cron jobs"
+
+
+# ---------------------------------------------------------------------------
+# Spawn-boundary env scrub (defense-in-depth for the CLI + cron subprocesses)
+# ---------------------------------------------------------------------------
+
+class TestCliCronRunScrubsKanbanEnv:
+    def test_run_strips_kanban_env_for_duration_and_restores(self, monkeypatch, worker_env):
+        """`_cron_api(action='run')` must strip the worker's kanban identity from
+        os.environ for the run (so the job agent and its subprocesses never inherit
+        it), then restore it so in-process callers are not tainted."""
+        import os
+
+        from agent.delegation_context import KANBAN_ENV_KEYS
+        from hermes_cli import cron as croncli
+        from tools import cronjob_tools
+
+        def _identity():
+            return {
+                k: v for k, v in os.environ.items() if k in KANBAN_ENV_KEYS
+            }
+
+        observed: dict = {}
+
+        def fake_cronjob(**kwargs):
+            observed["during"] = _identity()
+            return '{"success": true, "job": {}}'
+
+        monkeypatch.setattr(cronjob_tools, "cronjob", fake_cronjob)
+
+        before = _identity()
+        assert before, "worker_env should populate kanban identity env"
+
+        result = croncli._cron_api(action="run", job_id="j1")
+        after = _identity()
+
+        assert result == {"success": True, "job": {}}
+        # During the run the identity vars are gone...
+        assert observed["during"] == {}
+        # ...and restored afterwards.
+        assert after == before
+
+    def test_non_run_actions_do_not_scrub(self, monkeypatch, worker_env):
+        """Only action='run' scrubs; list/create etc. leave os.environ untouched."""
+        import os
+
+        from agent.delegation_context import KANBAN_ENV_KEYS
+        from hermes_cli import cron as croncli
+        from tools import cronjob_tools
+
+        seen = {}
+
+        def fake_cronjob(**kwargs):
+            seen["kanban"] = {
+                k: v for k, v in os.environ.items() if k in KANBAN_ENV_KEYS
+            }
+            return '{"success": true}'
+
+        monkeypatch.setattr(cronjob_tools, "cronjob", fake_cronjob)
+        croncli._cron_api(action="list")
+        assert seen["kanban"], "list must not strip the worker's kanban identity"
+
+
+class TestBotChatDeliveryScrubsKanbanEnv:
+    def test_subprocess_env_has_no_kanban_identity(self, monkeypatch, worker_env):
+        """The `hermes chat` subprocess spawned for bot-chat delivery must not
+        inherit the worker's kanban identity."""
+        import subprocess
+        import types
+
+        from agent.delegation_context import KANBAN_ENV_KEYS
+
+        import cron.scheduler as sched
+
+        captured: dict = {}
+
+        def fake_run(argv, **kw):
+            captured["env"] = dict(kw.get("env") or os.environ)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr(sched, "_get_bot_chat_delivery_timeout", lambda: 60)
+
+        err = sched._deliver_to_bot_chat(
+            {"id": "j1", "name": "botchat"}, "content", profile=""
+        )
+        assert err is None
+        assert not any(k in captured["env"] for k in KANBAN_ENV_KEYS)
+
+
+class TestScrubKanbanEnvMarkOption:
+    def test_mark_false_strips_without_marker(self):
+        from agent.delegation_context import (
+            DELEGATED_CHILD_ENV_MARKER,
+            scrub_kanban_env,
+        )
+
+        cleaned = scrub_kanban_env(
+            {"HERMES_KANBAN_TASK": "t1", "HERMES_KANBAN_DB": "/x", "KEEP": "v"},
+            mark=False,
+        )
+        assert not any(k.startswith("HERMES_KANBAN_") for k in cleaned)
+        assert cleaned["KEEP"] == "v"
+        assert DELEGATED_CHILD_ENV_MARKER not in cleaned
+
+    def test_mark_true_sets_marker_by_default(self):
+        from agent.delegation_context import (
+            DELEGATED_CHILD_ENV_MARKER,
+            scrub_kanban_env,
+        )
+
+        cleaned = scrub_kanban_env({"HERMES_KANBAN_TASK": "t1"})
+        assert cleaned[DELEGATED_CHILD_ENV_MARKER] == "1"
+
+
+class TestSubprocessBoundaryScrub:
+    def test_scrubbed_env_crosses_process_boundary(self, monkeypatch, worker_env):
+        """The strip must hold across a real fork: a child spawned with a scrubbed
+        env sees zero kanban identity vars."""
+        import os
+        import subprocess
+        import sys
+
+        from agent.delegation_context import KANBAN_ENV_KEYS, scrub_kanban_env
+
+        assert any(k in os.environ for k in KANBAN_ENV_KEYS), (
+            "worker_env should populate kanban identity env in the parent"
+        )
+        child_env = scrub_kanban_env(dict(os.environ), mark=False)
+        probe = (
+            "import os;"
+            "print([k for k in os.environ if k in "
+            "{'HERMES_KANBAN_TASK','HERMES_KANBAN_DB','HERMES_KANBAN_RUN_ID',"
+            "'HERMES_KANBAN_WORKSPACE','HERMES_KANBAN_WORKSPACES_ROOT',"
+            "'HERMES_KANBAN_CLAIM_LOCK','HERMES_KANBAN_BOARD'}])"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            env=child_env,
+        )
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.strip() == "[]"
 
 
 # ---------------------------------------------------------------------------

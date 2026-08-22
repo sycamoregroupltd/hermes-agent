@@ -130,12 +130,25 @@ def is_delegated_child_process_context() -> bool:
     )
 
 
-def scrub_kanban_env(env: Mapping[str, str] | MutableMapping[str, str]) -> dict[str, str]:
-    """Return *env* with dispatcher-only Kanban variables removed."""
+def scrub_kanban_env(
+    env: Mapping[str, str] | MutableMapping[str, str],
+    *,
+    mark: bool = True,
+) -> dict[str, str]:
+    """Return *env* with dispatcher-only Kanban variables removed.
+
+    ``mark=True`` (default) also tags the result with the delegated-child
+    lineage marker, so the spawned process is denied kanban mutation and its
+    own descendants keep the identity scrubbed (the delegate_task contract).
+    ``mark=False`` strips the identity vars only: use it for cron subprocess
+    spawns, where the child must not inherit a worker's kanban identity but may
+    still legitimately use kanban itself (e.g. a cron-orchestrator).
+    """
     cleaned = dict(env)
     for key in KANBAN_ENV_KEYS:
         cleaned.pop(key, None)
-    cleaned[DELEGATED_CHILD_ENV_MARKER] = "1"
+    if mark:
+        cleaned[DELEGATED_CHILD_ENV_MARKER] = "1"
     return cleaned
 
 

@@ -2447,6 +2447,8 @@ def _deliver_to_bot_chat(job: dict, content: str, profile: str) -> Optional[str]
     import shutil as _shutil
     import tempfile
 
+    from agent.delegation_context import scrub_kanban_env
+
     job_id = job.get("id", "?")
     job_name = job.get("name", job_id)
 
@@ -2464,7 +2466,7 @@ def _deliver_to_bot_chat(job: dict, content: str, profile: str) -> Optional[str]
         except Exception:
             return "bot-chat delivery failed: hermes CLI not resolvable"
 
-    env = os.environ.copy()
+    env = scrub_kanban_env(os.environ.copy(), mark=False)
     if profile:
         argv += ["-p", profile]
         # -p owns profile resolution in the child; a leftover HERMES_HOME
@@ -4059,6 +4061,14 @@ def _run_job_script(
             }
         env = build_subprocess_env()
         env.update(env_overlay)
+        # A cron script can be spawned from inside a kanban worker (the worker
+        # triggered the job). Strip the worker's kanban identity so the script —
+        # and anything it shells out to — cannot inherit HERMES_KANBAN_TASK and
+        # misdefault a kanban lifecycle tool to the worker's task. Keep ``mark``
+        # off so a script that legitimately orchestrates kanban is not denied.
+        from agent.delegation_context import scrub_kanban_env
+
+        env = scrub_kanban_env(env, mark=False)
         # Use the job's workdir as the subprocess cwd when configured,
         # otherwise default to the scripts-dir parent (back-compat).
         # NEVER mutate the Python process cwd — that would leak into
