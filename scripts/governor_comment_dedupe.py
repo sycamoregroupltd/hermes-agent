@@ -5,7 +5,7 @@ Read-only: inspects a board's task_comments table and tells governor/recovery
 sweeps whether a classification comment should be suppressed because the same
 (task_id, classification, owner_packet) was already recorded inside a TTL.
 
-Three coverage classes:
+Four coverage classes:
   1. provider/auth classification comments (legacy class) — keyed on a
      (classification, owner_packet) pair with alias normalization.
   2. proposal-aging-guard comments (added 2026-07-13, per 03:46Z governor
@@ -20,17 +20,37 @@ Three coverage classes:
      must be suppressed even when the caller supplies a new --classification
      string each cycle. The caller embeds the exact key string in the comment
      it writes; the next cycle's scan finds it and suppresses.
+  4. governor-refresh comments (added 2026-08-22, t_2044aea3) — keyed on a
+     stable identity `governor-refresh:v1:<board>:<task_id>:<owner_slug>:
+     <residual_hash>` where residual_hash = sha256(canonicalize(residual))[:12]
+     and residual is the DURABLE evidence (e.g. `cron_stale_direct_rows=1`),
+     canonicalized lowercase/alnum. Classification is caller-chosen and varies
+     every governor cycle for the same long-lived A3/stale-direct blocker, so
+     class 1 cannot see those refreshes as duplicates. Class 4 keys on the
+     stable residual fingerprint instead: a repeat same-owner refresh whose
+     residual has not materially changed is suppressed (cycle-log-only) within
+     the TTL; a material residual change -> different hash -> COMMENT; TTL
+     aging -> a fresh escalation comment is allowed. The credential/approval-
+     critical carve-out for class 4 is evaluated on the explicit
+     --critical-escalation flag / the durable residual content, NOT on
+     incidental classification tokens (a bare `deploy`/`production` in the
+     classification must not force routine A3-deploy-gate refreshes to COMMENT
+     forever). Classes 1-3 keep the original carve-out unchanged.
 
 The CLI stays backward-compatible: the existing --classification / --owner-packet
 path is used for class 1. A new --proposal-aging-guard flag selects class 2.
 The new deterministic path is selected by --finding-key or --target-comment-id
-(plus --action) and takes precedence over the legacy path when present.
+(plus --action) and takes precedence over the legacy path when present. The
+governor-refresh path is selected by --governor-refresh (plus --owner-packet /
+--residual, or an explicit --refresh-key) with precedence class-3 > class-4 >
+class-2 > class-1.
 Credential/approval-critical escalations are NEVER suppressed (existing
 carve-out preserved and now enforced in code).
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sqlite3
@@ -62,6 +82,38 @@ FINDING_KEY_PREFIX = "verdict-sweep:v1:"
 
 def build_finding_key(*, board: str, task_id: str, target_comment_id: int, action: str) -> str:
     return f"{FINDING_KEY_PREFIX}{board}:{task_id}:comment:{target_comment_id}:action:{action}"
+
+
+# Governor-refresh namespace (class 4, t_2044aea3). Stable identity is the
+# DURABLE residual evidence (e.g. `cron_stale_direct_rows=1`) fingerprinted
+# into the key — NOT the caller-chosen classification, which the governor
+# varies every cycle, and NOT a changing probe filename/timestamp. Shape:
+#   governor-refresh:v1:<board>:<task_id>:<owner_slug>:<residual_hash>
+# residual_hash = sha256(canonicalize(residual))[:12].
+REFRESH_KEY_PREFIX = "governor-refresh:v1:"
+
+
+def canonicalize(text: str) -> str:
+    """Lowercase the text and keep only alphanumerics (durable residual norm).
+
+    This is deliberately coarser than normalize(): the residual is hashed, so
+    we drop everything that is not a stable [a-z0-9] token. A changing probe
+    filename, timestamp, or punctuation must not perturb the fingerprint.
+    """
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def owner_slug(owner_packet: str) -> str:
+    """Stable slug for an owner_packet (e.g. `jarvis-os/t_62adfa66`)."""
+    norm = canonicalize(owner_packet)
+    # Keep a readable dash-separated slug; fall back to a hash when empty.
+    readable = re.sub(r"[^a-z0-9]+", "-", (owner_packet or "").lower()).strip("-")
+    return readable or f"h{hashlib.sha256(norm.encode()).hexdigest()[:8]}"
+
+
+def build_refresh_key(*, board: str, task_id: str, owner_packet: str, residual: str) -> str:
+    residual_hash = hashlib.sha256(canonicalize(residual).encode("utf-8")).hexdigest()[:12]
+    return f"{REFRESH_KEY_PREFIX}{board}:{task_id}:{owner_slug(owner_packet)}:{residual_hash}"
 
 
 # Credential/approval-critical carve-out (never suppress). Matches the
@@ -335,6 +387,80 @@ def find_finding_key_duplicate(
     }
 
 
+def find_refresh_duplicate(
+    *, board: str, task_id: str, refresh_key: str, ttl_seconds: int, now: int
+) -> dict[str, Any]:
+    """Class 4: suppress a repeat same-owner A3/stale-direct refresh.
+
+    The governor embeds the exact deterministic refresh key (built from board,
+    task_id, owner_slug, and a hash of the DURABLE residual — NOT the
+    caller-chosen classification) in the refresh comment it writes. If a
+    comment on the task already carries that key inside the TTL, the same
+    residual is already reported and the card is waiting on the same gate; a
+    fresh comment would be spam, so it is suppressed with the cycle-log-only
+    reason. Material evidence change => different residual => different hash
+    => different key => COMMENT. TTL aging => the last refresh falls out of the
+    window => a fresh escalation comment is allowed.
+    """
+    db = board_db(board)
+    if not db.exists():
+        raise FileNotFoundError(str(db))
+
+    since = now - ttl_seconds
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """
+            SELECT id, author, body, created_at
+            FROM task_comments
+            WHERE task_id=? AND created_at>=?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (task_id, since),
+        ).fetchall()
+    finally:
+        con.close()
+
+    for row in rows:
+        if refresh_key in (row["body"] or ""):
+            age_seconds = max(0, now - int(row["created_at"]))
+            return {
+                "decision": "SUPPRESS",
+                "reason": "governor_refresh_unchanged_within_ttl",
+                "dedupe_key": {
+                    "board": board,
+                    "task_id": task_id,
+                    "refresh_key": refresh_key,
+                    "classification": None,  # caller-chosen label is NOT identity
+                    "owner_packet": None,
+                    "ttl_seconds": ttl_seconds,
+                },
+                "matched_comment": {
+                    "id": int(row["id"]),
+                    "author": row["author"],
+                    "created_at": int(row["created_at"]),
+                    "age_seconds": age_seconds,
+                    "excerpt": (row["body"] or "")[:300],
+                },
+                "comments_scanned": len(rows),
+            }
+
+    return {
+        "decision": "COMMENT",
+        "reason": "no_matching_refresh_key_within_ttl",
+        "dedupe_key": {
+            "board": board,
+            "task_id": task_id,
+            "refresh_key": refresh_key,
+            "classification": None,
+            "owner_packet": None,
+            "ttl_seconds": ttl_seconds,
+        },
+        "comments_scanned": len(rows),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only governor classification comment dedupe guard")
     parser.add_argument("--board", required=True)
@@ -372,6 +498,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Mark this escalation credential/approval-critical. It is NEVER suppressed (safety carve-out); always returns COMMENT.",
     )
+    # Class 4 governor-refresh inputs (t_2044aea3)
+    parser.add_argument(
+        "--governor-refresh",
+        action="store_true",
+        help="Use the governor-refresh dedupe class (suppress repeat same-owner A3/stale-direct refreshes on a blocked card when the durable residual is unchanged within the TTL).",
+    )
+    parser.add_argument(
+        "--residual",
+        default=None,
+        help="Durable evidence residual for class 4 (e.g. `cron_stale_direct_rows=1`). Fingerprinted into the refresh key; NOT the classification and NOT a changing probe filename/timestamp. Required with --governor-refresh unless --refresh-key is supplied.",
+    )
+    parser.add_argument(
+        "--refresh-key",
+        default=None,
+        help="Explicit deterministic governor-refresh key string (e.g. governor-refresh:v1:<board>:<task_id>:<owner_slug>:<residual_hash>). Takes precedence over --residual and the legacy classification path for class 4.",
+    )
     args = parser.parse_args(argv)
 
     ttl_seconds = int(args.ttl_hours * 3600)
@@ -391,11 +533,77 @@ def main(argv: list[str] | None = None) -> int:
             action=args.action,
         )
 
+    # Class 4 governor-refresh key. Precedence: class-3 > class-4 > class-2 >
+    # class-1, so the finding-key path above wins when both are somehow present.
+    refresh_key = args.refresh_key
+    if args.governor_refresh and refresh_key is None:
+        if not args.owner_packet or not args.residual:
+            parser.error(
+                "--governor-refresh requires --owner-packet and --residual "
+                "(or pass --refresh-key with the full key string)"
+            )
+        refresh_key = build_refresh_key(
+            board=args.board,
+            task_id=args.task_id,
+            owner_packet=args.owner_packet,
+            residual=args.residual,
+        )
+
     # Safety carve-out: never suppress credential/approval-critical escalations,
     # even when a deterministic key match exists. This is enforced BEFORE any
     # scan so a critical escalation always returns COMMENT.
+    #
+    # Class-4 carve-out semantics (design finding, t_330f2377): the existing
+    # CRITICAL_MARKER_RE matches bare `deploy`/`production` tokens in the
+    # CALLER-CHOSEN classification, which would force routine A3-deploy-gate
+    # refreshes to COMMENT forever. For the class-4 path the carve-out is
+    # evaluated on the explicit --critical-escalation flag AND the durable
+    # residual content only — NOT on incidental classification tokens. The
+    # credential/approval-critical suppression for classes 1-3 is unchanged.
     try:
-        if args.critical_escalation or is_critical_escalation(
+        if args.critical_escalation:
+            result = {
+                "decision": "COMMENT",
+                "reason": "critical_escalation_never_suppressed",
+                "dedupe_key": {
+                    "board": args.board,
+                    "task_id": args.task_id,
+                    "classification": args.classification,
+                    "owner_packet": args.owner_packet,
+                    "finding_key": finding_key,
+                    "refresh_key": refresh_key,
+                    "ttl_seconds": ttl_seconds,
+                },
+                "comments_scanned": 0,
+            }
+        elif args.governor_refresh:
+            # Class-4: carve-out is decided on the residual / flag, not the
+            # incidental classification text.
+            residual_critical = bool(CRITICAL_MARKER_RE.search(args.residual or ""))
+            if residual_critical:
+                result = {
+                    "decision": "COMMENT",
+                    "reason": "critical_escalation_never_suppressed",
+                    "dedupe_key": {
+                        "board": args.board,
+                        "task_id": args.task_id,
+                        "classification": args.classification,
+                        "owner_packet": args.owner_packet,
+                        "finding_key": finding_key,
+                        "refresh_key": refresh_key,
+                        "ttl_seconds": ttl_seconds,
+                    },
+                    "comments_scanned": 0,
+                }
+            else:
+                result = find_refresh_duplicate(
+                    board=args.board,
+                    task_id=args.task_id,
+                    refresh_key=refresh_key,
+                    ttl_seconds=ttl_seconds,
+                    now=now,
+                )
+        elif is_critical_escalation(
             classification=args.classification or "",
             owner_packet=args.owner_packet or "",
             finding_key=finding_key or "",
@@ -409,6 +617,7 @@ def main(argv: list[str] | None = None) -> int:
                     "classification": args.classification,
                     "owner_packet": args.owner_packet,
                     "finding_key": finding_key,
+                    "refresh_key": refresh_key,
                     "ttl_seconds": ttl_seconds,
                 },
                 "comments_scanned": 0,
@@ -433,7 +642,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             if not args.classification or not args.owner_packet:
-                parser.error("legacy path requires --classification and --owner-packet (or use --finding-key / --target-comment-id / --proposal-aging-guard)")
+                parser.error("legacy path requires --classification and --owner-packet (or use --finding-key / --target-comment-id / --proposal-aging-guard / --governor-refresh)")
             result = find_duplicate(
                 board=args.board,
                 task_id=args.task_id,

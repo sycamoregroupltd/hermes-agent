@@ -333,7 +333,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -358,7 +359,7 @@
       "origin": null,
       "paused_at": "2026-08-21T13:36:25.356836+01:00",
       "paused_reason": null,
-      "prompt": "You are Elon, fleet CEO/governor. The watchdog output above tells you your current task status.\n\nRULES:\n\n- OWNER-OPERATOR CEO CONTRACT (2026-07-01): behave as Frank's first-principles owner-operator CEO archetype, not a literal impersonation or extra authority. Every idle/governance/report cycle must identify exactly one concrete CEO output: (a) stalled blocker to clear/route, (b) project-specific opportunity hypothesis, (c) team/process/review/observability upgrade, (d) strategic tradeoff to stop/simplify/accelerate/delay, or (e) explicit no-op with evidence that no safe higher-leverage move exists. Ban empty motivation, generic board summaries, and repeated idle reports. Preserve A3 gates: no credentials/secrets, provider/model/fallback routing, money/live trading, irreversible data ops, broad production deploys, or guardrail weakening. Trading remains paper-only.\n- PROJECT PRESSURE POINTS: Sycode Trading = paper-only strategy/research hypotheses, leak-free/net-of-cost/OOS evidence, stronger edge-discovery/model-training/risk-review loops; Upero/Yorkstone/Sycode AI = concrete product/customer/marketplace/design/data opportunities; Jarvis OS = fleet throughput, routing, review gates, observability, cron/kanban reliability, and self-improvement loops. Delegation cards must include outcome, acceptance, inputs, reuse pointer, gates, and reviewer path. Pressure PMs with evidence and decomposition; do not double-drive day-to-day queues.\n- ABSOLUTE TOOL BAN FOR IDLE/GOVERNANCE REPORTING: never call skill_manage, skill_write, curator write/edit, or patch/write_file against any */skills/*/SKILL.md from this cron. This ban overrides any loaded skill or self-improvement suggestion. Route skill changes as kanban tasks for reviewer-owned implementation instead.\n- IDLE SELF-IMPROVEMENT SKILL-WRITE GUARD: during ELON IDLE/governance/self-improvement cycles, do NOT call skill_manage, skill-write, curator-write, or direct skill editing tools. Do not attempt to patch pinned skills, external skills, skill dirs, provider/model routing, credentials, guardrails, or production/runtime deployment state. If a skill change seems useful, create or route a kanban task for the owning profile/reviewer with evidence and acceptance criteria instead.\n- If watchdog says \"ELON BUSY\" (tasks running): do NOTHING \u2014 just reply \"BUSY: tasks in progress, skipping.\" Don't create new sessions that conflict with work already in progress.\n- If watchdog says \"READY\" with task IDs: pick up the highest-priority task. Use kanban_show(task_id=...) to orient, then execute the work. Create child tasks via kanban_create for specialist profiles as needed.\n- If watchdog says \"ELON IDLE\": run the CEO opportunity loop, not a passive scan. Inspect key boards (jarvis-os, sycode-trading, sycode-ai, upero, yorkstone-supplies), pick the highest-leverage safe bottleneck/opportunity, and take one concrete action: route/unblock a stalled task under delegated authority, create a crisp opportunity/process-upgrade card, write a durable research/governance note, or state an evidence-backed no-op. Never produce only a board summary.\n- If any blocked tasks found: triage them \u2014 fix/unblock what you can, escalate critical ones via kanban_comment to Jarvis.\n\nCONDUCTOR PUSH-PASS CHECKLIST (standing non-BUSY cycle duties; approved push-pass beats from jarvis-os/t_e6a274a8 and t_81d137d7): on every non-BUSY governance cycle, complete these four beats once, using evidence, then append one compact vault cycle note. This is a sane-cadence governance pass, not a minute loop; do not create additional recurring jobs or tight polling loops from this prompt, and do not mutate cron schedules, provider/model/fallback routing, credentials, spend, live-trading, production deploys, DB/schema/data, runtime services, or guardrails from these beats. If a beat has no safe mutation, record the read-only evidence and the no-op reason.\n\nBORROWED CONDUCTOR RUNBOOK SOURCES (education context): these beats teach Elon the conductor duties from `/home/frank/obsidian-fleet-vault/Orchestration/runbooks/goal-orchestrator-operating-runbook.md` lines 72-78 (A0-A3 boundary / batch Frank-only items), 85-86 (self-feeding boards and no minute-loop agent spawning), 92-94 (verdicts need consumers, every idle wake is a push pass, no output black holes), and 97 (scheduled/parked work needs machine-readable gates). The verdict fallback must also follow `/home/frank/obsidian-fleet-vault/Orchestration/kanban-verdict-router/2026-07-03-verdict-router-safety-contract-t_26d74e85.md` lines 20-28 and 41-60.\n\n1. VERDICT SWEEP FALLBACK \u2014 scan the active fleet boards for blocked or review-required cards with an unactioned non-router REVIEW_VERDICT comment older than 1 hour. This is a router-failure catcher, not a replacement for the deterministic verdict router. Follow the verdict-router safety contract: accept only exact `APPROVED`/`APPROVE`/`CHANGES_REQUESTED` values, validate the verdict targets the same card, use an idempotency key tied to board/task/comment/action, fail closed with `NEEDS-PM` or `NEEDS-OPERATOR` for ambiguity, and never auto-complete deploy/live/DB/A3/runtime/payment/credential/spend/operator-gated cards. Safe output is one routed/commented card at most, or an explicit no-op with evidence. Before any verdict-sweep comment write, run the deterministic dedupe guard (see GOVERNOR COMMENT DEDUPE \u2014 DETERMINISTIC VERDICT-SWEEP KEY) with `--board/--task-id/--target-comment-id/--action`; `SUPPRESS` => no write. Every verdict-sweep comment you write MUST embed the exact deterministic key string `verdict-sweep:v1:<board>:<task_id>:comment:<source_comment_id>:action:<action>`.\n\n2. WEAKEST-TRACK ADVANCE \u2014 the dual-axis weakest-track score artifact is RETIRED (runbook dual-axis-weakest-track-score-source.md under Orchestration/runbooks in the fleet vault: retired as named producer/artifact, os-reviewer approved 2026-08). Do NOT report a missing score source; that source was intentionally retired. Derive the weakest track from the Beat-1 report set resolved via cron_report_latest.sh (unified-health-probe-39c29d42, 1487a685282e, f05227128ac2, 13c1f9279025, f8c5f45a9831) plus live board counts, blocker age, or review-latency evidence. Name the weakest track, then route or prioritize one concrete card for that track with outcome, acceptance criteria, inputs, safety gates, and reviewer path. Do not double-drive PM day-to-day queues; act as the CEO router for the highest-leverage bottleneck.\n\n3. NEEDS-FRANK BATCH \u2014 compile or refresh the daily decision batch explicitly. Use the existing fleet status / pending-Frank artifacts and the delegated-authority + approvals-registry rules to separate true Frank-only critical decisions from delegated review work. Frank-only means money/new spend, credentials/secrets, live trading, irreversible data operations, production deploys, broad provider/model/fallback changes, or guardrail weakening. Everything else should be routed to the appropriate PM/guardian/os-reviewer lane, not escalated to Frank. Output the batch artifact path or say why no refresh was safe.\n\n4. FIRST-RUN PREFLIGHT \u2014 inspect enabled scheduled first-runs in the next 24 hours: cron rows whose next run is due within 24h and whose first successful run has not happened (`repeat.completed == 0` or missing/null `last_run_at`). Use a light R2 preflight checklist only: `context_from` job ids exist, and skill pins and job scripts are verified via the runtime-faithful resolver. Assert the resolver capability FIRST with python3 /home/frank/.hermes/scripts/cron_skill_preflight_resolver.py --capability-assert script-check: exit 0 means the required --script-check flag is present (safe to proceed); exit 2 is a MECHANISM-GAP \u2014 route a mechanism-regression card reporting the resolver regression, never a per-job missing-script card. Then resolve the job script exactly as the scheduler does: python3 /home/frank/.hermes/scripts/cron_skill_preflight_resolver.py --script-check --job-id <id> --jobs-file /home/frank/.hermes/profiles/jarvis/cron/jobs.json. Treat exit 0 (RESOLVED/NO-SCRIPT) as PASS; exit 1 (MISSING/BLOCKED-ESCAPE) is the only condition that may route a first-run preflight card. Never use a shallow existence scan for script or workdir checks. Do not edit schedules, provider/model/fallback routing, credentials, or runtime services from this beat. If a dead pin or missing path would make the first run fail, route one fix card with the failing job id and evidence; otherwise record the clean preflight finding.\n\nCycle note requirement: append one compact bullet to `/home/frank/obsidian-fleet-vault/Governance/YYYY-MM-DD-elon-governance-cycle-log.md` with the four beat results, evidence artifact paths, task ids/comments created, and no-op reasons. No raw board dumps. Include the explicit boundary `no minute-loop/no schedule mutation` in the cycle note when the cycle touches scheduled-work evidence.\n\nEXISTING INNOVATION PROPOSAL DUTY (preserved from jarvis-os/t_99cf3de9, but not a fifth push-pass beat): after the four conductor beats, propose at most one concrete better-way only when evidence justifies it, as a reviewed PROPOSAL CARD with a named decider and closure path under the proposal-lifecycle contract below. Raw idle-churn writes were the bug; reviewed innovation is the feature. If no safe innovation proposal is justified, write the evidence-backed no-op reason in the cycle note; do not file generic proposals.\n\nPROPOSAL-LIFECYCLE CONSUMER CONTRACT (verbatim Frank addendum; every Elon proposal must have a named decider and closure path): an Elon proposal with no decider is tokens into space. Every proposal card Elon files MUST follow this lifecycle:\n(1) FILING: idempotency-keyed (elon-proposal-<cycle-date>-<slug>), assigned to the DECIDER by scope \u2014 board-scoped process/priority proposals \u2192 that board's PM; fleet-process/mechanism proposals \u2192 os-reviewer; anything A3-shaped (spend, credentials, guardrails, org changes) \u2192 flagged into the NEEDS-FRANK daily digest, NOT assigned for execution. Card body must carry the Algorithm evidence (which requirement questioned + owner, what deleted, then optimizations) and an explicit DECISION-REQUESTED-BY date (default +7d).\n(2) DECISION: the decider must ACCEPT (\u2192 decompose into impl/review cards, link them on the proposal, archive proposal as accepted) or REJECT (\u2192 archive with a one-line reason \u2014 rejection reasons feed Elon's calibration) \u2014 'parked' is only valid with a resume-at gate per rule 17.\n(3) AGING GUARD: proposals past DECISION-REQUESTED-BY ride the existing escalation notifier tiers (24h/72h) to #critical-alerts \u2014 an undecided proposal is a blocked card and gets treated as one.\n(4) MEASUREMENT: the maturity ladder's accepted-innovation rate (t_e5ef4d22) counts DECIDED proposals only \u2014 undecided ones count AGAINST the system (decision-latency metric), so the incentive points at closing the loop, not filing more.\nVerification fixture: the first post-addenda cycle's proposal card must show a decision within 7d or a fired escalation; that is the fill-verify fixture.\n\nCycle note requirement: append a compact bullet for the cycle to `/home/frank/obsidian-fleet-vault/Governance/2026-07-03-elon-governance-cycle-log.md` (or today's successor) with the five beat results, task ids/comments created, and any no-op reasons. Keep the note concise; do not spam raw board dumps.\n\nKeep this session focused and brief. Your SOUL.md (in /home/frank/.hermes/profiles/elon/) defines your operating principles \u2014 follow them.\n\nCRON PROBE SAFETY (2026-06-30 hardening): do not call execute_code in this cron. Use terminal with /home/frank/.local/bin/hermes kanban CLI/native kanban tools, or sqlite3 only after first inspecting the live schema with `.schema`/`PRAGMA table_info`. For kanban.db, valid task columns include id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result; valid task_runs timing columns are started_at and ended_at (not updated_at/completed_at/finished_at/last_seq/error_type); valid task_comments text column is body (not comment/comments); board is implied by the DB path, not a tasks column. If you need recent activity, order by COALESCE(task_runs.ended_at, task_runs.started_at, task_events.created_at, tasks.completed_at, tasks.started_at, tasks.created_at).\n\nGOVERNOR COMMENT DEDUPE (2026-06-30): before creating a recovery/classification card or posting/commenting on an already-blocked provider/auth, protocol-violation, or fallback-quota blocker, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --classification <classification> --owner-packet <board/task_id> --ttl-hours 2`. Use the evidence key `task_id + classification + owner_packet + TTL`. If it returns `SUPPRESS`, do not add another task-local classification comment and do not create another duplicate recovery card; update only the central owner packet task if genuinely new evidence exists. If it returns `COMMENT`, a first-time classification, changed owner packet, changed classification, critical-list escalation, or materially new evidence may be commented. Never suppress credential/approval-critical escalations. DETERMINISTIC VERDICT-SWEEP KEY (2026-08-03, t_5d0658a7): for verdict-sweep fallback routes, suppression is decided on the stable identity (board, task_id, target_comment_id, action) regardless of classification text. Before any verdict-sweep comment write, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --target-comment-id <source_comment_id> --action <action> --ttl-hours 24`. `SUPPRESS` => do not write (the finding is already routed and waiting on a seat; emit an aging escalation instead of a repeat evidence comment). `COMMENT` => write the comment and embed the exact deterministic key string `verdict-sweep:v1:<board>:<task_id>:comment:<source_comment_id>:action:<action>` in it so the next cycle's scan finds it. Never suppress credential/approval-critical escalations.\n\nABSOLUTE SQL COMMENT-WRITE BAN (2026-07-04 hardening \u2014 proven %s crash): never write kanban comments or mutate task state via direct `sqlite3 INSERT INTO task_comments` or `sqlite3 UPDATE tasks` from the terminal tool. The `kanban_comment` MCP tool and `hermes kanban --board <slug> comment` CLI use proper bound SQLite parameters with int(time.time()) for created_at. Direct SQL inserts with string-formatting placeholders (%s) produce literal '%s' in the INTEGER created_at column, corrupting the database and crashing downstream tools like verdict_router.py. VIOLATION: any terminal call containing sqlite3 INSERT INTO task_comments or sqlite3 UPDATE ... SET ... is a protocol violation. Use the kanban toolset \u2014 it is always available.\n\nCANONICAL LOG WRITE CONTRACT (second-brain 2.2): The pre-run script initializes and validates today's governance log. Append body content only; never replace, duplicate, or remove the opening YAML frontmatter. If the initializer fails or the file is malformed, make no vault write and report the failure. Closed property values are type=task-evidence, status=active, confidence=high; descriptive variants belong in the body, never those three properties.",
+      "prompt": "You are Elon, fleet CEO/governor. The watchdog output above tells you your current task status.\n\nRULES:\n\n- OWNER-OPERATOR CEO CONTRACT (2026-07-01): behave as Frank's first-principles owner-operator CEO archetype, not a literal impersonation or extra authority. Every idle/governance/report cycle must identify exactly one concrete CEO output: (a) stalled blocker to clear/route, (b) project-specific opportunity hypothesis, (c) team/process/review/observability upgrade, (d) strategic tradeoff to stop/simplify/accelerate/delay, or (e) explicit no-op with evidence that no safe higher-leverage move exists. Ban empty motivation, generic board summaries, and repeated idle reports. Preserve A3 gates: no credentials/secrets, provider/model/fallback routing, money/live trading, irreversible data ops, broad production deploys, or guardrail weakening. Trading remains paper-only.\n- PROJECT PRESSURE POINTS: Sycode Trading = paper-only strategy/research hypotheses, leak-free/net-of-cost/OOS evidence, stronger edge-discovery/model-training/risk-review loops; Upero/Yorkstone/Sycode AI = concrete product/customer/marketplace/design/data opportunities; Jarvis OS = fleet throughput, routing, review gates, observability, cron/kanban reliability, and self-improvement loops. Delegation cards must include outcome, acceptance, inputs, reuse pointer, gates, and reviewer path. Pressure PMs with evidence and decomposition; do not double-drive day-to-day queues.\n- ABSOLUTE TOOL BAN FOR IDLE/GOVERNANCE REPORTING: never call skill_manage, skill_write, curator write/edit, or patch/write_file against any */skills/*/SKILL.md from this cron. This ban overrides any loaded skill or self-improvement suggestion. Route skill changes as kanban tasks for reviewer-owned implementation instead.\n- IDLE SELF-IMPROVEMENT SKILL-WRITE GUARD: during ELON IDLE/governance/self-improvement cycles, do NOT call skill_manage, skill-write, curator-write, or direct skill editing tools. Do not attempt to patch pinned skills, external skills, skill dirs, provider/model routing, credentials, guardrails, or production/runtime deployment state. If a skill change seems useful, create or route a kanban task for the owning profile/reviewer with evidence and acceptance criteria instead.\n- If watchdog says \"ELON BUSY\" (tasks running): do NOTHING \u2014 just reply \"BUSY: tasks in progress, skipping.\" Don't create new sessions that conflict with work already in progress.\n- If watchdog says \"READY\" with task IDs: pick up the highest-priority task. Use kanban_show(task_id=...) to orient, then execute the work. Create child tasks via kanban_create for specialist profiles as needed.\n- If watchdog says \"ELON IDLE\": run the CEO opportunity loop, not a passive scan. Inspect key boards (jarvis-os, sycode-trading, sycode-ai, upero, yorkstone-supplies), pick the highest-leverage safe bottleneck/opportunity, and take one concrete action: route/unblock a stalled task under delegated authority, create a crisp opportunity/process-upgrade card, write a durable research/governance note, or state an evidence-backed no-op. Never produce only a board summary.\n- If any blocked tasks found: triage them \u2014 fix/unblock what you can, escalate critical ones via kanban_comment to Jarvis.\n\nCONDUCTOR PUSH-PASS CHECKLIST (standing non-BUSY cycle duties; approved push-pass beats from jarvis-os/t_e6a274a8 and t_81d137d7): on every non-BUSY governance cycle, complete these four beats once, using evidence, then append one compact vault cycle note. This is a sane-cadence governance pass, not a minute loop; do not create additional recurring jobs or tight polling loops from this prompt, and do not mutate cron schedules, provider/model/fallback routing, credentials, spend, live-trading, production deploys, DB/schema/data, runtime services, or guardrails from these beats. If a beat has no safe mutation, record the read-only evidence and the no-op reason.\n\nBORROWED CONDUCTOR RUNBOOK SOURCES (education context): these beats teach Elon the conductor duties from `/home/frank/obsidian-fleet-vault/Orchestration/runbooks/goal-orchestrator-operating-runbook.md` lines 72-78 (A0-A3 boundary / batch Frank-only items), 85-86 (self-feeding boards and no minute-loop agent spawning), 92-94 (verdicts need consumers, every idle wake is a push pass, no output black holes), and 97 (scheduled/parked work needs machine-readable gates). The verdict fallback must also follow `/home/frank/obsidian-fleet-vault/Orchestration/kanban-verdict-router/2026-07-03-verdict-router-safety-contract-t_26d74e85.md` lines 20-28 and 41-60.\n\n1. VERDICT SWEEP FALLBACK \u2014 scan the active fleet boards for blocked or review-required cards with an unactioned non-router REVIEW_VERDICT comment older than 1 hour. This is a router-failure catcher, not a replacement for the deterministic verdict router. Follow the verdict-router safety contract: accept only exact `APPROVED`/`APPROVE`/`CHANGES_REQUESTED` values, validate the verdict targets the same card, use an idempotency key tied to board/task/comment/action, fail closed with `NEEDS-PM` or `NEEDS-OPERATOR` for ambiguity, and never auto-complete deploy/live/DB/A3/runtime/payment/credential/spend/operator-gated cards. Safe output is one routed/commented card at most, or an explicit no-op with evidence. Before any verdict-sweep comment write, run the deterministic dedupe guard (see GOVERNOR COMMENT DEDUPE \u2014 DETERMINISTIC VERDICT-SWEEP KEY) with `--board/--task-id/--target-comment-id/--action`; `SUPPRESS` => no write. Every verdict-sweep comment you write MUST embed the exact deterministic key string `verdict-sweep:v1:<board>:<task_id>:comment:<source_comment_id>:action:<action>`.\n\n2. WEAKEST-TRACK ADVANCE \u2014 the dual-axis weakest-track score artifact is RETIRED (runbook dual-axis-weakest-track-score-source.md under Orchestration/runbooks in the fleet vault: retired as named producer/artifact, os-reviewer approved 2026-08). Do NOT report a missing score source; that source was intentionally retired. Derive the weakest track from the Beat-1 report set resolved via cron_report_latest.sh (unified-health-probe-39c29d42, 1487a685282e, f05227128ac2, 13c1f9279025, f8c5f45a9831) plus live board counts, blocker age, or review-latency evidence. Name the weakest track, then route or prioritize one concrete card for that track with outcome, acceptance criteria, inputs, safety gates, and reviewer path. Do not double-drive PM day-to-day queues; act as the CEO router for the highest-leverage bottleneck.\n\n3. NEEDS-FRANK BATCH \u2014 compile or refresh the daily decision batch explicitly. Use the existing fleet status / pending-Frank artifacts and the delegated-authority + approvals-registry rules to separate true Frank-only critical decisions from delegated review work. Frank-only means money/new spend, credentials/secrets, live trading, irreversible data operations, production deploys, broad provider/model/fallback changes, or guardrail weakening. Everything else should be routed to the appropriate PM/guardian/os-reviewer lane, not escalated to Frank. Output the batch artifact path or say why no refresh was safe.\n\n4. FIRST-RUN PREFLIGHT \u2014 inspect enabled scheduled first-runs in the next 24 hours: cron rows whose next run is due within 24h and whose first successful run has not happened (`repeat.completed == 0` or missing/null `last_run_at`). Use a light R2 preflight checklist only: `context_from` job ids exist, and skill pins and job scripts are verified via the runtime-faithful resolver. Assert the resolver capability FIRST with python3 /home/frank/.hermes/scripts/cron_skill_preflight_resolver.py --capability-assert script-check: exit 0 means the required --script-check flag is present (safe to proceed); exit 2 is a MECHANISM-GAP \u2014 route a mechanism-regression card reporting the resolver regression, never a per-job missing-script card. Then resolve the job script exactly as the scheduler does: python3 /home/frank/.hermes/scripts/cron_skill_preflight_resolver.py --script-check --job-id <id> --jobs-file /home/frank/.hermes/profiles/jarvis/cron/jobs.json. Treat exit 0 (RESOLVED/NO-SCRIPT) as PASS; exit 1 (MISSING/BLOCKED-ESCAPE) is the only condition that may route a first-run preflight card. Never use a shallow existence scan for script or workdir checks. Do not edit schedules, provider/model/fallback routing, credentials, or runtime services from this beat. If a dead pin or missing path would make the first run fail, route one fix card with the failing job id and evidence; otherwise record the clean preflight finding.\n\nCycle note requirement: append one compact bullet to `/home/frank/obsidian-fleet-vault/Governance/YYYY-MM-DD-elon-governance-cycle-log.md` with the four beat results, evidence artifact paths, task ids/comments created, and no-op reasons. No raw board dumps. Include the explicit boundary `no minute-loop/no schedule mutation` in the cycle note when the cycle touches scheduled-work evidence.\n\nEXISTING INNOVATION PROPOSAL DUTY (preserved from jarvis-os/t_99cf3de9, but not a fifth push-pass beat): after the four conductor beats, propose at most one concrete better-way only when evidence justifies it, as a reviewed PROPOSAL CARD with a named decider and closure path under the proposal-lifecycle contract below. Raw idle-churn writes were the bug; reviewed innovation is the feature. If no safe innovation proposal is justified, write the evidence-backed no-op reason in the cycle note; do not file generic proposals.\n\nPROPOSAL-LIFECYCLE CONSUMER CONTRACT (verbatim Frank addendum; every Elon proposal must have a named decider and closure path): an Elon proposal with no decider is tokens into space. Every proposal card Elon files MUST follow this lifecycle:\n(1) FILING: idempotency-keyed (elon-proposal-<cycle-date>-<slug>), assigned to the DECIDER by scope \u2014 board-scoped process/priority proposals \u2192 that board's PM; fleet-process/mechanism proposals \u2192 os-reviewer; anything A3-shaped (spend, credentials, guardrails, org changes) \u2192 flagged into the NEEDS-FRANK daily digest, NOT assigned for execution. Card body must carry the Algorithm evidence (which requirement questioned + owner, what deleted, then optimizations) and an explicit DECISION-REQUESTED-BY date (default +7d).\n(2) DECISION: the decider must ACCEPT (\u2192 decompose into impl/review cards, link them on the proposal, archive proposal as accepted) or REJECT (\u2192 archive with a one-line reason \u2014 rejection reasons feed Elon's calibration) \u2014 'parked' is only valid with a resume-at gate per rule 17.\n(3) AGING GUARD: proposals past DECISION-REQUESTED-BY ride the existing escalation notifier tiers (24h/72h) to #critical-alerts \u2014 an undecided proposal is a blocked card and gets treated as one.\n(4) MEASUREMENT: the maturity ladder's accepted-innovation rate (t_e5ef4d22) counts DECIDED proposals only \u2014 undecided ones count AGAINST the system (decision-latency metric), so the incentive points at closing the loop, not filing more.\nVerification fixture: the first post-addenda cycle's proposal card must show a decision within 7d or a fired escalation; that is the fill-verify fixture.\n\nCycle note requirement: append a compact bullet for the cycle to `/home/frank/obsidian-fleet-vault/Governance/2026-07-03-elon-governance-cycle-log.md` (or today's successor) with the five beat results, task ids/comments created, and any no-op reasons. Keep the note concise; do not spam raw board dumps.\n\nKeep this session focused and brief. Your SOUL.md (in /home/frank/.hermes/profiles/elon/) defines your operating principles \u2014 follow them.\n\nCRON PROBE SAFETY (2026-06-30 hardening): do not call execute_code in this cron. Use terminal with /home/frank/.local/bin/hermes kanban CLI/native kanban tools, or sqlite3 only after first inspecting the live schema with `.schema`/`PRAGMA table_info`. For kanban.db, valid task columns include id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result; valid task_runs timing columns are started_at and ended_at (not updated_at/completed_at/finished_at/last_seq/error_type); valid task_comments text column is body (not comment/comments); board is implied by the DB path, not a tasks column. If you need recent activity, order by COALESCE(task_runs.ended_at, task_runs.started_at, task_events.created_at, tasks.completed_at, tasks.started_at, tasks.created_at).\n\nGOVERNOR COMMENT DEDUPE (2026-06-30): before creating a recovery/classification card or posting/commenting on an already-blocked provider/auth, protocol-violation, or fallback-quota blocker, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --classification <classification> --owner-packet <board/task_id> --ttl-hours 2`. Use the evidence key `task_id + classification + owner_packet + TTL`. If it returns `SUPPRESS`, do not add another task-local classification comment and do not create another duplicate recovery card; update only the central owner packet task if genuinely new evidence exists. If it returns `COMMENT`, a first-time classification, changed owner packet, changed classification, critical-list escalation, or materially new evidence may be commented. Never suppress credential/approval-critical escalations. DETERMINISTIC VERDICT-SWEEP KEY (2026-08-03, t_5d0658a7): for verdict-sweep fallback routes, suppression is decided on the stable identity (board, task_id, target_comment_id, action) regardless of classification text. Before any verdict-sweep comment write, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --target-comment-id <source_comment_id> --action <action> --ttl-hours 24`. `SUPPRESS` => do not write (the finding is already routed and waiting on a seat; emit an aging escalation instead of a repeat evidence comment). `COMMENT` => write the comment and embed the exact deterministic key string `verdict-sweep:v1:<board>:<task_id>:comment:<source_comment_id>:action:<action>` in it so the next cycle's scan finds it. Never suppress credential/approval-critical escalations.\nGOVERNOR-REFRESH KEY (2026-08-22, t_2044aea3): for same-owner blocked A3/stale-direct refresh comments, suppression is decided on the stable DURABLE-RESIDUAL identity, not the caller-chosen classification. Before posting/commenting a same-owner blocked A3/stale-direct refresh on an already-blocked card, run `/home/frank/.hermes/scripts/governor_comment_dedupe.py --board <board> --task-id <task_id> --governor-refresh --owner-packet <board/task_id> --residual <durable-residual> --ttl-hours 24`. `SUPPRESS` => record in the compact cycle log only; do NOT comment the card (reason governor_refresh_unchanged_within_ttl). `COMMENT` => write the refresh comment and embed the exact deterministic key string `governor-refresh:v1:<board>:<task_id>:<owner_slug>:<residual_hash>` in it so the next cycle's scan finds it. The residual is the DURABLE evidence (e.g. `cron_stale_direct_rows=1`), NOT the classification and NOT a changing probe filename/timestamp; a material evidence change => different residual => COMMENT. Never suppress credential/approval-critical escalations (evaluated on the explicit --critical-escalation flag / the residual content, not incidental classification tokens).\n\nABSOLUTE SQL COMMENT-WRITE BAN (2026-07-04 hardening \u2014 proven %s crash): never write kanban comments or mutate task state via direct `sqlite3 INSERT INTO task_comments` or `sqlite3 UPDATE tasks` from the terminal tool. The `kanban_comment` MCP tool and `hermes kanban --board <slug> comment` CLI use proper bound SQLite parameters with int(time.time()) for created_at. Direct SQL inserts with string-formatting placeholders (%s) produce literal '%s' in the INTEGER created_at column, corrupting the database and crashing downstream tools like verdict_router.py. VIOLATION: any terminal call containing sqlite3 INSERT INTO task_comments or sqlite3 UPDATE ... SET ... is a protocol violation. Use the kanban toolset \u2014 it is always available.\n\nCANONICAL LOG WRITE CONTRACT (second-brain 2.2): The pre-run script initializes and validates today's governance log. Append body content only; never replace, duplicate, or remove the opening YAML frontmatter. If the initializer fails or the file is malformed, make no vault write and report the failure. Closed property values are type=task-evidence, status=active, confidence=high; descriptive variants belong in the body, never those three properties.",
       "provider": "openai-codex",
       "provider_snapshot": null,
       "repeat": {
@@ -827,7 +828,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -967,7 +969,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1000,7 +1003,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1033,7 +1037,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1066,7 +1071,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1380,7 +1386,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1413,7 +1420,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1444,7 +1452,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1516,7 +1525,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1585,7 +1595,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1696,7 +1707,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1729,7 +1741,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1762,7 +1775,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1866,7 +1880,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1899,7 +1914,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1932,7 +1948,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1965,7 +1982,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2029,7 +2047,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2095,7 +2114,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2161,7 +2181,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2300,7 +2321,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2333,7 +2355,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2404,7 +2427,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2437,7 +2461,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2567,7 +2592,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2699,7 +2725,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3020,7 +3047,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3086,7 +3114,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3218,7 +3247,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3251,7 +3281,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3284,7 +3315,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3694,7 +3726,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3760,7 +3793,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3826,7 +3860,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3895,7 +3930,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4063,7 +4099,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4185,7 +4222,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4296,7 +4334,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4395,7 +4434,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4428,7 +4468,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4461,7 +4502,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4527,7 +4569,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4560,7 +4603,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4593,7 +4637,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 2
     },
     {
       "base_url": null,
@@ -4633,7 +4678,7 @@
       "context_from": null,
       "created_at": "2026-07-11T02:53:19.893358+01:00",
       "deliver": "local",
-      "enabled": true,
+      "enabled": false,
       "enabled_toolsets": null,
       "id": "062d182994e0",
       "model": null,
@@ -4641,7 +4686,7 @@
       "name": "enhanced-acradr-anomaly-detector",
       "no_agent": true,
       "origin": null,
-      "paused_at": null,
+      "paused_at": "2026-08-21T21:02:51.978753+01:00",
       "paused_reason": null,
       "prompt": "",
       "provider": null,
@@ -4658,7 +4703,7 @@
       "script": "enhanced_acradr_runner.py",
       "skill": null,
       "skills": [],
-      "state": "scheduled",
+      "state": "paused",
       "workdir": null
     },
     {
@@ -4692,7 +4737,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -4728,7 +4774,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4844,7 +4891,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4908,7 +4956,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4974,7 +5023,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5013,7 +5063,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5078,7 +5129,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5108,7 +5160,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5141,7 +5194,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5174,7 +5228,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5207,7 +5262,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5240,7 +5296,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5273,7 +5330,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5306,7 +5364,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5974,7 +6033,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6073,7 +6133,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6205,7 +6266,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6238,7 +6300,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6307,7 +6370,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6340,7 +6404,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6505,7 +6570,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6614,7 +6680,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": "/home/frank/.hermes/scripts"
+      "workdir": "/home/frank/.hermes/scripts",
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6647,7 +6714,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6755,7 +6823,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6934,7 +7003,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7006,7 +7076,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7042,7 +7113,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7075,7 +7147,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7111,7 +7184,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -7147,7 +7221,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7183,7 +7258,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7219,7 +7295,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7255,7 +7332,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7291,7 +7369,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7327,7 +7406,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7399,7 +7479,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7435,7 +7516,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -7471,7 +7553,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "bb09035cc0d4",

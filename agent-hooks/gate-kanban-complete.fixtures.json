@@ -35,7 +35,7 @@
     "task_id": "t_f5f5385f_fixture",
     "expected": "allow",
     "expected_class": "readonly_nonapp",
-    "title": "P0: paper-risk-agent (15m safety monitor) failing every run — repoint off paid nous deepseek-v4-flash",
+    "title": "P0: paper-risk-agent (15m safety monitor) failing every run \u2014 repoint off paid nous deepseek-v4-flash",
     "body": "FINDING: jarvis cron job paper-risk-agent is the fleet paper-trading risk monitor and model traffic is demonstrably serving elsewhere. TASK: repoint the job provider/model pin, back up jobs.json, verify forced smoke output, and record before/after pins. This is a cron/config task only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backup path recorded; jobs.json before/after pins recorded; forced cron smoke output ok; no app route changed; no running app VERIFY_PASS supplied",
     "metadata": {
@@ -57,7 +57,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "Reconcile stale provider-state bookkeeping: codex exhausted zombie flags vs demonstrably-serving reality",
-    "body": "TASK (bookkeeping only — NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
+    "body": "TASK (bookkeeping only \u2014 NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backups recorded; forced smokes ok; before/after flags recorded; zero credential/routing changes; no running app VERIFY_PASS supplied",
     "metadata": {
       "changed_files": [
@@ -896,7 +896,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "REVIEW: sycode-trading Fix UI spacing on order-book widget from sycode-trading/t_5c33e334",
-    "body": "Review source task sycode-trading/t_5c33e334: UI spacing fixes for the order-book widget display. REVIEW_VERDICT=CHANGES_REQUESTED — spacing needs width breakpoint adjustments.",
+    "body": "Review source task sycode-trading/t_5c33e334: UI spacing fixes for the order-book widget display. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 spacing needs width breakpoint adjustments.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED posted for sycode-trading/t_5c33e334; verdict consumed by verdict-router.",
     "metadata": {
       "changed_files": [
@@ -911,7 +911,7 @@
     "expected": "block",
     "expected_class": "web",
     "title": "REVIEW: sycode-trading marketplace order-book from sycode-trading/t_patch01",
-    "body": "Review source task sycode-trading/t_patch01: implement marketplace order-book React route component—this card applies the reviewed spacing fixes. REVIEW_VERDICT=CHANGES_REQUESTED.",
+    "body": "Review source task sycode-trading/t_patch01: implement marketplace order-book React route component\u2014this card applies the reviewed spacing fixes. REVIEW_VERDICT=CHANGES_REQUESTED.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; apps/web files modified.",
     "metadata": {
       "changed_files": [
@@ -926,7 +926,7 @@
     "expected": "block",
     "expected_class": "web",
     "title": "REVIEW: sycode-trading marketplace dashboard from sycode-trading/t_patch02",
-    "body": "Review source task sycode-trading/t_patch02: fix marketplace dashboard page component layout. REVIEW_VERDICT=CHANGES_REQUESTED — this card applies the reviewed changes. No running app VERIFY_PASS supplied.",
+    "body": "Review source task sycode-trading/t_patch02: fix marketplace dashboard page component layout. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 this card applies the reviewed changes. No running app VERIFY_PASS supplied.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; fix marketplace dashboard page component.",
     "metadata": {
       "changed_files": [
@@ -1005,14 +1005,14 @@
     "metadata": {
       "changed_files": []
     },
-    "description": "BLOCK: regression guard for t_f31ab4c4 — a CHILD REVIEW_VERDICT=APPROVED phrase must not reclassify a goal-judge provider-error trap as readonly_nonapp and fail open. Fixture id is deliberately NON-hex to also guard the removed task-id-format prerequisite on the shell trap."
+    "description": "BLOCK: regression guard for t_f31ab4c4 \u2014 a CHILD REVIEW_VERDICT=APPROVED phrase must not reclassify a goal-judge provider-error trap as readonly_nonapp and fail open. Fixture id is deliberately NON-hex to also guard the removed task-id-format prerequisite on the shell trap."
   },
   {
     "name": "t_cdeab9c4-source-pr-review-guc-bypass-allows",
     "task_id": "t_cdeab9c4_fixture",
     "expected": "allow",
     "expected_class": "readonly_nonapp",
-    "title": "Review PR #752 — DataRetentionService append-only bypass fix (exact-SHA review required)",
+    "title": "Review PR #752 \u2014 DataRetentionService append-only bypass fix (exact-SHA review required)",
     "body": "Review PR #752: fixes trg_signal_pnl_points_append_only raising SQLSTATE 23514 on retention deletes by adding SET LOCAL app.bypass_append_only='true' inside the retention transaction. Also fixes the trigger function to return OLD (not NEW) for DELETE operations. Changes: Migration 0115, DataRetentionService.ts, tests. Review gates: exact-SHA code review, CI evidence, verdict REVIEW_VERDICT=approve or changes_requested. After APPROVED: route to Frank for merge + deploy approval (proof-boundary gate).",
     "summary": "REVIEW_VERDICT=APPROVED at exact SHA d4a5eda8; PR #752 MERGED 2026-07-28 (acfea2db); migration 0115 NOT applied to live DB (Frank-gated deploy child t_48ea3e4b); paper-only review, no frontend/web/app surface touched.",
     "metadata": {
@@ -1021,7 +1021,7 @@
       ],
       "verdict": "APPROVED"
     },
-    "description": "ALLOW: real t_cdeab9c4 regression — a paper-only source PR review whose body quotes the PostgreSQL GUC app.bypass_append_only must NOT be misclassified as frontend/app implementation; it routes through the source-review readonly_nonapp lane. Paired negative below proves the same GUC wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_cdeab9c4 regression \u2014 a paper-only source PR review whose body quotes the PostgreSQL GUC app.bypass_append_only must NOT be misclassified as frontend/app implementation; it routes through the source-review readonly_nonapp lane. Paired negative below proves the same GUC wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_cdeab9c4-paired-frontend-guc-bypass-negative-blocks",
@@ -1044,7 +1044,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "FIX (source-only): calibration-drift-monitor renders timed-out queries as 0pp + unweighted MCE inflated by tiny buckets",
-    "body": "Source-only fix to the drift monitor script /home/frank/.hermes/scripts/calibration-drift-monitor.py (no deploy, no schedule change). Defect 1: a timed-out query is rendered as 0pp (perfectly calibrated) because db_query() imposes a hard 30s timeout and overall_calibration() returns {} which build_report renders as stats.get('overall_bias_pp', 0). Fix: never render an unmeasured metric as a number — emit MEASUREMENT_UNAVAILABLE marker in both the report and the card body, and raise the timeout. Defect 2: MCE formula is an unweighted mean over buckets with n>=5 letting 1-row and 2-row buckets drive the headline; report sample-weighted as headline and keep significant-bucket figure alongside. Defect 3: group cohort by composite_confidence_weights_version and print the split. Verify by running the script with --verbose against the live read-only DB and pasting real output.",
+    "body": "Source-only fix to the drift monitor script /home/frank/.hermes/scripts/calibration-drift-monitor.py (no deploy, no schedule change). Defect 1: a timed-out query is rendered as 0pp (perfectly calibrated) because db_query() imposes a hard 30s timeout and overall_calibration() returns {} which build_report renders as stats.get('overall_bias_pp', 0). Fix: never render an unmeasured metric as a number \u2014 emit MEASUREMENT_UNAVAILABLE marker in both the report and the card body, and raise the timeout. Defect 2: MCE formula is an unweighted mean over buckets with n>=5 letting 1-row and 2-row buckets drive the headline; report sample-weighted as headline and keep significant-bucket figure alongside. Defect 3: group cohort by composite_confidence_weights_version and print the split. Verify by running the script with --verbose against the live read-only DB and pasting real output.",
     "summary": "Source-only fix complete and verified live: Overall bias -15.0pp (not 0pp), sample-weighted MCE 15.2pp with unweighted/significant figures alongside, estimator provenance 96.7% conviction alias. No deploy/schedule/DB/trading action.",
     "metadata": {
       "changed_files": [
@@ -1052,7 +1052,7 @@
         "/home/frank/.hermes/scripts/test_calibration_drift_monitor.py"
       ]
     },
-    "description": "ALLOW: real t_ec251392 regression — a source-only monitor script fix whose title says the monitor 'renders' report output as 0pp must NOT be misclassified as frontend/app work; it routes through the readonly_nonapp lane. Paired negative below proves the same 'renders ... 0pp' wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_ec251392 regression \u2014 a source-only monitor script fix whose title says the monitor 'renders' report output as 0pp must NOT be misclassified as frontend/app work; it routes through the readonly_nonapp lane. Paired negative below proves the same 'renders ... 0pp' wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_ec251392-paired-frontend-renders-0pp-negative-blocks",
@@ -1125,7 +1125,7 @@
         "tests/test_fusion_calibration_anomaly_kanban.py"
       ]
     },
-    "description": "ALLOW: real t_0430e36c regression — 'route a bounded ... fix' is the dispatch idiom (route the remediation card), not a browser route; observability/report-routing card with pure-Python changed files must not be misclassified as frontend/app. Paired negative below proves the same 'route a bounded ... fix' wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_0430e36c regression \u2014 'route a bounded ... fix' is the dispatch idiom (route the remediation card), not a browser route; observability/report-routing card with pure-Python changed files must not be misclassified as frontend/app. Paired negative below proves the same 'route a bounded ... fix' wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_0430e36c-paired-frontend-bounded-route-negative-blocks",
@@ -1156,7 +1156,7 @@
         "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json"
       ]
     },
-    "description": "ALLOW: real t_a318252c regression — static authority/claim review whose body contains 'route' as a domain noun within ~120 chars of 'ship' embedded in 'ownership'. Without a leading verb boundary, APP_IMPL_PATTERNS[1] matched and wedged the card as web. This fixture locks the verb-boundary fix: the SOUS body must classify not_web."
+    "description": "ALLOW: real t_a318252c regression \u2014 static authority/claim review whose body contains 'route' as a domain noun within ~120 chars of 'ship' embedded in 'ownership'. Without a leading verb boundary, APP_IMPL_PATTERNS[1] matched and wedged the card as web. This fixture locks the verb-boundary fix: the SOUS body must classify not_web."
   },
   {
     "name": "t_660a588a-ownership-verb-boundary-paired-frontend-negative-blocks",
@@ -1171,7 +1171,7 @@
         "apps/web/src/app/ownership/page.tsx"
       ]
     },
-    "description": "BLOCK: paired negative for t_660a588a — the SAME 'ownership ... route/domain' wording attached to concrete apps/web route/page work must still require running-app VERIFY_PASS. Proves the verb-boundary fix does not weaken BLOCK_WEB_SURFACE / BLOCK_APP_IMPL for genuinely web cards."
+    "description": "BLOCK: paired negative for t_660a588a \u2014 the SAME 'ownership ... route/domain' wording attached to concrete apps/web route/page work must still require running-app VERIFY_PASS. Proves the verb-boundary fix does not weaken BLOCK_WEB_SURFACE / BLOCK_APP_IMPL for genuinely web cards."
   },
   {
     "name": "t_17b2b7ed-e04df764-compound-route-allows",
@@ -1234,5 +1234,30 @@
       ]
     },
     "description": "BLOCK: paired negative for t_17b2b7ed \u2014 standalone word routes (not a compound noun) must still classify as app-impl/web."
+  },
+  {
+    "name": "t_90c5e1e0-paper-sleeve-route-safety-clause-allows",
+    "task_id": "t_90c5e1e0_fixture",
+    "expected": "allow",
+    "expected_class": "not_web",
+    "title": "EDGE-DISCOVERY: explain 50 suppressed high-conviction BTCUSDT 1h signals under fail-closed gate",
+    "body": "OUTCOME: produce one leak-free, paper-only edge-discovery packet for the current fail-closed Sycode Trading lane by identifying whether the 50 recently suppressed high-conviction BTCUSDT 1h candidates are a calibration artifact, cohort-specific feature gap, or genuinely no-edge regime.\\n\\nEVIDENCE INPUTS (Elon governor 2026-08-12 02:44 local):\\n- quant-researcher-6h latest report /home/frank/.hermes/profiles/jarvis/cron/output/13c1f9279025/2026-08-12_00-37-39.md: TIER1_GROSS_REFERENCE_STATUS=FAIL_CLOSED; fresh N=1116, Tier-1 gross WR=40.9498% <= 50% coin-flip floor; no cohort cleared.\\n- signal-fusion-engine latest report /home/frank/.hermes/profiles/jarvis/cron/output/f8c5f45a9831/2026-08-12_02-24-55.md: 50 input signals, 50 above high-conviction threshold, 50 suppressed by fail-closed calibration gate, 0 TradeSetups written.\\n- data-freshness-probe /home/frank/.hermes/profiles/jarvis/cron/output/1487a685282e/2026-08-12_02-31-06.md: 9/9 pipelines fresh, so this is not a freshness outage.\\n\\nTASK:\\n1. Segment the suppressed cohort by symbol/timeframe/direction/feature buckets available in clean epoch only; compare against Tier-1 realized exits and Tier-2 trajectory-derived diagnostics without using contaminated/pre-clean data.\\n2. Name at most three falsifiable candidate hypotheses for why high-conviction BTCUSDT 1h LONG repeats survive scoring while global Tier-1 WR fails.\\n3. For each hypothesis, define the smallest OOS/net-of-cost validation query or experiment needed to promote, reject, or recalibrate it.\\n4. Persist a Sycode-Trading research note with sources, method, limitations, recommendations, and task id; link this card.\\n\\nACCEPTANCE:\\n- No implementation/promotion/paper-sleeve route unless clean-epoch net-of-cost/OOS gates pass; trading remains paper-only.\\n- Deliverable includes exact SQL/scripts used, sample sizes, win-rate/net-PnL/MCE or calibration metrics as applicable, and honest fail-closed verdict if no cohort survives.\\n- Reviewer path: trading-risk-reviewer verifies methodology and gate interpretation before any downstream implementation card.\\n\\nSAFETY GATES: no live trading, orders, exchange, credentials, provider/model routing, DB writes, schema/data mutation, spend, deploy, or guardrail changes.",
+    "summary": "paper-only edge-discovery packet; leak-free cohort segmentation; fail-closed verdict; no running app VERIFY_PASS supplied",
+    "description": "ALLOW: real t_90c5e1e0 regression \u2014 a paper-only edge-discovery card whose ACCEPTANCE contains the safety clause 'No implementation/promotion/paper-sleeve route unless ... paper-only' must not be classified as web. APP_IMPL_PATTERNS[0] matches 'implement' inside 'implementation' then bare 'route' (no leading verb boundary); the new negation neutralizes the dispatch/safety-noun idiom only when an explicit paper-only/read-only/no-implementation qualifier is present. Paired negative below proves the same phrase on concrete apps/web route work still blocks."
+  },
+  {
+    "name": "t_90c5e1e0-paper-sleeve-route-paired-frontend-negative-blocks",
+    "task_id": "t_90c5e1e0_frontend_negative",
+    "expected": "block",
+    "expected_class": "web",
+    "title": "Implement frontend paper-sleeve route dashboard",
+    "body": "Implement apps/web React route component and page layout for the paper-sleeve route dashboard, rendering paper-sleeve promotion candidates for the edge-discovery flow. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+    "summary": "paper-sleeve route dashboard implemented; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/paper-sleeve/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_90c5e1e0; the 'paper-sleeve route' phrase attached to concrete apps/web route/page work with app-surface changed_files must still require running-app VERIFY_PASS."
   }
 ]

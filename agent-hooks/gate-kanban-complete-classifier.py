@@ -345,6 +345,20 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # Backend cron/report/CLI cards can mention rendered list/output text without
     # implying a browser route or page implementation.
     r"\b(cli|python|shell|command|cron|report)\b[^\n]{0,260}\brenders?\b[^\n]{0,120}\b(list|output|rows?|items?|values?|results?|metrics?|markers?|count|section)\b",
+    # "No implementation/promotion/paper-sleeve route unless ... paper-only /
+    # read-only" safety-clause idiom (t_90c5e1e0; recurrence of the documented
+    # t_77316e9c false-positive class). APP_IMPL_PATTERNS[0] has no leading verb
+    # boundary, so it matched "implement" inside "implementation" then bare
+    # "route" and classed a paper-only edge-discovery/research card as web. Here
+    # "route" is a dispatch/safety noun ("no ... route to promotion/paper-sleeve"),
+    # NOT a browser/API route surface. The negation fires ONLY when the "no
+    # <implementation|promotion|paper-sleeve> ... route(s)" construction is
+    # present AND an explicit paper-only/read-only/no-implementation qualifier
+    # appears within 240 chars after it, so a positive "implement ... route"
+    # instruction is never neutralized. Concrete apps/web route/page work still
+    # matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS and is caught by the
+    # paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS "app route").
+    r"\bno\s+(?:implementation|promotion|paper[- ]?sleeve)(?:[/,]\s*(?:implementation|promotion|paper[- ]?sleeve)){0,3}\s*/?\s*\broutes?\b[^.\n]{0,240}\b(?:paper[- ]?only|read[- ]?only|no[ -]implementation)\b",
 ]
 
 GATE_SCOPE_NONAPP_PATTERNS: PatternList = [

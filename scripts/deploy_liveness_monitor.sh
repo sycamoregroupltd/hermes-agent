@@ -17,7 +17,12 @@
 #     DEPLOY.lock HELD). A run with NO status line = broken pipeline (the ENOENT class).
 #  3. SHIP-GAP: if origin/main != deployed sha for > GAP_ALERT_SECS, alert with the
 #     last status (catches gate deadlocks, e.g. injector positions never flat, and
-#     silent classes not imagined yet).
+#     silent classes not imagined yet). 2026-08-21 (t_0230aa98, reshape-w6a): the
+#     divergence alert is now ALSO routed through the jarvis alert spool (spool_alert_write
+#     → jarvis drain → discord:#critical-alerts) at a 30-min threshold, AND the
+#     deployed-vs-origin/main divergence is written into sycodeserver-state.json as a
+#     machine-checkable `deployed_vs_main` block so merged==deployed is a published, alarmed
+#     fact (the recurring merged-not-deployed gap has invalidated expectancy analyses before).
 # Re-alerts every REALERT_SECS while a condition persists.
 
 set -u
@@ -30,8 +35,12 @@ STATE_JSON="${STATE_JSON:-/home/frank/.hermes/deploy-state/sycodeserver-state.js
 BUILD_TREE="${BUILD_TREE:-/home/frank/.hermes/deploy-state/build-tree}"
 MON_STATE="${MON_STATE:-/home/frank/.hermes/state/deploy-liveness-state.txt}"
 LOG_FILE="${LOG_FILE:-/home/frank/.hermes/logs/deploy-liveness.log}"
+# 2026-08-21 (t_0230aa98, reshape-w6a): jarvis alert spool — alerts written here are
+# drained every 60s by jarvis's sycode-alertmanager-oob-spool-drain → discord:#critical-alerts.
+JARVIS_SPOOL="${JARVIS_SPOOL:-/home/frank/.hermes/profiles/jarvis/state/alertmanager-spool/incoming}"
+SPOOL_WRITER="${SPOOL_WRITER:-/home/frank/.hermes/scripts/spool_alert_write.py}"
 STALE_SECS="${STALE_SECS:-2700}"        # 45 min: cron runs every 15m, 3 misses = dead
-GAP_ALERT_SECS="${GAP_ALERT_SECS:-14400}" # 4h of merged-undeployed before alerting
+GAP_ALERT_SECS="${GAP_ALERT_SECS:-1800}" # 30 min merged-undeployed before alerting (t_0230aa98, tightened from 4h)
 REALERT_SECS="${REALERT_SECS:-21600}"   # re-alert every 6h while condition persists
 # 2026-07-13 (t_ecfeb48c): primary target flipped discord→whatsapp:Frank. 13 ship-gap
 # alerts (up to 58h) went unread in discord:#critical-alerts — an alert without a
@@ -94,6 +103,72 @@ clear_key() {
     mv "$MON_STATE.tmp" "$MON_STATE"
 }
 
+# 2026-08-21 (t_0230aa98, reshape-w6a): route an alert through the jarvis alert spool so
+# the jarvis drain delivers it to discord:#critical-alerts. Own throttle key per alertname
+# (REALERT_SECS) so a failing hermes-send channel can never make the spool re-fire on every
+# 30-min run. Best-effort: a spool write failure is logged, never fatal.
+spool_alert() {
+    local name="$1" summary="$2"
+    local key="spool_${name}" last
+    last=$(grep -a "^${key}=" "$MON_STATE" 2>/dev/null | tail -1 | cut -d= -f2)
+    if [ -n "${last:-}" ] && [ $((now_epoch - last)) -lt "$REALERT_SECS" ]; then
+        log "SPOOL-SUPPRESSED key=$key (re-alert window)"
+        return 0
+    fi
+    if timeout 10 python3 "$SPOOL_WRITER" --spool "$JARVIS_SPOOL" --alertname "$name" \
+        --severity warning --summary "$summary" 2>/dev/null; then
+        grep -av "^${key}=" "$MON_STATE" 2>/dev/null > "$MON_STATE.tmp" || true
+        echo "${key}=${now_epoch}" >> "$MON_STATE.tmp"
+        mv "$MON_STATE.tmp" "$MON_STATE"
+        log "SPOOL-ALERT-WRITTEN name=$name"
+    else
+        log "SPOOL-ALERT-FAILED name=$name"
+    fi
+}
+
+# 2026-08-21 (t_0230aa98, reshape-w6a): write the deployed-vs-origin/main divergence as a
+# machine-checkable `deployed_vs_main` block in the deploy-state json (sycodeserver-state.json).
+# Atomic merge (tmp + os.replace) that preserves every other key, so it never clobbers a
+# concurrent deploy write. All values best-effort; a write failure is logged, never fatal.
+write_divergence_status() {
+    local deployed="$1" remote="$2" diverged="$3" age="$4" gap_since="$5" behind="${6:-null}"
+    local checked_at
+    checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+    local out
+    out="$(python3 - "$deployed" "$remote" "$diverged" "$age" "$gap_since" "$behind" "$checked_at" "$STATE_JSON" <<'PY'
+import json, os, sys
+deployed, remote, diverged, age, gap_since, behind, checked_at, path = sys.argv[1:]
+block = {
+    "checked_at": checked_at,
+    "deployed_sha": deployed,
+    "origin_main_sha": remote,
+    "diverged": diverged == "true",
+    "divergence_commits": None if behind in ("null", "", "None") else behind,
+    "divergence_age_seconds": int(age or 0),
+    "gap_since_epoch": int(gap_since) if str(gap_since).isdigit() and int(gap_since) > 0 else None,
+    "alert_threshold_seconds": 1800,
+    "alert_mechanism": "jarvis-alert-spool:deployed-main-divergence",
+}
+try:
+    with open(path) as f:
+        data = json.load(f)
+except Exception:
+    data = {}
+data["deployed_vs_main"] = block
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(data, f, indent=2)
+os.replace(tmp, path)
+print("OK")
+PY
+)"
+    if [ "$out" = "OK" ]; then
+        log "DIVERGENCE-STATUS-WRITTEN diverged=$diverged age=${age}s"
+    else
+        log "DIVERGENCE-STATUS-WRITE-FAILED: $out"
+    fi
+}
+
 # ── 1. CRON-ALIVE ────────────────────────────────────────────────────────────
 if [ ! -f "$DEPLOY_LOG" ]; then
     send_alert cron_dead "🚨 sycode auto-deploy: log missing" "Deploy log $DEPLOY_LOG does not exist — auto-deploy cron may be gone entirely. Check: crontab -l | grep deploy"
@@ -134,6 +209,8 @@ if [ -z "$deployed_sha" ] || [ -z "$remote_sha" ]; then
     grep -av "^probe_fails=" "$MON_STATE" 2>/dev/null > "$MON_STATE.tmp" || true
     echo "probe_fails=${fails}" >> "$MON_STATE.tmp"; mv "$MON_STATE.tmp" "$MON_STATE"
     log "PROBE-FAILED deployed='$deployed_sha' remote='$remote_sha' consecutive=$fails"
+    # 2026-08-21 (t_0230aa98): publish an UNKNOWN divergence state (never claim fine when blind)
+    write_divergence_status "${deployed_sha:-unknown}" "${remote_sha:-unknown}" "false" "0" "0" "null"
     [ "$fails" -ge 3 ] && send_alert probe_dead "⚠️ sycode deploy monitor: probes failing" "Cannot read deployed sha ($STATE_JSON) or origin/main ($BUILD_TREE) for $fails consecutive runs — the monitor itself is blind. Investigate."
 elif [ "$deployed_sha" = "$remote_sha" ]; then
     clear_key probe_fails; clear_key ship_gap
@@ -141,19 +218,37 @@ elif [ "$deployed_sha" = "$remote_sha" ]; then
     # cleared when a NEW gap opened, so a closed gap left a stale "gap_since_<sha>="
     # line in the state file that read as an open ship-gap to anyone inspecting it.
     sed -i '/^gap_since_/d' "$MON_STATE" 2>/dev/null || true
+    write_divergence_status "$deployed_sha" "$remote_sha" "false" "0" "0" "0"
     log "OK deployed=current (${deployed_sha:0:9})"
 else
     clear_key probe_fails
     # gap exists — how long? track first-seen epoch per remote sha
     seen=$(grep -a "^gap_since_${remote_sha:0:9}=" "$MON_STATE" 2>/dev/null | tail -1 | cut -d= -f2)
+    # 2026-08-21 (t_0230aa98): behind-count is best-effort (only when the deployed sha is a
+    # known object in the build-tree's shallow history); null on any failure, never a block.
+    behind="null"
+    if timeout 2 git -C "$BUILD_TREE" cat-file -e "$deployed_sha" 2>/dev/null; then
+        behind=$(timeout 3 git -C "$BUILD_TREE" rev-list --count "${deployed_sha}..origin/main" 2>/dev/null)
+        [ -z "$behind" ] && behind="null"
+    fi
     if [ -z "${seen:-}" ]; then
         sed -i '/^gap_since_/d' "$MON_STATE" 2>/dev/null || true
         echo "gap_since_${remote_sha:0:9}=${now_epoch}" >> "$MON_STATE"
+        write_divergence_status "$deployed_sha" "$remote_sha" "true" "0" "$now_epoch" "$behind"
         log "GAP-NEW deployed=${deployed_sha:0:9} main=${remote_sha:0:9}"
     elif [ $((now_epoch - seen)) -gt "$GAP_ALERT_SECS" ]; then
         last_status=$(tail -400 "$DEPLOY_LOG" 2>/dev/null | grep -aoE "SUCCESS:.*|NOOP:.*|BUILD_FAILED:.*|ROLLED_BACK:.*|PIPELINE_ERROR:.*|SAFETY_GATE_BLOCKED:.*|\"action\"[[:space:]]*:[[:space:]]*\"[a-z_]+\"" | tail -1)
-        send_alert ship_gap "⚠️ sycode: merged work undeployed $(( (now_epoch - seen) / 3600 ))h" "origin/main ${remote_sha:0:9} has not deployed (running ${deployed_sha:0:9}) for over $(( (now_epoch - seen) / 3600 ))h. Last agent status: ${last_status:-none}. Gate deadlock (injector positions?) or pipeline issue. State: $STATE_JSON"
+        age_s=$((now_epoch - seen))
+        if [ "$age_s" -ge 3600 ]; then dur="${age_s}h $(( (age_s % 3600) / 60 ))m"; else dur="${age_s}m"; fi
+        msg="origin/main ${remote_sha:0:9} has not deployed (running ${deployed_sha:0:9}) for ${dur}. Last agent status: ${last_status:-none}. Gate deadlock (injector positions?) or pipeline issue. State: $STATE_JSON"
+        send_alert ship_gap "⚠️ sycode: merged work undeployed ${dur}" "$msg"
+        # 2026-08-21 (t_0230aa98, reshape-w6a): ALSO route through the jarvis alert spool so
+        # the jarvis drain (discord:#critical-alerts) delivers it — the recurring merged-not-
+        # deployed gap must be an alarmed fact, not a quiet one.
+        spool_alert deployed_main_divergence "$msg"
+        write_divergence_status "$deployed_sha" "$remote_sha" "true" "$((now_epoch - seen))" "$seen" "$behind"
     else
+        write_divergence_status "$deployed_sha" "$remote_sha" "true" "$((now_epoch - seen))" "$seen" "$behind"
         log "GAP-TRACKING deployed=${deployed_sha:0:9} main=${remote_sha:0:9} age=$((now_epoch - seen))s"
     fi
 fi

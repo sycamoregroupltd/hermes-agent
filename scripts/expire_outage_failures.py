@@ -28,6 +28,9 @@ Deterministic, read-mostly actuator run as a no-agent LOOP. It:
        - NOT sticky-blocked (no worker/operator kanban_block is the most
          recent blocked/unblocked event),
        - the remaining healthy-period failures < effective failure limit,
+       - NO protocol_violation/gave_up run in the trailing failure streak
+         (terminal discipline failures are held for a named PM/owner
+         disposition and are NEVER auto-requeued — t_86cc4345),
      via the sanctioned kanban_db.unblock_task API (emits 'unblocked',
      re-gates on parents, resets counter/error) so the card becomes
      re-dispatchable WITHOUT a governor hand-resurrection.
@@ -69,13 +72,22 @@ OUTAGE_MERGE_MIN = 30 * 60
 # Latest health record older than this => history stale => fail open.
 STALE_HEALTH_MIN = 40 * 60
 # Failure outcomes that feed the dispatcher's consecutive_failures counter.
-FAILURE_OUTCOMES = (
+TRANSIENT_OUTCOMES = (
     "crashed",
-    "gave_up",
     "timed_out",
     "spawn_failed",
-    "protocol_violation",
 )
+# Terminal discipline failures. These are NEVER outage-caused: a protocol
+# violation is rc=0-without-a-terminal-call, and a gave_up is a worker that
+# exhausted its retries (e.g. pid-not-alive after max_retries). They require a
+# named PM/owner terminal disposition, so the outage-expiry actuator must never
+# decay them away or auto-requeue a card carrying them in its trailing streak
+# (jarvis-os/t_86cc4345).
+TERMINAL_OUTCOMES = (
+    "protocol_violation",
+    "gave_up",
+)
+FAILURE_OUTCOMES = TRANSIENT_OUTCOMES + TERMINAL_OUTCOMES
 # Breaker-shaped block kinds that are safe to auto-requeue.
 REQUEUEABLE_KINDS = (None, "capability")
 # Append-only idempotency state: which failure run_ids have already been
@@ -262,6 +274,37 @@ def is_sticky_blocked(conn: sqlite3.Connection, task_id: str) -> bool:
     return bool(row) and row["kind"] == "blocked"
 
 
+def has_terminal_failure_since_last_unblock(
+    conn: sqlite3.Connection, task_id: str
+) -> bool:
+    """True if a protocol_violation/gave_up event occurred since the last
+    deliberate unblock (or in all history if never unblocked).
+
+    A protocol_violation (rc=0 without a terminal kanban call) or a gave_up
+    (worker exhausted retries, e.g. pid-not-alive after max_retries) is a
+    TERMINAL discipline failure, never an outage-caused transient. The card
+    must stay blocked until a named PM/owner gives a terminal disposition or
+    deliberately requeues. A deliberate PM requeue emits an 'unblocked' event;
+    any terminal event AFTER that unblock is a fresh terminal failure and must
+    be held again. This mirrors the dispatcher's own record (task_events), not
+    task_runs.outcome, which records these runs as 'crashed' (t_86cc4345).
+    """
+    last_unblock = conn.execute(
+        "SELECT COALESCE(MAX(id), 0) AS m FROM task_events "
+        "WHERE task_id = ? AND kind = 'unblocked'",
+        (task_id,),
+    ).fetchone()
+    if last_unblock is None:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM task_events "
+        "WHERE task_id = ? AND id > ? "
+        "AND kind IN ('protocol_violation', 'gave_up') LIMIT 1",
+        (task_id, int(last_unblock["m"])),
+    ).fetchone()
+    return row is not None
+
+
 def classify_task(conn: sqlite3.Connection, task_id: str,
                   windows: list[tuple[dt.datetime, dt.datetime]],
                   failure_limit: int, state: ExpiryState | None = None,
@@ -286,6 +329,12 @@ def classify_task(conn: sqlite3.Connection, task_id: str,
     already_expired = state.expired_ids(key) if state else set()
     outage_accrued = 0
     expired_run_ids: list[int] = []
+    # A terminal discipline failure (protocol_violation / gave_up) since the
+    # last deliberate unblock means this card must be held for a named
+    # PM/owner terminal disposition, NOT auto-requeued by outage-expiry. We
+    # detect it from task_events (the dispatcher's own record), because these
+    # runs are logged as task_runs.outcome='crashed' (t_86cc4345).
+    terminal_in_streak = has_terminal_failure_since_last_unblock(conn, task_id)
     for r in runs:
         rid = int(r["id"])
         if rid in already_expired:
@@ -311,7 +360,16 @@ def classify_task(conn: sqlite3.Connection, task_id: str,
     if status == "blocked":
         sticky = is_sticky_blocked(conn, task_id)
         breaker_shaped = block_kind in REQUEUEABLE_KINDS
-        if healthy_failures < limit and breaker_shaped and not sticky:
+        if terminal_in_streak:
+            # Protocol violations / gave_ups are NOT outage-caused. They must
+            # stay blocked until a named PM/owner deliberately requeues with a
+            # reason. Decay the genuinely outage-accrued failures (so the
+            # counter is truthful) but NEVER auto-requeue.
+            requeue_reason = (
+                "terminal protocol_violation/gave_up in streak — held for "
+                "PM/owner disposition (outage decay only, no auto-requeue)"
+            )
+        elif healthy_failures < limit and breaker_shaped and not sticky:
             requeue = True
             requeue_reason = (
                 f"healthy_failures={healthy_failures}<limit={limit} "
@@ -336,6 +394,7 @@ def classify_task(conn: sqlite3.Connection, task_id: str,
         "expired_run_ids": expired_run_ids,
         "requeue": requeue,
         "requeue_reason": requeue_reason,
+        "terminal_in_streak": terminal_in_streak,
     }
 
 
