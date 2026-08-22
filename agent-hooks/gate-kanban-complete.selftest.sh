@@ -14,139 +14,139 @@ trap cleanup EXIT
 mkdir -p "$tmp/kanban/boards/test"
 db="$tmp/kanban/boards/test/kanban.db"
 sqlite3 "$db" <<'SQL'
-CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT);
+CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL DEFAULT 'todo');
 CREATE TABLE task_comments (task_id TEXT, body TEXT, created_at INTEGER);
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_pmroute',
   'REVIEW: Meilisearch product-search foundation handoff from t_552f2d3f',
   'Upero PM task completed its actual PM routing work. Scope: prevent frontend VERIFY_PASS gate on PM review-routing tasks/review-lane tasks that do not modify frontend/web/app surfaces. Evidence: verified handoff, unlinked dependency-stalled guardian child, and verified review child running on guardian. No app/product code changes are requested.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_webwork',
   'Build marketplace frontend page',
   'Implement apps/web marketplace React page and route component.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_webpass',
   'Build marketplace frontend page',
   'Implement apps/web marketplace React page and route component.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_web_linked_packet',
   'Review marketplace frontend page with linked terminal packet',
   'Platform-reviewer is reviewing concrete apps/web marketplace React page and route component work. A terminal-capable RUNNING_APP_VERIFICATION packet may satisfy only the running-app evidence requirement.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_web_negated_packet_discussion',
   'Build frontend route with delegated evidence packet',
   'Implementation worker changed concrete apps/web dashboard route component and page layout. It may mention delegated evidence, but cannot self-approve or bypass running-app evidence.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_cliscript',
   'REPAIR: non-web kanban completion gate false positive for CLI/script tasks',
   'Investigate a Hermes CLI/Python/shell worker-visibility preflight. Acceptance requires command evidence such as py_compile, bash -n, pytest, and temp JSON; no frontend/web route, page, component, middleware, layout, tRPC path, or browser UI is touched.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_web_cli_helper',
   'Build frontend page with CLI/script helper',
   'Implement apps/web dashboard route component. Use a CLI/script helper to seed fixture data before serving the React page.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_web_python_helper',
   'Build frontend page with Python/shell helper',
   'Implement apps/web marketplace route component. Use Python/shell commands to generate fixture data before serving the React page.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_frontend_nonweb_cli_helper',
   'Build frontend route with non-web CLI/script helper',
   'Implement apps/web dashboard route component. The worker may use a non-web CLI/script helper for fixture preflight, but this is still true frontend/UI work.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_frontend_nonui_python_preflight',
   'Build frontend page with non-UI Python/shell preflight',
   'Implement apps/web marketplace page component and layout. Use a non-UI Python/shell preflight helper before checking the route.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_frontend_completion_gate_cli',
   'Build app route with completion-gate CLI/script support',
   'Implement apps/web route component. A CLI/script completion-gate support helper is part of the workflow, but VERIFY_PASS is still required.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_frontend_false_positive_python',
   'Fix frontend component with false-positive Python/shell classification note',
   'Update apps/web React component and page layout. The handoff mentions Python/shell false-positive classification support, but the app surface changed.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_pkg_types_review',
   'REVIEW: delivery Zod cleanup reconciliation gate failure',
   'Review a TypeScript gate/policy failure for packages/types/src/delivery.ts. The diff under review is only packages/types/src/delivery.ts with z.record cleanup; apps/api tsc output mentions src/trpc/routers but this review task does not touch or approve a running app route.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_frontend_pkg_types_route',
   'Build frontend route using packages/types delivery schema',
   'Implement apps/web delivery dashboard route component using packages/types/src/delivery.ts schema output. This is concrete frontend UI work and must still prove the running route.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_repo_hygiene',
   'UNBLOCK: reconcile dirty Upero checkout for Yorkstone CMS block wave',
   'Repo-hygiene checkout-reconciliation task: classify dirty/untracked paths including apps/web/src/lib/payload-client.test.ts, update .git/info/exclude for AGENTS.md and wt/, create a reversible stash, verify git status clean, and update Obsidian note/log. No app/runtime route, page, component, middleware, API, tRPC, auth/tenant, layout, or frontend runtime surface was modified.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_frontend_repo_hygiene_route',
   'Fix frontend route after repo-hygiene cleanup',
   'Implement apps/web marketplace route component and page layout after repo-hygiene checkout cleanup. The worker may use git status and a reversible stash, but this is concrete frontend UI work and must still prove the running route.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_static_obsidian_qa_packet',
   'Assemble QA packet and comment evidence path',
   'Goal: turn completed visual/content evidence and static-only boundary audit into the final lightweight visual/content QA packet. Create a clear Markdown packet under /home/frank/obsidian-fleet-vault/Operations/ with screenshots/render evidence links, blog-category notes, job-tile notes, explicit static-only/forbidden-capability confirmations, and no app/runtime route, page, component, middleware, API, tRPC, auth/tenant, layout, or frontend runtime surface modified.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_frontend_static_packet_route',
   'Build frontend route with static QA packet output',
   'Implement apps/web marketplace route component and page layout, then produce a static visual/content QA packet. This changed a concrete page-dependent API path and frontend route, so it must still prove the running route.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_66c7c9a3',
   'REVIEW-VERDICT source-PR-review',
   'REVIEW_VERDICT: source-PR-review for another implementation card. Reviewed PR surface mentions dashboard display exposure, dashboard bundle, and metric semantics. This packet is review-only and contains only surface wording.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_cc5a3939',
   'FOLLOW-UP: Posted REVIEW_VERDICT=APPROVED for PR #70072 — all 4 accepta',
   'FOLLOW-UP: REVIEW_VERDICT=APPROVED for PR #70072. The reviewed card resolved dashboard display exposure, dashboard bundle, and metric semantics. No implementation steps are included in this ticket.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_cc5a3939_applies',
   'IMPLEMENT: APPLY reviewed dashboard changes',
   'Apply the reviewed dashboard changes from source PR #70072 to implement the apps/web dashboard route component and page layout for the frontend experience.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_eea84fb8',
   'Cron/report CLI output cleanup',
   'Backend cron/report task updates Hermes CLI/Python worker command list output. It renders metric rows for monitoring output and CLI display only; no browser route, page, component, middleware, layout, or dashboard app surface changed.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_77316e9c',
   'UPSTREAM GAP: hermes cron create must refuse dead stores (no live ticker_heartbeat)',
   '`cron list` still renders them [active]. This is CLI list output only, not a browser page render.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_real_dashboard_render_web',
   'Implement apps/web dashboard render route component',
   'Implement apps/web dashboard route component and render metric cards on the dashboard page using React and shared UI helpers.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_17b2b7ed_compound',
   'IMPLEMENT PM-reroute un-deadlocked verdict-router B1-B4 dry-run repairs',
   'IMPLEMENT the approved verdict-router B1-B4 dry-run repairs. This card is the PM-rerouted execution of a backend CLI/SQLite script. Also covers router, api-router, message_router, and trade-route helpers. Source and tests only under scripts/.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_17b2b7ed_standalone_route',
   'Implement apps/web dashboard route component with React',
   'Implement apps/web dashboard route component and page layout with React. This is concrete frontend UI work.'
 );
-INSERT INTO tasks VALUES (
+INSERT INTO tasks (id, title, body) VALUES (
   't_90c5e1e0',
   'EDGE-DISCOVERY: explain 50 suppressed high-conviction BTCUSDT 1h signals under fail-closed gate',
   'OUTCOME: produce one leak-free, paper-only edge-discovery packet for the current fail-closed Sycode Trading lane.
@@ -164,6 +164,43 @@ INSERT INTO task_comments VALUES (
   't_web_negated_packet_discussion',
   'implementation-worker delegated evidence discussion: bare VERIFY_PASS quoted as an example, but no RUNNING_APP_VERIFICATION packet from a terminal-capable reviewer and no independent reviewer verdict.',
   1783072501
+);
+-- Terminal-by-approve lock-gate fixtures (t_6334ff49).
+-- (a) approve->done terminal: already-done approved web card must ALLOW a
+--     redundant completion even without fresh VERIFY_PASS (terminal override).
+INSERT INTO tasks (id, title, body, status) VALUES (
+  't_terminal_done_approved',
+  'Implement apps/web dashboard route component',
+  'Landed and approved. Concrete frontend route/page/component work with no running app VERIFY_PASS supplied on this redundant completion.'
+, 'done');
+INSERT INTO task_comments VALUES (
+  't_terminal_done_approved',
+  'REVIEW_VERDICT=APPROVED by platform-reviewer after running-app gate evidence',
+  1783073000
+);
+-- done WITHOUT approval marker must keep existing behavior (not terminal):
+-- web card -> block without VERIFY_PASS.
+INSERT INTO tasks (id, title, body, status) VALUES (
+  't_terminal_done_noapproval',
+  'Implement apps/web dashboard route component',
+  'Done but never approved. Concrete frontend route/page/component work with no VERIFY_PASS supplied.'
+, 'done');
+-- done+approved but ALSO a goal-judge provider-error trap must still block
+-- (terminal override must NOT bypass the fail-closed goal-judge quarantine).
+INSERT INTO tasks (id, title, body, status) VALUES (
+  't_terminal_done_approved_goaljudge',
+  'Implement apps/web dashboard route component',
+  'Concrete frontend route/page/component work.'
+, 'done');
+INSERT INTO task_comments VALUES (
+  't_terminal_done_approved_goaljudge',
+  'REVIEW_VERDICT=APPROVED by platform-reviewer',
+  1783074000
+);
+INSERT INTO task_comments VALUES (
+  't_terminal_done_approved_goaljudge',
+  'GeminiAPIError/NotFoundError in goal-judge provider during completion; needs quarantine',
+  1783074001
 );
 SQL
 
@@ -310,6 +347,33 @@ PY
   printf 'PASS %s classifier: %s\n' "$name" "$class"
 }
 
+run_terminal_classifier_case() {
+  # Terminal-by-approve lock-gate (t_6334ff49): pure classifier verdict fixture.
+  local name="$1" status="$2" approval="$3" reopen="$4" expected="$5"
+  local args=()
+  if [ "$approval" = "1" ]; then args+=(--approval); fi
+  if [ "$reopen" = "1" ]; then args+=(--reopen); fi
+  local verdict
+  verdict=$(python3 "$classifier" --terminal --status "$status" "${args[@]}")
+  if [ "$verdict" != "$expected" ]; then
+    printf 'FAIL %s: expected %s got %s\n' "$name" "$expected" "$verdict" >&2
+    exit 1
+  fi
+  printf 'PASS %s terminal: %s\n' "$name" "$verdict"
+}
+
+run_has_approval_case() {
+  # Anchored REVIEW_VERDICT=APPROVED detection used by the hook terminal rule.
+  local name="$1" text="$2" expected="$3"
+  local got
+  got=$(printf '%s' "$text" | python3 "$classifier" --has-approval)
+  if [ "$got" != "$expected" ]; then
+    printf 'FAIL %s: expected %s got %s\n' "$name" "$expected" "$got" >&2
+    exit 1
+  fi
+  printf 'PASS %s has-approval: %s\n' "$name" "$got"
+}
+
 run_case "pm-review-routing-nonapp-allows" t_pmroute allow
 run_case "cli-script-nonweb-command-evidence-allows" t_cliscript allow 'py_compile rc=0; bash -n rc=0; pytest 6 passed; temp JSON read back'
 run_case "frontend-without-verify-blocks" t_webwork block
@@ -350,6 +414,29 @@ run_case "goal-judge-provider-error-no-override-blocks" t_goal_judge_provider_er
 run_case "goal-judge-provider-error-incomplete-override-blocks" t_goal_judge_incomplete_override_fixture block 'Incomplete override marker; failure lane preserved'
 run_case "goal-judge-provider-error-verified-review-override-allows" t_goal_judge_verified_override_fixture allow 'REVIEW_VERDICT=APPROVED with reviewed task evidence path in metadata; GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE present'
 run_case "goal-judge-provider-error-frontend-negative-blocks" t_goal_judge_frontend_negative_fixture block 'apps/web frontend task; GOAL_JUDGE_VERIFIED_REVIEW_OVERRIDE wording is present but no running-app VERIFY_PASS supplied'
+
+# Terminal-by-approve lock-gate fixtures (t_6334ff49). Required fixture corpus:
+# (a) approve->done stays terminal; (b) done->blocked WITHOUT re-open rejected;
+# (c) done->blocked WITH reviewer re-open allowed. Plus noop preservation and
+# anchored approval detection used by the hook's done-terminal rule.
+run_terminal_classifier_case "terminal-a-approve-done-stays-terminal" done 1 0 terminal
+run_terminal_classifier_case "terminal-b-done-blocked-no-reopen-rejected" blocked 1 0 regress_blocked
+run_terminal_classifier_case "terminal-c-done-blocked-with-reopen-allowed" blocked 1 1 regress_allowed
+run_terminal_classifier_case "terminal-archived-approved-terminal" archived 1 0 terminal
+run_terminal_classifier_case "terminal-ready-no-reopen-rejected" ready 1 0 regress_blocked
+run_terminal_classifier_case "terminal-noop-no-approval-blocked-preserves-existing" blocked 0 0 noop
+run_terminal_classifier_case "terminal-noop-no-approval-done-preserves-existing" done 0 0 noop
+run_has_approval_case "terminal-has-approval-anchored-verdict" 'REVIEW_VERDICT=APPROVED by reviewer' 1
+run_has_approval_case "terminal-has-approval-colon-verdict" 'REVIEW_VERDICT: APPROVED' 1
+run_has_approval_case "terminal-has-approval-prose-not-verdict" 'the card was not REVIEW_VERDICT=APPROVED' 0
+run_has_approval_case "terminal-has-approval-fenced-ignored" '```\nREVIEW_VERDICT=APPROVED\n```' 0
+# Hook-level terminal override: a done+approved web card must ALLOW a redundant
+# completion without fresh VERIFY_PASS (terminal), a done card WITHOUT approval
+# must keep existing behavior (block), and a done+approved card that ALSO trips
+# the goal-judge provider-error trap must still block (fail-closed preserved).
+run_case "terminal-hook-done-approved-web-allows-terminal-override" t_terminal_done_approved allow 'redundant completion; card is done+approved (terminal)'
+run_case "terminal-hook-done-noapproval-web-blocks-existing-behavior" t_terminal_done_noapproval block 'done but not approved; web card without VERIFY_PASS must still block'
+run_case "terminal-hook-done-approved-goal-judge-trap-still-blocks" t_terminal_done_approved_goaljudge block 'done+approved but goal-judge provider-error trap present; terminal override must NOT bypass quarantine'
 
 while IFS=$'\t' read -r name tid expected summary metadata_json expected_class; do
   run_case "fixture-corpus:${name}" "$tid" "$expected" "$summary" "$metadata_json"
