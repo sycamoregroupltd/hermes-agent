@@ -27,15 +27,19 @@ HERMES = os.environ.get("CHANNEL_LIVENESS_HERMES_BIN", "/home/frank/.local/bin/h
 HERMES_HOME = os.environ.get("CHANNEL_LIVENESS_HERMES_HOME", "/home/frank/.hermes")
 
 # Frank-facing channels: (name, target, fallback_weight)
+# 2026-08-25 jarvis: whatsapp-frank REMOVED from probe set — WhatsApp bridge
+# (localhost:3901) decommissioned/dead since 2026-07-24 (32 consecutive daily
+# failures; no process, no listener). Probing a decommissioned channel produced
+# a guaranteed daily false alarm. Re-add when the bridge is restored
+# (see kanban t_d0e82114 CONDENSE 3/4 delivery fixes).
 CHANNELS = [
     ("discord-critical-alerts", "discord:#critical-alerts", 0),
     ("telegram", "telegram:506972405", 1),
-    ("whatsapp-frank", "whatsapp:Frank", 2),
 ]
 
 CROSS_ALERT_TARGETS = os.environ.get(
     "CHANNEL_LIVENESS_CROSS_TARGETS",
-    "discord:#critical-alerts,whatsapp:Frank",
+    "discord:#critical-alerts,telegram:506972405",
 ).split(",")
 
 
