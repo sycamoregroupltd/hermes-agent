@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+# Auto-generated shim: routes 'nous-balance-watchdog' output to the BOARD instead of discord:#critical-alerts.
+# Canonical logic untouched at /home/frank/.hermes/profiles/jarvis/scripts/nous_balance_watchdog.py; delivery changed only.
+import os, sys
+os.environ.setdefault("RTB_SCRIPT", "/home/frank/.hermes/profiles/jarvis/scripts/nous_balance_watchdog.py")
+os.environ.setdefault("RTB_KEY", "nous-balance-watchdog")
+os.environ.setdefault("RTB_TITLE", "nous-balance-watchdog")
+os.environ.setdefault("RTB_BOARD", "jarvis-os")
+os.execv(sys.executable, [sys.executable,
+    "/home/frank/.hermes/scripts/report-to-board.py", *sys.argv[1:]])
