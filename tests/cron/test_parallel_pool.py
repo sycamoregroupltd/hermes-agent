@@ -5,6 +5,7 @@ prevented the ticker thread from firing, causing all other jobs to be fast-forwa
 """
 
 import concurrent.futures
+import contextlib
 import threading
 import time
 from unittest.mock import patch
@@ -189,6 +190,11 @@ class TestRunningJobGuard:
         )
         monkeypatch.setattr(sched, "mark_execution_running", lambda *_a, **_kw: None)
         monkeypatch.setattr(sched, "heartbeat_fire_claim", lambda *_a, **_kw: True)
+        # The fake claim above has no real store record behind it; fence the
+        # pre-run runnability check (t_d0104339) so the fake world stays whole.
+        monkeypatch.setattr(
+            sched, "fire_claim_fence", lambda *_a, **_kw: contextlib.nullcontext(True)
+        )
 
         n = sched.tick(verbose=False)
 

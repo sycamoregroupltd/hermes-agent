@@ -646,8 +646,10 @@ from cron.jobs import (
     fire_claim_fence,
     clear_run_claim,
     get_due_jobs,
+    get_job,
     heartbeat_fire_claim,
     heartbeat_run_claim,
+    is_job_runnable,
     mark_job_run,
     save_job_output,
     use_cron_store,
@@ -7152,6 +7154,68 @@ def _run_one_job_body(
         # The attempt is claimed durably before executor/provider dispatch and
         # becomes running only immediately before the actual run.
         mark_execution_running(execution_id)
+
+        # Claim-vs-pause race (t_d0104339): the job was claimed while enabled,
+        # but a pause that lands between the claim and the actual side-effect
+        # start must abort this execution — otherwise the run completes after
+        # paused_at and stamps last_run_at past the reviewed pause (the
+        # cron-store-disabled-state-watchdog divergence). Re-read the CURRENT
+        # record under the same per-job fire fence used for save/deliver, so
+        # the decision is atomic against a concurrent pause_job store write (a
+        # pause cannot race past this check). If the job is no longer runnable
+        # (paused / disabled) — or we no longer own the claim (replacement
+        # owner) — finish the claimed execution as skipped WITHOUT running,
+        # marking, or delivering. Lives in this shared body so BOTH the
+        # built-in ticker and the external provider fire path (fire_due) get
+        # the same guarantee.
+        pre_run_skip_reason = None
+        with _side_effect_fence() as owns_pre_run_side_effect:
+            if not owns_pre_run_side_effect:
+                pre_run_skip_reason = (
+                    "Fire claim ownership lost before side effect start."
+                )
+            else:
+                try:
+                    _fresh_job = get_job(job["id"])
+                except Exception as _read_exc:
+                    logger.warning(
+                        "Job '%s': could not re-read job record before side "
+                        "effect start; aborting conservatively: %s",
+                        job.get("name", job["id"]),
+                        _read_exc,
+                    )
+                    pre_run_skip_reason = (
+                        "Job record could not be re-read before side effect "
+                        "start; execution skipped."
+                    )
+                if (
+                    pre_run_skip_reason is None
+                    and _fresh_job is not None
+                    and not is_job_runnable(_fresh_job)
+                ):
+                    pre_run_skip_reason = (
+                        "Job was paused after claim; execution skipped before "
+                        "side effect start (skipped-paused-after-claim)."
+                    )
+        if pre_run_skip_reason is not None:
+            logger.info(
+                "Job '%s': %s",
+                job.get("name", job["id"]),
+                pre_run_skip_reason,
+            )
+            try:
+                finish_execution(
+                    execution_id,
+                    success=False,
+                    error=pre_run_skip_reason,
+                )
+            except Exception as _finish_exc:
+                logger.warning(
+                    "Job '%s': failed to close skipped execution ledger row: %s",
+                    job["id"],
+                    _finish_exc,
+                )
+            return True
 
         # Run the job under the profile's secret scope. get_secret() fails
         # closed outside a scope once profile isolation is in play (multiple
