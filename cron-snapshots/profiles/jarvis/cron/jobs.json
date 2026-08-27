@@ -62,7 +62,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -311,38 +312,6 @@
     },
     {
       "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-22T11:53:04.581245+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "e97a2e581fa8",
-      "model": null,
-      "name": "elon-kanban-watchdog",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 1m",
-        "kind": "interval",
-        "minutes": 1
-      },
-      "schedule_display": "every 1m",
-      "script": "elon_kanban_watchdog.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
       "context_from": [
         "e97a2e581fa8"
       ],
@@ -456,7 +425,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -491,42 +461,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-24T18:53:02.996416+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "id": "3ac9196fe0f0",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "native-version-check",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run `/home/frank/.local/bin/hermes --version` and check if this matches the latest release at https://github.com/NousResearch/hermes-agent/releases/latest. If there's a newer version, report it. If not, stay silent.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 9 * * 1",
-        "expr": "0 9 * * 1",
-        "kind": "cron"
-      },
-      "schedule_display": "0 9 * * 1",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -598,75 +534,6 @@
       "skills": [],
       "state": "paused",
       "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-24T19:07:09.468324+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "id": "f85a3de37919",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "native-weekly-insights",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run `/home/frank/.local/bin/hermes insights --days 7 --source cli` and produce a summary. Focus on: session count, total tokens, model distribution, any anomalies (like sessions with abnormal error counts). Output a compact markdown report.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 8 * * 1",
-        "expr": "0 8 * * 1",
-        "kind": "cron"
-      },
-      "schedule_display": "0 8 * * 1",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null
-    },
-    {
-      "context_from": null,
-      "created_at": "2026-06-24T19:15:08.616772+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "id": "43d386fc9339",
-      "model": null,
-      "name": "native-curator-backup",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run `/home/frank/.local/bin/hermes curator backup` to snapshot all skills. If successful, report the snapshot path and size.",
-      "provider": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 5 * * 0",
-        "expr": "0 5 * * 0",
-        "kind": "cron"
-      },
-      "schedule_display": "0 5 * * 0",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "provider_snapshot": "nous",
-      "model_snapshot": "stealth/ox-alpha"
     },
     {
       "base_url": null,
@@ -806,7 +673,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -839,48 +707,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-25T11:48:15.265521+01:00",
-      "deliver": "discord:#quant-reports",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "exec_context": {
-        "mode": "systemd-run-user-service",
-        "properties": {
-          "Slice": "hermes-cron-heavy.slice",
-          "TasksMax": "65536"
-        },
-        "unit_prefix": "hermes-cron-heavy-native"
-      },
-      "id": "13c1f9279025",
-      "model": null,
-      "model_snapshot": null,
-      "name": "quant-researcher-6h",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "37 */6 * * *",
-        "expr": "37 */6 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "37 */6 * * *",
-      "script": "/home/frank/.hermes/profiles/jarvis/scripts/quant_researcher_6h.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": "/home/frank/.hermes/scripts",
-      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -946,7 +772,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -987,7 +814,7 @@
       "context_from": null,
       "created_at": "2026-06-26T06:22:11.420893+01:00",
       "deliver": "local",
-      "enabled": true,
+      "enabled": false,
       "enabled_toolsets": null,
       "id": "ee57faa4538f",
       "model": null,
@@ -995,7 +822,7 @@
       "name": "fleet-cred-sync",
       "no_agent": true,
       "origin": null,
-      "paused_at": null,
+      "paused_at": "2026-08-24T17:24:51.632394+01:00",
       "paused_reason": null,
       "prompt": "",
       "provider": null,
@@ -1012,7 +839,7 @@
       "script": "dgx_fleet_xai_cred_sync.py",
       "skill": null,
       "skills": [],
-      "state": "scheduled",
+      "state": "paused",
       "workdir": null,
       "failure_streak": 0
     },
@@ -1507,80 +1334,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-06-30T20:37:43.494011+01:00",
-      "deliver": "discord:#quant-reports",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal",
-        "file"
-      ],
-      "id": "e46687368088",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "paper-risk-agent",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "You are paper-risk, the Risk Monitor Agent.\n\nYour input includes pre-gathered risk context from the gate script. If the context says \"nothing new\" or the context block is empty/minimal, respond with \"NO ACTION \u2014 no new risk events\" and exit immediately (1 line).\n\nIf there ARE new events (recent losses, stale positions, drawdown):\n1. Review the provided risk context (open positions, drawdown, largest losses, stale positions)\n2. Identify any strategy in drawdown that needs a pause or review\n3. If a strategy has a NET-OF-COST 24h PnL loss > $10 (net of fees/funding/slippage, per the immutable realized_trade_ledger `losing_strategies_24h[].net_pnl`), flag it for PM review \u2014 a breakeven strategy (e.g. openclaw:house ~ -$0.92) must NOT be flagged\n4. If stale Jarvis positions > 50, escalate to Frank\n5. Keep report to 5 lines max unless there's a critical risk\n\nTOKEN-SAFE CURL: Use SYCODE_CURL wrapper for all OpenClaw calls.\nSYCODE_CURL=/home/frank/.hermes/scripts/sycode_curl.sh",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": "paper_risk_gate.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-30T20:37:56.243337+01:00",
-      "deliver": "discord:#quant-reports",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal",
-        "file"
-      ],
-      "id": "35fd9cd6d157",
-      "model": null,
-      "model_snapshot": null,
-      "name": "paper-analyst-agent",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Generate the deterministic read-only paper analytics report. The reviewed script performs all endpoint reads and atomically writes canonical Obsidian evidence; this prompt is descriptive only.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 */6 * * *",
-        "expr": "0 */6 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 */6 * * *",
-      "script": "paper_analytics_report.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 2
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-06-30T21:29:02.215693+01:00",
       "deliver": "discord:#quant-reports",
       "enabled": true,
@@ -1693,145 +1446,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-06-30T21:33:49.635057+01:00",
-      "deliver": "discord:#quant-reports",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "565a6ee597b9",
-      "model": null,
-      "model_snapshot": null,
-      "name": "active-position-manager",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Manage open paper positions - trail stops, partial exits, tighten losers",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": "active_position_manager.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T09:15:27.661091+01:00",
-      "deliver": "discord:#quant-reports",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "c79a0939cfe7",
-      "model": null,
-      "model_snapshot": null,
-      "name": "funding-arb-bot",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run funding rate arbitrage bot in paper mode",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 240m",
-        "kind": "interval",
-        "minutes": 240
-      },
-      "schedule_display": "every 240m",
-      "script": "run_funding_arb.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T09:45:47.065613+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "7c783af2177f",
-      "model": null,
-      "model_snapshot": null,
-      "name": "market-data-collector",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Collect external market data and write to Sycode DB. Run the script collect_market_data.py.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 5m",
-        "kind": "interval",
-        "minutes": 5
-      },
-      "schedule_display": "every 5m",
-      "script": "collect_market_data.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T10:10:55.046603+01:00",
-      "deliver": "discord:#quant-reports",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "4aecc19efac8",
-      "model": "grok-4.3",
-      "model_snapshot": null,
-      "name": "strategy-self-tuner",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "You are the Strategy Self-Tuner in PAPER-ONLY / READ-ONLY RECOMMENDATION MODE.\n\nHard safety boundary:\n- Do NOT write to the Sycode database.\n- Do NOT run SQL UPDATE/INSERT/DELETE/DDL, strategy enable/disable changes, risk-profile raises, cache refreshes, deploys, restarts, live trading/order actions, credential/provider changes, or spend-affecting actions.\n- Do NOT call POST/PUT/PATCH/DELETE endpoints, including /api/strategies/cache/refresh.\n- Do NOT generate or use admin JWTs.\n- If a possible strategy change looks warranted, produce a recommendation only and state the explicit approvals required before any separate implementation task may mutate anything.\n- Any future mutation path must be gated by explicit risk-reviewer + PM/operator approval and executed in a separate approved task, never by this cron job.\n\nSTEP 1: Query read-only 7d performance evidence. Use SELECT-only SQL. Prefer strategy_outcomes for a true 7d window:\n\ndocker exec sycodetrading-supabase-db psql -h localhost -U postgres -d postgres -t -A -F'|' -c \"\nSELECT so.strategy_id, COALESCE(s.name, so.strategy_id) AS strategy_name,\n  COUNT(*) AS trades_7d,\n  SUM(CASE WHEN so.actual_pnl > 0 THEN 1 ELSE 0 END) AS wins_7d,\n  SUM(CASE WHEN so.actual_pnl < 0 THEN 1 ELSE 0 END) AS losses_7d,\n  ROUND(COALESCE(SUM(so.actual_pnl), 0)::numeric, 2) AS total_pnl_7d\nFROM strategy_outcomes so\nLEFT JOIN strategies s ON s.id::text = so.strategy_id\nWHERE so.created_at > now() - interval '7d'\n  AND so.was_executed = true\n  AND COALESCE(s.enabled, true) = true\nGROUP BY so.strategy_id, s.name\nORDER BY total_pnl_7d ASC;\n\"\n\nIf strategy_outcomes is unavailable, use SELECT-only fallback from strategies cumulative fields:\n\ndocker exec sycodetrading-supabase-db psql -h localhost -U postgres -d postgres -t -A -F'|' -c \"\nSELECT name, total_trades, ROUND(COALESCE(total_pnl, 0)::numeric, 2) AS total_pnl\nFROM strategies\nWHERE enabled = true\nORDER BY total_pnl ASC;\n\"\n\nSTEP 2: Produce recommendations only:\n- If trades_7d >= 30 AND total_pnl_7d < 0: recommend risk review for possible disable, with evidence.\n- If trades_7d >= 20 AND total_pnl_7d > 5: recommend risk review for possible risk-profile raise, with evidence.\n- If sample size is small, PnL is near zero, or evidence is ambiguous: recommend no change.\n\nSTEP 3: Append a paper-only report to /home/frank/sycode-trading/reports/strategy-promotion-funnel/self-tuner-actions.md. The log entry must explicitly say PAPER-ONLY / NO MUTATION, include the query source used, recommendations, and approvals required. Do not append tuner entries to latest.md because the daily funnel report overwrites it.\n\nSTEP 4: If recommendations exist, file or update one weekly idempotency-keyed review card to trading-risk-reviewer with idempotency key self-tuner-review-<ISO_YEAR>-W<ISO_WEEK>. The card must be recommendation-only and must state that any DB write, strategy enable/disable, risk-profile raise, cache refresh, deploy/restart, live trading/order, credential/provider, or spend-affecting action requires explicit risk-reviewer + PM/operator approval in a separate task. If no recommendations occurred, record a no-recommendation line in self-tuner-actions.md and skip the review card.\n\nSTEP 5: Output a concise report:\n- Strategies checked and data source used\n- Recommendations only; no mutations performed\n- Append-only action log path\n- Weekly review card id/key if created or updated\n- Explicit statement: cache refresh not performed and no DB writes were performed",
-      "provider": "xai-oauth",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 360m",
-        "kind": "interval",
-        "minutes": 360
-      },
-      "schedule_display": "every 360m",
-      "script": null,
-      "skill": "trading-data-analysis",
-      "skills": [
-        "trading-data-analysis",
-        "obsidian-knowledge-management"
-      ],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-01T10:13:23.362063+01:00",
       "deliver": "discord:#quant-reports",
       "enabled": false,
@@ -1867,142 +1481,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-01T10:39:02.082410+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "7885ab69d7cb",
-      "model": null,
-      "model_snapshot": null,
-      "name": "arb-trade-pipeline",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run arb_trade_pipeline.py script every 5 minutes to collect market data, detect arb opportunities, and execute trades.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 5m",
-        "kind": "interval",
-        "minutes": 5
-      },
-      "schedule_display": "every 5m",
-      "script": "arb_trade_pipeline.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T11:41:09.728577+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "67a0e9a36047",
-      "model": null,
-      "model_snapshot": null,
-      "name": "multi-pair-arb",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run multi_pair_arb.py",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 5m",
-        "kind": "interval",
-        "minutes": 5
-      },
-      "schedule_display": "every 5m",
-      "script": "multi_pair_arb.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T11:42:28.495169+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "8c0e599c454a",
-      "model": null,
-      "model_snapshot": null,
-      "name": "auto-signal-trader",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run auto_signal_trader.py",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 5m",
-        "kind": "interval",
-        "minutes": 5
-      },
-      "schedule_display": "every 5m",
-      "script": "auto_signal_trader.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T11:42:44.247958+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "f2d0c8cfd508",
-      "model": null,
-      "model_snapshot": null,
-      "name": "pnl-tracker",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run pnl_tracker.py",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": "pnl_tracker.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 18
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-01T11:44:13.826772+01:00",
       "deliver": "local",
       "enabled": true,
@@ -2032,7 +1510,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -2065,39 +1543,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T12:13:25.804944+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "dd3863533d18",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "system-improvement-scan",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "You are the System Improvement Scanner. Run daily to find and report any issues, regressions, or improvement opportunities across the trading system.\n\n1. CHECK cron health: run `/home/frank/.local/bin/hermes cron list` and report any jobs with errors or that haven't run in 24h\n\n2. CHECK strategy performance: run via docker exec psql:\n   SELECT s.name, s.total_trades, ROUND(s.total_pnl::numeric,2) as pnl, s.enabled\n   FROM strategies s ORDER BY s.total_trades DESC\n\n3. CHECK strategy matching: get recent intent data via docker exec psql:\n   SELECT ti.strategy_name, COUNT(*) as intents_5m\n   FROM trade_intents ti WHERE ti.created_at > now() - interval '5m'\n   GROUP BY ti.strategy_name ORDER BY intents_5m DESC\n\n4. CHECK open positions: `SELECT COUNT(*) FROM managed_positions WHERE status='open'`\n\n5. CHECK news sentiment: read /home/frank/.hermes/data/news_sentiment/state.json for F&G and macro events\n\n6. OUTPUT a structured report:\n   - Health status of all major systems\n   - Any errors or warnings found\n   - Strategy performance summary (winners/losers)\n   - NFP countdown if applicable\n   - Suggested improvements for the next session\n\nIMPORTANT: Do NOT make any changes. Only observe and report. This is a read-only scan.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 6 * * *",
-        "expr": "0 6 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 6 * * *",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null
     },
     {
       "base_url": null,
@@ -2164,7 +1609,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -2196,47 +1642,6 @@
       "script": "position_age_watchdog.py",
       "skill": null,
       "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-01T15:38:52.475470+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal",
-        "file",
-        "kanban"
-      ],
-      "id": "6747b083dce8",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "autonomous-trading-pm",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Run the autonomous trading PM loop: scan trading kanban board, triage tasks, route to appropriate specialist profiles. Load kanban and sycode-codebase skills.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 4,10,16,22 * * *",
-        "expr": "0 4,10,16,22 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 4,10,16,22 * * *",
-      "script": null,
-      "skill": "kanban",
-      "skills": [
-        "kanban",
-        "sycode-codebase"
-      ],
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
@@ -2306,7 +1711,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2340,41 +1746,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 10
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-02T15:46:40.204311+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "a9def8c365df",
-      "model": null,
-      "model_snapshot": null,
-      "name": "fleet-dispatch-loop",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 2m",
-        "kind": "interval",
-        "minutes": 2
-      },
-      "schedule_display": "every 2m",
-      "script": "fleet-dispatch.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 13
     },
     {
       "base_url": null,
@@ -2413,40 +1785,6 @@
       ],
       "state": "paused",
       "workdir": "/home/frank"
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-02T16:22:01.418246+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "7ffdf1f12d4e",
-      "model": null,
-      "model_snapshot": null,
-      "name": "review-required-auto-router",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 10m",
-        "kind": "interval",
-        "minutes": 10
-      },
-      "schedule_display": "every 10m",
-      "script": "kanban_review_required_auto_router.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2510,40 +1848,6 @@
       },
       "schedule_display": "0 8 * * *",
       "script": "memory_knowledge_health.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-02T21:44:51.884882+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "a1646f47cb29",
-      "model": null,
-      "model_snapshot": null,
-      "name": "macro-regime-adaptor",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 60m",
-        "kind": "interval",
-        "minutes": 60
-      },
-      "schedule_display": "every 60m",
-      "script": "macro_regime_adaptor.py",
       "skill": null,
       "skills": [],
       "state": "scheduled",
@@ -2647,7 +1951,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2711,39 +2016,6 @@
       },
       "schedule_display": "0 9 * * *",
       "script": "needs_frank_daily_digest.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-03T21:03:27.113292+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "474645983254",
-      "model": null,
-      "model_snapshot": null,
-      "name": "kanban-scheduled-wake-scanner",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 10m",
-        "kind": "interval",
-        "minutes": 10
-      },
-      "schedule_display": "every 10m",
-      "script": "kanban_scheduled_wake_scanner.py",
       "skill": null,
       "skills": [],
       "state": "scheduled",
@@ -2964,50 +2236,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-01T22:33:24.738759+01:00",
-      "deliver": "discord:1521973783794155530",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "id": "e2bcff2ad299",
-      "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "governance-task-bridge-report",
-      "no_agent": false,
-      "origin": {
-        "chat_id": "506972405",
-        "chat_name": "Fws",
-        "platform": "telegram",
-        "thread_id": null,
-        "user_id": "506972405"
-      },
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "You are jarvis-os-pm. Run the governance bridge scan and report the results to #jarvis-os-governance.\n\nRun:\n```\npython3 /home/frank/.hermes/profiles/jarvis-os-pm/scripts/governance-task-bridge.py --report 2>&1\n```\n\nFrom the output:\n1. Note the total governance notes scanned and task references\n2. Report the number of unmatched refs\n3. If unmatched_refs > 0, list the governance note files that have them\n4. If any new unmatched refs appeared since the baseline (first run on 2026-07-01), flag them as NEW.\n\nOutput format: concise, scannable, with the key numbers bolded. Keep it under 20 lines. Do not include raw JSON.\n\nIf the scan fails, report the error and escalate to Frank via critical-alerts.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 8 * * *",
-        "expr": "0 8 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 8 * * *",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-03T21:04:57.448945+01:00",
       "deliver": "discord:#fleet-reports",
       "enabled": false,
@@ -3147,40 +2375,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-03T20:36:04.830418+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "d042c6feafa6",
-      "model": null,
-      "model_snapshot": null,
-      "name": "deterministic-verdict-router",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Script-only dry-run deterministic verdict router; mutations stay disabled unless /home/frank/.hermes/cron/state/verdict-router.apply-enabled exists or VERDICT_ROUTER_APPLY=1 is set.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 10m",
-        "kind": "interval",
-        "minutes": 10
-      },
-      "schedule_display": "every 10m",
-      "script": "verdict_router.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 19
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-03T21:14:52.238482+01:00",
       "deliver": "discord:#critical-alerts",
       "enabled": true,
@@ -3209,7 +2403,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3384,44 +2579,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-03T21:40:32.740686+01:00",
-      "deliver": "discord:#critical-alerts,telegram",
-      "enabled": true,
-      "enabled_toolsets": [
-        "kanban",
-        "terminal",
-        "file"
-      ],
-      "id": "063fe9fb6f87",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "needs-frank-decision-batch-agent",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "You are the Jarvis NEEDS-FRANK decision-batch curator running from the Jarvis cron store.\n\nPurpose: once per day, produce a concise, judgment-ranked batch of items that genuinely require Frank, derived from deterministic NEEDS-FRANK surfaces. This complements the script-only `needs-frank-daily-digest`; do not replace it.\n\nRead-only evidence to inspect:\n- /home/frank/uaa-rules/FLEET-STATUS.md, especially Pending Frank rows.\n- /home/frank/uaa-rules/approvals-registry.md, especially entries marked AWAITING.\n- Live kanban state for referenced task IDs on boards under /home/frank/.hermes/kanban/boards/.\n- Recent Jarvis cron output for `needs-frank-daily-digest` if useful.\n\nDecision rules:\n1. Group and rank only items that match Frank-critical gates: credentials/secrets/auth material, real money/new spend, live trading, production deploys, irreversible data operations, or live voice/calls where policy requires Frank.\n2. De-dupe stale/resolved entries. If a referenced task is done/archived or no longer blocked on Frank, exclude it and say why only if it was previously prominent.\n3. Do not mutate files, cron jobs, credentials, provider/model settings, kanban task state, or production services. This is a read-only curator/report job.\n4. If there are zero true Frank decisions, output exactly `[SILENT]`.\n5. Otherwise output at most 8 bullets, oldest/highest-risk first. Each bullet must include: board/task or registry date, age, gate type, requested Frank decision, and safest default if Frank does nothing.\n6. Keep the report phone-readable and evidence-backed; no generic fleet summary.\n\n\n\nKanban SQLite schema caution: before any sqlite query, inspect `.schema` or `PRAGMA table_info`. Current boards use `tasks(id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result)` and `task_comments(body,created_at,author)`; there is no `task_blocks` table and no `tasks.block_reason` column. Prefer `kanban_show` for exact task context when available, and if it reports not found, check the board-specific DB path rather than assuming the current board.\n\nSafety boundaries: no live trading action, no credential handling, no spend, no deploy, no irreversible data operation, no gateway restart. Use native Hermes kanban tools where available; use terminal/sqlite read-only only when needed and never print secrets.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "5 9 * * *",
-        "expr": "5 9 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "5 9 * * *",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": "/home/frank",
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-03T21:45:32.579430+01:00",
       "deliver": "discord:#fleet-reports",
       "enabled": true,
@@ -3450,7 +2607,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3482,45 +2640,6 @@
       "script": "no_black_holes_detector.py",
       "skill": null,
       "skills": [],
-      "state": "scheduled",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-03T21:55:37.605937+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": true,
-      "enabled_toolsets": [
-        "kanban",
-        "terminal",
-        "file"
-      ],
-      "id": "88c545dffd60",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "jarvis-daily-mechanism-liveness",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "You are Jarvis commander running the daily LIGHT mechanism-liveness verification matrix for Frank's fleet.\n\nInput: the pre-run script output is a JSON object named `jarvis-commander-mechanism-liveness-light-matrix`. It contains rows for standing mechanisms: verdict-router (including shadow/apply state), wake scanner (including last wake action), PM triage crons for live-verified boards, detectors (registered-implies-ticking, black-hole weekly, fork-drift, quarantine invariant, leak guard), auto-review-router, breaker, OOB canary, and escalation notifier tiers.\n\nRules:\n1. Do not hand-fix any broken mechanism from this cron.\n2. For every row whose `status` is exactly `DEAD`, create or reuse one idempotency-keyed repair card on the `jarvis-os` board assigned to `devops`. Use the row's `repair_idempotency_key` exactly. The card body must include:\n   - source cron: `jarvis-daily-mechanism-liveness`\n   - source task: `t_5311fb77`\n   - the dead row key/label/reason/job_id/profile/script/output_artifact fields when present\n   - acceptance criteria: repair the mechanism, verify the correct live ticker/store, prove last_run/last_status or output artifact, and complete with the `gap-plugging` skill procedure\n   - safety boundary: no credentials/secrets, live trading, production deploys, irreversible data ops, money/new spend, or guardrail weakening; block instead if repair needs those.\n3. Treat WARN rows as visibility only; do not create repair cards for WARN rows.\n4. Preserve the verdict-router mode honestly: shadow mode is OK unless the row status is DEAD; do not enable apply mode from this cron.\n5. Final response must be exactly one line suitable for discord:#fleet-reports. Format:\n   `GREEN Jarvis mechanisms live: ok=<n> warn=<n> dead=0` when there are no DEAD rows.\n   or `RED Jarvis mechanisms stale/dead: dead=<n> keys=<comma-list>; repair_cards=<id-or-existing-list>; ok=<n> warn=<n>` when repair cards were created or already existed.\n6. If card creation fails for any DEAD row, final line must be RED and include `repair_card_creation_failed=<key>:<error-summary>`.\n\nUse kanban tools if available; otherwise use `/home/frank/.local/bin/hermes kanban --board jarvis-os create ...` from terminal. Keep the final one line only; no markdown table.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "15 8 * * *",
-        "expr": "15 8 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "15 8 * * *",
-      "script": "jarvis_mechanism_liveness_collect.py",
-      "skill": "gap-plugging",
-      "skills": [
-        "gap-plugging"
-      ],
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
@@ -3561,42 +2680,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-03T21:57:04.467764+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "ac8f83c93959",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "elon-succession-review",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Monthly SUCCESSION REVIEW. Load /home/frank/obsidian-fleet-vault/Governance/Succession/Hermes-Succession-Maturity-Ladder.md and /home/frank/obsidian-fleet-vault/Governance/Succession/succession-maturity-latest.md. Score Hermes current succession level, identify regressions, recommend hold/advance/rollback, and produce a concise digest for Frank. Do not expand authority yourself; if a level change is recommended, route it through Elon + Frank approval and approvals-registry update. Do not recursively schedule cron jobs.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "15 7 1 * *",
-        "expr": "15 7 1 * *",
-        "kind": "cron"
-      },
-      "schedule_display": "15 7 1 * *",
-      "script": null,
-      "skill": "fleet-governor",
-      "skills": [
-        "fleet-governor",
-        "obsidian-knowledge-management"
-      ],
-      "state": "scheduled",
-      "workdir": "/home/frank/.hermes/profiles/elon"
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-04T01:25:14.678592+01:00",
       "deliver": "local",
       "enabled": true,
@@ -3627,7 +2710,7 @@
       "state": "scheduled",
       "updated_at": "2026-07-04T01:25:14.678592+01:00",
       "workdir": null,
-      "failure_streak": 1
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -3765,74 +2848,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-04T07:24:09.388425+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "9a755435138f",
-      "model": null,
-      "model_snapshot": null,
-      "name": "board-pm-triage-sycode-ai",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 60m",
-        "kind": "interval",
-        "minutes": 60
-      },
-      "schedule_display": "every 60m",
-      "script": "board_pm_triage_sycode_ai.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-04T07:24:09.704684+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "4c80202279d2",
-      "model": null,
-      "model_snapshot": null,
-      "name": "board-pm-triage-yorkstone-supplies",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 60m",
-        "kind": "interval",
-        "minutes": 60
-      },
-      "schedule_display": "every 60m",
-      "script": "board_pm_triage_yorkstone_supplies.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-04T10:53:32.291299+01:00",
       "deliver": "discord:#quant-reports",
       "enabled": false,
@@ -3932,40 +2947,6 @@
       ],
       "state": "paused",
       "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-04T17:11:26.614163+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "79b3e3471877",
-      "model": null,
-      "model_snapshot": null,
-      "name": "regime-signal",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": "run_composite_signal.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4219,46 +3200,6 @@
       "skills": [],
       "state": "paused",
       "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-05T10:44:25.069809+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "f8c5f45a9831",
-      "model": null,
-      "model_snapshot": null,
-      "name": "signal-fusion-engine",
-      "no_agent": true,
-      "origin": {
-        "chat_id": "1521955147411095716",
-        "chat_name": "Hermes-jarvis / #general",
-        "platform": "discord",
-        "thread_id": null,
-        "user_id": "566415197649240064"
-      },
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": "run_signal_fusion.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4544,39 +3485,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-08T00:36:13.693267+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "fac46dae8172",
-      "model": null,
-      "model_snapshot": null,
-      "name": "sycode-edge-emergence-scan",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 10 * * 1",
-        "expr": "0 10 * * 1",
-        "kind": "cron"
-      },
-      "schedule_display": "0 10 * * 1",
-      "script": "sycode_edge_emergence_scan.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-08T08:08:57.593454+01:00",
       "deliver": "local",
       "enabled": true,
@@ -4641,40 +3549,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-08T23:28:19.468950+01:00",
-      "deliver": "discord:#critical-alerts",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "2e26eefaccf8",
-      "model": null,
-      "model_snapshot": null,
-      "name": "sycode-critical-stream-freshness",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "11,26,41,56 * * * *",
-        "expr": "11,26,41,56 * * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "11,26,41,56 * * * *",
-      "script": "sycode_critical_stream_freshness.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 20
     },
     {
       "base_url": null,
@@ -4851,57 +3725,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-13T17:33:46.694174+01:00",
-      "deliver": "discord:#quant-reports",
-      "enabled": true,
-      "enabled_toolsets": [
-        "web",
-        "terminal",
-        "file",
-        "delegation"
-      ],
-      "id": "8b84c382cfa8",
-      "model": "grok-4.3",
-      "model_snapshot": null,
-      "name": "confluence-edge-research",
-      "no_agent": false,
-      "origin": {
-        "chat_id": "1521955147411095716",
-        "chat_name": "Hermes-jarvis / #general",
-        "platform": "discord",
-        "thread_id": null,
-        "user_id": "566415197649240064"
-      },
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "You are the standing Sycode confluence/edge research + PRO-QUANT OPTIMIZATION loop (Jarvis fleet). Two jobs every run:\n\nJOB A \u2014 TRADITIONAL EDGE DISCOVERY: (A) discover external strategies from X/GitHub/TradingView and (B) MANIPULATE/RE-ENGINEER Sycode's internal signal_journeys data (feature transforms, alternative labels, horizon changes, redefined confluence) to break the known Wave 3 wall: native confluence tech scores are FLAT and 24h binary labels are random (AUC ~0.50). Research only \u2014 never live trade.\n\nJOB B \u2014 PRO-QUANT OPTIMIZATION & PATTERN EMERGENCE (Frank mandate 2026-08-05): act like a professional quantitative strategist, not a passive test-runner. For every candidate edge and for the existing data itself:\n1. SWEET-SPOT DISCOVERY: bucket each indicator/score (RSI, Williams %R, MACD, ADX, volume z-score, confluence, mean-reversion, momentum, volatility regime) into value ranges and find the ACTUAL optimal thresholds \u2014 not textbook values. Report WR and avg PnL per bucket with minimum sample (n>=10).\n2. MULTI-FACTOR ALIGNMENT MINING: search for OBSCURE pattern combos where regime \u00d7 volume \u00d7 other signals align to create the best win rates. Intersect 2-3 conditions: e.g. regime (QUIET/NORMAL/VOLATILE/EXTREME) \u00d7 volume_z (2,3,5) \u00d7 RSI/WilliamsR bucket \u00d7 session \u00d7 direction \u00d7 timeframe. Find the small alignments that concentrate win rate (e.g. \"SHORT 1h LOW-vol + volume_z>2 + RSI<40 \u2192 65% WR\"). Report n, WR, avg_fwd, stale_share per combo \u2014 never report a combo with n<30 as a real edge.\n3. PARAMETER TUNING: for each promising family, run a pre-committed grid over the key knobs (lookback windows, entry/exit thresholds, hold horizons, exit bars) to find the best config \u2014 but ALWAYS with multiple-testing awareness: log every grid in MULTIPLE-TESTING-LEDGER.md, prefer stability bands over the single grid winner, and treat \"best of grid\" as an upper bound, not a production parameter.\n4. REGIME \u00d7 VOLUME \u00d7 CONFLUENCE LINKAGE: explicitly test whether linking confluence/manufactured-confluence with volume-regime alignments discriminates where each alone was flat. This is the highest-priority pattern-emergence question from Frank.\n5. TWEAK-AND-COMPARE: when an external strategy is found (e.g. Williams %R), don't just test the literal rules \u2014 ALSO test the optimized variants (threshold shifts, lookback changes, added filters) and report which tweak improves net-of-cost win rate. This is the pro-quant \"make it better\" step.\n\nHARD BOUNDARIES (do not violate):\n- Paper-only. No live orders, no trade_intents, no strategy promotion/registration, no DB writes/backfills/migrations, no deploy/restart, no credentials/provider/model routing, no spend.\n- Every candidate edge MUST pass: synthetic forward labels on the FULL signal population (never executed-trade subset), freshness gate, stale_share invariant, chronological OOS split, realistic fee/slippage (16bps RT baseline), multiple-testing awareness. Fail-closed if stale_share > 5% or fresh n < 300 or fresh WR < 53%.\n- Never fabricate data. Manipulation = legitimate feature engineering / label design / parameter tuning, NOT inventing values.\n- MULTIPLE-TESTING-LEDGER.md is mandatory: every grid/param sweep logged before results are claimed.\n\nPROCEDURE each run:\n1. LOAD skills (in order): trading-systems-operations, external-strategy-discovery, multivariate-pattern-mining, trading-data-analysis, grok-cli, obsidian-knowledge-management.\n2. INTERNAL mining (read-only, duckdb via `source ~/.hermes/venvs/trading-ml/bin/activate`, POSTGRES_PASSWORD from env or docker exec fallback; use read-only transaction):\n   - Re-read `/home/frank/.hermes/profiles/jarvis/skills/finance/trading-systems-operations/references/wave3-empirical-findings-2026-07-04.md` so you do NOT rediscover known negatives.\n   - Attack the confluence-flat finding: redefine confluence as a MANUFACTURED feature (e.g. count of DISTINCT trigger_pattern TYPES firing, or distinct indicator-stream coverage from JSONB) and bucket-test WR on 1h/4h synthetic forward labels. Does engineered confluence discriminate where native score did not?\n   - Attack the 24h-random finding: recompute synthetic forward labels at 1h and 4h horizons per direction\u00d7timeframe\u00d7regime; test the proven SHORT combo (BOLLINGER_SQUEEZE_DOWN + DMI_BEARISH + MULTI_VWAP_CONFLUENCE) and the LONG 4h LOW/MEDIUM-vol anomaly at shorter horizons.\n   - JOB B: run sweet-spot bucketing + multi-factor alignment mining + parameter grids per the mandate above. Log all grids to MULTIPLE-TESTING-LEDGER.md.\n   - Apply freshness gate (1m=1,5m=5,15m=15,1h=60,4h=240 min): report all-joined AND fresh-only WR/avg_fwd/stale_share.\n3. EXTERNAL discovery: use `web_search` (X/GitHub/TradingView) freely. For X Articles / login-walled long-form posts use Grok CLI headless per the grok-cli skill: AUTH PRE-FLIGHT (`timeout 30 grok whoami` \u2014 if it fails, skip grok, note gap), then `timeout --kill-after=60 1800 grok --single \"...\" --output-format plain --no-memory --no-plan` redirected to a file, then clean up (`pgrep -af \"grok --single\"`). Score every external find on the 4 criteria (Methodology, Cost Modeling, Sycode-Feasibility, Edge Uniqueness) and tag Validated/Template/Reference. For each external find, ALSO run the tweak-and-compare optimization pass (JOB B step 5) before deciding.\n4. PERSIST: write dated note `/home/frank/obsidian/quant-team/research/confluence-edge-research-YYYY-MM-DD.md` (YAML frontmatter + 2 wikilinks, link to concepts/net-of-fee-leak-free-evaluation-bar). Update `/home/frank/obsidian/quant-team/index.md` and `log.md`. Link to existing strategy pool to dedup. Add any new sweet-spot/alignment findings to a dedicated `sweet-spot-alignment-registry` section.\n5. ROUTE: if a candidate passes all gates, create a PAPER-ONLY kanban card on `sycode-trading` (via `hermes kanban create`) linking the Obsidian note; title prefix 'RESEARCH:' ; never imply live readiness.\n6. REPORT tersely: internal experiment results (n/WR/avg_fwd/stale_share), top external finds with scores, NEW sweet-spot/alignment findings (the obscure combos with best WR), persistence paths, explicit no-live boundary.\n\nIf DB or grok is unreachable, document the gap and proceed with the available half; do not stop.",
-      "provider": "xai-oauth",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 720m",
-        "kind": "interval",
-        "minutes": 720
-      },
-      "schedule_display": "every 720m",
-      "script": null,
-      "skill": "trading-systems-operations",
-      "skills": [
-        "trading-systems-operations",
-        "external-strategy-discovery",
-        "multivariate-pattern-mining",
-        "grok-cli",
-        "obsidian-knowledge-management"
-      ],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-17T02:49:55.098495+01:00",
       "deliver": "discord:#fleet-reports",
       "enabled": true,
@@ -4970,38 +3793,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-17T10:46:59.366003+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "06311c0fa116",
-      "model": null,
-      "name": "fleet-cron-store-clobber-canary",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Deploy-atomicity / cron-store-clobber regression guard (t_838b8d66 #3). no-agent script; silent when healthy, alerts discord:#critical-alerts on clobber/vanish.",
-      "provider": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 2m",
-        "kind": "interval",
-        "minutes": 2
-      },
-      "schedule_display": "every 2m",
-      "script": "fleet_cron_store_clobber_canary.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-23T21:23:06.445051+01:00",
       "deliver": "local",
       "enabled": true,
@@ -5027,39 +3818,6 @@
       },
       "schedule_display": "0 5 * * 0",
       "script": "sycode_worktree_reaper.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-28T21:52:22.419374+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "cc05e9815067",
-      "model": null,
-      "model_snapshot": null,
-      "name": "blocked-to-running-soak-watchdog",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "watchdog (no_agent)",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "*/5 * * * *",
-        "expr": "*/5 * * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "*/5 * * * *",
-      "script": "blocked_to_running_soak_watchdog.py",
       "skill": null,
       "skills": [],
       "state": "scheduled",
@@ -5144,68 +3902,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-08-18T21:58:26+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "fd7669daf8a8",
-      "model": null,
-      "model_snapshot": null,
-      "name": "board-pm-triage-jarvis-os",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "schedule": {
-        "display": "every 60m",
-        "kind": "interval",
-        "minutes": 60
-      },
-      "schedule_display": "every 60m",
-      "script": "board_pm_triage_jarvis_os.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-04T07:24:09.388425+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "eaf7ec9955df",
-      "model": null,
-      "model_snapshot": null,
-      "name": "board-pm-triage-sycode-trading",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "schedule": {
-        "display": "every 60m",
-        "kind": "interval",
-        "minutes": 60
-      },
-      "schedule_display": "every 60m",
-      "script": "board_pm_triage_sycode_trading.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-08-01T13:03:06.853643+01:00",
       "deliver": "discord:#critical-alerts",
       "enabled": true,
@@ -5235,7 +3931,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 5
+      "failure_streak": 7
     },
     {
       "base_url": null,
@@ -5472,7 +4168,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5539,7 +4236,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5641,7 +4339,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5708,43 +4407,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-08-03T10:25:48.433566+01:00",
-      "deliver": "all",
-      "enabled": false,
-      "enabled_toolsets": [
-        "terminal",
-        "file"
-      ],
-      "id": "524e1c15facf",
-      "model": null,
-      "model_snapshot": "stealth/ox-alpha",
-      "name": "fleet-monitor",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-08-03T11:11:12.534387+01:00",
-      "paused_reason": "dead-pin: script not found: fleet-monitor.sh",
-      "prompt": "## Fleet Monitor \u2014 auto-dispatch & report\n\nYour context above contains the current board state (injected by fleet-monitor.sh script). Use it to:\n\n1. **Report to Frank**: Produce a concise summary of the board state, any new completions since last check, and any profile capacity changes.\n\n2. **Auto-dispatch ready cards**: For each board, check if any ready task's assignee profile is currently free (no running tasks). If so, dispatch:\n   `hermes kanban --board <slug> dispatch`\n\nReport format:\n```\nFLEET MONITOR\nBoard: sycode-trading \u2014 Ready: N  Running: N  Blocked: N\nBoard: jarvis-os \u2014 Ready: N  Running: N  Blocked: N\nNew completions: ...\nDispatched: ...\n```\n\nSAFETY: Read-only + auto-dispatch only. No card creation, credentials, live trading.",
-      "provider": null,
-      "provider_snapshot": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": "fleet-monitor.sh",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": "/home/frank"
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5777,7 +4441,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
+      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts",
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5815,72 +4480,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-08-03T10:25:48.509495+01:00",
-      "deliver": "all",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "7aeae3239bfb",
-      "model": null,
-      "model_snapshot": null,
-      "name": "news-macro-integrity-sentinel",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-08-03T11:07:26.391827+01:00",
-      "paused_reason": "dead-pin: script not found: dgx_news_macro_integrity_sentinel.py",
-      "prompt": "Paper-mode data stream integrity alert for the news + macro context pipelines (market_news_cache, market_news, macro_context_daily VIX/DXY). Emits a discord alert only on the falling edge of a new staleness / low-coverage / NULL-integrity condition; silent while the condition persists (slow re-remind). Writes a unified health-canary JSONL record to /home/frank/.hermes/profiles/jarvis/cron/output/health_canary.jsonl. Read-only \u2014 never mutates trading state.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "*/30 * * * *",
-        "expr": "*/30 * * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "*/30 * * * *",
-      "script": "dgx_news_macro_integrity_sentinel.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-08-03T10:25:48.535723+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "04331480c31b",
-      "model": "deepseek/deepseek-v4-flash-0731",
-      "model_snapshot": null,
-      "name": "gateway-cgroup-guard",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-08-03T11:07:36.129241+01:00",
-      "paused_reason": "dead-pin: script not found: gateway-cgroup-guard.py",
-      "prompt": "Run the gateway cgroup sprawl sentinel. Script exits non-zero (watchdog alert) only when sprawl is found; otherwise stays silent. Do not reason; just run the script and deliver its stdout verbatim only if non-empty.",
-      "provider": "nous",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "*/15 * * * *",
-        "expr": "*/15 * * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "*/15 * * * *",
-      "script": "gateway-cgroup-guard.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-08-03T10:25:48.640058+01:00",
       "deliver": "local",
       "enabled": true,
@@ -5909,7 +4508,8 @@
       "skill": null,
       "skills": [],
       "state": "scheduled",
-      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
+      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts",
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -6120,39 +4720,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-08-03T10:25:48.878992+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "518e83e5f80a",
-      "model": null,
-      "model_snapshot": null,
-      "name": "local-inference-liveness",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-08-03T11:13:47.024624+01:00",
-      "paused_reason": "dead-pin: script not found: local_inference_liveness_probe.py",
-      "prompt": "DGX local-inference liveness probe (llama.cpp CUDA + ollama end-to-end + GB10 unified-memory headroom). Quiet on green, alerts on red. Filed by kanban t_b0c418cd.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "*/30 * * * *",
-        "expr": "*/30 * * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "*/30 * * * *",
-      "script": "local_inference_liveness_probe.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-08-03T10:25:48.906315+01:00",
       "deliver": "discord:#fleet-reports",
       "enabled": true,
@@ -6249,39 +4816,6 @@
       "skill": null,
       "skills": [],
       "state": "completed",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-08-03T10:25:49.051504+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "8bfa777ea66f",
-      "model": null,
-      "model_snapshot": null,
-      "name": "persistence-health-watch",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-08-03T11:14:19.695166+01:00",
-      "paused_reason": "dead-pin: script not found: persistence-health-watch.sh",
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 5m",
-        "kind": "interval",
-        "minutes": 5
-      },
-      "schedule_display": "every 5m",
-      "script": "persistence-health-watch.sh",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
       "workdir": null
     },
     {
@@ -6699,42 +5233,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-08-06T03:05:54.706287+00:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "id": "426b14e2307b",
-      "model": null,
-      "model_snapshot": null,
-      "name": "mech-red-standing-guard",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 1m",
-        "kind": "interval",
-        "minutes": 1
-      },
-      "schedule_display": "every 1m",
-      "script": "mech_red_guard.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": "/home/frank/.hermes/scripts",
-      "failure_streak": 175
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-08-06T04:20:11.738923+01:00",
       "deliver": "local",
       "enabled": false,
@@ -6875,42 +5373,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-08-11T09:27:23.000000+00:00",
-      "deliver": "discord:#critical-alerts",
-      "enabled": true,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "id": "3e0ad6fee667",
-      "model": null,
-      "model_snapshot": null,
-      "name": "sycode-pipeline-anomaly-engine",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "Standing read-only anomaly detection engine (t_fa200457): audits surface freshness across 12 certified surfaces (register SLOs), feature density, pg_stat_activity, table bloat, and clean-cohort accrual on the sycode-trading DB. Runs the in-dir shim sycode_pipeline_anomaly_engine.sh which execs the canonical engine at /home/frank/.hermes/profiles/trading-data-oracle/scripts/sycode_pipeline_anomaly_engine.py. Silent (exit 0) when healthy; on warning/breach findings exports structured diagnostics to /tmp/data-integrity-diagnostics/<ts>/ (diagnostics.json + anomalies.csv) and exits 2 with alert lines on stdout. PAPER-MODE ONLY - SELECT-only via PGOPTIONS read-only; never writes production tables, never inserts trade_intents, never enables live trading.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 60m",
-        "kind": "interval",
-        "minutes": 60
-      },
-      "schedule_display": "every 60m",
-      "script": "sycode_pipeline_anomaly_engine.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/scripts",
-      "failure_streak": 14
     },
     {
       "base_url": null,
@@ -7162,40 +5624,6 @@
       },
       "schedule_display": "every 60m",
       "script": "now_regime_tape_stamp.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-08-14T12:21:04.884249+01:00",
-      "deliver": "discord:#critical-alerts",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "0afe4c31ef9a",
-      "model": null,
-      "model_snapshot": null,
-      "name": "dead-store-invariant-guard",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "*/30 * * * *",
-        "expr": "*/30 * * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "*/30 * * * *",
-      "script": "cron_ticker_invariant_guard.py",
       "skill": null,
       "skills": [],
       "state": "scheduled",
@@ -7606,7 +6034,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 1
     },
     {
       "id": "bb09035cc0d4",
@@ -7717,6 +6145,117 @@
       "enabled_toolsets": null,
       "workdir": null,
       "failure_streak": 0
+    },
+    {
+      "id": "753b24e47131",
+      "name": "weekly-insights-digest",
+      "prompt": "no-agent script job",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "weekly_insights_digest.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 * * 1",
+        "display": "0 9 * * 1"
+      },
+      "schedule_display": "0 9 * * 1",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-25T21:52:16.033150+01:00",
+      "failure_streak": 0,
+      "deliver": "discord:#fleet-reports",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "c6af23536cc0",
+      "name": "binder-capacity-window-watchdog",
+      "prompt": "no-agent watchdog: binder activation capacity window (t_4a7979bb)",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "binder_capacity_window_watchdog.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 5,
+        "display": "every 5m"
+      },
+      "schedule_display": "every 5m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-25T21:55:44.920581+01:00",
+      "failure_streak": 0,
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "940ea2b808ea",
+      "name": "jarvis-buzz-mention-router",
+      "prompt": "Not used (no_agent job).",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "jarvis-buzz-mention-router.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 5,
+        "display": "every 5m"
+      },
+      "schedule_display": "every 5m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-26T06:40:21.320335+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }

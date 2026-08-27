@@ -171,74 +171,6 @@
       "workdir": null
     },
     {
-      "id": "bd9848a88dd3",
-      "name": "needs-input-auto-escalation",
-      "prompt": "",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "needs_input_escalation.sh",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "cron",
-        "expr": "0 */6 * * *",
-        "display": "0 */6 * * *"
-      },
-      "schedule_display": "0 */6 * * *",
-      "repeat": {
-        "times": null
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-04T17:54:12.129596+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "id": "5c14c760b7df",
-      "name": "PM REJECT Monitor \u2014 daily digest",
-      "prompt": "",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "pm_reject_monitor.sh",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "cron",
-        "expr": "0 8 * * *",
-        "display": "0 8 * * *"
-      },
-      "schedule_display": "0 8 * * *",
-      "repeat": {
-        "times": null
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-04T21:28:34.235601+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null,
-      "failure_streak": 1
-    },
-    {
       "id": "986e25e53c03",
       "name": "qwen-coder-download-watchdog",
       "prompt": "",
@@ -405,43 +337,6 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
-    },
-    {
-      "id": "16ae9bc18c6b",
-      "name": "cdpds-data-profiler-sentinel",
-      "prompt": "Continuous Data Profiler & Drift Sentinel (CDPDS) - paper-mode data quality scorecard + dashboard refresh. Registered by kanban t_a0c0087c (t_e9a8d181-child-2 WIRE).",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "run_cdpds.sh",
-      "no_agent": true,
-      "monitor_script": null,
-      "monitor_url": null,
-      "monitor_state": null,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 30,
-        "display": "every 30m"
-      },
-      "schedule_display": "every 30m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": true,
-      "state": "scheduled",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-08-11T10:22:13.799674+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null,
-      "failure_streak": 33
     },
     {
       "id": "4dad2695cdad",

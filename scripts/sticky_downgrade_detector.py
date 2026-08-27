@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -43,6 +44,13 @@ LOG_FILE = os.environ.get("SDD_AGENT_LOG", f"{HOME}/.hermes/logs/agent.log")
 PROFILE_GLOB = os.environ.get("SDD_PROFILE_GLOB", f"{HOME}/.hermes/profiles/*/logs/agent.log")
 STATE_FILE = os.environ.get("SDD_STATE", f"{HOME}/.hermes/state/sticky-downgrade-detector.json")
 OUT_LOG = os.environ.get("SDD_LOG", f"{HOME}/.hermes/logs/sticky-downgrade-detector.log")
+# System crontab PATH lacks ~/.local/bin, so a bare "hermes" raised FileNotFoundError and every
+# BREACH alert logged ALERT-EXC/ALERT-UNDELIVERED (observed 2026-08-24 21:00Z). Resolve once, fail loud.
+HERMES_BIN = (
+    os.environ.get("SDD_HERMES_BIN")
+    or shutil.which("hermes")
+    or next((c for c in (f"{HOME}/.local/bin/hermes", "/usr/local/bin/hermes") if os.path.exists(c)), "hermes")
+)
 PRICE_OVERRIDE = os.environ.get("SDD_PRICES", f"{HOME}/.hermes/state/model-prices.json")
 
 ALERT_TARGET = os.environ.get("SDD_ALERT_TARGET", "whatsapp:Frank")
@@ -262,7 +270,7 @@ def send_alert(key, subject, body, st, dry_run):
         pretty = subject if target == ALERT_TARGET else f"🔁 FAILOVER: {subject}"
         try:
             rc = subprocess.run(
-                ["hermes", "send", "-q", "-t", target, "-s", pretty, body],
+                [HERMES_BIN, "send", "-q", "-t", target, "-s", pretty, body],
                 capture_output=True, timeout=60,
             ).returncode
         except Exception as exc:
