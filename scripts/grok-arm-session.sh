@@ -34,4 +34,8 @@ if [ -n "$viol" ]; then
   export HERMES_HOME=/home/frank/.hermes
   hermes send -q -t whatsapp:Frank -s "🚨 Grok-ARM scope violation" \
     "Post-session audit found writes outside Grok-ARM's sandbox: ${viol}. Nothing auto-reverted (other agents may own some changes) — fable seat will triage. Log: ~/logs/grok-arm-sessions.log" || true
+  # 2026-08-27: also to the BOARD — whatsapp:Frank has been unpaired since 07-26.
+  "$HOME/.hermes/scripts/fleet-alert-card.sh" "grok-arm-scope-violation" \
+    "Grok-ARM scope violation" \
+    "Post-session audit found writes outside Grok-ARM's sandbox: ${viol}. Nothing auto-reverted. Log: ~/logs/grok-arm-sessions.log" >/dev/null 2>&1 || true
 fi

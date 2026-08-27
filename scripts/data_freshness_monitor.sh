@@ -54,6 +54,9 @@ log() { echo "[$now_iso] $*" >> "$LOG_FILE"; }
 
 send_alert() {
     local key="$1" subject="$2" body="$3"
+    # 2026-08-27: also write the alert to the BOARD — the only channel Frank reads.
+    # Additive and non-fatal: never let a card write break a monitor.
+    "$HOME/.hermes/scripts/fleet-alert-card.sh" "$key" "$subject" "$body" >/dev/null 2>&1 || true
     if [ "$DRY_RUN" = "1" ]; then
         echo "WOULD-ALERT key=$key subject=$subject"
         echo "  $body"

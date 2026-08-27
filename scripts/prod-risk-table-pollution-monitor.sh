@@ -82,6 +82,8 @@ firing means either a path it does not cover, or the guard regressed.
 Check:  docker exec sycodetrading-supabase-db psql -U postgres -d postgres \\
           -c \"select * from circuit_breaker_state where trading_date=current_date;\""
 
+# 2026-08-27: also to the BOARD — $ALERT_TARGET is a channel Frank does not read.
+"$HOME/.hermes/scripts/fleet-alert-card.sh" "$KEY" "PROD RISK TABLE POLLUTED (test fixtures)" "$BODY" >/dev/null 2>&1 || true
 if hermes send -q --json -t "$ALERT_TARGET" -s "PROD RISK TABLE POLLUTED (test fixtures)" "$BODY" >/dev/null 2>&1; then
   echo "[$TS] ALERT-SENT target=$ALERT_TARGET key=$KEY"
   printf '%s=%s\n' "$KEY" "$NOW" >> "$STATE_FILE"

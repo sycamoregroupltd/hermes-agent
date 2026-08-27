@@ -135,7 +135,7 @@
         "terminal"
       ],
       "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading",
-      "failure_streak": 0
+      "failure_streak": 1
     },
     {
       "id": "ac9fd7e91dac",
@@ -168,7 +168,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "986e25e53c03",
@@ -369,7 +370,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-14T09:24:46.347075+01:00",
-      "deliver": "discord:1521973787363508325",
+      "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,

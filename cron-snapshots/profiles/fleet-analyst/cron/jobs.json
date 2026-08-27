@@ -31,7 +31,8 @@
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "id": "85bc89e5241f",

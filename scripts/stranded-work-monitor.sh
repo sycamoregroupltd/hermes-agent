@@ -48,6 +48,10 @@ done
 } > "$OUT"
 
 if [ "${count:-0}" -gt 0 ]; then
+  # 2026-08-27: also to the BOARD — $ALERT_TARGET is a channel Frank does not read.
+  "$HOME/.hermes/scripts/fleet-alert-card.sh" "stranded-work" \
+    "stranded work: ${count} stale dirty/unpushed worktrees" \
+    "Weekly stranded-work audit found ${count} worktrees with unpushed commits or dirty files older than ${STALE_DAYS} days. Digest: $OUT — salvage (commit+push) or sweep them; unpushed work is one janitor pass from gone." >/dev/null 2>&1 || true
   hermes send -q -t "$ALERT_TARGET" -s "🧹 stranded work: ${count} stale dirty/unpushed worktrees" \
     "Weekly stranded-work audit found ${count} worktrees with unpushed commits or dirty files older than ${STALE_DAYS} days. Digest: $OUT — salvage (commit+push) or sweep them; unpushed work is one janitor pass from gone." \
     || true

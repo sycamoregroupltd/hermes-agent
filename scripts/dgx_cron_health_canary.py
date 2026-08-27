@@ -110,14 +110,30 @@ def _profile_model_defaults(profile: str) -> tuple[str | None, str | None, str |
     return _load_model_settings(cfg)
 
 
-def iter_profile_jobs() -> list[tuple[str, Path, dict[str, Any]]]:
-    rows: list[tuple[str, Path, dict[str, Any]]] = []
+def profile_estop_active(profile_dir: Path) -> bool:
+    """Is this profile's cron store under an active operator ESTOP?
+
+    Mirrors cron_liveness_monitor.profile_estop_active (task t_6c2abedd):
+    `hermes pause` writes a profile-local sentinel at the owning profile's
+    HERMES_HOME (`~/.hermes/profiles/<p>/ESTOP`, plus any `*.ESTOP` variant,
+    matching agent/estop.py's check_paused fail-safe). While the sentinel
+    exists the cron scheduler SKIPS dispatching every job in that store, so
+    OVERDUE/ERROR/DELIVERY flags for that store are expected state, not a
+    health breach. Fail safe toward "paused" (an unreadable sentinel still
+    counts as engaged).
+    """
+    candidates = [profile_dir / "ESTOP"] + sorted(profile_dir.glob("*.ESTOP"))
+    return any(c.exists() for c in candidates)
+
+
+def iter_profile_jobs() -> list[tuple[str, Path, dict[str, Any], bool]]:
+    rows: list[tuple[str, Path, dict[str, Any], bool]] = []
     if not PROFILES_DIR.exists():
-        rows.append(("<scan>", PROFILES_DIR, {"name": "<profiles>", "enabled": True, "last_status": "error", "last_error": f"profile cron root missing: {PROFILES_DIR}"}))
+        rows.append(("<scan>", PROFILES_DIR, {"name": "<profiles>", "enabled": True, "last_status": "error", "last_error": f"profile cron root missing: {PROFILES_DIR}"}, False))
         return rows
     job_paths = sorted(PROFILES_DIR.glob("*/cron/jobs.json"))
     if not job_paths:
-        rows.append(("<scan>", PROFILES_DIR, {"name": "<profiles>", "enabled": True, "last_status": "error", "last_error": f"zero profile cron stores matched under {PROFILES_DIR}"}))
+        rows.append(("<scan>", PROFILES_DIR, {"name": "<profiles>", "enabled": True, "last_status": "error", "last_error": f"zero profile cron stores matched under {PROFILES_DIR}"}, False))
         return rows
     seen_real: set[str] = set()
     for path in job_paths:
@@ -131,14 +147,15 @@ def iter_profile_jobs() -> list[tuple[str, Path, dict[str, Any]]]:
         profile = profile_dir.name
         if profile_dir.is_symlink():
             profile = str(profile_dir.resolve()).rstrip("/").rsplit("/", 1)[-1]
+        estop = profile_estop_active(profile_dir)
         try:
             data = json.loads(path.read_text())
         except Exception as exc:
-            rows.append((profile, path, {"name": "<jobs.json>", "enabled": True, "last_status": "error", "last_error": f"unreadable jobs.json: {exc}"}))
+            rows.append((profile, path, {"name": "<jobs.json>", "enabled": True, "last_status": "error", "last_error": f"unreadable jobs.json: {exc}"}, estop))
             continue
         for job in data.get("jobs", []):
             if isinstance(job, dict):
-                rows.append((profile, path, job))
+                rows.append((profile, path, job, estop))
     return rows
 
 
@@ -242,8 +259,15 @@ def main() -> None:
     if BASELINE_ERROR:
         bad.append(f"DRIFT-BASELINE {BASELINE_CONFIG}: cannot read approved global baseline: {BASELINE_ERROR}")
 
-    for profile, path, job in iter_profile_jobs():
+    suspended_profiles: set[str] = set()
+    for profile, path, job, estop in iter_profile_jobs():
         scanned_profiles.add(profile)
+        if estop:
+            # Operator emergency stop (t_24425a94 / t_6c2abedd): the scheduler
+            # intentionally skips dispatch for this store, so its jobs are
+            # suspended, not broken. Count it as scanned, flag nothing.
+            suspended_profiles.add(profile)
+            continue
         if not job.get("enabled", True):
             continue
         scanned_jobs += 1
@@ -281,7 +305,7 @@ def main() -> None:
         # noise when the total exceeds MAX_ALERTS. Detection counts are unchanged.
         bad.sort(key=lambda line: 0 if line.startswith(("UNPINNED", "DRIFT")) else 1)
         shown = bad[:MAX_ALERTS]
-        lines = [f"🔴 CRON HEALTH: {len(bad)} issue(s) across {len(scanned_profiles)} profile cron store(s), {scanned_jobs} enabled job(s) scanned"]
+        lines = [f"🔴 CRON HEALTH: {len(bad)} issue(s) across {len(scanned_profiles)} profile cron store(s) ({len(suspended_profiles)} suspended by operator ESTOP), {scanned_jobs} enabled job(s) scanned"]
         lines.extend(f"  • {item}" for item in shown)
         if len(bad) > len(shown):
             lines.append(f"  • … {len(bad) - len(shown)} more")

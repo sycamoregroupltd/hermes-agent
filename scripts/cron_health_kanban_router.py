@@ -99,7 +99,11 @@ DEDUP_WINDOW_SECONDS = DEDUP_WINDOW_DAYS * 24 * 3600
 PRIORITY = int(os.environ.get("CRON_HEALTH_KANBAN_PRIORITY", "20"))  # low priority
 
 OPEN_STATUSES = ("ready", "todo", "running", "blocked", "review")
-ACTIVE_STATUSES = ("ready", "todo")  # eligible for auto-complete on resolve
+ACTIVE_STATUSES = ("ready", "todo", "blocked")  # eligible for auto-complete on resolve
+# "blocked" included 2026-08-27: six CRON-HEALTH cards had been auto-blocked by the
+# board and were therefore permanently ineligible for self-resolve -- immortal cards
+# for problems that had long since cleared. A card the detector cannot close is the
+# ratchet half of the same defect as the churning key above.
 CLOSED_STATUSES = ("done", "archived")
 
 # ---------------------------------------------------------------------------
@@ -495,7 +499,23 @@ def derive_key(alert_text: str) -> str | None:
     issues = parse_alerts(alert_text)
     if not issues:
         return None
-    sig_parts = sorted({f"{i['kind']}|{i['profile']}|{i['job']}" for i in issues})
+    # 2026-08-27: keyed on the issue KIND SET only, not (kind, profile, job).
+    #
+    # The original triple-keying was deliberate ("a NEW failing profile/job opens
+    # a fresh card") and it is what produced 232 cards against 1 resolve. In a
+    # 74-profile fleet the failing profile/job set drifts on almost every 30m
+    # tick, so a content-derived key is a new key nearly every tick: the audit
+    # log shows dedup hits stopping entirely on 2026-08-22 while creates ran on
+    # to 08-27. A detector that opens cards faster than it can close them is a
+    # ratchet, and the board is the delivery pipe -- flooding it breaks the thing
+    # this feeds.
+    #
+    # The KIND set is a small closed vocabulary, so the same class of problem now
+    # maps to one long-lived owner packet that updates in place and resolves when
+    # clean. Which profiles/jobs are currently failing is volatile detail and
+    # belongs in the body and the recurrence comments, where it already is --
+    # nothing is lost, it just stops minting cards.
+    sig_parts = sorted({i["kind"] for i in issues})
     h = hashlib.md5("\n".join(sig_parts).encode("utf-8")).hexdigest()[:12]
     return f"cronhealth_{h}"
 
