@@ -500,7 +500,13 @@ def main() -> int:
             stuck = clear_alert(f'vaultcommit_{vault.name}')
             if stuck:
                 messages.append(stuck)
-            if msg and any(marker in msg for marker in NOTICE_MARKERS):
+            if not (msg and any(marker in msg for marker in NOTICE_MARKERS)):
+                # Same lesson as the failure card: an alert with no clear path
+                # becomes a pile. Clear the notice card once the notice stops.
+                stuck_notice = clear_alert(f'vaultnotice_{vault.name}')
+                if stuck_notice:
+                    messages.append(stuck_notice)
+            else:
                 raise_alert(
                     f'vaultnotice_{vault.name}',
                     f'⚠️ vault autocommit notice: {vault.name}',
