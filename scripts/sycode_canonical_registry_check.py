@@ -157,10 +157,13 @@ def main():
             print(f"| {r['id']} | {r['name']} | {r['target']} | {r['measured']} | {badge} |")
         print("\n> Re-run before quoting. A number in a note is provenance; only a fresh run is status.")
 
-    if harness_err:
-        return 3
+    # FAILs win over harness errors: a genuine canonical-SLO break must surface as
+    # CRITICAL (exit 1) even when a sibling dataset probe timed out, so one slow
+    # dataset cannot mask a real gate break. (t_7b10dfee)
     if any(r["ok"] is False and r.get("canonical") for r in rows):
         return 1
+    if harness_err:
+        return 3
     return 0
 
 
