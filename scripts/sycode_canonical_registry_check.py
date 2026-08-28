@@ -24,6 +24,20 @@ EXIT CODES
     1  one or more canonical datasets FAIL their SLO
     3  harness error (cannot read registry or measure) — NOT the same as a pass
 
+EVENT-DRIVEN SUPPRESSION (t_75cc88ff re-baseline, 2026-08-28)
+    canonical_outcomes_v2 is a plain VIEW over trade_close_events (relkind='v'),
+    not a streaming dataset. Its max(realized_closed_at) legitimately freezes
+    during a paper-trading halt, or when the only closes are contaminated
+    random-entry control arms (the view filters contaminated IS NOT TRUE) — that
+    is NOT a data-freshness incident (t_51cbb2ec false alarm). Two read-only
+    measures, matching sycode_surface_freshness_monitor.py:
+      (a) probe the SOURCE tape trade_close_events (fresh under control-only)
+          instead of the derived view, and
+      (b) datasets declaring "suppress_under_flat_book": true are reported PASS/
+          FLAT when the book is flat (0 open positions) — the legitimate halt.
+    Both are SELECT-only; no DDL/DML. ts-index migration 20260704000001 stays
+    A3/Frank-gated.
+
 SAFETY
     Strictly read-only. SELECT only. Same docker-exec psql pattern as sycode_data_acceptance.py.
     Non-canonical datasets are reported but never gate the exit code.
@@ -75,11 +89,30 @@ def age_hours(ts_text):
     return None
 
 
+def is_flat_book():
+    """True when there are 0 open positions (managed_positions.closed_at IS
+    NULL). Closing-activity / outcome surfaces are DOWNSTREAM OF POSITION
+    CLOSING: under a flat book they legitimately stop advancing — that is the
+    NS-P1 paper-drought / paper-halt condition, NOT a writer death. Mirrors the
+    FLAT_BOOK_SURFACES suppression in sycode_surface_freshness_monitor.py
+    (t_16fdf654, 2026-07-11). Fail-OPEN on read error returns False so a genuine
+    incident is never masked by doubt (a stuck close-writer with open positions
+    still FAILs because is_flat_book() is False)."""
+    raw, err = q("SELECT count(*) FROM public.managed_positions WHERE closed_at IS NULL;")
+    if err or raw is None:
+        return False
+    try:
+        return int(raw) == 0
+    except (ValueError, TypeError):
+        return False
+
+
 def eval_dataset(ds):
     """Return (ok: bool|None, measured: str) for one canonical dataset. ok=None = UNKNOWN."""
     probe = ds.get("probe_sql")
     mode = ds.get("probe_mode", "age_lt")
     slo = ds.get("slo_hours")
+    suppress_flat = ds.get("suppress_under_flat_book", False)
 
     if not probe:
         return None, "no probe_sql (sidecar/mcp surface — verified via its own monitor)"
@@ -101,6 +134,12 @@ def eval_dataset(ds):
     a = age_hours(raw)
     if a is None:
         return None, f"unparseable ts: {raw}"
+    if a > slo and suppress_flat and is_flat_book():
+        # Event-driven surface downstream of position closing: a flat book (0
+        # open positions) is the legitimate paper-drought / paper-halt condition.
+        # The tape legitimately freezes — this is NOT a data-freshness incident.
+        # Mirror of sycode_surface_freshness_monitor FLAT_BOOK_SURFACES (t_16fdf654).
+        return True, f"FLAT (0 open positions) — event-driven surface legitimately halted (tape age {a:.2f}h)"
     return (a <= slo, f"age {a:.2f}h (SLO < {slo}h, max {raw[:19]})")
 
 
