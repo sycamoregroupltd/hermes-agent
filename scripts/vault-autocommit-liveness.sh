@@ -15,6 +15,8 @@
 # CHECKS, per vault:
 #   1. newest 'auto-commit vault snapshot' commit on HEAD is younger than
 #      VAULT_LIVENESS_MAX_AGE_MIN (default 90; job cadence is 30m).
+#   3. the cron job's PROFILE-LOCAL script copy still matches ~/.hermes/scripts
+#      (hermes cron runs the profile copy; nothing syncs it — t_de78cf24).
 #   2. checkout is on the vault's expected branch (list entry PATH:BRANCH, else
 #      EXPECTED_BRANCH, default main) — the 07-17..08-05 fault put
 #      811 commits on a pm/* branch while the nightly Mac bundle backed up a
@@ -141,6 +143,37 @@ Manual fire: HERMES_PROFILE=jarvis hermes cron run b2536429e954"
 Fix (only if the branch is a strict descendant): cd ${vault} && git merge-base --is-ancestor ${want_branch} ${cur_branch:-BRANCH} && git checkout ${want_branch} && git merge --ff-only ${cur_branch:-BRANCH}"
     else
         clear_key "branch_${vname}"
+    fi
+done
+
+# 3) profile-copy drift — the check that would have made this whole repair inert.
+# Hermes cron resolves a job's `script` against the RUNNING GATEWAY's HERMES_HOME,
+# and the jarvis gateway runs with HERMES_HOME=/home/frank/.hermes/profiles/jarvis.
+# So b2536429e954 executes profiles/jarvis/scripts/obsidian_vault_autocommit.py, NOT
+# the git-tracked ~/.hermes/scripts/ copy that everyone edits. Nothing syncs them
+# (cron-doctor.sh only documents the manual `cp`), so a fix can be committed, run by
+# hand, verified green — and never once execute in production. t_de78cf24.
+for mirror in ${VAULT_LIVENESS_SCRIPT_MIRRORS:-obsidian_vault_autocommit.py:jarvis}; do
+    mfile="${mirror%%:*}"; mprofile="${mirror#*:}"
+    canonical="/home/frank/.hermes/scripts/${mfile}"
+    profile_copy="/home/frank/.hermes/profiles/${mprofile}/scripts/${mfile}"
+    [ -f "$canonical" ] || continue
+    if [ ! -f "$profile_copy" ]; then
+        unhealthy=$((unhealthy + 1))
+        send_alert "mirror_missing_${mprofile}_${mfile}" \
+            "🚨 cron script missing from profile: ${mprofile}/${mfile}" \
+"Hermes cron resolves scripts against the gateway's HERMES_HOME (/home/frank/.hermes/profiles/${mprofile}), so the job runs ${profile_copy} — which does not exist. The job will dead-pin.
+Fix: cp ${canonical} ${profile_copy}"
+    elif ! cmp -s "$canonical" "$profile_copy"; then
+        unhealthy=$((unhealthy + 1))
+        send_alert "mirror_drift_${mprofile}_${mfile}" \
+            "🚨 cron script DRIFT: ${mprofile}/${mfile} differs from ~/.hermes/scripts" \
+"${profile_copy} is NOT the same file as ${canonical}. Hermes cron executes the PROFILE copy, so edits to the git-tracked canonical copy are running nowhere. This is how a verified fix stays inert.
+Fix: cp ${canonical} ${profile_copy}
+Diff: diff -u ${canonical} ${profile_copy} | head -40"
+    else
+        clear_key "mirror_missing_${mprofile}_${mfile}"
+        clear_key "mirror_drift_${mprofile}_${mfile}"
     fi
 done
 
