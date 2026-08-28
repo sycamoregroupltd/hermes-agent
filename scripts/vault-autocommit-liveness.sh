@@ -15,7 +15,8 @@
 # CHECKS, per vault:
 #   1. newest 'auto-commit vault snapshot' commit on HEAD is younger than
 #      VAULT_LIVENESS_MAX_AGE_MIN (default 90; job cadence is 30m).
-#   2. checkout is on EXPECTED_BRANCH (default main) — the 07-17..08-05 fault put
+#   2. checkout is on the vault's expected branch (list entry PATH:BRANCH, else
+#      EXPECTED_BRANCH, default main) — the 07-17..08-05 fault put
 #      811 commits on a pm/* branch while the nightly Mac bundle backed up a
 #      19-day-stale main. Commit-age alone cannot catch this (autocommits land on
 #      whatever branch is checked out, so HEAD looks fresh while main rots).
@@ -29,7 +30,13 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export PATH="/home/frank/.local/bin:/home/frank/.hermes/hermes-agent/venv/bin:/usr/bin:/bin:$PATH"
 export HERMES_HOME=/home/frank/.hermes
 
-VAULTS="${VAULT_LIVENESS_VAULTS:-/home/frank/obsidian-fleet-vault /home/frank/obsidian/quant-team}"
+# Each entry is PATH or PATH:BRANCH. obsidian/investments was NOT watched here
+# until 2026-08-29 (t_de78cf24) — the one vault that actually suffered the 7-day
+# silent uncommitted window was the one vault this watchdog could not see, and it
+# is on `master`, so it needs a per-vault branch or it would alert forever.
+# /home/frank/obsidian/sycode-trading is a SYMLINK to quant-team; listing it would
+# double-count one repo, so it is deliberately absent.
+VAULTS="${VAULT_LIVENESS_VAULTS:-/home/frank/obsidian-fleet-vault /home/frank/obsidian/quant-team /home/frank/obsidian/investments:master}"
 MAX_AGE_MIN="${VAULT_LIVENESS_MAX_AGE_MIN:-90}"
 EXPECTED_BRANCH="${VAULT_LIVENESS_EXPECTED_BRANCH:-main}"
 MON_STATE="${MON_STATE:-/home/frank/.hermes/state/vault-autocommit-liveness-state.txt}"
@@ -46,6 +53,9 @@ log() { echo "[$now_iso] $*" >> "$LOG_FILE"; }
 
 send_alert() {
     local key="$1" subject="$2" body="$3" last
+    # 2026-08-27: also write the alert to the BOARD — the only channel Frank reads.
+    # Additive and non-fatal: never let a card write break a monitor.
+    "$HOME/.hermes/scripts/fleet-alert-card.sh" "$key" "$subject" "$body" >/dev/null 2>&1 || true
     last=$(grep -a "^${key}=" "$MON_STATE" 2>/dev/null | tail -1 | cut -d= -f2)
     if [ -n "${last:-}" ] && [ $((now_epoch - last)) -lt "$REALERT_SECS" ]; then
         log "SUPPRESSED key=$key (re-alert window)"
@@ -85,7 +95,11 @@ clear_key() {
 unhealthy=0
 checked=0
 
-for vault in $VAULTS; do
+for spec in $VAULTS; do
+    case "$spec" in
+        *:*) vault="${spec%%:*}"; want_branch="${spec#*:}" ;;
+        *)   vault="$spec";       want_branch="$EXPECTED_BRANCH" ;;
+    esac
     vname=$(basename "$vault")
     if [ ! -d "$vault/.git" ] && [ ! -f "$vault/.git" ]; then
         unhealthy=$((unhealthy + 1))
@@ -120,11 +134,11 @@ Manual fire: HERMES_PROFILE=jarvis hermes cron run b2536429e954"
 
     # 2) branch check — autocommits must land on the branch the bundle backs up
     cur_branch=$(git -C "$vault" rev-parse --abbrev-ref HEAD 2>/dev/null)
-    if [ "${cur_branch:-}" != "$EXPECTED_BRANCH" ]; then
+    if [ "${cur_branch:-}" != "$want_branch" ]; then
         unhealthy=$((unhealthy + 1))
-        send_alert "branch_${vname}" "🚨 vault ${vname} checked out on '${cur_branch:-?}' not '${EXPECTED_BRANCH}'" \
-"Vault ${vault} is on branch '${cur_branch:-?}'. Autocommits land on the CHECKED-OUT branch, but the nightly Mac bundle backs up ${EXPECTED_BRANCH} — history accrues off-bundle (the 07-17..08-05 fault stranded 811 commits / 19 days this way).
-Fix (only if the branch is a strict descendant): cd ${vault} && git merge-base --is-ancestor ${EXPECTED_BRANCH} ${cur_branch:-BRANCH} && git checkout ${EXPECTED_BRANCH} && git merge --ff-only ${cur_branch:-BRANCH}"
+        send_alert "branch_${vname}" "🚨 vault ${vname} checked out on '${cur_branch:-?}' not '${want_branch}'" \
+"Vault ${vault} is on branch '${cur_branch:-?}'. Autocommits land on the CHECKED-OUT branch, but the off-box backup follows ${want_branch} — history accrues off-bundle (the 07-17..08-05 fault stranded 811 commits / 19 days this way).
+Fix (only if the branch is a strict descendant): cd ${vault} && git merge-base --is-ancestor ${want_branch} ${cur_branch:-BRANCH} && git checkout ${want_branch} && git merge --ff-only ${cur_branch:-BRANCH}"
     else
         clear_key "branch_${vname}"
     fi
@@ -137,5 +151,5 @@ if [ "$unhealthy" -gt 0 ]; then
 fi
 
 log "OK vaults_checked=$checked max_age_min=$MAX_AGE_MIN"
-echo "[SILENT] vault autocommit healthy: $checked vault(s), newest snapshot within ${MAX_AGE_MIN}m, branch=${EXPECTED_BRANCH}"
+echo "[SILENT] vault autocommit healthy: $checked vault(s), newest snapshot within ${MAX_AGE_MIN}m, each on its expected branch"
 exit 0
