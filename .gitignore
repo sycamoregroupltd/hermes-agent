@@ -35,6 +35,15 @@
 !/scripts/tests/*.py
 /scripts/tests/__pycache__/
 
+# Cron scripts that live in a SUBDIRECTORY of scripts/ (2026-08-28). The depth-1
+# `!/scripts/*.py` above does not match them, so a job pointing at
+# scripts/<dir>/<file>.py was silently untracked — untracked-cron-script-guard
+# (b94a952f8849) had been failing on exactly this since it was written.
+!/scripts/frank-gate-probe/
+!/scripts/frank-gate-probe/*.py
+!/scripts/frank-gate-probe/*.sh
+/scripts/frank-gate-probe/__pycache__/
+
 # Deny scratch / runtime / cache subdirs under scripts/
 /scripts/archive/
 /scripts/backups/
@@ -87,6 +96,12 @@
 !/profiles/*/scripts/tests/
 !/profiles/*/scripts/tests/*.py
 /profiles/*/scripts/tests/__pycache__/
+# Same depth-1 blind spot as scripts/ above: a cron script in a subdirectory of a
+# profile's scripts/ was never re-included, so it stayed untracked (2026-08-28).
+!/profiles/*/scripts/frank-gate-probe/
+!/profiles/*/scripts/frank-gate-probe/*.py
+!/profiles/*/scripts/frank-gate-probe/*.sh
+/profiles/*/scripts/frank-gate-probe/__pycache__/
 /profiles/*/scripts/__pycache__/
 /profiles/*/scripts/state/
 

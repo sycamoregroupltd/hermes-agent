@@ -50,6 +50,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+# Exit code meaning "findings exist, and that is a HEALTHY outcome". Must match the
+# `10)` arm in verdict-blackhole-report.sh — for a --no-agent cron the exit code is
+# the only liveness signal, so a finding must not look like a job failure.
+FINDINGS_EXIT_CODE = 10
+
 ROOT = Path(os.environ.get("VERDICT_DETECTOR_ROOT", "/home/frank/.hermes"))
 BOARDS_DIR = Path(os.environ.get("VERDICT_DETECTOR_BOARDS_DIR", str(ROOT / "kanban" / "boards")))
 DEFAULT_DB = Path(os.environ.get("VERDICT_DETECTOR_DEFAULT_DB", str(ROOT / "kanban.db")))
@@ -411,6 +416,12 @@ def run_with_alerting(
 
 
 def main() -> int:
+    # Exit contract with verdict-blackhole-report.sh: 0 = clean, FINDINGS_EXIT_CODE
+    # = findings (healthy; the CARD carries them), anything else = the probe broke.
+    # This previously returned len(findings), so 6 findings exited 6, the wrapper
+    # read that as "PROBE FAILED", and the cron was marked error for ~a week while
+    # the detector was working perfectly. Only a run with exactly 10 findings would
+    # have looked healthy. Never return a count from here.
     ap = argparse.ArgumentParser(description="Read-only detector for out-of-contract REVIEW_VERDICT values.")
     ap.add_argument("--state", default=None, help="State file for send dedup (default cron/state path).")
     ap.add_argument("--alert", action="store_true", help="Emit via blocked_task_notifier.send_alert when findings exist.")
@@ -427,10 +438,10 @@ def main() -> int:
             from blocked_task_notifier import send_alert  # type: ignore
         except Exception as exc:  # pragma: no cover
             print(f"verdict-vocabulary-detector: alert skipped (send_alert unavailable: {exc!r})")
-            return len(findings)
+            return FINDINGS_EXIT_CODE
         count, failures = run_with_alerting(send_alert, state_path=args.state, now=args.now)
         print(f"verdict-vocabulary-detector: alerted {count} finding(s); failures={failures}")
-    return len(findings)
+    return FINDINGS_EXIT_CODE
 
 
 if __name__ == "__main__":

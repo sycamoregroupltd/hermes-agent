@@ -109,7 +109,18 @@ research/world-class-trading-loop/artifacts/**/*.jsonl
 
 
 def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=str(cwd), text=True, capture_output=True, check=check)
+    # errors='replace' is LOAD-BEARING. `git diff` emits raw file bytes, so a single
+    # non-UTF-8 byte anywhere in the diff (a .pyc, an image, a parquet) made the
+    # default strict decode raise UnicodeDecodeError and abort the whole vault pass
+    # before any commit. That is exactly what happened to obsidian/investments: a
+    # venv/ was git-added on 2026-08-21, and every autocommit run from then until
+    # 2026-08-28 died on its bytecode — the vault silently went 7 days uncommitted
+    # and unpushed while the watchdog still reported the job as running.
+    # Replacement chars only affect the SCAN text; commits use git's own bytes.
+    return subprocess.run(
+        cmd, cwd=str(cwd), text=True, capture_output=True, check=check,
+        encoding="utf-8", errors="replace",
+    )
 
 
 def ensure_repo(vault: Path) -> None:
