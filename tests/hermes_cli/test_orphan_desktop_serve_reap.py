@@ -14,6 +14,7 @@ from unittest.mock import patch
 from hermes_cli.dashboard_procs import (
     _is_desktop_local_serve_cmdline,
     _reap_orphaned_desktop_local_serves,
+    _serve_backend_has_active_client,
 )
 
 
@@ -236,9 +237,12 @@ def test_reap_spare_lock_owned_ssh_remote_backend_of_foreign_client():
             signal_kill=9,
             lock_owned_pids_fn=lambda: lock_owned,
             process_age_seconds_fn=lambda _pid: 600.0,
+            # A genuinely-active remote backend keeps an established client
+            # connection — it must be spared even though orphaned at ppid 1.
+            has_active_client_fn=lambda _pid: True,
         )
 
-    # Only the genuine orphan (666) is reaped; the lock-owned remote (555) lives.
+    # Only the genuine orphan (666) is reaped; the active lock-owned remote (555) lives.
     assert set(result["matched"]) == {666}
     assert set(terms) == {666}
     assert 555 not in terms
@@ -384,7 +388,160 @@ def test_reap_spare_lock_owned_backend_even_without_exclude_match(tmp_path):
             signal_term=15,
             signal_kill=9,
             lock_owned_pids_fn=lambda: _lock_owned_serve_pids(base_dir=lock_root),
+            # The real lock scanner says 4242 is owned; its client is genuinely
+            # connected, so it must be spared even though orphaned at ppid 1.
+            has_active_client_fn=lambda _pid: True,
         )
 
     assert terms == []
     assert result["matched"] == []
+
+
+# ---------------------------------------------------------------------------
+# #60703 regression: an orphaned (ppid 1) desktop serve backend that holds a
+# valid backend.lock.json claim (i.e. IS lock-owned) must be reaped when it is
+# genuinely idle — no active client connection, old enough. Before the orphan
+# reap hardenings the reap spared ALL lock-owned PIDs, so these corpses
+# persisted and starved the jarvis cron scheduler on .jobs.lock/.fire-*.lock.
+# ---------------------------------------------------------------------------
+
+
+def test_reap_lock_owned_orphaned_idle_backend():
+    """A lock-owned, ppid-1 backend with NO active client and old enough is an
+    orphaned cron-lock holder — it must be reaped (the #60703 incident shape)."""
+    scanned = [
+        (811, "hermes serve --isolated --host 127.0.0.1 --port 0"),  # idle corpse
+        (822, "hermes serve --isolated --host 127.0.0.1 --port 0"),  # active remote
+    ]
+    ppids = {811: 1, 822: 1}
+    terms: list[int] = []
+    live = {811, 822}
+
+    def fake_kill(pid, sig):
+        if sig == 0:
+            if pid in live:
+                return None
+            raise ProcessLookupError()
+        if sig == 15:
+            terms.append(pid)
+            live.discard(pid)
+            return None
+        if sig == 9:
+            live.discard(pid)
+            return None
+        return None
+
+    # Both are claimed by a valid backend.lock.json.
+    lock_owned = {811, 822}
+
+    with (
+        patch(
+            "hermes_cli.dashboard_procs._scan_dashboard_processes",
+            return_value=scanned,
+        ),
+        patch(
+            "hermes_cli.dashboard_procs._process_ppid",
+            side_effect=lambda pid: ppids.get(pid),
+        ),
+        patch("os.kill", side_effect=fake_kill),
+        patch("sys.platform", "darwin"),
+    ):
+        os.environ.pop("HERMES_DESKTOP_CHILD_PID", None)
+        result = _reap_orphaned_desktop_local_serves(
+            sleep_fn=lambda _s: None,
+            signal_term=15,
+            signal_kill=9,
+            lock_owned_pids_fn=lambda: lock_owned,
+            process_age_seconds_fn=lambda _pid: 3600.0,  # older than the lock-owned window
+            # 811 is idle (no client); 822 has a live client.
+            has_active_client_fn=lambda pid: pid == 822,
+        )
+
+    # Only the idle lock-owned corpse (811) is reaped; the active remote (822) lives.
+    assert set(result["matched"]) == {811}
+    assert set(terms) == {811}
+    assert set(result["killed"]) == {811}
+    assert 822 not in terms
+
+
+def test_reap_spares_lock_owned_idle_but_young_backend():
+    """A lock-owned backend with no active client is still spared until it is
+    past the longer lock-owned grace window — a momentarily-idle remote (client
+    reconnect gap) must not be mistaken for a corpse."""
+    scanned = [(833, "hermes serve --isolated --host 127.0.0.1 --port 0")]
+    terms: list[int] = []
+
+    def fake_kill(pid, sig):
+        if sig == 15:
+            terms.append(pid)
+        return None
+
+    with (
+        patch(
+            "hermes_cli.dashboard_procs._scan_dashboard_processes",
+            return_value=scanned,
+        ),
+        patch("hermes_cli.dashboard_procs._process_ppid", return_value=1),
+        patch("os.kill", side_effect=fake_kill),
+        patch("sys.platform", "darwin"),
+    ):
+        result = _reap_orphaned_desktop_local_serves(
+            sleep_fn=lambda _s: None,
+            signal_term=15,
+            signal_kill=9,
+            lock_owned_pids_fn=lambda: {833},
+            process_age_seconds_fn=lambda _pid: 600.0,  # past 180s, under 900s
+            has_active_client_fn=lambda _pid: False,  # idle right now
+        )
+
+    assert result["matched"] == []
+    assert result["killed"] == []
+    assert terms == []
+
+
+def test_reap_spares_lock_owned_active_backend_regardless_of_age():
+    """A lock-owned backend with a live client connection is always spared, even
+    when it has been orphaned at ppid 1 for a very long time (#78872 safety)."""
+    scanned = [(844, "hermes serve --isolated --host 127.0.0.1 --port 0")]
+    terms: list[int] = []
+
+    def fake_kill(pid, sig):
+        if sig == 15:
+            terms.append(pid)
+        return None
+
+    with (
+        patch(
+            "hermes_cli.dashboard_procs._scan_dashboard_processes",
+            return_value=scanned,
+        ),
+        patch("hermes_cli.dashboard_procs._process_ppid", return_value=1),
+        patch("os.kill", side_effect=fake_kill),
+        patch("sys.platform", "darwin"),
+    ):
+        result = _reap_orphaned_desktop_local_serves(
+            sleep_fn=lambda _s: None,
+            signal_term=15,
+            signal_kill=9,
+            lock_owned_pids_fn=lambda: {844},
+            process_age_seconds_fn=lambda _pid: 7200.0,
+            has_active_client_fn=lambda _pid: True,
+        )
+
+    assert result["matched"] == []
+    assert result["killed"] == []
+    assert terms == []
+
+
+def test_serve_backend_has_active_client_probe_error_spares():
+    """A liveness-probe failure must never widen the reap: _serve_backend_has_active_client
+    returns True (spare) on any probe error."""
+    from unittest.mock import patch as _patch
+
+    import psutil
+
+    with _patch("psutil.Process", side_effect=psutil.NoSuchProcess(999999)):
+        assert _serve_backend_has_active_client(999999) is True
+
+    with _patch("psutil.Process", side_effect=psutil.AccessDenied(999999)):
+        assert _serve_backend_has_active_client(999999) is True

@@ -125,3 +125,16 @@ def test_jobs_lock_excludes_another_process(tmp_path, monkeypatch):
     # Once the child has released, the lock is freely acquirable again.
     with jobs._jobs_lock():
         pass
+
+
+@pytest.mark.skipif(not hasattr(os, "get_inheritable"), reason="os.get_inheritable unavailable")
+def test_cron_lock_fd_is_non_inheritable(tmp_path):
+    """#60703: the cron jobs / fire-fence lock fds must be non-inheritable so a
+    forked/exec'd child (agent run, subprocess) can never inherit the flock fd
+    and keep the cross-process lock alive after the scheduler exits."""
+    lock_path = tmp_path / ".jobs.lock"
+    fd = jobs._open_cron_lock_file(lock_path)
+    try:
+        assert os.get_inheritable(fd.fileno()) is False
+    finally:
+        fd.close()

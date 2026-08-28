@@ -269,6 +269,33 @@ def _jobs_lock_file() -> Path:
     return _current_cron_store().cron_dir / ".jobs.lock"
 
 
+def _open_cron_lock_file(path: Path):
+    """Open a cron advisory-lock file with a non-inheritable (O_CLOEXEC) fd.
+
+    The fd that carries the cross-process flock must never be inherited by a
+    forked/exec'd child. If it were, a child spawned by a cron job (agent
+    run, ``subprocess``) would inherit the open file description and keep the
+    flock alive after this scheduler process exits — so every other cron
+    writer would keep timing out on ``.jobs.lock`` / ``.fire-*.lock`` even
+    though the real scheduler is gone (#60703). Clearing the inheritance flag
+    (O_CLOEXEC) drops the fd on any exec, so a child can never inherit the
+    lock.
+
+    ``open(path, "a+")`` already sets O_CLOEXEC on modern Pythons (PEP 446),
+    but we open explicitly and mark non-inheritable so the guarantee holds
+    regardless of interpreter defaults, and so ``flock`` shares nothing with
+    a future ``os.fork()``-based child that hasn't exec'd yet.
+    """
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+    fd = os.open(str(path), flags | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.set_inheritable(fd, False)
+    except (AttributeError, OSError):
+        pass
+    return os.fdopen(fd, "a+", encoding="utf-8")
+
+
+
 @contextlib.contextmanager
 def _jobs_lock():
     """Serialize a load_jobs→modify→save_jobs critical section.
@@ -310,7 +337,7 @@ def _jobs_lock():
         try:
             try:
                 ensure_dirs()
-                lock_fd = open(_jobs_lock_file(), "a+", encoding="utf-8")
+                lock_fd = _open_cron_lock_file(_jobs_lock_file())
                 lock_fd.seek(0)
                 if fcntl is not None:
                     # Bounded acquisition (#60703): a plain blocking
@@ -394,7 +421,7 @@ def _fire_job_lock(job_id: str):
         lock_fd = None
         acquired = False
         try:
-            lock_fd = open(lock_path, "a+", encoding="utf-8")
+            lock_fd = _open_cron_lock_file(lock_path)
             lock_fd.seek(0)
             if fcntl is not None:
                 deadline = time.monotonic() + _JOBS_LOCK_TIMEOUT_SECONDS

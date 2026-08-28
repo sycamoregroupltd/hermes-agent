@@ -906,6 +906,14 @@ def _lock_owned_serve_pids(base_dir: Path | None = None) -> set[int]:
 # gap between process start and the Desktop client writing backend.lock.json.
 _REAP_MIN_AGE_SECONDS = 180.0
 
+# Lock-owned backends need a longer idle window before they are eligible for
+# reaping: they may be a genuinely-active SSH remote backend owned by another
+# client/machine. We only reap a lock-owned backend once it is BOTH orphaned
+# (ppid 1) AND has no active client connection AND is at least this old — the
+# extra margin means a momentarily-idle remote backend (client reconnect gap)
+# is never mistaken for a corpse. (#60703 orphan-reap hardening)
+_LOCK_OWNED_MIN_AGE_SECONDS = 900.0  # 15 min
+
 
 def _process_age_seconds(pid: int) -> float:
     """Return a process age using psutil's cross-platform start timestamp."""
@@ -916,6 +924,37 @@ def _process_age_seconds(pid: int) -> float:
     return max(0.0, _time.time() - _psutil.Process(pid).create_time())
 
 
+def _serve_backend_has_active_client(pid: int) -> bool:
+    """Return True when a serve backend still has a live inbound connection.
+
+    A desktop backend is considered *actively serving* while any of its
+    sockets holds an established TCP connection on a loopback address (the
+    Desktop client / WebSocket is attached). Once the client disconnects and
+    no connection remains, the backend is idle even if its process is alive —
+    the exact shape of the orphaned cron-lock holders from #60703 (ppid 1,
+    listening only on 127.0.0.1, no inbound client).
+
+    Fail-safe: any probe error returns True (i.e. treat as active / spare), so
+    a liveness probe failure can never widen the reap and kill a live remote
+    backend. Never raises.
+    """
+    try:
+        import psutil
+    except Exception:
+        return True
+
+    try:
+        proc = psutil.Process(pid)
+        for conn in proc.net_connections(kind="inet"):
+            status = getattr(conn, "status", None)
+            if status == psutil.CONN_ESTABLISHED:
+                return True
+        return False
+    except Exception:
+        # NoSuchProcess / AccessDenied / unsupported platform — spare.
+        return True
+
+
 def _reap_orphaned_desktop_local_serves(
     *,
     reason: str = "orphaned desktop-local hermes serve",
@@ -924,6 +963,7 @@ def _reap_orphaned_desktop_local_serves(
     sleep_fn=None,
     lock_owned_pids_fn=None,
     process_age_seconds_fn=None,
+    has_active_client_fn=None,
 ) -> dict[str, list]:
     """Kill leftover Desktop-local ``hermes serve`` backends with no parent.
 
@@ -941,10 +981,14 @@ def _reap_orphaned_desktop_local_serves(
     - only the Desktop-local spawn shape (loopback + ``--port 0``)
     - only processes whose current ppid is 1 (or 0 on some supervisors)
     - never self / never HERMES_DESKTOP_CHILD_PID entries
-    - never a PID a valid ``backend.lock.json`` claims as its owner — that is
-      a legitimately lock-owned backend, *including SSH remote backends started
-      by another client/machine* which legitimately sit at ppid 1 after sshd
-      exits. Killing those is a production incident, not cleanup.
+    - lock-owned backends (a valid ``backend.lock.json`` claims the PID) are
+      reaped ONLY when genuinely orphaned AND idle: ppid 1, no active client
+      connection, and older than ``_LOCK_OWNED_MIN_AGE_SECONDS``. A genuinely
+      active SSH remote backend (started by another client/machine, legitimately
+      at ppid 1 after sshd exits) keeps an established inbound connection and
+      is therefore spared — killing one is a production incident, not cleanup
+      (#78872). An orphaned cron-lock holder from #60703 has no connection and
+      is reaped.
     - never fixed-port remote serves (e.g. ``--port 9119``)
     - never a candidate younger than ``_REAP_MIN_AGE_SECONDS`` (or whose age
       cannot be determined). The Desktop client writes ``backend.lock.json``
@@ -968,6 +1012,8 @@ def _reap_orphaned_desktop_local_serves(
         lock_owned_pids_fn = _lock_owned_serve_pids
     if process_age_seconds_fn is None:
         process_age_seconds_fn = _process_age_seconds
+    if has_active_client_fn is None:
+        has_active_client_fn = _serve_backend_has_active_client
 
     if sys.platform == "win32":
         # Windows desktop uses taskkill tree teardown; orphan scan here is POSIX.
@@ -980,23 +1026,18 @@ def _reap_orphaned_desktop_local_serves(
         exclude.add(os.getppid())
     except Exception:
         pass
-    # Spare every PID a valid backend.lock.json owns — SSH remote backends
-    # started by other clients/machines are legitimate, lock-owned owners even
-    # though they are orphaned (ppid 1) on this host. (#78872 regression)
-    try:
-        exclude |= set(lock_owned_pids_fn())
-    except Exception:
-        # Best-effort: never let lock scanning block or widen the reap.
-        pass
 
     try:
         scanned = _scan_dashboard_processes(exclude_pids=exclude)
     except Exception:
         return {"matched": [], "killed": [], "failed": []}
 
-    # Re-read lock ownership defensively: the scan above already filtered
-    # exclude PIDs, but a lock file may have been written between the scan and
-    # now. Defense in depth — never kill a freshly-claimed owner.
+    # Lock ownership snapshot, re-read defensively AFTER the scan so a lock
+    # written between the scan and now is honored below. We no longer exclude
+    # lock-owned PIDs from the scan outright: an orphaned cron-lock holder from
+    # #60703 IS lock-owned, so blanket-excluding them let the corpse persist
+    # and starve the scheduler. Instead we reap a lock-owned backend only when
+    # it is provably idle (no active client + old enough), never a live remote.
     try:
         owned_now = set(lock_owned_pids_fn())
     except Exception:
@@ -1006,14 +1047,13 @@ def _reap_orphaned_desktop_local_serves(
     for pid, cmd in scanned:
         if not _is_desktop_local_serve_cmdline(cmd):
             continue
-        if pid in owned_now:
-            continue
         ppid = _process_ppid(pid)
         if ppid is None:
             continue
         # Orphaned under init/launchd.
         if ppid not in (0, 1):
             continue
+
         # Spare backends that are still starting up. backend.lock.json is
         # written by the *Desktop client* only after the backend reports
         # HERMES_BACKEND_READY, so a sibling spawned seconds ago is not yet
@@ -1024,11 +1064,27 @@ def _reap_orphaned_desktop_local_serves(
         # storm. A genuine corpse from a previous Desktop session is always
         # older than this grace window; anything younger is a live sibling.
         try:
-            if process_age_seconds_fn(pid) < _REAP_MIN_AGE_SECONDS:
-                continue
+            age = process_age_seconds_fn(pid)
         except Exception:
             # Never let a liveness probe failure widen the reap.
             continue
+
+        is_lock_owned = pid in owned_now
+        if is_lock_owned:
+            # A valid backend.lock.json owns this PID. It may be a genuinely
+            # active SSH remote backend (started by another client/machine,
+            # legitimately at ppid 1 after sshd exits) — killing that is a
+            # production incident (#78872). Spare it while it still has an
+            # established client connection. Only when it is idle AND past the
+            # longer lock-owned window do we treat it as an orphaned cron-lock
+            # holder (#60703) and reap it.
+            if has_active_client_fn(pid):
+                continue
+            if age < _LOCK_OWNED_MIN_AGE_SECONDS:
+                continue
+        else:
+            if age < _REAP_MIN_AGE_SECONDS:
+                continue
         targets.append((pid, cmd))
 
     if not targets:
