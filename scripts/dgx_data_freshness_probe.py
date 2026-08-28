@@ -48,7 +48,18 @@ PIPELINES = {
     "signal_journeys":        ("created_at",  3),
     "signal_pnl_points":      ("ts",          3),
     "oi_snapshots":           ("created_at",  3),
-    "signal_trajectory_bars": ("captured_at", 8),
+    # signal_trajectory_bars: sparse-by-design FORENSIC OHLC store. TrajectoryCaptureService
+    # persists bars only when includeFullBars = isStage5bProofMode() || decision.reason==='EXECUTED'
+    # || Math.random() < FORENSIC_OHLC_SAMPLE_RATE (1%). With proofMode OFF and the paper desk
+    # predominantly emitting EXPIRED journeys (recurrence t_c799394b / diagnosis t_1cd1ea54,
+    # 2026-08-21), max(captured_at) ages past any tight budget BY DESIGN while the trajectory
+    # ANALYSIS pipeline is healthy (signal_journeys.trajectory_captured_at fresh; signal_journeys
+    # created_at watch below is fresh). Budget raised to forensic cadence (96h) so a GENUINE
+    # bars-persistence failure (producer dead >96h) stays visible without false-stale alerts.
+    # Do NOT switch this to max(signal_journeys.trajectory_captured_at): that column has NO index
+    # and max() over the 42GB signal_journeys seq-scans (cost 2.1M) on every probe run — the exact
+    # trap this probe's FAST_QUERY_GROUPBY was built to avoid.
+    "signal_trajectory_bars": ("captured_at", 96),
     "funding_rate_history":   ("created_at",  6),
     "signal_fingerprints":    ("created_at", 36),
     "signal_journey_events":  ("recorded_at",  6),  # emission fixed 2026-07-02 (was frozen 15d); recorded_at = DB write time (best "is data landing" signal). No created_at column exists on this table.
@@ -210,6 +221,42 @@ FAST_QUERY_GROUPBY = {
     "signal_pnl_points": "journey_id",
 }
 
+# Trajectory-pipeline liveness (t_cf1b921d rework, data-oracle t_1cd1ea54 disposition):
+# signal_trajectory_bars is a sparse-by-design FORENSIC store — bars land only when
+# includeFullBars is true, so max(captured_at) there is NOT a producer-liveness signal.
+# The live producer-completion timestamp is signal_journeys.trajectory_captured_at
+# (written by saveAnalysis on every capture). Watch THAT with an 8h budget.
+#
+# CRITICAL: trajectory_captured_at has NO index, so a naive max() over the 42GB
+# signal_journeys seq-scans (cost 2.1M) — the exact trap FAST_QUERY_GROUPBY was built
+# to avoid. We instead BOUND the scan to journeys created within a recent window using
+# idx_signal_journeys_created_at (a live journey column): the planner filters on
+# created_at (index) then aggregates over the surviving rows, which is far cheaper than
+# a full-table scan. A healthy pipeline captures every journey, so max(trajectory_captured_at)
+# over journeys created in the last 96h stays fresh.
+TRAJECTORY_ANALYSIS_TABLE = "signal_journeys"
+TRAJECTORY_ANALYSIS_COLUMN = "trajectory_captured_at"
+TRAJECTORY_ANALYSIS_BUDGET_HOURS = 8
+TRAJECTORY_ANALYSIS_LOOKBACK_HOURS = 96  # created_at window that bounds the scan via the index
+
+
+def probe_trajectory_analysis():
+    """max(trajectory_captured_at) over journeys created in the last 96h — bounded by
+    idx_signal_journeys_created_at so it does NOT seq-scan the 42GB table. Returns
+    (kind, value) like probe() but reports an EMPTY sentinel when no recent journey has
+    been captured yet."""
+    q = (
+        "SELECT COALESCE(EXTRACT(EPOCH FROM (now()-max(%s)))/3600.0, %s)::numeric(12,2) "
+        "FROM %s WHERE created_at > now() - interval '%d hours'"
+        % (TRAJECTORY_ANALYSIS_COLUMN, int(EMPTY),
+           TRAJECTORY_ANALYSIS_TABLE, TRAJECTORY_ANALYSIS_LOOKBACK_HOURS)
+    )
+    try:
+        age = float(psql_scalar(q))
+        return ("empty", 0) if age <= EMPTY else ("ok", age)
+    except Exception as e:
+        return ("err", str(e)[:90])
+
 
 def psql_scalar(q):
     # Wrap the query so the per-connection timeout overrides the role-level 3s cap.
@@ -303,6 +350,25 @@ def probe_all_pipelines():
                 alerts.append("  \U0001f534 %s: STALE %.1fh (budget %dh) — feed likely dead" % (t, age, budget))
             else:
                 pipeline_states[t] = {"status": "fresh", "age_h": round(age, 2), "budget": budget}
+
+    # Trajectory-pipeline liveness (t_cf1b921d rework): signal_trajectory_bars is
+    # sparse-by-design, so watch the live producer-completion timestamp instead.
+    t = "trajectory_analysis"
+    tbudget = TRAJECTORY_ANALYSIS_BUDGET_HOURS
+    tkind, tval = probe_trajectory_analysis()
+    if tkind == "err":
+        pipeline_states[t] = {"status": "error", "age_h": None, "budget": tbudget, "error": tval}
+        alerts.append("  ⚠ %s: probe error — %s" % (t, tval))
+    elif tkind == "empty":
+        pipeline_states[t] = {"status": "empty", "age_h": None, "budget": tbudget}
+        alerts.append("  ⚠ %s: EMPTY (no captured journey in lookback) — expected a live feed" % t)
+    else:
+        tage = float(tval)
+        if tage > tbudget:
+            pipeline_states[t] = {"status": "stale", "age_h": round(tage, 2), "budget": tbudget}
+            alerts.append("  \U0001f534 %s: STALE %.1fh (budget %dh) — trajectory capture has stopped" % (t, tage, tbudget))
+        else:
+            pipeline_states[t] = {"status": "fresh", "age_h": round(tage, 2), "budget": tbudget}
 
     paired_alert = paired_execution_freshness_alert()
     if paired_alert:
