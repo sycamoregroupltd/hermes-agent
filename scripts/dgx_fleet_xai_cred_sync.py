@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-# CANONICAL SOURCE — do not edit profile-local copies. See the goal-orchestrator-operating-runbook for the canonical-copy rule.
+# CANONICAL SOURCE — keep /home/frank/.hermes/scripts/ and
+# /home/frank/.hermes/profiles/jarvis/scripts/ byte-identical.
+# NOTE: the `fleet-cred-sync` cron resolves the bare script name to the PROFILE-LOCAL
+# copy (verified 2026-08-12 by triggering the job and reading cron/output/). Editing only
+# ~/.hermes/scripts/ changes nothing at runtime.
 """Durable credential sharing across the fleet (single-refresher + push).
 
 Root cause this solves: xAI AND Codex (openai-codex) rotate the refresh_token on every
@@ -13,35 +17,129 @@ never hit the rotation failure. Interval must stay < access_token lifetime (~hou
 
 2026-06-30 (claude-bcf4cc1a): extended to also sync openai-codex (credential_pool +
 provider section) after the fleet migrated its primary from xai-oauth/grok-4.3 to
-openai-codex/gpt-5.5. jarvis's primary is openai-codex, so the `-z ok` prewarm refreshes
-the codex token before each push. The original xai-only behavior is preserved.
+openai-codex/gpt-5.5.
+
+2026-08-12 (earlier): pre-warm made BEST-EFFORT per provider so one dead rung degrades
+the sync instead of disabling it. History: this step hardcoded `--provider xai-oauth` and
+exited on non-zero. When xAI's refresh token became invalid ("invalid_grant"), the whole
+fleet's credential distribution stopped silently — nous lived only in jarvis and every
+other profile crashed with "No access token found".
+
+2026-08-12 (claude-orchestrator): two remaining defects fixed.
+
+  1. COST — the nous pre-warm was a billed `hermes chat` completion every 7 min (~205
+     LLM calls/day) purely to refresh a token. Replaced with the native in-process path
+     (hermes_cli.auth.resolve_nous_runtime_credentials): ~1s, zero tokens.
+     HERMES_HOME MUST be set to the jarvis profile or the refresh silently lands in the
+     DEFAULT profile store instead (verified 2026-08-12: jarvis's expires_at was
+     unchanged while the global store advanced).
+
+  2. FLAPPING — Hermes only auto-refreshes within ACCESS_TOKEN_REFRESH_SKEW_SECONDS
+     (120s) of expiry, but this job runs every 7 min. So a run could return a token with
+     ~3 min of life, push it to all 73 profiles, and leave the fleet holding an EXPIRED
+     credential for the remainder of the window — the recurring "nous keeps going down"
+     outage. We now force a full-lifetime refresh whenever the token has less runway
+     than MIN_PUSH_TTL_SECONDS, which is set well above the cron cadence.
+
+  Exit code is now the alert: a fleet primary that cannot be refreshed exits non-zero
+  instead of reporting a green "ok" over an outage (exit-code liveness doctrine).
 """
-import json, glob, subprocess
+import json, glob, subprocess, sys
 
-HERMES = '/home/frank/.hermes/hermes-agent/venv/bin/hermes'
+HERMES_AGENT = '/home/frank/.hermes/hermes-agent'
+HERMES = f'{HERMES_AGENT}/venv/bin/hermes'
+VENV_PY = f'{HERMES_AGENT}/venv/bin/python'
 PROF = '/home/frank/.hermes/profiles'
+JARVIS_HOME = f'{PROF}/jarvis'
 GLOBAL = '/home/frank/.hermes/auth.json'
-POOL_KEYS = ('xai-oauth', 'xai', 'openai-codex', 'nous')   # credential_pool entries to push
-PROVIDER_KEYS = ('xai-oauth', 'openai-codex', 'nous')     # providers[] sections to mirror
+# NOUS DELIBERATELY EXCLUDED (2026-08-28, Frank).
+# This script exists for xAI/grok OAuth. Nous was added to these tuples at some point and
+# that single change caused a fleet-wide outage class: Hermes ALREADY shares Nous natively
+# via <hermes-root>/shared/nous_auth.json — one file outside every profile, read by all,
+# rotated under _nous_shared_store_lock(), with auto-import for profiles holding none.
+# Pushing providers.nous into all 73 profile auth.json files converted that ONE coordinated
+# credential into 73 independent refreshers racing on a SINGLE-USE refresh token. Nous Portal
+# detects the replay as token reuse and revokes the whole family, logging every profile out
+# (68 dead on 2026-08-28; ~80% of dispatch burned on workers dying in ~1s at startup).
+# Do NOT re-add 'nous' here. If Nous creds need distributing, the answer is the native shared
+# store, not a fan-out. See memory hermes-native-first-not-patches + card t_e30f855d.
+POOL_KEYS = ('xai-oauth', 'xai')           # credential_pool entries to push
+PROVIDER_KEYS = ('xai-oauth',)             # providers[] sections to mirror
 
-# 1) Pre-warm jarvis xAI explicitly so its stored xai-oauth token is fresh
-#    (refreshes if near-expiry, rewrites jarvis/auth.json). Do not rely on
-#    `hermes -z ok`: in non-TTY cron shells it can hang under some model/config
-#    paths. The chat path below is the Hermes CLI path verified by `auth status`
-#    and real xai-oauth smoke tests.
+# Minimum nous runway to push to the fleet. MUST stay comfortably above the 7-min cron
+# cadence so a pushed token cannot expire before the next sync replaces it.
+MIN_PUSH_TTL_SECONDS = 15 * 60
+
+# --- 1) Pre-warm jarvis credentials (best-effort per provider; never aborts the push) ---
+
+# nous: native, token-free refresh with a runway guarantee.
+_NOUS_REFRESH = f'''
+import sys, time, datetime
+sys.path.insert(0, {HERMES_AGENT!r})
+from hermes_cli.auth import resolve_nous_runtime_credentials
+
+MIN_TTL = {MIN_PUSH_TTL_SECONDS}
+
+def ttl(expires_at):
+    if not expires_at:
+        return -1
+    try:
+        dt = datetime.datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+    except Exception:
+        return -1
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.timestamp() - time.time()
+
+# Cheap path first: no-ops while the token is still healthy.
+r = resolve_nous_runtime_credentials(timeout_seconds=30, force_refresh=False)
+remaining = ttl(r.get("expires_at"))
+if remaining < MIN_TTL:
+    # Too little runway to survive until the next sync — force a full-lifetime token.
+    r = resolve_nous_runtime_credentials(timeout_seconds=30, force_refresh=True)
+    remaining = ttl(r.get("expires_at"))
+if not r.get("api_key"):
+    raise SystemExit("nous refresh returned no usable key")
+if remaining < MIN_TTL:
+    raise SystemExit("nous still short-lived after forced refresh: %.0fs" % remaining)
+print("expires_at=%s (ttl %.0fm)" % (r.get("expires_at"), remaining / 60))
+'''
+
+
+def prewarm_nous():
+    """Refresh jarvis's nous token natively. Returns (ok, message). Never raises."""
+    try:
+        p = subprocess.run(
+            [VENV_PY, '-c', _NOUS_REFRESH],
+            env={'HERMES_HOME': JARVIS_HOME, 'PATH': '/usr/bin:/bin', 'HOME': '/home/frank'},
+            timeout=120, capture_output=True, text=True,
+        )
+    except Exception as e:
+        return False, f'{type(e).__name__}: {e}'
+    out = (p.stdout or '').strip()
+    if p.returncode != 0:
+        err = (p.stderr or out or 'unknown error').strip().splitlines()
+        return False, err[-1] if err else 'unknown error'
+    return True, out
+
+
+nous_ok, nous_msg = prewarm_nous()
+print(f'prewarm nous: {"ok" if nous_ok else "FAILED"} ({nous_msg})')
+
+# xai-oauth: kept best-effort. Dead as of 2026-08-12 (refresh_token invalid_grant) and
+# will stay dead until Frank re-authenticates; a failed attempt costs no tokens because
+# it fails at the auth step, and this resumes working automatically after re-login.
 try:
-    prewarm = subprocess.run([
-        HERMES, '-p', 'jarvis', 'chat', '--provider', 'xai-oauth',
-        '-m', 'grok-4.3', '-t', '', '-q', 'Return exactly OK.'
-    ], timeout=180, capture_output=True)
+    pw = subprocess.run(
+        [HERMES, '-p', 'jarvis', 'chat', '--provider', 'xai-oauth',
+         '-m', 'grok-4.3', '-t', '', '-q', 'Return exactly OK.'],
+        timeout=180, capture_output=True,
+    )
+    print(f'prewarm xai-oauth: {"ok" if pw.returncode == 0 else "failed (continuing)"}')
 except Exception as e:
-    print(f'jarvis xai-oauth prewarm failed ({type(e).__name__}); no sync performed')
-    raise SystemExit(0)
-if prewarm.returncode != 0:
-    print('jarvis xai-oauth prewarm failed; no sync performed')
-    raise SystemExit(0)
+    print(f'prewarm xai-oauth: {type(e).__name__} (continuing)')
 
-# 2) Read jarvis's current credential(s).
+# --- 2) Read jarvis's current credential(s). ---
 def usable_entries(value):
     entries = value if isinstance(value, list) else [value]
     usable = []
@@ -57,7 +155,8 @@ def usable_entries(value):
 try:
     ja = json.load(open(f'{PROF}/jarvis/auth.json'))
 except Exception as e:
-    print(f'cannot read jarvis auth: {e}'); raise SystemExit(0)
+    print(f'cannot read jarvis auth: {e}')
+    raise SystemExit(1)
 jp = ja.get('credential_pool', {})
 jprov = ja.get('providers', {})
 
@@ -79,9 +178,9 @@ for k in PROVIDER_KEYS:
 
 if not valid and not valid_providers:
     print('no usable credential in jarvis pool; no sync performed')
-    raise SystemExit(0)
+    raise SystemExit(1)
 
-# 3) Push to every other profile + the global pool (only when changed).
+# --- 3) Push to every other profile + the global pool (only when changed). ---
 n = 0
 for p in glob.glob(f'{PROF}/*/auth.json'):
     if p.endswith('/jarvis/auth.json'):
@@ -114,3 +213,8 @@ except Exception as e:
 print(f'credential sync from jarvis -> {n} profiles updated '
       f'(pool={list(valid)}, providers={list(valid_providers)}) + global pool')
 
+# The fleet primary is nous. If it could not be refreshed, the credentials just pushed
+# are on a countdown to expiry — surface that as a cron error, not a silent "ok".
+if not nous_ok:
+    print('FLEET PRIMARY (nous) COULD NOT BE REFRESHED — pushed credentials will expire')
+    raise SystemExit(1)
