@@ -64,6 +64,25 @@ READY_BACKLOG_TOP_LIMIT = 5
 # sycode-trading held a 24.4d-old approved review awaiting PR merge — a 24d
 # stalled P0a that the probe's jarvis-only backlog metric never surfaced.
 READY_BACKLOG_WARN_DAYS = 7
+
+# --- Host CPU saturation (t_4ae8a651, 2026-08-29) ---------------------------
+# Sustained oversubscription had NO monitor before this. Measured on the DGX
+# 2026-08-28T23:15Z: load15 47.9 on 20 cores (2.4x) with /proc/pressure/cpu
+# some avg300 = 57% and idle 0.5%, while the jarvis gateway cgroup stalled
+# 25.4% of the time -- 8 discord "42s behind" heartbeats and 31 lost cron fire
+# claims in the same 24h. Load alone is NOT the signal: loadavg counts
+# uninterruptible-sleep (D-state) tasks too, so an I/O stall shows the same
+# number with idle CPUs. WARN therefore requires BOTH a high load ratio AND
+# real pressure; PSI also names which resource is actually binding.
+# Observability + WARN only -- capacity is never a BLOCK cause (a permanently
+# red fleet verdict trains everyone to ignore it).
+HOST_LOAD_WARN_RATIO = 2.0     # load15 / ncpu
+HOST_CPU_PSI_WARN = 40.0       # /proc/pressure/cpu  "some avg300" percent
+HOST_IO_PSI_WARN = 10.0        # /proc/pressure/io   "full avg300" percent
+HOST_MEM_PSI_WARN = 10.0       # /proc/pressure/memory "full avg300" percent
+HOST_CPU_ATTRIB_INTERVAL_S = 3.0   # cgroup cpu.stat delta window
+HOST_CPU_ATTRIB_TOP_N = 4
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 ALERT_TARGET = "discord:#fleet-reports"
 CRON_STALE_MIN = 35          # cron ticker considered stale past this
 CANARY_STALE_MIN = 40        # newest INDEPENDENT health_canary.jsonl write
@@ -522,6 +541,151 @@ def check_disk() -> tuple[bool, str, bool]:
     return False, out.replace("\n", " | "), bool(r.get("fork_resource_pressure"))
 
 
+def _psi(resource: str, field: str, key: str) -> float | None:
+    """Read one PSI number, e.g. _psi("cpu", "some", "avg300"). None if absent."""
+    try:
+        for line in (Path("/proc/pressure") / resource).read_text(
+                encoding="utf-8").splitlines():
+            parts = line.split()
+            if parts and parts[0] == field:
+                for kv in parts[1:]:
+                    k, _, v = kv.partition("=")
+                    if k == key:
+                        return float(v)
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _cgroup_cpu_top(interval: float, top_n: int) -> list[tuple[str, float]]:
+    """Top cgroups by CPU consumed over `interval`, as percent of the host.
+
+    A single ps/top snapshot lies about bursty work; a cpu.stat delta does not.
+    Scans only the two top-level slices' direct children, so it is O(100) file
+    reads and adds `interval` seconds to the probe.
+    """
+    targets: list[tuple[str, Path]] = []
+    for slice_name in ("user.slice/user-1000.slice/user@1000.service/app.slice",
+                       "system.slice"):
+        base = CGROUP_ROOT / slice_name
+        try:
+            for child in base.iterdir():
+                f = child / "cpu.stat"
+                if f.exists():
+                    targets.append((child.name, f))
+        except OSError:
+            continue
+
+    def sample() -> dict[str, int]:
+        out: dict[str, int] = {}
+        for name, f in targets:
+            try:
+                for line in f.read_text(encoding="utf-8").splitlines():
+                    if line.startswith("usage_usec"):
+                        out[name] = int(line.split()[1])
+                        break
+            except (OSError, ValueError):
+                continue
+        return out
+
+    a = sample()
+    t0 = time.monotonic()
+    time.sleep(interval)
+    b = sample()
+    wall = time.monotonic() - t0
+    ncpu = os.cpu_count() or 1
+    avail = wall * ncpu * 1e6
+    if avail <= 0:
+        return []
+    rows = [((b[k] - a[k]) / avail * 100.0, k) for k in b if k in a]
+    rows.sort(reverse=True)
+    hits = [(k, round(pct, 1)) for pct, k in rows[:top_n] if pct >= 1.0]
+    return [(_pretty_cgroup(k), pct) for k, pct in hits]
+
+
+_DOCKER_NAMES: dict[str, str] | None = None
+
+
+def _pretty_cgroup(name: str) -> str:
+    """Turn `docker-<64 hex>.scope` into the container's actual name.
+
+    An alert that says `docker-e5bf728a...` is not actionable; one that says
+    `sycodetrading-supabase-db` is. Resolved lazily and only once per run, and
+    fails open to a 12-char id so a missing/broken docker never breaks the probe.
+    """
+    global _DOCKER_NAMES
+    m = re.fullmatch(r"docker-([0-9a-f]{12,64})\.scope", name)
+    if not m:
+        return name.removesuffix(".service").removesuffix(".scope")
+    cid = m.group(1)
+    if _DOCKER_NAMES is None:
+        _DOCKER_NAMES = {}
+        r = run(["docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}"],
+                timeout=20)
+        if r["rc"] == 0:
+            for line in r["out"].splitlines():
+                parts = line.split(None, 1)
+                if len(parts) == 2:
+                    _DOCKER_NAMES[parts[0].strip()] = parts[1].strip()
+    return _DOCKER_NAMES.get(cid, f"docker:{cid[:12]}")
+
+
+def check_host_cpu_saturation() -> dict[str, Any]:
+    """Sustained host oversubscription -- WARN only, never a BLOCK cause."""
+    try:
+        load1, load5, load15 = (
+            float(x) for x in
+            Path("/proc/loadavg").read_text(encoding="utf-8").split()[:3])
+    except (OSError, ValueError, IndexError) as exc:
+        return {"available": False, "warn": False,
+                "detail": f"loadavg unreadable ({exc}) -- check skipped"}
+
+    ncpu = os.cpu_count() or 1
+    ratio = load15 / ncpu
+    cpu_psi = _psi("cpu", "some", "avg300")
+    io_psi = _psi("io", "full", "avg300")
+    mem_psi = _psi("memory", "full", "avg300")
+
+    # Which resource is actually binding? loadavg counts D-state tasks, so a
+    # high load with low CPU pressure is an I/O stall and needs a different fix.
+    if cpu_psi is not None and cpu_psi >= HOST_CPU_PSI_WARN:
+        constraint = "cpu"
+    elif io_psi is not None and io_psi >= HOST_IO_PSI_WARN:
+        constraint = "io"
+    elif mem_psi is not None and mem_psi >= HOST_MEM_PSI_WARN:
+        constraint = "memory"
+    elif cpu_psi is None:
+        constraint = "unknown"      # no PSI on this kernel -- fail open
+    else:
+        constraint = "none"
+
+    high_load = ratio >= HOST_LOAD_WARN_RATIO
+    warn = bool(high_load and constraint in ("cpu", "io", "memory"))
+
+    top: list[tuple[str, float]] = []
+    if warn:
+        try:
+            top = _cgroup_cpu_top(HOST_CPU_ATTRIB_INTERVAL_S,
+                                  HOST_CPU_ATTRIB_TOP_N)
+        except Exception:
+            top = []
+
+    detail = (f"load15={load15:.1f} on {ncpu} cores ({ratio:.1f}x); "
+              f"psi cpu_some_avg300="
+              f"{'n/a' if cpu_psi is None else format(cpu_psi, '.1f')}% "
+              f"io_full={'n/a' if io_psi is None else format(io_psi, '.1f')}% "
+              f"mem_full={'n/a' if mem_psi is None else format(mem_psi, '.1f')}%; "
+              f"binding={constraint}")
+    if warn and top:
+        detail += "; top=" + ", ".join(f"{n}:{p}%" for n, p in top)
+
+    return {"available": True, "warn": warn, "detail": detail,
+            "load1": load1, "load5": load5, "load15": load15, "ncpu": ncpu,
+            "ratio": round(ratio, 2), "constraint": constraint,
+            "psi_cpu_some_avg300": cpu_psi, "psi_io_full_avg300": io_psi,
+            "psi_memory_full_avg300": mem_psi, "top_cgroups": top}
+
+
 def check_mechanism_matrix() -> dict[str, Any]:
     """Fold in jarvis-daily-mechanism-liveness read-only classification."""
     if not MECH_COLLECT.exists():
@@ -622,26 +786,42 @@ def _pid_alive(pid: int | None) -> bool:
     return True
 
 
-def _task_has_newer_live_run(cur, task_id: str, now: int) -> bool:
-    """True when `task_id` currently holds a NEWER live/productive run.
+def _task_crash_superseded(cur, task_id: str, crash_run_id: int, now: int) -> bool:
+    """True when a crashed/gave_up run on `task_id` is superseded by a LATER
+    lifecycle on the same task.
 
-    Supersession test (t_047d91e7): a prior timed_out/gave_up attempt should
-    not keep fleet health at BLOCK when the same task has since been retried
-    and the newer run is genuinely in flight — status='running', an alive
-    worker pid, and a recent heartbeat. Any of those failing (no newer run,
-    dead pid, no/stale heartbeat) returns False so the task stays a BLOCK."""
+    A prior crashed/gave_up attempt is NOT a live fleet failure (and must not
+    pin the verdict to BLOCK) when the SAME task has since either:
+      * reached a terminal completed/done lifecycle via a LATER run
+        (status='done', outcome='completed') — the task was successfully
+        resolved by a subsequent attempt (t_e27d602a: the crash->successful
+        retry->done shape), OR
+      * been retried and the newer run is genuinely in flight —
+        status='running', an alive worker pid, and a recent heartbeat
+        (t_047d91e7: a productive retry aging out a false BLOCK).
+
+    Only runs strictly NEWER than the crash run (id greater) count as
+    superseding, so a genuine unresolved crash on a still-active task with no
+    later success or live retry still BLOCKs. Any of the checks failing (no
+    newer run, dead pid, no/stale heartbeat) returns False so the task stays a
+    BLOCK.
+    """
     try:
         row = cur.execute(
             "SELECT status, worker_pid, last_heartbeat_at FROM task_runs "
-            "WHERE task_id = ? AND status = 'running' "
+            "WHERE task_id = ? AND id > ? "
             "ORDER BY id DESC LIMIT 1",
-            (task_id,),
+            (task_id, crash_run_id),
         ).fetchone()
     except sqlite3.OperationalError:
         return False
     if not row:
         return False
     status, pid, hb = row
+    if status == "done":
+        # The task was resolved by a later successful/terminal run — the crash
+        # is a historical event, not a live failure.
+        return True
     if status != "running" or not _pid_alive(pid):
         return False
     if hb is None:
@@ -688,7 +868,7 @@ def check_kanban_crashes() -> tuple[int, list[str], int, list[str]]:
             # falls back to 'unknown' => treated as NOT active, i.e. stale).
             try:
                 rows = cur.execute(
-                    "SELECT tr.task_id, tr.outcome, tr.ended_at, "
+                    "SELECT tr.id, tr.task_id, tr.outcome, tr.ended_at, "
                     "COALESCE(t.status, 'unknown') AS task_status, "
                     "COALESCE(t.assignee, '') AS task_assignee, "
                     "EXISTS ("
@@ -710,7 +890,7 @@ def check_kanban_crashes() -> tuple[int, list[str], int, list[str]]:
                 # crash scan still works on those boards.
                 try:
                     rows = cur.execute(
-                        "SELECT tr.task_id, tr.outcome, tr.ended_at, "
+                        "SELECT tr.id, tr.task_id, tr.outcome, tr.ended_at, "
                         "COALESCE(t.status, 'unknown') AS task_status, "
                         "'' AS task_assignee, "
                         "EXISTS ("
@@ -937,6 +1117,14 @@ def main() -> int:
     checks.append({"name": "disk_space", "ok": disk_ok, "detail": d,
                    "fork_resource_pressure": disk_fork})
 
+    host_cpu = check_host_cpu_saturation()
+    checks.append({"name": "host_cpu_saturation", "ok": True,
+                   "detail": host_cpu.get("detail", ""),
+                   "fork_resource_pressure": False,
+                   "observability_only": True,
+                   "warn": bool(host_cpu.get("warn"))})
+    host_cpu_warn = bool(host_cpu.get("warn"))
+
     mech = check_mechanism_matrix()
     checks.append({"name": "mechanism_matrix", "ok": mech.get("available", False)
                    and mech.get("overall") in (None, "GREEN"), "detail": mech.get("detail", ""),
@@ -1033,7 +1221,8 @@ def main() -> int:
         "profile": PROFILE,
         "verdict": ("BLOCK" if blocked else
                     "DEGRADED" if degraded else
-                    "WARN" if (bool(warn_boards) or forced_warn or stale_warn)
+                    "WARN" if (bool(warn_boards) or forced_warn or stale_warn
+                               or host_cpu_warn)
                     else "PASS"),
         "infra_failed": [c["name"] for c in infra_failed],
         "mechanism_overall": mech.get("overall"),
@@ -1059,6 +1248,7 @@ def main() -> int:
             "warn": stale_warn,
         },
         "cron_stale_direct_row_count": stale_direct_rows.get("count", 0),
+        "host_cpu_saturation": host_cpu,
         "jarvis_ready_backlog": ready_backlog,
         "sycode_trading_ready_backlog": sycode_ready_backlog,
         "ready_backlog_warn_boards": [
@@ -1127,7 +1317,8 @@ def main() -> int:
         # BLOCKing (t_bf11a0ce); a single/rare cron forced release degrades
         # PASS -> WARN too (t_615aa245). WARN names the board + oldest ready
         # task id and/or the forced-release count.
-        verdict = "WARN" if (bool(warn_boards) or forced_warn or stale_warn) else "PASS"
+        verdict = "WARN" if (bool(warn_boards) or forced_warn or stale_warn
+                             or host_cpu_warn) else "PASS"
         emoji = "🟠" if verdict == "WARN" else "🟢"
         lines = [
             f"{emoji} UNIFIED FLEET HEALTH — {now.isoformat()} — VERDICT: {verdict}",
@@ -1152,6 +1343,17 @@ def main() -> int:
                 lines.append(f"  - {b}: oldest_ready={t} age_days={a}")
             lines.append("      action: route to PM/devops for review-merge; "
                          "not an infra outage.")
+        if host_cpu_warn:
+            lines.append("")
+            lines.append("## Host CPU saturation WARN (capacity — NOT an infra outage)")
+            lines.append(f"  - {host_cpu.get('detail')}")
+            lines.append("      binding resource is named above: 'cpu' = run-queue "
+                         "contention, 'io' = D-state blocking (a different fix), "
+                         "'memory' = reclaim stalls.")
+            lines.append("      action: capacity, not a fault. Check whether a lane "
+                         "grew (CI jobs, kanban.max_in_progress, a container) before "
+                         "changing any CPUWeight — see fleet vault "
+                         "Operations/DGX-HOST-CPU-PRIORITY-2026-08.md (t_4ae8a651).")
         if forced_warn:
             lines.append("")
             lines.append("## Cron forced-release WARN (single/rare wedge — "
@@ -1241,6 +1443,13 @@ def main() -> int:
         lines.append("")
         lines.append("## fork_resource_pressure (also present, non-fatal): "
                      f"{', '.join(fork_failed)}")
+    if host_cpu_warn:
+        # Visible on BLOCK too (t_4ae8a651): a saturated host is the context in
+        # which half the other symptoms make sense — a monitor that goes silent
+        # exactly when the fleet is worst is not a monitor.
+        lines.append("")
+        lines.append("## Host CPU saturation (capacity — NOT a BLOCK cause)")
+        lines.append(f"  - {host_cpu.get('detail')}")
     lines.append("")
     lines.append("## Ready backlog telemetry (observability-only, NOT a BLOCK cause)")
     for _bl in (ready_backlog, sycode_ready_backlog):
