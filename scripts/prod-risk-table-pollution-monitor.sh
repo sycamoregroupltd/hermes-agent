@@ -56,13 +56,28 @@ TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 if [ -z "${FINDINGS:-}" ]; then
   echo "[$TS] CLEAN — no fixture signatures in prod circuit_breaker_state"
+  # RESOLVE PATH (t_cef408bd, 2026-08-29): close any open pollution card now that the
+  # prod risk row is clean. Without this the card outlives the condition for ever.
+  "$HOME/.hermes/scripts/fleet-alert-card.sh" --resolve 'riskpollution-*' \
+    "prod circuit_breaker_state CLEAN at ${TS} — no fixture signatures in today's row." \
+    >/dev/null 2>&1 || true
   exit 0
 fi
 
 echo "[$TS] POLLUTION DETECTED: $FINDINGS"
 
 # Throttle: one alert per distinct finding-set per 6h.
-KEY=$(printf '%s' "$FINDINGS" | md5sum | cut -c1-12)
+# t_cef408bd (2026-08-29, fable-devops): this used to be md5("$FINDINGS") raw, and
+# $FINDINGS embeds live VALUES — 'current_portfolio_usd=<n>', 'daily_pnl_usd=<n> vs
+# real closes=<n> over <n> trades'. Those move every run, so the key rotated, the
+# 6h throttle never suppressed anything, and fleet-alert-card.sh could never
+# supersede its own previous card (it keys on state[key]). Same defect class that
+# minted 157 duplicate stack-health cards. Key on the finding LABELS only — strip
+# every number — and leave the values in $BODY, which is rebuilt on every re-fire.
+# 'riskpollution-' prefix so the key has a FAMILY: a bare hex key normalises to the
+# catch-all family '*' in fleet-alert-card.sh, and the clean path below needs a glob
+# that matches only this monitor's own cards.
+KEY="riskpollution-$(printf '%s' "$FINDINGS" | sed -E 's/-?[0-9]+(\.[0-9]+)?//g' | md5sum | cut -c1-12)"
 NOW=$(date +%s)
 LAST=$(grep -a "^$KEY=" "$STATE_FILE" 2>/dev/null | tail -1 | cut -d= -f2)
 if [ -n "${LAST:-}" ] && [ $((NOW - LAST)) -lt 21600 ]; then
@@ -82,6 +97,8 @@ firing means either a path it does not cover, or the guard regressed.
 Check:  docker exec sycodetrading-supabase-db psql -U postgres -d postgres \\
           -c \"select * from circuit_breaker_state where trading_date=current_date;\""
 
+# 2026-08-27: also to the BOARD — $ALERT_TARGET is a channel Frank does not read.
+"$HOME/.hermes/scripts/fleet-alert-card.sh" "$KEY" "PROD RISK TABLE POLLUTED (test fixtures)" "$BODY" >/dev/null 2>&1 || true
 if hermes send -q --json -t "$ALERT_TARGET" -s "PROD RISK TABLE POLLUTED (test fixtures)" "$BODY" >/dev/null 2>&1; then
   echo "[$TS] ALERT-SENT target=$ALERT_TARGET key=$KEY"
   printf '%s=%s\n' "$KEY" "$NOW" >> "$STATE_FILE"
