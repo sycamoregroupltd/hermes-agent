@@ -52,8 +52,19 @@ VENV_PY = f'{HERMES_AGENT}/venv/bin/python'
 PROF = '/home/frank/.hermes/profiles'
 JARVIS_HOME = f'{PROF}/jarvis'
 GLOBAL = '/home/frank/.hermes/auth.json'
-POOL_KEYS = ('xai-oauth', 'xai', 'nous')   # credential_pool entries to push
-PROVIDER_KEYS = ('xai-oauth', 'nous')      # providers[] sections to mirror
+# NOUS DELIBERATELY EXCLUDED (2026-08-28, Frank).
+# This script exists for xAI/grok OAuth. Nous was added to these tuples at some point and
+# that single change caused a fleet-wide outage class: Hermes ALREADY shares Nous natively
+# via <hermes-root>/shared/nous_auth.json — one file outside every profile, read by all,
+# rotated under _nous_shared_store_lock(), with auto-import for profiles holding none.
+# Pushing providers.nous into all 73 profile auth.json files converted that ONE coordinated
+# credential into 73 independent refreshers racing on a SINGLE-USE refresh token. Nous Portal
+# detects the replay as token reuse and revokes the whole family, logging every profile out
+# (68 dead on 2026-08-28; ~80% of dispatch burned on workers dying in ~1s at startup).
+# Do NOT re-add 'nous' here. If Nous creds need distributing, the answer is the native shared
+# store, not a fan-out. See memory hermes-native-first-not-patches + card t_e30f855d.
+POOL_KEYS = ('xai-oauth', 'xai')           # credential_pool entries to push
+PROVIDER_KEYS = ('xai-oauth',)             # providers[] sections to mirror
 
 # Minimum nous runway to push to the fleet. MUST stay comfortably above the 7-min cron
 # cadence so a pushed token cannot expire before the next sync replaces it.

@@ -23,15 +23,9 @@
 #   - Writes a markdown report to
 #     /home/frank/obsidian/sycode-trading/analytics/surface-freshness/YYYY-MM-DD.md
 #     (the ONLY thing this script ever writes; same-day reruns overwrite).
-#   - Per-surface isolation (t_080c0eef): each surface is read with a bounded
-#     statement_timeout (30s). A slow surface that cannot be read (e.g.
-#     signal_journey_events/stablecoin_flow_hourly_v1) is reported as a degraded
-#     "ERROR" row in the report and the run CONTINUES to every remaining surface —
-#     it can never suppress alerts for the rest (incl. liquidation_events).
 #   - Exits 2 and prints ALERT line(s) when any surface with mode=alert exceeds
-#     its SLO (or is unexpectedly EMPTY). Exits 0 when every alertable surface is
-#     within SLO (per-surface read failures are reported degraded but do not fail
-#     the run).
+#     its SLO (or is unexpectedly EMPTY). Exits 1 on operational error. Exits 0
+#     when every alertable surface is within SLO.
 #   - mode=pending surfaces (born-empty tables awaiting first production batch,
 #     e.g. r_multiple_labels) report PENDING while empty and graduate to the SLO
 #     automatically once rows exist. mode=gap surfaces (capture never wired,
@@ -56,17 +50,6 @@ DB_CONTAINER = "sycodetrading-supabase-db"
 REPORT_DIR = Path("/home/frank/obsidian/sycode-trading/analytics/surface-freshness")
 REGISTER = "analytics/data-surface-register.md"
 
-# Per-surface psql statement budget (ms). Some certified surfaces are
-# fundamentally slow to read (e.g. signal_journey_events ~9.9M rows has no
-# leading occurred_at-only index for a global max(), so it seq-scans; and
-# stablecoin_flow_hourly_v1 is a VIEW whose max(hour_utc) recomputes the view).
-# Under the DB's 1min default statement_timeout these take >60s and abort the
-# WHOLE run before later surfaces (liquidation_events) are ever checked. Setting
-# a bounded 30s per-surface budget makes a slow surface fail FAST and be isolated
-# to a documented per-surface ERROR instead of killing the run (t_080c0eef).
-STATEMENT_TIMEOUT_MS = 30000
-PGOPTIONS = f"-c default_transaction_read_only=on -c statement_timeout={STATEMENT_TIMEOUT_MS}"
-
 # ----------------------------------------------------------------------------
 # CERTIFIED SURFACES — keep in lockstep with the register. One row per surface:
 #   surface, table, ts column, SLO hours, mode, note
@@ -86,8 +69,8 @@ SURFACES = [
      "continuous (~500 rows/h); NOT covered by dgx probe"),
     ("signal_journeys",        "signal_journeys",          "created_at",    3.0,  "alert",
      "signal-gated (~150-550/h observed); 3h budget tolerates quiet market stretches"),
-    ("signal_journey_events",  "signal_journey_events",    "recorded_at",   3.0,  "alert",
-     "event stream for journeys; was frozen 15d once (2026-07-02 lesson); probe recorded_at (indexed write time — occurred_at has no leading index so max() seq-scans 25M rows and times out, t_52aecd6b)"),
+    ("signal_journey_events",  "signal_journey_events",    "occurred_at",   3.0,  "alert",
+     "event stream for journeys; was frozen 15d once (2026-07-02 lesson)"),
     ("pro_trader_fills",       "pro_trader_fills",         "ingested_at",   6.0,  "alert",
      "wallet-shadow cohort fill feed (continuous WS+REST; PR #814 harness); 6h SLO matches WalletShadowFillsFeedStale"),
     ("wallet_shadow_journeys", "signal_journeys",          "created_at",    3.0,  "alert",
@@ -158,7 +141,7 @@ def fetch_open_position_count():
     sql = "SELECT count(*) FROM public.managed_positions WHERE closed_at IS NULL;"
     cmd = [
         "docker", "exec",
-        "-e", f"PGOPTIONS={PGOPTIONS}",
+        "-e", "PGOPTIONS=-c default_transaction_read_only=on",
         DB_CONTAINER,
         "psql", "-U", "postgres", "-d", "postgres",
         "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql,
@@ -190,7 +173,7 @@ def fetch_age_hours(table, col, where=None):
     )
     cmd = [
         "docker", "exec",
-        "-e", f"PGOPTIONS={PGOPTIONS}",
+        "-e", "PGOPTIONS=-c default_transaction_read_only=on",
         DB_CONTAINER,
         "psql", "-U", "postgres", "-d", "postgres",
         "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql,
@@ -204,22 +187,14 @@ def fetch_age_hours(table, col, where=None):
 # ----------------------------------------------------------------------------
 # Evaluation (pure function — reused by --self-test)
 # ----------------------------------------------------------------------------
-def evaluate(surfaces, ages, flat_book=False, surface_errors=None):
+def evaluate(surfaces, ages, flat_book=False):
     """surfaces: config rows; ages: {surface: age_hours or EMPTY_SENTINEL}.
     flat_book: if True, closing-activity surfaces (FLAT_BOOK_SURFACES) are
     reported FLAT (no alert) under the legitimate paper-drought / paper-halt
     condition (see FLAT-BOOK SUPPRESSION header).
-    surface_errors: {surface: error_msg} for surfaces whose freshness could not
-    be read (e.g. per-surface statement_timeout). Such surfaces are reported
-    ERROR (documented, NOT a freshness alert) so one slow surface can never
-    suppress evaluation/alerts for the rest (t_080c0eef).
     Returns (alerts, rows) where rows = [(surface, status, age_h, slo_h, mode)]."""
-    surface_errors = surface_errors or {}
     alerts, rows = [], []
     for surface, _table, _col, slo_h, mode, _note in surfaces:
-        if surface in surface_errors:
-            rows.append((surface, "ERROR", None, slo_h, mode))
-            continue
         age = ages[surface]
         empty = age == EMPTY_SENTINEL
         if mode == "gap":
@@ -245,9 +220,8 @@ def evaluate(surfaces, ages, flat_book=False, surface_errors=None):
 # ----------------------------------------------------------------------------
 # Report rendering
 # ----------------------------------------------------------------------------
-def render_report(rows, alerts, now_utc, surface_errors=None):
+def render_report(rows, alerts, now_utc):
     notes = {s: n for s, _t, _c, _slo, _m, n in SURFACES}
-    surface_errors = surface_errors or {}
     lines = []
     lines.append(f"# Surface freshness — certified register SLOs — {now_utc:%Y-%m-%d}")
     lines.append("")
@@ -262,13 +236,6 @@ def render_report(rows, alerts, now_utc, surface_errors=None):
             lines.append(f"- `{a}`")
     else:
         lines.append("## Status: HEALTHY — every alertable surface within its SLO")
-    if surface_errors:
-        lines.append("")
-        lines.append(f"## Degraded surfaces ({len(surface_errors)}) — per-surface read error "
-                     "(statement timeout), isolated; freshness NOT verified for these")
-        lines.append("")
-        for s, msg in surface_errors.items():
-            lines.append(f"- `{s}`: {msg.strip()[:160]}")
     lines.append("")
     lines.append("| surface | status | age | SLO | mode | note |")
     lines.append("|---|---|---|---|---|---|")
@@ -276,8 +243,7 @@ def render_report(rows, alerts, now_utc, surface_errors=None):
         age_s = "—" if age is None else f"{age:.1f}h"
         slo_s = "—" if mode == "gap" else f"{slo_h:g}h"
         flag = {"FRESH": "ok", "PENDING": "pending", "GAP": "**GAP**",
-                "STALE": "**STALE**", "EMPTY": "**EMPTY**", "FLAT": "flat",
-                "ERROR": "**ERROR**"}[status]
+                "STALE": "**STALE**", "EMPTY": "**EMPTY**", "FLAT": "flat"}[status]
         lines.append(f"| {surface} | {flag} | {age_s} | {slo_s} | {mode} | {notes[surface]} |")
     lines.append("")
     lines.append("Companions: `dgx_data_freshness_probe.py` (producer liveness, */30m), "
@@ -345,25 +311,6 @@ def self_test():
     results.append(("wallet_shadow_journeys has a WHERE filter",
                     "wallet_shadow_journeys" in SURFACE_FILTERS
                     and "correlation_id LIKE 'wallet-shadow-%'" in SURFACE_FILTERS["wallet_shadow_journeys"]))
-
-    # Per-surface fetch-error isolation (t_080c0eef): a surface that cannot be
-    # read (statement_timeout) must be reported ERROR without aborting the run
-    # or suppressing alerts for the remaining surfaces.
-    err_surfaces = [
-        ("ok_feed",  "t", "c", 1.0, "alert",   "n"),
-        ("slow_feed","t", "c", 3.0, "alert",   "n"),
-        ("slow_gap", "t", "c", 0.0, "gap",     "n"),
-    ]
-    err_ages = {"ok_feed": 0.2}
-    err_alerts, err_rows = evaluate(err_surfaces, err_ages, flat_book=False,
-                                    surface_errors={"slow_feed": "statement timeout",
-                                                    "slow_gap": "statement timeout"})
-    err_status = {r[0]: r[1] for r in err_rows}
-    results.append(("erroring surface reported ERROR (run survives)",
-                    err_status.get("slow_feed") == "ERROR" and err_status.get("slow_gap") == "ERROR"))
-    results.append(("remaining surface still evaluated FRESH when another errors",
-                    err_status.get("ok_feed") == "FRESH"))
-    results.append(("per-surface fetch error is NOT a freshness alert", len(err_alerts) == 0))
     all_ok = all(ok for _, ok in results)
     for name, ok in results:
         print(f"SELF-TEST {'PASS' if ok else 'FAIL'}: {name}")
@@ -384,20 +331,15 @@ def main():
     now_utc = datetime.now(timezone.utc)
     flat_book = is_flat_book()  # suppress benign flat-book staleness on closing surfaces
     ages = {}
-    surface_errors = {}
-    # Per-surface isolation (t_080c0eef): a slow surface (per-surface
-    # statement_timeout on e.g. signal_journey_events/stablecoin_flow_hourly_v1)
-    # must NOT abort the run before later surfaces (liquidation_events) are
-    # checked. Each surface is fetched independently; a failure is recorded and
-    # the loop continues to every remaining surface.
-    for surface, table, col, _slo, _mode, _note in SURFACES:
-        try:
+    try:
+        for surface, table, col, _slo, _mode, _note in SURFACES:
             ages[surface] = fetch_age_hours(table, col, SURFACE_FILTERS.get(surface))
-        except Exception as e:
-            surface_errors[surface] = str(e)
+    except Exception as e:
+        print(f"ERROR surface-freshness monitor: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    alerts, rows = evaluate(SURFACES, ages, flat_book=flat_book, surface_errors=surface_errors)
-    report = render_report(rows, alerts, now_utc, surface_errors=surface_errors)
+    alerts, rows = evaluate(SURFACES, ages, flat_book=flat_book)
+    report = render_report(rows, alerts, now_utc)
 
     report_date = f"{now_utc:%Y-%m-%d}"
     report_path = REPORT_DIR / f"{report_date}.md"
@@ -427,18 +369,9 @@ def main():
         for a in alerts:
             print(a)  # stdout — delivered by the no-agent cron
         sys.exit(2)
-    # No freshness alerts. Per-surface read errors (statement timeouts) are
-    # documented in the report as degraded surfaces; they do NOT fail the run
-    # (the slow surfaces are a known, chronic condition — alerting hourly would
-    # be cry-wolf noise). Reported on stderr for operator visibility.
-    if surface_errors:
-        print(f"DEGRADED surface-freshness monitor: {len(surface_errors)} surface(s) "
-              f"could not be read (statement timeout), isolated + documented in report: "
-              f"{', '.join(sorted(surface_errors))}", file=sys.stderr)
     print(f"OK: all {sum(1 for _s, st, _a, _sl, _m in rows if st == 'FRESH')} alertable "
           f"surfaces within SLO ({sum(1 for _s, st, _a, _sl, _m in rows if st == 'PENDING')} pending, "
-          f"{sum(1 for _s, st, _a, _sl, _m in rows if st == 'GAP')} gap, "
-          f"{len(surface_errors)} degraded)", file=sys.stderr)
+          f"{sum(1 for _s, st, _a, _sl, _m in rows if st == 'GAP')} gap)", file=sys.stderr)
     sys.exit(0)
 
 

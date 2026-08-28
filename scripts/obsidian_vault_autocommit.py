@@ -19,9 +19,17 @@ import re
 import subprocess
 from pathlib import Path
 
+# All four vaults are git repos with GitHub remotes; git IS the off-box backup.
+# sycode-trading and investments were MISSING from this list until 2026-08-28 —
+# `investments` was found carrying 2 unpushed commits + 6 uncommitted files, i.e. it
+# had no off-box copy at all once the Mac tar was retired (Frank: "I don't need a
+# backup to the mac"). Every vault that git protects must be listed here, or the
+# vault-autocommit-liveness watchdog reports green on a vault nothing is committing.
 VAULTS = [
     Path('/home/frank/obsidian-fleet-vault'),
     Path('/home/frank/obsidian/quant-team'),
+    Path('/home/frank/obsidian/sycode-trading'),
+    Path('/home/frank/obsidian/investments'),
 ]
 
 # A lock older than this cannot belong to a live run (a run commits in seconds),

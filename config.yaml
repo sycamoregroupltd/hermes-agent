@@ -17,30 +17,30 @@ agent:
   tool_use_enforcement: true
 approvals:
   deny:
-  - git -C /home/frank/.hermes/hermes-agent checkout*
-  - git -C /home/frank/.hermes/hermes-agent reset*
-  - git -C /home/frank/.hermes/hermes-agent stash*
-  - git -C /home/frank/.hermes/hermes-agent switch*
-  - git -C /home/frank/.hermes/hermes-agent pull*
-  - git -C /home/frank/.hermes/hermes-agent rebase*
-  - git -C ~/.hermes/hermes-agent checkout*
-  - git -C ~/.hermes/hermes-agent reset*
-  - git -C ~/.hermes/hermes-agent stash*
-  - git -C ~/.hermes/hermes-agent switch*
-  - git -C ~/.hermes/hermes-agent pull*
-  - git -C ~/.hermes/hermes-agent rebase*
-  - '*cd /home/frank/.hermes/hermes-agent*git checkout*'
-  - '*cd /home/frank/.hermes/hermes-agent*git reset*'
-  - '*cd /home/frank/.hermes/hermes-agent*git stash*'
-  - '*cd /home/frank/.hermes/hermes-agent*git switch*'
-  - '*cd /home/frank/.hermes/hermes-agent*git pull*'
-  - '*cd ~/.hermes/hermes-agent*git checkout*'
-  - '*cd ~/.hermes/hermes-agent*git reset*'
-  - '*cd ~/.hermes/hermes-agent*git stash*'
-  - '*cd ~/.hermes/hermes-agent*git switch*'
-  - '*cd ~/.hermes/hermes-agent*git pull*'
-  - git push --force*
-  - git push -f*
+    - git -C /home/frank/.hermes/hermes-agent checkout*
+    - git -C /home/frank/.hermes/hermes-agent reset*
+    - git -C /home/frank/.hermes/hermes-agent stash*
+    - git -C /home/frank/.hermes/hermes-agent switch*
+    - git -C /home/frank/.hermes/hermes-agent pull*
+    - git -C /home/frank/.hermes/hermes-agent rebase*
+    - git -C ~/.hermes/hermes-agent checkout*
+    - git -C ~/.hermes/hermes-agent reset*
+    - git -C ~/.hermes/hermes-agent stash*
+    - git -C ~/.hermes/hermes-agent switch*
+    - git -C ~/.hermes/hermes-agent pull*
+    - git -C ~/.hermes/hermes-agent rebase*
+    - '*cd /home/frank/.hermes/hermes-agent*git checkout*'
+    - '*cd /home/frank/.hermes/hermes-agent*git reset*'
+    - '*cd /home/frank/.hermes/hermes-agent*git stash*'
+    - '*cd /home/frank/.hermes/hermes-agent*git switch*'
+    - '*cd /home/frank/.hermes/hermes-agent*git pull*'
+    - '*cd ~/.hermes/hermes-agent*git checkout*'
+    - '*cd ~/.hermes/hermes-agent*git reset*'
+    - '*cd ~/.hermes/hermes-agent*git stash*'
+    - '*cd ~/.hermes/hermes-agent*git switch*'
+    - '*cd ~/.hermes/hermes-agent*git pull*'
+    - git push --force*
+    - git push -f*
   cron_mode: deny
   destructive_slash_confirm: true
   mcp_reload_confirm: true
@@ -245,11 +245,11 @@ discord:
   voice_fx:
     ack_enabled: true
     ack_phrases:
-    - Let me look into that.
-    - One moment.
-    - Checking on that now.
-    - Give me a sec.
-    - On it.
+      - Let me look into that.
+      - One moment.
+      - Checking on that now.
+      - Give me a sec.
+      - On it.
     ambient_enabled: true
     ambient_gain: 0.18
     ambient_path: ''
@@ -285,9 +285,9 @@ display:
   runtime_footer:
     enabled: false
     fields:
-    - model
-    - context_pct
-    - cwd
+      - model
+      - context_pct
+      - cwd
   show_cost: true
   show_reasoning: false
   skin: default
@@ -314,39 +314,39 @@ goals:
 honcho: {}
 hooks:
   on_session_end:
-  - command: /home/frank/.hermes/agent-hooks/log-session.sh
-    timeout: 10
+    - command: /home/frank/.hermes/agent-hooks/log-session.sh
+      timeout: 10
   on_session_start:
-  - command: /home/frank/.hermes/agent-hooks/log-session.sh
-    timeout: 10
-  - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
-    timeout: 30
+    - command: /home/frank/.hermes/agent-hooks/log-session.sh
+      timeout: 10
+    - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
+      timeout: 30
   pre_llm_call:
-  - command: /home/frank/.hermes/agent-hooks/inject-second-brain-contract.sh
-    timeout: 10
-  - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
-    timeout: 30
-  - command: /home/frank/.hermes/agent-hooks/inject-call-snapshot.sh
-    timeout: 10
-  - command: /home/frank/.hermes/agent-hooks/gate-spend-ceiling.sh
-    timeout: 20
+    - command: /home/frank/.hermes/agent-hooks/inject-second-brain-contract.sh
+      timeout: 10
+    - command: /home/frank/.hermes/agent-hooks/gate-provider-governance.sh
+      timeout: 30
+    - command: /home/frank/.hermes/agent-hooks/inject-call-snapshot.sh
+      timeout: 10
+    - command: /home/frank/.hermes/agent-hooks/gate-spend-ceiling.sh
+      timeout: 20
   pre_tool_call:
-  - command: /home/frank/.hermes/agent-hooks/gate-second-brain-writes.sh
-    matcher: ^(write_file|patch|terminal)$
-    timeout: 20
-  - command: /home/frank/.hermes/agent-hooks/gate-config-writes.sh
-    timeout: 15
-  - command: /home/frank/.hermes/agent-hooks/gate-kanban-complete.sh
-    matcher: kanban_complete
-    timeout: 60
-  - command: /home/frank/.hermes/agent-hooks/gate-kanban-dupe-create.sh
-    matcher: kanban_create
-    timeout: 20
+    - command: /home/frank/.hermes/agent-hooks/gate-second-brain-writes.sh
+      matcher: ^(write_file|patch|terminal)$
+      timeout: 20
+    - command: /home/frank/.hermes/agent-hooks/gate-config-writes.sh
+      timeout: 15
+    - command: /home/frank/.hermes/agent-hooks/gate-kanban-complete.sh
+      matcher: kanban_complete
+      timeout: 60
+    - command: /home/frank/.hermes/agent-hooks/gate-kanban-dupe-create.sh
+      matcher: kanban_create
+      timeout: 20
   subagent_stop:
-  - command: /home/frank/.hermes/agent-hooks/catch-silent-exit.sh
-    timeout: 20
-  - command: /home/frank/.hermes/agent-hooks/log-session.sh
-    timeout: 10
+    - command: /home/frank/.hermes/agent-hooks/catch-silent-exit.sh
+      timeout: 20
+    - command: /home/frank/.hermes/agent-hooks/log-session.sh
+      timeout: 10
 hooks_auto_accept: true
 human_delay:
   max_ms: 2500
@@ -359,7 +359,7 @@ kanban:
   auto_decompose_per_tick: 3
   default_assignee: ''
   default_board: sycode-trading
-  dispatch_in_gateway: true
+  dispatch_in_gateway: false
   dispatch_interval_seconds: 60
   dispatch_stale_timeout_seconds: 1800
   failure_limit: 4
@@ -405,15 +405,15 @@ model:
   provider: nous
   base_url: https://inference-api.nousresearch.com/v1
 fallback_providers:
-- provider: nous
-  model: qwen/qwen3.7-flash
-  base_url: https://inference-api.nousresearch.com/v1
-- provider: nous
-  model: ~deepseek/deepseek-v4-flash-latest
-  base_url: https://inference-api.nousresearch.com/v1
-- provider: nous
-  model: openai/gpt-5.6-luna
-  base_url: https://inference-api.nousresearch.com/v1
+  - provider: nous
+    model: qwen/qwen3.7-flash
+    base_url: https://inference-api.nousresearch.com/v1
+  - provider: nous
+    model: ~deepseek/deepseek-v4-flash-latest
+    base_url: https://inference-api.nousresearch.com/v1
+  - provider: nous
+    model: openai/gpt-5.6-luna
+    base_url: https://inference-api.nousresearch.com/v1
 model_catalog:
   enabled: true
   providers: {}
@@ -559,9 +559,9 @@ tools:
     search_default_limit: 5
     threshold_pct: 10
 toolsets:
-- hermes-cli
-- terminal
-- skills
+  - hermes-cli
+  - terminal
+  - skills
 tts:
   edge:
     voice: en-US-AriaNeural
@@ -616,6 +616,6 @@ x_search:
   timeout_seconds: 180
 plugins:
   enabled:
-  - deadpid-fleet-alert
-  - disk-cleanup
-  - security-guidance
+    - deadpid-fleet-alert
+    - disk-cleanup
+    - security-guidance

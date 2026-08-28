@@ -622,26 +622,42 @@ def _pid_alive(pid: int | None) -> bool:
     return True
 
 
-def _task_has_newer_live_run(cur, task_id: str, now: int) -> bool:
-    """True when `task_id` currently holds a NEWER live/productive run.
+def _task_crash_superseded(cur, task_id: str, crash_run_id: int, now: int) -> bool:
+    """True when a crashed/gave_up run on `task_id` is superseded by a LATER
+    lifecycle on the same task.
 
-    Supersession test (t_047d91e7): a prior timed_out/gave_up attempt should
-    not keep fleet health at BLOCK when the same task has since been retried
-    and the newer run is genuinely in flight — status='running', an alive
-    worker pid, and a recent heartbeat. Any of those failing (no newer run,
-    dead pid, no/stale heartbeat) returns False so the task stays a BLOCK."""
+    A prior crashed/gave_up attempt is NOT a live fleet failure (and must not
+    pin the verdict to BLOCK) when the SAME task has since either:
+      * reached a terminal completed/done lifecycle via a LATER run
+        (status='done', outcome='completed') — the task was successfully
+        resolved by a subsequent attempt (t_e27d602a: the crash->successful
+        retry->done shape), OR
+      * been retried and the newer run is genuinely in flight —
+        status='running', an alive worker pid, and a recent heartbeat
+        (t_047d91e7: a productive retry aging out a false BLOCK).
+
+    Only runs strictly NEWER than the crash run (id greater) count as
+    superseding, so a genuine unresolved crash on a still-active task with no
+    later success or live retry still BLOCKs. Any of the checks failing (no
+    newer run, dead pid, no/stale heartbeat) returns False so the task stays a
+    BLOCK.
+    """
     try:
         row = cur.execute(
             "SELECT status, worker_pid, last_heartbeat_at FROM task_runs "
-            "WHERE task_id = ? AND status = 'running' "
+            "WHERE task_id = ? AND id > ? "
             "ORDER BY id DESC LIMIT 1",
-            (task_id,),
+            (task_id, crash_run_id),
         ).fetchone()
     except sqlite3.OperationalError:
         return False
     if not row:
         return False
     status, pid, hb = row
+    if status == "done":
+        # The task was resolved by a later successful/terminal run — the crash
+        # is a historical event, not a live failure.
+        return True
     if status != "running" or not _pid_alive(pid):
         return False
     if hb is None:
@@ -688,7 +704,7 @@ def check_kanban_crashes() -> tuple[int, list[str], int, list[str]]:
             # falls back to 'unknown' => treated as NOT active, i.e. stale).
             try:
                 rows = cur.execute(
-                    "SELECT tr.task_id, tr.outcome, tr.ended_at, "
+                    "SELECT tr.id, tr.task_id, tr.outcome, tr.ended_at, "
                     "COALESCE(t.status, 'unknown') AS task_status, "
                     "COALESCE(t.assignee, '') AS task_assignee, "
                     "EXISTS ("
@@ -710,7 +726,7 @@ def check_kanban_crashes() -> tuple[int, list[str], int, list[str]]:
                 # crash scan still works on those boards.
                 try:
                     rows = cur.execute(
-                        "SELECT tr.task_id, tr.outcome, tr.ended_at, "
+                        "SELECT tr.id, tr.task_id, tr.outcome, tr.ended_at, "
                         "COALESCE(t.status, 'unknown') AS task_status, "
                         "'' AS task_assignee, "
                         "EXISTS ("

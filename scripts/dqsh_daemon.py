@@ -170,10 +170,17 @@ def record_action_in_state(action_type, details):
 # ----------------------------------------------------------------------------
 
 def run_sql(sql):
-    """Executes read-only SQL queries against the Sycode Supabase container."""
+    """Executes read-only SQL queries against the Sycode Supabase container.
+
+    Durable lock-tangle guard (t_c84d7d72, anchor t_23839e98): explicit
+    statement_timeout bounds every read so a runaway full-table scan cannot
+    hold locks and tangle (root cause of 2026-07-12 circular lock tangle over
+    signal_journeys full scans). Mirrors the durable server-side postgres role
+    statement_timeout=60s; explicit here for robustness across roles.
+    """
     cmd = [
         "docker", "exec",
-        "-e", "PGOPTIONS=-c default_transaction_read_only=on",
+        "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=60s",
         DB_CONTAINER,
         "psql", "-U", "postgres", "-d", "postgres",
         "-X", "-q", "-v", "ON_ERROR_STOP=1", "--csv", "-c", sql,

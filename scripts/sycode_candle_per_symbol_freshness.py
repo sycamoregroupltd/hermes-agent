@@ -75,9 +75,9 @@ def fetch_fresh_count(timeframe, budget_hours):
     """Return count of distinct symbols with a candle within budget_hours for
     the given timeframe. Read-only single aggregate."""
     sql = (
-        "SELECT COALESCE(count(DISTINCT symbol), 0)::int "
-        "FROM public.candles WHERE timeframe = '%s' "
-        "AND timestamp >= now() - interval '%d hours';" % (timeframe, int(budget_hours))
+        "SELECT COALESCE(count(DISTINCT symbol) "
+        "FILTER (WHERE timestamp >= now() - interval '%d hours'), 0)::int "
+        "FROM public.candles WHERE timeframe = '%s';" % (int(budget_hours), timeframe)
     )
     cmd = [
         "docker", "exec",

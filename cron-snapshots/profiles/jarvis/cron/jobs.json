@@ -34,40 +34,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-06-17T08:01:12.100047+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "81a69dfea215",
-      "model": null,
-      "model_snapshot": null,
-      "name": "dgx-skill-curator-loop",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 3 * * *",
-        "expr": "0 3 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 3 * * *",
-      "script": "dgx_skill_curator.py",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-06-17T08:01:12.584592+01:00",
       "deliver": "local",
       "enabled": true,
@@ -536,39 +502,6 @@
       "workdir": null
     },
     {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-24T19:15:10.635724+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": false,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "id": "96a24b35be15",
-      "model": "tencent/hy3:free",
-      "name": "native-weekly-swarm-demo",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-07-11T08:32:14.412940+01:00",
-      "paused_reason": null,
-      "prompt": "Run a kanban swarm on the upero board as a proof of concept. Create a small swarm with 2 workers (upero-pm, upero-ui-builder), verifier (upero-design-reviewer), and synthesizer (upero-pm) for the goal 'Review and document recent UI component changes'. Use `/home/frank/.local/bin/hermes kanban swarm --worker upero-pm:Catalog recent UI changes --worker upero-ui-builder:Audit component library --verifier upero-design-reviewer --synthesizer upero-pm 'Review and document recent UI component changes' --created-by jarvis`. Report the output.",
-      "provider": "nous",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 10 * * 1",
-        "expr": "0 10 * * 1",
-        "kind": "cron"
-      },
-      "schedule_display": "0 10 * * 1",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
       "context_from": null,
       "created_at": "2026-06-24T19:15:20.738515+01:00",
       "deliver": "discord:#fleet-reports",
@@ -778,74 +711,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-06-26T06:18:03.382101+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "b701186fa79f",
-      "model": null,
-      "model_snapshot": null,
-      "name": "nous-proxy-watchdog",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-08-22T14:10:29.634277+01:00",
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 120m",
-        "kind": "interval",
-        "minutes": 120
-      },
-      "schedule_display": "every 120m",
-      "script": "dgx_nous_proxy_watchdog.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-26T06:22:11.420893+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "ee57faa4538f",
-      "model": null,
-      "model_snapshot": null,
-      "name": "fleet-cred-sync",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-08-24T17:24:51.632394+01:00",
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 7m",
-        "kind": "interval",
-        "minutes": 7
-      },
-      "schedule_display": "every 7m",
-      "script": "dgx_fleet_xai_cred_sync.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null,
-      "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-06-26T13:08:05.588781+01:00",
       "deliver": "local",
       "enabled": true,
@@ -914,77 +779,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-06-26T14:31:45.955145+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": false,
-      "enabled_toolsets": [
-        "terminal",
-        "file",
-        "kanban"
-      ],
-      "id": "5f71a9e0462f",
-      "model": "tencent/hy3:free",
-      "model_snapshot": null,
-      "name": "fleet-health-watchdog",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-07-11T10:34:31.256482+00:00",
-      "paused_reason": "Consolidated into dgx-unified-health-probe (t_39c29d42): single canonical probe + single escalation path.",
-      "pinned": true,
-      "prompt": "Check fleet health and report only if there are issues:\n\n1. Check all kanban boards for crashed workers (repeated 'pid not alive' or 'protocol violation' errors)\n2. Check for any profile that has fallen back to non-approved provider\n3. Check gateway services are active\n4. Check disk usage (warn if >80%)\n5. Check if any cron jobs have failed\n\nFormat: brief summary with action items. If everything is healthy, just say 'Fleet healthy.' Do not report routine blocked tasks \u2014 only report crashes, repeated failures, or infrastructure issues.\n\nCRON PROBE SAFETY (2026-06-30 hardening): do not call execute_code in this cron. Use terminal with /home/frank/.local/bin/hermes kanban CLI/native kanban tools, or sqlite3 only after first inspecting the live schema with `.schema`/`PRAGMA table_info`. For kanban.db, valid task columns include id,title,body,assignee,status,priority,created_at,started_at,completed_at,last_heartbeat_at,last_failure_error,block_kind,current_run_id,consecutive_failures,result; valid task_runs timing columns are started_at and ended_at (not updated_at/completed_at/finished_at/last_seq/error_type); valid task_comments text column is body (not comment/comments); board is implied by the DB path, not a tasks column. If you need recent activity, order by COALESCE(task_runs.ended_at, task_runs.started_at, task_events.created_at, tasks.completed_at, tasks.started_at, tasks.created_at).",
-      "provider": "nous",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 30m",
-        "kind": "interval",
-        "minutes": 30
-      },
-      "schedule_display": "every 30m",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-26T15:08:50.639859+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "4c6f2a1c81cc",
-      "model": null,
-      "model_snapshot": null,
-      "name": "hermes-fleet-textfile-collector",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-07-03T21:41:21.816993+01:00",
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 1m",
-        "kind": "interval",
-        "minutes": 1
-      },
-      "schedule_display": "every 1m",
-      "script": "hermes_fleet_textfile_collector.sh",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": "/home/frank/sycode-trading"
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-06-26T15:49:09.625293+01:00",
       "deliver": "local",
       "enabled": true,
@@ -1015,39 +809,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-27T03:31:45.351029+01:00",
-      "deliver": "discord:1521973783794155530",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "0ddf67598a8c",
-      "model": null,
-      "model_snapshot": null,
-      "name": "research-review-actionables-extractor",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-07-11T08:32:13.202591+01:00",
-      "paused_reason": null,
-      "prompt": "Script-only Jarvis cron: scan completed research-like Hermes kanban tasks across boards, persist extracted actionables to the fleet Obsidian vault, and emit stdout only when new actionables are found.",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 */6 * * *",
-        "expr": "0 */6 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 */6 * * *",
-      "script": "research_review_extractor.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
     },
     {
       "base_url": null,
@@ -1091,39 +852,6 @@
         "external-strategy-discovery",
         "obsidian-knowledge-management"
       ],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-27T12:45:26.209174+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "cf77312cc3c7",
-      "model": null,
-      "model_snapshot": null,
-      "name": "jarvis-gateway-liveness-collector",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-07-11T10:34:31.256482+00:00",
-      "paused_reason": "Consolidated into dgx-unified-health-probe (t_39c29d42): single canonical probe + single escalation path.",
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 10m",
-        "kind": "interval",
-        "minutes": 10
-      },
-      "schedule_display": "every 10m",
-      "script": "jarvis-gateway-liveness-collector.py",
-      "skill": null,
-      "skills": [],
       "state": "paused",
       "workdir": null
     },
@@ -1294,42 +1022,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-30T20:37:31.952112+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": [
-        "terminal",
-        "file"
-      ],
-      "id": "0335d3de142b",
-      "model": "tencent/hy3:free",
-      "model_snapshot": null,
-      "name": "paper-trader-agent",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-07-06T11:59:41.760746+01:00",
-      "paused_reason": null,
-      "prompt": "You are the paper-trader Hermes agent.\n\nYour input includes pre-gathered market context from the gate script. If the context says \"nothing new\" or is empty, respond with \"NO ACTION \u2014 gate closed\" and exit immediately (1 line).\n\nIf there IS new work (signals detected, open positions to manage):\n1. Check the provided market context (fear/greed, open positions, today's PnL)\n2. Evaluate any new signals against the current market regime\n3. Open paper trades only on high-confidence signals (conf \u2265 threshold based on market state)\n4. Report trades opened, skipped, and current balance\n\nTOKEN-SAFE CURL RULE: Use SYCODE_CURL wrapper for all OpenClaw calls.\nSYCODE_CURL=/home/frank/.hermes/scripts/sycode_curl.sh\n\nAvailable endpoints:\n- GET /signals/live?limit=10 \u2014 live signals\n- GET /status \u2014 current positions and balance\n- POST /trade/open \u2014 {symbol, direction, sizeUsd, stopLoss, leverage}",
-      "provider": "nous",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 5m",
-        "kind": "interval",
-        "minutes": 5
-      },
-      "schedule_display": "every 5m",
-      "script": "paper_trader_gate.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
     },
     {
       "base_url": null,
@@ -1746,7 +1438,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0,
+      "failure_streak": 3,
       "timeout": 900
     },
     {
@@ -2124,80 +1816,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-03T21:04:24.198699+01:00",
-      "deliver": "discord:#fleet-reports",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "042823b6d8b7",
-      "model": null,
-      "model_snapshot": null,
-      "name": "sycode-minimal-host-health",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-07-11T10:34:31.256482+00:00",
-      "paused_reason": "Consolidated into dgx-unified-health-probe (t_39c29d42): single canonical probe + single escalation path.",
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 30m",
-        "kind": "interval",
-        "minutes": 30
-      },
-      "schedule_display": "every 30m",
-      "script": "sycode_minimal_host_health.sh",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-06-27T03:33:06.205450+01:00",
-      "deliver": "discord:1521973783794155530",
-      "enabled": false,
-      "enabled_toolsets": [
-        "terminal",
-        "file",
-        "kanban"
-      ],
-      "id": "6494f3b7d374",
-      "migrated_from_profile": "jarvis-os-pm",
-      "migration_task": "t_86c82617",
-      "model": "tencent/hy3:free",
-      "model_snapshot": null,
-      "name": "research-review-cron",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-07-11T08:32:14.209373+01:00",
-      "paused_reason": null,
-      "prompt": "You are jarvis-os-pm following the World Class Hermes Agent Template and obsidian-knowledge-management skill. Scan all Hermes kanban boards (via kanban tools or direct SQLite inspection under ~/.hermes/kanban/boards) for recently completed research, synthesis, architecture, governance, or swarm tasks. For each candidate that has actionable recommendations or findings but lacks Obsidian persistence links, review routing, or implementation children: extract key details (board, task_id, title, summary, extracted actions, obsidian_status, recommended_action, proposed_assignee). Update or append to /home/frank/obsidian-fleet-vault/Research/Reviews/research-actionables.md with the new items in the standard table format. Also update the 'Last generated' timestamp and link back to source tasks t_58bc3642, t_child_aeeaa6fc, t_06fff32a. Persist any new findings to the fleet vault using proper YAML frontmatter and wikilinks. Produce a compact report of changes. If no new candidates, log a silent no-op entry. Align with research-to-implementation review rule: never mutate boards without explicit review gate. Use native tools only. Reference parent orchestrator and World Class principles.",
-      "provider": "nous",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 */6 * * *",
-        "expr": "0 */6 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 */6 * * *",
-      "script": null,
-      "skill": "obsidian-knowledge-management",
-      "skills": [
-        "obsidian-knowledge-management"
-      ],
-      "state": "paused",
-      "workdir": "/home/frank"
     },
     {
       "base_url": null,
@@ -2716,72 +2334,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-03T22:50:02.887420+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "1f6bac147b1b",
-      "model": null,
-      "model_snapshot": null,
-      "name": "kanban-gc-hygiene-bundle",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-07-04T01:42:24.082268+01:00",
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 4 * * 0",
-        "expr": "0 4 * * 0",
-        "kind": "cron"
-      },
-      "schedule_display": "0 4 * * 0",
-      "script": "kanban_gc_hygiene_bundle_apply.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-03T22:52:51.988308+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "efd8c1a115d6",
-      "model": null,
-      "model_snapshot": null,
-      "name": "kanban-gc-hygiene-bundle",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-07-04T01:42:24.276261+01:00",
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 4 * * 0",
-        "expr": "0 4 * * 0",
-        "kind": "cron"
-      },
-      "schedule_display": "0 4 * * 0",
-      "script": "kanban_gc_hygiene_bundle_apply.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-03T22:56:17.383200+01:00",
       "deliver": "local",
       "enabled": false,
@@ -2986,75 +2538,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-04T21:58:33.867302+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "78a8c2d6b4f9",
-      "model": "deepseek-ai/deepseek-v4-pro",
-      "model_snapshot": null,
-      "name": "data-foundation-verification-loop",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-07-10T19:54:04.912861+01:00",
-      "paused_reason": null,
-      "prompt": "You are the Data Foundation Verification Loop. Every 15 minutes:\n\n1. Check sycode-trading kanban board for all data-foundation-blocker goal cards created on 2026-07-04.\n   - Wave 1: P0.*, P1.*, P2.* cards\n   - Wave 2: W2.* cards\n\n2. Classify each card:\n   - 'running' = agent actively working\n   - 'waiting' = deferred (profile cap, will auto-dispatch)\n   - 'done' = complete, verify evidence exists in Obsidian\n   - 'blocked' = needs Frank attention\n   - 'crashed' = agent crashed\n\n3. Report:\n   - Wave 1 (P0-P2): X/14 completed\n   - Wave 2 (W2): X/6 running/completed\n   - Any blockers or crashes\n   - Estimated time to completion\n\n4. If ALL cards for a wave are done:\n   - Wave 1: \"DATA FOUNDATION COMPLETE \u2014 all 14 gaps fixed. Proceeding to Wave 2.\"\n   - Wave 2: \"ORTHOGONAL STREAMS COMPLETE \u2014 all 6 streams integrated. Model tuning is now unblocked.\"\n   - Do NOT create new cards or change anything.\n\n5. If any card is 'crashed' or 'blocked' >2 hours:\n   - Read the task's outcome/error\n   - Report to Frank\n\nSAFETY: Read-only. No card creation, no dispatching, no DB writes.",
-      "provider": "nvidia",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-04T22:49:23.638517+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "34c74dfeb231",
-      "model": "deepseek-ai/deepseek-v4-pro",
-      "model_snapshot": null,
-      "name": "data-foundation-governor-loop",
-      "no_agent": false,
-      "origin": null,
-      "paused_at": "2026-07-10T19:54:04.355322+01:00",
-      "paused_reason": null,
-      "prompt": "You are the Data Foundation Governor driving Frank's Sycode data pipeline to completion. You have Frank's standing driver-mode authority: monitor, harvest, and fire the next batch without re-asking.\n\nWAVES (defined in obsidian/quant-team/governance/):\n\nWave 1 \u2014 Data Foundation (14 cards): ALL DONE. Verify none regressed. If any show blocked/crashed/reopened, report to Frank but continue.\n\nWave 2 \u2014 Orthogonal Data Streams (6 cards): W2.1-W2.6 on sycode-trading board. Created 2026-07-04.\n\nWave 3 \u2014 Model Tuning Pipeline (NOT YET DISPATCHED):\n  3.1 NeMo signal-quality predictor training on signal_training_features_v1 (clean_outcome_binary_24h)\n  3.2 Raw journey JSONB pattern mining \u2014 indicator values, trigger pattern types, confluence scores, trajectory shapes\n  3.3 cuDF accelerated pipeline \u2014 GPU-accelerate feature materializers via cudf.pandas\n  3.4 Honest-CV baseline on expanded feature set (stablecoin flows, funding+OI, wallet signals, lead-lag)\n  3.5 LightGBM feature importance ranking on all features\n\nYOUR JOB EVERY TICK:\n\n1. CHECK sycode-trading board for Wave 2 cards (W2.*). Query: SELECT id, title, status FROM tasks WHERE title LIKE 'W2.%' ORDER BY id.\n\n2. IF any Wave 2 card shows 'crashed' or 'blocked' over 2 hours: read the outcome/error, report a 1-line summary to Frank.\n\n3. IF ALL 6 Wave 2 cards show 'done' AND Wave 3 has NOT been dispatched (check for 'W3.' or '3.' cards on the board):\n   - Create 5 Wave 3 goal cards on sycode-trading board (see below)\n   - Run `hermes kanban --board sycode-trading dispatch`\n   - Report: \"Wave 2 complete! Wave 3 model tuning fired off to 5 agents.\"\n\n4. IF Wave 3 is already running: report status compactly (X/5 running, X/5 done, ETA).\n\n5. IF Wave 3 is ALL DONE: report \"ALL WAVES COMPLETE. Frank, the model tuning pipeline is ready. Wave 2 orthogonal streams and Wave 3 model training are done.\"\n\nWAVE 3 CARDS TO CREATE:\n\nW3.1: \"W3.1: Train NeMo signal-quality predictor on signal_training_features_v1\" --assignee trading-ml-ensemble --priority 85\nBody: Frank-APPROVED 2026-07-04. Paper-only training. Goal: Binary classifier using clean_outcome_binary_24h as label, features from signal_training_features_v1 (conviction_score, mfe_mae_ratio, regime*, stablecoin_flow, funding_oi_squeeze, wallet_signals, lead_lag). Train/eval on frozen training dataset. Save artifact at obsidian/quant-team/models/nemo-signal-quality-v1. 20 turns, 8h runtime.\n\nW3.2: \"W3.2: Raw journey JSONB pattern mining \u2014 find winning indicator/trigger/confluence combos\" --assignee research --priority 83\nBody: Frank-APPROVED 2026-07-04. Read-only. Gap: We never mined the actual raw data in JSONB. Goal: Query signal_journeys for indicator values, trigger_pattern types, confluence_log factors, trajectory_analysis paths. Find which combos actually produce wins. Use clean_outcome_binary_24h as label. Deliver Obsidian note with top pattern clusters. 15 turns, 6h runtime.\n\nW3.3: \"W3.3: cuDF GPU-accelerate signal_training_features_v1 materialization\" --assignee trading-data-oracle --priority 82\nBody: Frank-APPROVED 2026-07-04. Paper-only. Path: python -m cudf.pandas on the view materialization. Goal: Speed up the training dataset build from hours to minutes. Verify identical output to CPU path. 10 turns, 4h runtime.\n\nW3.4: \"W3.4: Honest-CV walk-forward baseline on expanded feature set\" --assignee trading-backtest-runner --priority 80\nBody: Frank-APPROVED 2026-07-04. Paper-only backtest. Goal: Run honest walk-forward CV on signal_training_features_v1 with ALL Wave 2 features (stablecoin, funding+OI, wallet, lead-lag). Gate: OOS Sharpe > buy-hold, DSR > 0, PBO < 0.5. Deliver Obsidian report. 15 turns, 8h runtime.\n\nW3.5: \"W3.5: LightGBM feature importance ranking on full signal_training_features_v1\" --assignee trading-strategy-dev --priority 78\nBody: Frank-APPROVED 2026-07-04. Paper-only training. Goal: Train LightGBM on signal_training_features_v1, rank feature importance, identify which orthogonal streams (stablecoin/wallet/lead-lag) add the most predictive value. 8 turns, 4h runtime.\n\nIDEMPOTENCY KEYS: w3-20260704-nemo, w3-20260704-jsonb, w3-20260704-cudf, w3-20260704-cv, w3-20260704-lgbm\n\nSAFETY: Read-only DB. No live trading. No production deploy. No strategy enablement. Paper-only training and analysis.",
-      "provider": "nvidia",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 10m",
-        "kind": "interval",
-        "minutes": 10
-      },
-      "schedule_display": "every 10m",
-      "script": null,
-      "skill": "kanban",
-      "skills": [
-        "kanban",
-        "obsidian-knowledge-management"
-      ],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-05T06:23:44.261290+01:00",
       "deliver": "local",
       "enabled": true,
@@ -3123,89 +2606,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-05T09:11:09.142429+01:00",
-      "deliver": "origin",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "e53763f47144",
-      "model": "tencent/hy3:free",
-      "model_snapshot": "gemini-3.5-flash",
-      "name": "cascading-wave-governor-cycle-trading",
-      "no_agent": false,
-      "origin": {
-        "chat_id": "1521955147411095716",
-        "chat_name": "Hermes-jarvis / #general",
-        "platform": "discord",
-        "thread_id": null,
-        "user_id": "566415197649240064"
-      },
-      "paused_at": "2026-07-10T19:45:38.104723+01:00",
-      "paused_reason": null,
-      "prompt": "CASCADING-WAVE GOVERNOR TICK \u2014 Cycle Trading Day (2026-07-05)\n\nNORTH STAR: Generate real trading PnL by EOD through cycle trading. Frank has given full driver-mode authority for the entire session. All safety bounds still apply: NO live trading without completion of probe gates, NO credentials/spend changes, NO irreversible data ops.\n\nMANDATE (Frank 09:10 UTC):\n- Keep churning toward cycle trading\n- Use ALL tools \u2014 ML training (LightGBM/XGBoost/torch on ml-trainer container), data infrastructure, strategy tuning\n- Be innovative \u2014 find edge, train models, use tuning engines\n- System must be world-class quant trading \u2014 everything on DGX + Hermes\n- If tools missing, install them\n\nEACH TICK:\n1. **Scan board state** \u2014 query sycode-trading board for running, ready, blocked, completed tasks since last tick\n2. **Harvest completions** \u2014 for each newly completed card, read summary and check for produced artifacts (files, DB state, etc.)\n3. **Identify bottlenecks** \u2014 what's the next gate between current state and cycle trading generating PnL?\n4. **Auto-dispatch** \u2014 if any profile has freed capacity (<2 running) AND ready cards exist for them, dispatch automatically\n5. **Create next-wave cards** when a wave completes:\n   - After strategy build \u2192 dispatch paper testing card\n   - After paper testing \u2192 dispatch pre-live verification\n   - After data pipeline improvements \u2192 dispatch model training  \n6. **Report concisely** \u2014 4-5 line summary: what completed, what's running, what's blocked, next bottleneck\n\nPROACTIVE ACTIONS (you can take autonomously):\n- If all P3 strategy cards complete, create paper-testing cards for the strategies\n- If MLflow training completes, review results and create model evaluation/tuning cards\n- If data pipeline cards complete, create ML training cards with the improved data\n- If profiles are idle with no ready cards for them, create new cards from the cycle-trading strategy document at /home/frank/obsidian/quant-team/governance/cycle-trading-2026-07-05.md\n- Check data freshness periodically \u2014 is funding_rate_history fresh? Is macro_context_daily populated?\n\nTOOLS AVAILABLE:\n- ML: sycodetrading-ml-trainer container (LightGBM 4.5, XGBoost 2.1, torch 2.5, scikit-learn 1.6)\n- MLflow: sycodetrading-mlflow-server (port 5051)  \n- DB: sycodetrading-supabase-db (Postgres 17)\n- GPU: NVIDIA GB10 (DGX Spark)\n\nBoard path: ~/.hermes/kanban/boards/sycode-trading/kanban.db\n",
-      "provider": "nous",
-      "provider_snapshot": "gemini",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 10m",
-        "kind": "interval",
-        "minutes": 10
-      },
-      "schedule_display": "every 10m",
-      "script": null,
-      "skill": "multi-goal-orchestrator",
-      "skills": [
-        "multi-goal-orchestrator",
-        "kanban-orchestrator",
-        "proactive-pm-protocol",
-        "trading-systems-operations"
-      ],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-07-05T09:38:48.145119+01:00",
-      "deliver": "origin",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "d02673f760aa",
-      "model": "deepseek-ai/deepseek-v4-pro",
-      "model_snapshot": null,
-      "name": "hermes-trading-hourly-pipeline",
-      "no_agent": false,
-      "origin": {
-        "chat_id": "127281456513060@lid",
-        "chat_name": "Frank",
-        "platform": "whatsapp",
-        "thread_id": null,
-        "user_id": "447846416003@s.whatsapp.net"
-      },
-      "paused_at": "2026-07-10T19:54:06.014714+01:00",
-      "paused_reason": null,
-      "prompt": "Run the Hermes Trading pipeline in paper mode. Execute: cd /home/frank/hermes-trading && python3 -c \"\nimport sys; sys.path.insert(0, '.')\nfrom orchestrator import TradingOrchestrator\norch = TradingOrchestrator(testnet=True, mode='paper')\norch.run()\n\" 2>&1\n\nRules:\n- Testnet only, paper mode only.\n- Do NOT enable live trading.\n- If the risk engine kill-switch is active, report it and stop.\n- Log all output to /home/frank/hermes-trading/logs/cron-run-{timestamp}.log\n- Report any confirmed trades or risk events to the user.",
-      "provider": "nvidia",
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "0 * * * *",
-        "expr": "0 * * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "0 * * * *",
-      "script": null,
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-05T12:59:58.350928+01:00",
       "deliver": "local",
       "enabled": true,
@@ -3246,45 +2646,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-05T15:10:30.138699+01:00",
-      "deliver": "origin",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "f9aac66d5b49",
-      "model": "tencent/hy3:free",
-      "model_snapshot": "gemini-3.5-flash",
-      "name": "deploy-sycodeserver",
-      "no_agent": false,
-      "origin": {
-        "chat_id": "1521955147411095716",
-        "chat_name": "Hermes-jarvis / #general",
-        "platform": "discord",
-        "thread_id": null,
-        "user_id": "566415197649240064"
-      },
-      "paused_at": "2026-07-06T05:14:46.358193+01:00",
-      "paused_reason": "t_6bacc651: disabled P0 auto-deployer because 15m force-recreate can sweep paper positions, ignore deploy-deferred commits/migrations, and fight seat-owned deploys. Do not resume until single deploy authority + position-safe gate are implemented.",
-      "prompt": "Run the SycodeTrading server deployment agent via deploy_sycodeserver.sh and deliver the result.\n\nThe script -- deploy_sycodeserver.sh -- runs /home/frank/sycode-trading/execution/deploy_sycodeserver.py which produces a JSON deploy report on stdout. Read the script output (its stdout goes to cron output), interpret the JSON, and deliver a concise human-readable report back to the origin chat.\n\nThe JSON report has these keys: action (noop/deploy/build_failed), deployed_sha, pending_sha, deployed (bool), rolled_back (bool), errors (list), warnings (list), health_ok (bool|null), signals_ok (dict|null), build_time_s (float|null).\n\nInterpretation rules:\n- action=noop \u2192 \"\u2705 Server current at [deployed_sha[:12]] \u2014 nothing to deploy.\"\n- action=deploy AND deployed=true \u2192 \"\u2705 Deployed [pending_sha[:12]] in [build_time_s]s. Health OK. Signals: [signals_ok]\"\n- action=build_failed \u2192 \"\u274c Build failed for [pending_sha[:12]]. Error: [errors[0]]\"\n- rolled_back=true AND health_ok=false \u2192 \"\u26a0\ufe0f Health failed. Rolled back to [deployed_sha[:12]]. Deploy agent rolled back automatically.\"\n- errors present and no deploy happened \u2192 \"\ud83d\udd34 Pipeline error: [errors[0]]\"\n\nKeep it short. This is a deployment status update.",
-      "provider": "nous",
-      "provider_snapshot": "gemini",
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 15m",
-        "kind": "interval",
-        "minutes": 15
-      },
-      "schedule_display": "every 15m",
-      "script": "deploy_sycodeserver.sh",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-07-05T19:46:47.755512+01:00",
       "deliver": "local",
       "enabled": true,
@@ -3314,7 +2675,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -3869,41 +3230,6 @@
     {
       "base_url": null,
       "context_from": null,
-      "created_at": "2026-07-28T17:40:33.234634+00:00",
-      "deliver": "local",
-      "disabled_by": "t_5b07664c",
-      "disabled_reason": "t_5b07664c: staged for review in disabled/paused state. To activate: review, then set enabled=true AND (separately) arm LIVE=true per the staging runbook. Rehomed from devops store (t_c8241b86 GATE B) to jarvis live store.",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "319421d9afc4",
-      "model": null,
-      "model_snapshot": null,
-      "name": "budget-exhausted-actuator-staged",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-07-28T17:40:33.234634+00:00",
-      "paused_reason": "t_5b07664c: STAGED companion cron for review - disabled and paused. Default run is DRY-RUN (classifies + logs, mutates nothing). Arming requires a separate operator/Frank approval to set LIVE=true. Rehomed from devops store (t_c8241b86 GATE B) to jarvis live store.",
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 10m",
-        "kind": "interval",
-        "minutes": 10
-      },
-      "schedule_display": "every 10m",
-      "script": "budget-exhausted-actuator.sh",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": "/home/frank/.hermes/profiles/jarvis/scripts"
-    },
-    {
-      "base_url": null,
-      "context_from": null,
       "created_at": "2026-08-01T13:03:06.853643+01:00",
       "deliver": "local",
       "enabled": true,
@@ -3933,7 +3259,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 4
     },
     {
       "base_url": null,
@@ -4343,41 +3669,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-08-03T10:02:24.125044+01:00",
-      "deliver": "local",
-      "enabled": true,
-      "enabled_toolsets": null,
-      "id": "32121fb396af",
-      "timeout": 10800,
-      "model": null,
-      "model_snapshot": null,
-      "name": "nightly-fleet-backup",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": null,
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "30 4 * * *",
-        "expr": "30 4 * * *",
-        "kind": "cron"
-      },
-      "schedule_display": "30 4 * * *",
-      "script": "nightly-backup.sh",
-      "skill": null,
-      "skills": [],
-      "state": "scheduled",
-      "workdir": null,
-      "failure_streak": 2
     },
     {
       "base_url": null,
@@ -5450,42 +4741,6 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0
-    },
-    {
-      "base_url": null,
-      "context_from": null,
-      "created_at": "2026-08-13T21:32:11.823774+01:00",
-      "deliver": "local",
-      "enabled": false,
-      "enabled_toolsets": null,
-      "id": "967491bde125",
-      "model": null,
-      "model_snapshot": null,
-      "monitor_script": null,
-      "monitor_state": null,
-      "monitor_url": null,
-      "name": "jarvis-buzz-mention-router",
-      "no_agent": true,
-      "origin": null,
-      "paused_at": "2026-08-13T21:39:36.522476+01:00",
-      "paused_reason": null,
-      "prompt": "",
-      "provider": null,
-      "provider_snapshot": null,
-      "repeat": {
-        "times": null
-      },
-      "schedule": {
-        "display": "every 2m",
-        "kind": "interval",
-        "minutes": 2
-      },
-      "schedule_display": "every 2m",
-      "script": "jarvis-buzz-mention-router.py",
-      "skill": null,
-      "skills": [],
-      "state": "paused",
-      "workdir": null
     },
     {
       "base_url": null,

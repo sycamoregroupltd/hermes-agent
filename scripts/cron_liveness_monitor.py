@@ -323,9 +323,34 @@ def run_scan() -> tuple[list[dict], list[str], list[str]]:
 
 
 def _selftest() -> int:
+    """Hermetic self-test wrapper (ESTOP-leak class, Frank 2026-08-28).
+
+    Runs the deterministic tests against a THROWAWAY HERMES_HOME (temp dir) so
+    no self-test write — ESTOP sentinels, *.ESTOP variants, fake probe scripts,
+    synthetic cron stores — can ever land in a real profile dir. The previous
+    structure wrote sentinels under the real ~/.hermes/profiles/... during the
+    ESTOP-skip assertions and did not reliably clean up; a stray reason:null
+    sentinel froze the jarvis profile (cron dispatch silently skipped) on
+    2026-08-28 14:56. try/finally guarantees HERMES_HOME restoration AND temp
+    dir removal on every exit path (pass or fail).
+    """
+    import shutil
+    import tempfile
+    _orig_home = HERMES_HOME
+    tmp = Path(tempfile.mkdtemp())
+    globals()["HERMES_HOME"] = tmp
+    try:
+        return _selftest_body()
+    finally:
+        globals()["HERMES_HOME"] = _orig_home
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _selftest_body() -> int:
     """Deterministic offline tests for the union liveness logic."""
     from datetime import datetime as _dt
     failures = []
+    import shutil
     import tempfile
     tmp = Path(tempfile.mkdtemp())
 
@@ -450,6 +475,7 @@ def _selftest() -> int:
             failures.append("after resume, profile should NOT be SUSPENDED")
     finally:
         globals()["HERMES_HOME"] = _orig_home
+        shutil.rmtree(home2, ignore_errors=True)
 
     if failures:
         print("SELFTEST_FAIL")

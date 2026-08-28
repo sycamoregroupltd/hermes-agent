@@ -374,7 +374,44 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 3
+      "failure_streak": 0
+    },
+    {
+      "id": "a594dc5be4bf",
+      "name": "frank-gate-premise-probe",
+      "prompt": "Script-only (no_agent) frank_gate premise-activity probe cron wrapper (deploy card jarvis-os/t_64a1f191, Frank A3 GO 2026-08-28). Runs the os-reviewer-approved probe /home/frank/.hermes/scripts/frank-gate-probe/frank_gate_premise_probe.py (md5 bccd76a7b1b8feb93810308f7891a66c) in default read-only dry-run mode over jarvis-os + sycode-trading. Wrapper emits stdout only when >=1 blocked frank_gate card is examined (RECOMMEND-RETIRE/DECLINE evidence lines) \u2014 delivered to the jarvis/PM lane via bot-chat:jarvis; empty stdout (0 cards) is a silent no-op. RECOMMEND-ONLY: no status mutations, no board writes, never auto-retires.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "frank-gate-probe/frank_gate_premise_cron.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-28T16:13:49.884319+01:00",
+      "failure_streak": 0,
+      "deliver": "bot-chat:jarvis",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }

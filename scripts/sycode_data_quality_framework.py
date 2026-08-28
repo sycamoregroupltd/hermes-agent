@@ -165,10 +165,19 @@ HERMES_BIN = os.environ.get("HERMES_BIN", "/home/frank/.local/bin/hermes")
 
 
 def run_sql(sql):
-    """Executes SQL against the Supabase database in read-only mode."""
+    """Executes SQL against the Supabase database in read-only mode.
+
+    Durable lock-tangle guard (t_c84d7d72, anchor t_23839e98): an explicit
+    statement_timeout bounds every read so a runaway full-table scan cannot
+    hold locks for extended time and tangle with other backends (root cause of
+    the 70+ stalled-backend circular lock tangle, 2026-07-12). Mirrors the
+    durable server-side guard (postgres role statement_timeout=60s in
+    pg_roles.rolconfig); keeping it explicit here makes the behavior robust
+    even if a connection resolves to a different role.
+    """
     cmd = [
         "docker", "exec",
-        "-e", "PGOPTIONS=-c default_transaction_read_only=on",
+        "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=60s",
         DB_CONTAINER,
         "psql", "-U", "postgres", "-d", "postgres",
         "-X", "-q", "-v", "ON_ERROR_STOP=1", "--csv", "-c", sql,

@@ -48,9 +48,6 @@ psqlq() { docker exec "$DB_CONTAINER" psql -U postgres -d postgres -tAc "$1" 2>/
 
 send_alert() {
     local key="$1" subject="$2" body="$3"
-    # 2026-08-27: also write the alert to the BOARD — the only channel Frank reads.
-    # Additive and non-fatal: never let a card write break a monitor.
-    "$HOME/.hermes/scripts/fleet-alert-card.sh" "$key" "$subject" "$body" >/dev/null 2>&1 || true
     local last
     last=$(grep -a "^${key}=" "$MON_STATE" 2>/dev/null | tail -1 | cut -d= -f2)
     if [ -n "${last:-}" ] && [ $((now_epoch - last)) -lt "$REALERT_SECS" ]; then
