@@ -42,5 +42,9 @@ fi
 flock -n "$DESK/.watchman-guard.lock" -c \
   "cd $DESK && nohup setsid $PY gateway/watchman.py >> watchman.log 2>&1 &" || true
 hermes send -t telegram "HL DESK GUARD: watchman was DEAD (${age}s stale) with $npos open position(s) on 0x62d2..d747. Restarted it. Check the desk." || true
+env -u HERMES_DELEGATED_CHILD_CONTEXT hermes kanban --board jarvis-os create \
+  "HL DESK GUARD: watchman restarted (${age}s stale, $npos open)" \
+  --body "Watchman was DEAD (${age}s stale) with $npos open position(s) on 0x62d2..d747. Guard restarted it. Telegram alert also sent. Check the desk." \
+  || true
 echo "guard: positions=$npos watchman stale ${age}s — restarted + alerted"
 exit 1

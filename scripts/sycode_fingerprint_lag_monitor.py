@@ -69,7 +69,7 @@ CRIT_P95_MIN = float(os.getenv("GQT_FP_CRIT_P95_MIN", "60.0"))    # escalation
 CRIT_RATIO = float(os.getenv("GQT_FP_CRIT_RATIO", "0.90"))        # escalation
 REMIND_SECONDS = int(os.getenv("GQT_FP_REMIND_SECONDS", str(6 * 3600)))
 
-KANBAN_BOARD = os.getenv("GQT_FP_KANBAN_BOARD", "sycode-trading")
+KANBAN_BOARD = os.getenv("GQT_FP_KANBAN_BOARD", "jarvis-os")
 KANBAN_ASSIGNEE = os.getenv("GQT_FP_KANBAN_ASSIGNEE", "sycode-trading-pm")
 TELEGRAM_TARGET = os.getenv("GQT_FP_TELEGRAM_TARGET", "telegram")
 STANDING_CARD_IDEM_KEY = "gqt-fingerprint-lag-g-f1-standing"

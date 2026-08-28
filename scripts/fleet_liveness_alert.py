@@ -29,6 +29,10 @@ from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.join(HERE, "fleet_liveness_churn.py")
+# The engine imports hermes_cli/hermes_state; under the SYSTEM python (3.12)
+# that resolves to a stale installed copy missing hermes_state_common, so it
+# must run under the Hermes venv python (3.11) like hermes itself does.
+VENV_PY = "/home/frank/.hermes/hermes-agent/venv/bin/python3"
 
 METRICS_DIR = "/home/frank/.hermes/metrics"
 LOG_DIR = "/home/frank/.hermes/logs"
@@ -60,7 +64,13 @@ def log(msg):
 
 
 def measure():
-    out = subprocess.run([sys.executable, ENGINE], capture_output=True, text=True)
+    env = os.environ.copy()
+    # The engine imports hermes_cli, which warns when HERMES_HOME is unset and
+    # would write state to the DEFAULT profile instead of the jarvis profile
+    # (issue #18594; observed every 10 min in fleet-liveness-alert.log).
+    env.setdefault("HERMES_HOME", "/home/frank/.hermes/profiles/jarvis")
+    py = VENV_PY if os.path.exists(VENV_PY) else sys.executable
+    out = subprocess.run([py, ENGINE], capture_output=True, text=True, env=env)
     if out.returncode != 0:
         log(f"MEASURE_FAIL rc={out.returncode} err={out.stderr[:300]}")
         return None
