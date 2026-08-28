@@ -270,6 +270,13 @@ def main() -> None:
             continue
         if not job.get("enabled", True):
             continue
+        # Tourniquet-paused jobs (paused_at set by operator/PM) are intentionally
+        # not running; flagging them OVERDUE/ERROR churns the health key and
+        # created false CRON-HEALTH cards (acradr pair, t_6de4fd95/t_b4409ee8,
+        # observed 2026-08-28 — pause_reason documented but paused_at never landed).
+        # Skip them like disabled jobs.
+        if job.get("paused_at"):
+            continue
         scanned_jobs += 1
         name = job.get("name") or job.get("id") or "<unnamed>"
         prefix = f"{profile}/{name}"

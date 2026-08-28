@@ -6,6 +6,19 @@ TS=$(date +%Y%m%d-%H%M%S)
 DEST="$HOME/fleet-backups/$TS"
 mkdir -p "$DEST"
 
+# Retention runs FIRST, before the tars and the rsync. It used to be the last step, which meant
+# that once this job started exceeding the hermes 3600s cron timeout the prune never executed and
+# snapshots accumulated at ~5G/night until the Mac filled (observed 2026-08-20: 13 nights, 65G).
+# Pruning up front also frees the space this run is about to consume. Today's $DEST is never
+# matched: it is minutes old and both finds require -mtime +7 / +14.
+# Retention — BOTH sides. The remote was previously never pruned, which was survivable while the
+# payload was small but is not now: adding the two vault tars took a night from ~0.8G to ~4.6G, and
+# the Mac had 74G free, i.e. ~16 nights to a full disk and a silently failing backup.
+# Remote keeps 7 (≈32G) rather than 14 (≈64G) purely for headroom on that volume.
+find "$HOME/fleet-backups" -maxdepth 1 -type d -name "20*" -mtime +14 -exec rm -rf {} + 2>/dev/null || true
+ssh mac 'find ~/dgx-fleet-backups -maxdepth 1 -type d -name "20*" -mtime +7 -exec rm -rf {} + 2>/dev/null' \
+    || echo "WARNING: remote retention prune failed — check ssh mac df -h \~"
+
 for b in upero sycode-ai sycode-trading jarvis-os; do
     db="$HOME/.hermes/kanban/boards/$b/kanban.db"
     [ -f "$db" ] && sqlite3 "$db" ".backup $DEST/kanban-$b.db"
@@ -56,31 +69,56 @@ done
 echo "$TS" > "$HOME/fleet-backups/LATEST"
 
 # Push off-box (Mac alias from ~/.ssh/config; BatchMode)
-# The rsync EXIT CODE is checked. It previously was not: the script printed "pushed" and then
-# "[SILENT] ... ok" whatever rsync did, so a failed push (e.g. remote disk full) was indistinguishable
+# The rsync EXIT CODE is checked. It previously was not: the script printed "pushed" and
+# then "[SILENT] ... ok" whatever rsync did, so a failed push (e.g. remote disk full) was indistinguishable
 # from a good one. Under the [SILENT] convention that meant a dead backup looked healthy — the same
 # fabricated-success class this whole backup fix exists to kill.
+# HARDENED 2026-08-28 (t_f340551d): the Tailscale path to the Mac is slow (~1-1.4MB/s, ~46ms RTT)
+# and intermittently stalls. Observed 2026-08-27 18:50: rsync made zero progress for >51min (remote
+# dir 20260827-185023 left EMPTY with LATEST pointing at it) until the 3600s cron timeout killed the
+# run. Changes:
+#   * --timeout=300          -> abort a stalled transfer after 5min of zero progress instead of hanging forever
+#   * --partial              -> keep partially-transferred files on interrupt (openrsync receiver: no --append support)
+#   * bounded retry loop     -> rides out transient Tailscale stalls (3 attempts, 60s backoff)
+#   * remote size check      -> verify the tars landed with matching sizes; fail loudly if not
 if ssh mac true 2>/dev/null; then
-    if rsync -a "$HOME/fleet-backups/$TS" "$HOME/fleet-backups/LATEST" mac:dgx-fleet-backups/; then
-        echo "pushed $TS to mac:dgx-fleet-backups/"
-    else
+    push_ok=0
+    for attempt in 1 2 3; do
+        if rsync -a --timeout=300 --partial \
+            "$HOME/fleet-backups/$TS" "$HOME/fleet-backups/LATEST" mac:dgx-fleet-backups/; then
+            push_ok=1
+            break
+        fi
         rc=$?
-        echo "BACKUP PUSH FAILED: rsync exited $rc — $TS exists locally but NOT off-box."
-        echo "  Check remote free space: ssh mac df -h \~"
+        echo "WARNING: rsync attempt $attempt/3 failed (rc=$rc) — retrying in 60s" >&2
+        [ "$attempt" -lt 3 ] && sleep 60
+    done
+    if [ "$push_ok" -ne 1 ]; then
+        echo "BACKUP PUSH FAILED: all 3 rsync attempts failed — $TS exists locally but NOT off-box."
+        echo "  Check ssh mac / Tailscale link (tailscale status); remote free space: ssh mac df -h ~"
         exit 1
     fi
+    # Remote completeness check: the tars must be present with matching sizes.
+    missing=0
+    for f in hermes-state.tar.gz obsidian-fleet-vault.tar.gz obsidian.tar.gz; do
+        if [ -f "$HOME/fleet-backups/$TS/$f" ]; then
+            local_sz=$(stat -c %s "$HOME/fleet-backups/$TS/$f")
+            remote_sz=$(ssh mac "stat -f %z ~/dgx-fleet-backups/$TS/$f" 2>/dev/null || echo 0)
+            if [ "$local_sz" != "$remote_sz" ]; then
+                echo "WARNING: remote $f size mismatch (local=$local_sz remote=$remote_sz)" >&2
+                missing=1
+            fi
+        fi
+    done
+    if [ "$missing" -ne 0 ]; then
+        echo "BACKUP PUSH INCOMPLETE: some files did not reach mac:dgx-fleet-backups/$TS — do not trust LATEST until verified."
+        exit 1
+    fi
+    echo "pushed $TS to mac:dgx-fleet-backups/ (verified)"
 else
     echo "WARNING: mac unreachable — backup is on-box only at $DEST"
     exit 1
 fi
-
-# Retention — BOTH sides. The remote was previously never pruned, which was survivable while the
-# payload was small but is not now: adding the two vault tars took a night from ~0.8G to ~4.6G, and
-# the Mac had 74G free, i.e. ~16 nights to a full disk and a silently failing backup.
-# Remote keeps 7 (≈32G) rather than 14 (≈64G) purely for headroom on that volume.
-find "$HOME/fleet-backups" -maxdepth 1 -type d -name "20*" -mtime +14 -exec rm -rf {} + 2>/dev/null || true
-ssh mac 'find ~/dgx-fleet-backups -maxdepth 1 -type d -name "20*" -mtime +7 -exec rm -rf {} + 2>/dev/null' \
-    || echo "WARNING: remote retention prune failed — check ssh mac df -h \~"
 
 # Report remaining remote headroom so exhaustion is visible BEFORE it breaks the backup.
 avail=$(ssh mac "df -g ~ | awk 'NR==2{print \$4}'" 2>/dev/null || echo "")
