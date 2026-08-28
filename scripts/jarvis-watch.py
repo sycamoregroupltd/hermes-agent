@@ -75,6 +75,14 @@ def running_runs() -> list[Run]:
                 FROM task_runs r
                 LEFT JOIN tasks t ON t.id = r.task_id
                 WHERE r.status='running' AND r.ended_at IS NULL
+                  -- Ghost-run guard (2026-08-25): a run row can stay 'running'
+                  -- forever when its worker dies without a terminal (rc=0
+                  -- protocol violations, archived test artifacts). The card's
+                  -- own status is authoritative: only report runs whose task
+                  -- is STILL running. Verified live: jarvis-os t_a6e7616c was
+                  -- archived on 2026-08-02 yet its run #102708 showed as a
+                  -- 23-day-old "running agent" in every FLEET LIVE report.
+                  AND t.status = 'running'
                 ORDER BY r.started_at DESC
                 """
             ).fetchall()
