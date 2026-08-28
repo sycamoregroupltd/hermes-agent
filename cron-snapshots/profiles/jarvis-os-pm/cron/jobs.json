@@ -135,7 +135,7 @@
         "terminal"
       ],
       "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading",
-      "failure_streak": 1
+      "failure_streak": 0
     },
     {
       "id": "ac9fd7e91dac",
@@ -374,7 +374,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 17
     }
   ]
 }

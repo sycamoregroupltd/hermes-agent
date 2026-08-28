@@ -119,7 +119,7 @@ def board_counts() -> dict[str, dict[str, int | str]]:
             continue
         counts: dict[str, int | str] = {}
         try:
-            conn = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
             try:
                 for status in ("blocked", "ready", "running", "todo"):
                     counts[status] = int(

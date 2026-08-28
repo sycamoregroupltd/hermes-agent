@@ -2146,6 +2146,21 @@ def self_heal(breaches):
 # MAIN EXECUTION ENTRY POINT
 # ----------------------------------------------------------------------------
 
+def _fmt_lag_hours(value):
+    """Format a pipeline-lag hours value for the scorecard.
+
+    inspect_queues.safe_lag returns the string "UNKNOWN" when the backing query
+    times out (statement_timeout / DB lock contention — see t_d9c7537b), so a
+    bare {value:.1f} raises "Unknown format code 'f' for object of type 'str'"
+    and crashes the whole audit BEFORE kanban routing happens. Format numerics
+    and pass through non-numeric sentinels verbatim (same hardening the breach
+    evaluation already applies at lines 583-617).
+    """
+    if isinstance(value, (int, float)):
+        return f"{float(value):.1f}h"
+    return f"{value}h"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Continuous Data Integrity Monitor & Evidence Collector")
     parser.add_argument("--test", action="store_true", help="run comprehensive unit tests with mock DB")
@@ -2174,9 +2189,9 @@ def main():
     print(f"Orphan trade_close positions:  {results['orphans']['trade_close_positions']['count']}")
     print(f"Finalizer Queue Backlog:       {results['queues']['finalizer_backlog']}")
     print(f"Binary Label Backlog:          {results['queues']['binary_backlog']}")
-    print(f"Finalizer pipeline lag:        {results['queues']['finalizer_lag_hours']:.1f}h")
-    print(f"Trade Close pipeline lag:      {results['queues']['closer_lag_hours']:.1f}h")
-    print(f"Binary Labeler pipeline lag:   {results['queues']['binary_lag_hours']:.1f}h")
+    print(f"Finalizer pipeline lag:        {_fmt_lag_hours(results['queues']['finalizer_lag_hours'])}")
+    print(f"Trade Close pipeline lag:      {_fmt_lag_hours(results['queues']['closer_lag_hours'])}")
+    print(f"Binary Labeler pipeline lag:   {_fmt_lag_hours(results['queues']['binary_lag_hours'])}")
     print(f"Failed DLQ Outcome events:     {results['dlq']['count']}")
     print(f"\n--- COHORT ACCRUAL PROGRESS ---")
     print(f"Signals since Epoch:           {results['cohort']['signals']}")

@@ -1,263 +1,28 @@
 {
   "jobs": [
     {
-      "id": "5670f9ca0a19",
-      "name": "sidecar-freshness-check",
-      "prompt": "Run the sidecar SQLite freshness check script and report any degraded/critical stores. If all stores are OK, report silently (just 'all ok'). If any store is degraded or missing, report the specific alerts. Reference the catalog at [[research/2026-07-04-sidecar-sqlite-catalog]] in Obsidian vault /home/frank/obsidian/sycode-trading/ for context.",
-      "skills": [
-        "obsidian-knowledge-management"
-      ],
-      "skill": "obsidian-knowledge-management",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
-      "provider_snapshot": "openai-codex",
-      "model_snapshot": "gpt-5.5",
-      "base_url": null,
-      "script": "sidecar-freshness-check.py",
-      "no_agent": false,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 30,
-        "display": "every 30m"
-      },
-      "schedule_display": "every 30m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-28T12:10:28.858734+01:00",
-      "paused_reason": null,
-      "created_at": "2026-07-04T22:04:17.320389+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "3dd1697fc4e7",
-      "name": "catalyst-feed-production-gate-monitor",
-      "prompt": "Run the catalyst-feed production gate monitor. Executes export_market_news.py to refresh staging files, checks if 1000+ rows are ready, and if so creates a kanban card for trading-risk-reviewer to approve the production write.",
+      "id": "cd56040ea942",
+      "name": "pm-updown-diparb-forward-collector",
+      "prompt": "Run the forward Polymarket up/down dip-arb data collector for the 2-4 week paper test (task t_b21fae47). Execute: cd /home/frank/wallet-intel/pm-updown-diparb && ./.venv/bin/python run_continuous.py --assets btc,eth,sol,xrp --tfs 5m,15m --minutes 12. This captures CLOB book, Data API trades, RTDS Chainlink TWAP, and CLOB /price & /midpoint to append-only JSONL under data/ and detections/ \u2014 all read-only public endpoints, zero credentials, PAPER ONLY. Script is self-bounded to 12 min; cadence 11 min gives overlap so no round-opening is missed. Report only: rows appended (book/trade/twap/exec counts), any errors, next run expected. Do not place trades, do not touch credentials, do not alter any other system.",
       "skills": [],
       "skill": null,
-      "model": "tencent/hy3:free",
-      "provider": "nous",
-      "provider_snapshot": "openai-codex",
-      "model_snapshot": "gpt-5.5",
-      "base_url": null,
-      "script": "catalyst-feed-gate-monitor.py",
-      "no_agent": false,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 60,
-        "display": "every 60m"
-      },
-      "schedule_display": "every 60m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-03T10:25:49.208918+01:00",
-      "paused_reason": "migrated to trading-devops store (t_0814e3b3)",
-      "created_at": "2026-07-04T22:56:02.352763+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": [
-        "terminal",
-        "file"
-      ],
-      "workdir": "/home/frank/sycode-trading/reports/catalyst-feed"
-    },
-    {
-      "id": "8db4d896efe1",
-      "name": "weekend-short-29-verify",
-      "prompt": "Run the weekend Short 1m (strategy 29) post-weekend verification script and report results. This is a follow-up from the 1m signal pipeline fix (t_701c8072, t_9814dde1). The weekend period (Sat 00:00 UTC Jul 4 \u2192 Mon 00:00 UTC Jul 6) has just concluded. The script checks if strategy 29 produced any SHORT 1m signals with trigger_score >= 95 on its 7 target symbols. Run the script and deliver its full output. If the result is zero signals, add analysis about whether this is likely natural market conditions (altcoins in bullish phase) or indicates a remaining pipeline issue.",
-      "skills": [],
-      "skill": null,
-      "model": "tencent/hy3:free",
-      "provider": "nous",
-      "provider_snapshot": "openai-codex",
-      "model_snapshot": "gpt-5.5",
-      "base_url": null,
-      "script": "weekend-short-29-verify.sh",
-      "no_agent": false,
-      "context_from": null,
-      "schedule": {
-        "kind": "once",
-        "run_at": "2026-07-06T00:15:00+01:00",
-        "display": "once at 2026-07-06 00:15"
-      },
-      "schedule_display": "once at 2026-07-06 00:15",
-      "repeat": {
-        "times": 1
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-28T12:10:10.697308+01:00",
-      "paused_reason": null,
-      "created_at": "2026-07-05T16:31:06.683684+01:00",
-      "deliver": "origin",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "4eb82852ecc5",
-      "name": "sycode-data-quality-framework-monitor",
-      "prompt": "Run the Sycode Trading Data Quality and Pipeline Health framework script to refresh the Obsidian dashboard and alert on any connection leaks, stale tables, feature density drops, or outcome factory stalls.",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "sycode_data_quality_framework.py",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 60,
-        "display": "every 60m"
-      },
-      "schedule_display": "every 60m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-28T12:10:29.237284+01:00",
-      "paused_reason": null,
-      "created_at": "2026-07-06T17:51:23.050613+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "748de258cba0",
-      "name": "monitor-blur-hyperliquid-funding",
-      "prompt": "",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "monitor_blur_funding.py",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 60,
-        "display": "every 60m"
-      },
-      "schedule_display": "every 60m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "disabled",
-      "paused_at": "2026-08-02T21:15:00+01:00",
-      "paused_reason": "t_fbc62972: workdir pointed at garbage-collected kanban workspace t_e6639cce (GONE). Prototype monitor_blur_funding.py is superseded by the maintained collect_blur.py at /home/frank/.hermes/profiles/trading-data-oracle/blur-monitor (see jobs 6c084e12014f / 8033879cd039, already pointing at the permanent dir).",
-      "created_at": "2026-07-08T03:58:19.250715+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "6c084e12014f",
-      "name": "BLUR funding-rate monitor (hourly)",
-      "prompt": "Run the BLUR funding-rate persistence monitor: execute `python3 /home/frank/.hermes/profiles/trading-data-oracle/blur-monitor/collect_blur.py` and report the latest HL/Binance/Bybit BLUR funding rates (annualized) and whether a PERSISTENT EXTREME alert fired (HL annualized < -200% for >=6 consecutive samples). If an ALERT line appears, escalate prominently. Keep the report to 5 lines max. This is read-only monitoring; never place orders, never change credentials.",
-      "skills": [],
-      "skill": null,
-      "model": "tencent/hy3:free",
+      "model": "deepseek/deepseek-v4-flash-0731",
       "provider": "nous",
       "provider_snapshot": "nous",
-      "model_snapshot": "tencent/hy3:free",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
       "base_url": null,
       "script": null,
       "no_agent": false,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
       "context_from": null,
       "schedule": {
         "kind": "interval",
-        "minutes": 60,
-        "display": "every 60m"
+        "minutes": 11,
+        "display": "every 11m"
       },
-      "schedule_display": "every 60m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-03T10:25:49.229055+01:00",
-      "paused_reason": "migrated to trading-devops store (t_0814e3b3)",
-      "created_at": "2026-07-09T10:22:00.281109+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor"
-    },
-    {
-      "id": "8033879cd039",
-      "name": "BLUR funding-rate monitor (hourly) re-registered t_6b1b1589",
-      "prompt": "Read-only BLUR funding-rate persistence monitor. Execute collect_blur.py to append a row to data/blur_funding_timeseries.csv and emit the built-in persistent-extreme alert if Hyperliquid annualized BLUR funding is below -200% for >=6 consecutive samples. Public endpoints only; never place orders, never insert trade_intents, never change credentials, never allocate capital.",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "blur_funding_monitor_collect.py",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 60,
-        "display": "every 60m"
-      },
-      "schedule_display": "every 60m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-28T12:23:42.837551+01:00",
-      "paused_reason": null,
-      "created_at": "2026-07-28T10:12:14.288075+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/blur-monitor"
-    },
-    {
-      "id": "d72201006a87",
-      "name": "e4-hl-vaults-oos-weekly-pull",
-      "prompt": "E4 HL vaults OOS weekly pull (t_b62fa701): run the data-only collector for the frozen 22-vault shortlist + HLP. Appends raw JSON + sha256 + metrics to the Sycode vault tracker note (append-only). No capital action.",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "e4_hl_vault_oos_weekly.py",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "cron",
-        "expr": "0 9 * * 3",
-        "display": "0 9 * * 3"
-      },
-      "schedule_display": "0 9 * * 3",
+      "schedule_display": "every 11m",
       "repeat": {
         "times": null
       },
@@ -265,11 +30,12 @@
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
-      "created_at": "2026-08-03T11:26:16.015984+01:00",
+      "created_at": "2026-08-28T02:15:21.172035+01:00",
+      "failure_streak": 11,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": "/home/frank/.hermes/profiles/trading-data-oracle/e4-hl-vaults-oos"
+      "workdir": null
     }
   ]
 }

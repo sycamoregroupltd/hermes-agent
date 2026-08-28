@@ -169,7 +169,7 @@ def check_reviewer_events(conn, cutoff_ts, fix_deploy_ts):
 
 def scan_board(name, db_path, cutoff_ts, fix_deploy_ts):
     """Scan one board for reviewer-routing events."""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True, timeout=10)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
     cap_events, reblocks, post_fix = check_reviewer_events(
         conn, cutoff_ts, fix_deploy_ts

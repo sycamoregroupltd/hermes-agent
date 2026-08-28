@@ -104,7 +104,11 @@ def probe_board(board: str, now: int) -> dict:
     # sqlite raises OperationalError on any write against a ro connection.
     uri = "file:%s?mode=ro" % path
     try:
-        # timeout=0 + immutable=1: never blocks on a lock, never waits, pure read.
+        # timeout=0, mode=ro: never blocks on a lock, never waits, pure read.
+        # immutable=1 REMOVED 2026-08-28 (fleet-wide sweep): it makes SQLite ignore
+        # the -wal file, so on this WAL board (3MB uncheckpointed) the scan silently
+        # missed every row written since the last checkpoint. Same defect already
+        # documented for verdict_router.py under t_65a0c080; it was never swept.
         conn = sqlite3.connect(uri, uri=True, timeout=0)
         conn.execute("PRAGMA query_only = ON;")
     except sqlite3.Error as exc:

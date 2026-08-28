@@ -169,7 +169,7 @@ def _card_status(task_id: str) -> str | None:
         return None
     import sqlite3
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
         con.close()
         return row[0] if row else None
@@ -184,7 +184,7 @@ def existing_open_card(key: str) -> str | None:
         return None
     import sqlite3
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         placeholders = ",".join("?" * len(OPEN_STATUSES))
         row = con.execute(
             f"SELECT id FROM tasks WHERE idempotency_key=? AND created_by=? "

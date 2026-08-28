@@ -1510,7 +1510,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 1
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1610,7 +1610,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 1
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -1747,7 +1747,7 @@
       "state": "scheduled",
       "workdir": null,
       "failure_streak": 0,
-      "timeout": 420
+      "timeout": 900
     },
     {
       "base_url": null,
@@ -3084,7 +3084,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -3598,7 +3598,7 @@
       "name": "enhanced-acradr-anomaly-detector",
       "no_agent": true,
       "origin": null,
-      "paused_at": "2026-08-21T21:02:51.978753+01:00",
+      "paused_at": "2026-08-28T01:53:55.224581+01:00",
       "paused_reason": null,
       "prompt": "",
       "provider": null,
@@ -3632,7 +3632,7 @@
       "name": "enhanced-acradr-liveness-watchdog",
       "no_agent": true,
       "origin": null,
-      "paused_at": "2026-08-22T14:34:45.776803+01:00",
+      "paused_at": "2026-08-28T01:53:55.968646+01:00",
       "paused_reason": null,
       "prompt": "",
       "provider": null,
@@ -3933,7 +3933,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 8
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4352,6 +4352,7 @@
       "enabled": true,
       "enabled_toolsets": null,
       "id": "32121fb396af",
+      "timeout": 10800,
       "model": null,
       "model_snapshot": null,
       "name": "nightly-fleet-backup",
@@ -4376,7 +4377,7 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 1
+      "failure_streak": 2
     },
     {
       "base_url": null,
@@ -6367,6 +6368,80 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-27T23:14:43.408264+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "ec1542567066",
+      "name": "verdict-blackhole-report",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "verdict-blackhole-report.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
+      },
+      "schedule_display": "every 360m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-28T02:01:33.263156+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "9112324413d0",
+      "name": "merge-when-green",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "merge-when-green.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 10,
+        "display": "every 10m"
+      },
+      "schedule_display": "every 10m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-28T02:14:50.863166+01:00",
       "failure_streak": 0,
       "deliver": "local",
       "origin": null,

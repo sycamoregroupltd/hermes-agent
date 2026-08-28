@@ -223,7 +223,7 @@ def check_board_violations(conn, cutoff_ts, fix_deploy_ts):
 
 def scan_board(name, db_path, cutoff_ts, fix_deploy_ts, output_json, end_ts=None):
     """Scan one board and print results."""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True, timeout=10)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
     violations, post_fix, pre_fix = check_board_violations(conn, cutoff_ts, fix_deploy_ts)
     conn.close()

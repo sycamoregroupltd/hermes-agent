@@ -360,7 +360,7 @@ def _card_status(task_id: str) -> str | None:
     if not db.exists():
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
         con.close()
         return row[0] if row else None
@@ -374,7 +374,7 @@ def _task_created_at(task_id: str) -> float | None:
     if not db.exists():
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute("SELECT created_at FROM tasks WHERE id=?", (task_id,)).fetchone()
         con.close()
         return row[0] if row and row[0] else None
@@ -390,7 +390,7 @@ def _parent_is_usable(parent: str | None) -> bool:
     if not db.exists():
         return False
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute("SELECT status FROM tasks WHERE id=?", (parent,)).fetchone()
         con.close()
         return bool(row) and row[0] not in ("archived",)
@@ -409,7 +409,7 @@ def existing_open_card(key: str) -> str | None:
     if not db.exists():
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         placeholders = ",".join("?" * len(OPEN_STATUSES))
         row = con.execute(
             "SELECT id FROM tasks WHERE idempotency_key=? AND created_by=? "
@@ -428,7 +428,7 @@ def existing_any_card(key: str) -> tuple[str | None, str | None]:
     if not db.exists():
         return None, None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute(
             "SELECT id, status FROM tasks WHERE idempotency_key=? AND created_by=? "
             "AND status != 'archived' ORDER BY created_at DESC LIMIT 1",
@@ -515,9 +515,20 @@ def derive_key(alert_text: str) -> str | None:
     # clean. Which profiles/jobs are currently failing is volatile detail and
     # belongs in the body and the recurrence comments, where it already is --
     # nothing is lost, it just stops minting cards.
-    sig_parts = sorted({i["kind"] for i in issues})
-    h = hashlib.md5("\n".join(sig_parts).encode("utf-8")).hexdigest()[:12]
-    return f"cronhealth_{h}"
+    # CONSTANT key. One current-owner packet, exactly as card t_e9ae306e asked.
+    #
+    # This is the third keying scheme and the first that actually holds. The
+    # (kind, profile, job) triple minted 232 cards against 1 resolve. Narrowing it
+    # to the KIND SET on 2026-08-27 looked right in unit tests -- same kinds gave
+    # the same key -- but LIVE it produced 2 creates and 0 dedupes in 90 minutes,
+    # because in a 74-profile fleet the set of failing KINDS moves per tick too.
+    #
+    # The lesson generalises: ANY content-derived key churns when the content is a
+    # live fault set. Identity must come from the JOB, not from what the job found.
+    # What is currently failing is volatile detail and belongs in the body and the
+    # recurrence comments -- where append_comment() already puts it -- not in the
+    # key. Nothing is lost; it just stops minting cards.
+    return "cronhealth_current"
 
 
 # ---------------------------------------------------------------------------

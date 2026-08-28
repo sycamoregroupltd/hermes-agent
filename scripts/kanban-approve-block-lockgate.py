@@ -129,11 +129,11 @@ def _iter_board_dbs():
 
 
 def _open_ro(path=None):
-    """Open read-only with ZERO locking (immutable=1) so we never block or wait on the
+    """Open read-only (mode=ro) so we never block or wait on the
     live dispatcher's writer lock. Falls back to a 1s-timeout connect only if the uri form
     is unsupported."""
     try:
-        conn = sqlite3.connect(f'''file:{path}?mode=ro&immutable=1''', uri=True, timeout=1)
+        conn = sqlite3.connect(f'''file:{path}?mode=ro''', uri=True, timeout=1)
     except sqlite3.OperationalError:
         conn = sqlite3.connect(path, timeout=1)
     return conn

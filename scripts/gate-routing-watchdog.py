@@ -178,7 +178,7 @@ def main():
         print(f"[gate-watchdog] KANBAN_DB not found: {KANBAN_DB}", flush=True)
         return 1
 
-    conn = sqlite3.connect(f"file:{KANBAN_DB}?mode=ro&immutable=1", uri=True)
+    conn = sqlite3.connect(f"file:{KANBAN_DB}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
 

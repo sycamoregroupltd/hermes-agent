@@ -221,6 +221,26 @@ FAST_QUERY_GROUPBY = {
     "signal_pnl_points": "journey_id",
 }
 
+# Gated probe-error classes (t_8bf353b4, 2026-08-28). A probe that CANNOT complete on
+# a known-large table is a probe-capability gap, not a data-staleness signal; failing the
+# whole run on it churns the cron-health canary every 30m with zero new information.
+# Each entry documents the durable fix and its gate so the gate is removed when the fix
+# lands (self-healing: once the query succeeds again the pipeline returns to fresh).
+# Table -> (known_error_substring, durable_fix_card, note)
+GATED_PROBE_ERROR_TABLES = {
+    # signal_pnl_points: 88GB no-ts-index table. max(ts) GROUP BY journey_id still times
+    # out under DB contention even after the FAST_QUERY_GROUPBY rewrite (verified still
+    # timing out at 300s statement timeout on 2026-08-28). Durable fix = single-column
+    # index on signal_pnl_points(ts) — DDL is A3/Frank-gated: card t_66d31da9 (db-architect,
+    # blocked needs_input) is the owning Frank gate; DO NOT apply DDL without approval.
+    # Once the index lands, this query returns to sub-second and the pipeline reports fresh.
+    "signal_pnl_points": (
+        "canceling statement due to statement timeout",
+        "t_66d31da9 (ADD INDEXES: signal_pnl_points/ts — Frank-gated)",
+        "88GB no-ts-index table; probe cannot complete max(ts) within statement timeout",
+    ),
+}
+
 # Trajectory-pipeline liveness (t_cf1b921d rework, data-oracle t_1cd1ea54 disposition):
 # signal_trajectory_bars is a sparse-by-design FORENSIC store — bars land only when
 # includeFullBars is true, so max(captured_at) there is NOT a producer-liveness signal.
@@ -338,8 +358,19 @@ def probe_all_pipelines():
     for t, (c, budget) in PIPELINES.items():
         kind, val = probe(t, c)
         if kind == "err":
-            pipeline_states[t] = {"status": "error", "age_h": None, "budget": budget, "error": val}
-            alerts.append("  ⚠ %s: probe error — %s" % (t, val))
+            gate = GATED_PROBE_ERROR_TABLES.get(t)
+            if gate and isinstance(val, str) and gate[0] in val:
+                # Known probe-capability gap with a documented Frank-gated durable fix
+                # (t_8bf353b4). Report it visibly but do NOT count it as an error: the
+                # probe cannot distinguish fresh vs stale on this table today, so failing
+                # every run only churns the cron-health canary. Self-heals when the fix
+                # (index DDL, card t_66d31da9) lands and the query succeeds again.
+                pipeline_states[t] = {"status": "gated", "age_h": None, "budget": budget,
+                                      "error": val, "gate": gate[1]}
+                alerts.append("  ℹ %s: GATED probe error — %s (%s)" % (t, val, gate[1]))
+            else:
+                pipeline_states[t] = {"status": "error", "age_h": None, "budget": budget, "error": val}
+                alerts.append("  ⚠ %s: probe error — %s" % (t, val))
         elif kind == "empty":
             pipeline_states[t] = {"status": "empty", "age_h": None, "budget": budget}
             alerts.append("  ⚠ %s: EMPTY (0 rows) — expected a live feed" % t)
@@ -377,10 +408,10 @@ def probe_all_pipelines():
     return pipeline_states, alerts, paired_alert
 
 
-def write_health_canary_record(pipeline_states, paired_alert, stale_count, empty_count):
+def write_health_canary_record(pipeline_states, paired_alert, stale_count, empty_count, gated_count=0):
     """Write data freshness state to the health canary JSONL for unified health picture."""
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    all_fresh = stale_count == 0 and empty_count == 0
+    all_fresh = stale_count == 0 and empty_count == 0 and gated_count == 0
     record = {
         "ts": now_iso,
         "source": "data-freshness-probe",
@@ -389,6 +420,7 @@ def write_health_canary_record(pipeline_states, paired_alert, stale_count, empty
             "pipelines": pipeline_states,
             "stale_count": stale_count,
             "empty_count": empty_count,
+            "gated_count": gated_count,
             "total_pipelines": len(pipeline_states),
         },
     }
@@ -486,9 +518,10 @@ def main():
     stale_count = sum(1 for s in pipeline_states.values() if s["status"] == "stale")
     empty_count = sum(1 for s in pipeline_states.values() if s["status"] == "empty")
     error_count = sum(1 for s in pipeline_states.values() if s["status"] == "error")
+    gated_count = sum(1 for s in pipeline_states.values() if s["status"] == "gated")
 
     # Write to health canary JSONL (unified health picture)
-    write_health_canary_record(pipeline_states, paired_alert, stale_count, empty_count)
+    write_health_canary_record(pipeline_states, paired_alert, stale_count, empty_count, gated_count)
 
     # Write kanban-sidecar marker for stale feeds
     write_kanban_marker(pipeline_states)
@@ -497,18 +530,22 @@ def main():
     print("DATA FRESHNESS PROBE @ %s"
           % datetime.datetime.now(datetime.timezone.utc).isoformat())
     for table, state in sorted(pipeline_states.items()):
+        marker = {"fresh": "OK", "gated": "--"}.get(state["status"], "XX")
         print("  [%s] %s: %s budget=%dh age=%s%s" % (
-            "OK" if state["status"] == "fresh" else "XX",
+            marker,
             table, state["status"].upper(), state["budget"],
             _fmt_age(state),
-            (" err=%s" % state["error"]) if state.get("error") else "",
+            ((" err=%s" % state["error"]) if state.get("error") else "") +
+            ((" gate=%s" % state["gate"]) if state.get("gate") else ""),
         ))
 
+    # Gated probe-error classes (t_8bf353b4) do NOT fail the run: they are documented
+    # probe-capability gaps with Frank-gated durable fixes, not staleness signals.
     overall = "GREEN" if (stale_count == 0 and empty_count == 0 and error_count == 0) else "DEGRADED"
-    print("VERDICT: %s — %d/%d pipelines fresh, %d stale, %d empty, %d error" % (
+    print("VERDICT: %s — %d/%d pipelines fresh, %d stale, %d empty, %d error, %d gated" % (
         overall,
         sum(1 for s in pipeline_states.values() if s["status"] == "fresh"),
-        len(pipeline_states), stale_count, empty_count, error_count))
+        len(pipeline_states), stale_count, empty_count, error_count, gated_count))
 
     # Loud alert on the falling edge (deduped) for the operator feed.
     if should_emit(alerts):

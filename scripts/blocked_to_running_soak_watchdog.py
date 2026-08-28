@@ -346,7 +346,7 @@ def main():
         print(f"SOAK_SUMMARY: {{\"status\":\"skip\",\"reason\":\"db-not-found\",\"task_id\":\"{TASK_ID}\"}}")
         return 0
 
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro&immutable=1", uri=True, timeout=10)
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=10)
     conn.row_factory = sqlite3.Row
 
     violations, post_fix_count, pre_fix_count = check_violations(conn, cutoff_ts)
