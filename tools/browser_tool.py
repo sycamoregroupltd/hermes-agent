@@ -2502,6 +2502,10 @@ def _start_browser_cleanup_thread():
     """Start the background cleanup thread if not already running."""
     global _cleanup_thread, _cleanup_running
 
+    # Detached owner-death watchdog: belt-and-braces for hard kills (SIGKILL
+    # of the agent bypasses every in-process cleanup path). Spawn once.
+    _spawn_owner_watchdog()
+
     with _cleanup_lock:
         if _cleanup_thread is None or not _cleanup_thread.is_alive():
             _cleanup_running = True
@@ -2520,6 +2524,52 @@ def _stop_browser_cleanup_thread():
     _cleanup_running = False
     if _cleanup_thread is not None:
         _cleanup_thread.join(timeout=5)
+
+
+# Guard so we only spawn one watchdog per agent process.
+_owner_watchdog_spawned = False
+
+
+def _spawn_owner_watchdog():
+    """Spawn the detached owner-death watchdog (once per process).
+
+    The watchdog survives the agent's SIGKILL (it is reparented to init, not
+    killed) and reaps any agent-browser daemon + Chromium tree left behind when
+    this process dies hard — closing the leak at source that t_9b49cd19's
+    hourly reaper only bounds. See ``tools/browser_owner_watchdog.py``.
+
+    Pure belt-and-braces layer: the in-process atexit/thread cleanup already
+    handles graceful exits; the watchdog only matters for hard kills. It is a
+    tiny stdlib-only POSIX process and self-terminates on owner death, when all
+    socket dirs are gone, or after a hard lifetime cap — so it cannot itself
+    become a leak.
+    """
+    global _owner_watchdog_spawned
+    if _owner_watchdog_spawned:
+        return
+    if os.name != "posix":
+        return  # PR_SET_PDEATHSIG-equivalent and /proc scans are POSIX-only
+    _owner_watchdog_spawned = True
+
+    script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "browser_owner_watchdog.py"
+    )
+    if not os.path.isfile(script):
+        logger.warning("browser owner watchdog script missing: %s", script)
+        return
+    try:
+        subprocess.Popen(
+            [sys.executable, script, "--ppid", str(os.getpid())],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+        logger.debug("Spawned detached browser owner watchdog (ppid=%s)",
+                     os.getpid())
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("Could not spawn browser owner watchdog: %s", e)
 
 
 def _update_session_activity(task_id: str):
