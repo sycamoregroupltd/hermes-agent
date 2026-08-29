@@ -568,12 +568,14 @@ def run_self_test() -> int:
     jobs_file = str(PROFILES_DIR / "jarvis" / "cron" / "jobs.json")
 
     # Test cases: (job_id, job_name, profile, expected_pins)
+    # Pins must reference LIVE jarvis cron job IDs that exist in the store and
+    # whose skill pins resolve via build_skill_index (replaced 2026-08-29: the
+    # prior cases 88c545dffd60 / 8b84c382cfa8 no longer exist in the store).
     test_cases = [
-        ("88c545dffd60", "jarvis-daily-mechanism-liveness", "jarvis", ["gap-plugging"]),
+        ("3eddc6709f44", "dgx-self-improvement-loop", "jarvis", ["agent-reflection", "error-learner"]),
         ("495e3eb9252b", "portfolio-sizing-adjuster", "jarvis", ["trading-data-analysis"]),
-        ("8b84c382cfa8", "confluence-edge-research", "jarvis",
-         ["quant-research-operations", "external-strategy-discovery",
-          "multivariate-pattern-mining", "grok-cli", "obsidian-knowledge-management"]),
+        ("e51c9e2fa5df", "elon-governance-loop", "jarvis",
+         ["fleet-governor", "obsidian-knowledge-management"]),
     ]
 
     all_ok = True
