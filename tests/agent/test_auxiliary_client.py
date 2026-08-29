@@ -1281,6 +1281,43 @@ class TestAuxiliaryPoolAwareness:
         assert mock_openai.call_args.kwargs["base_url"] == "https://inference.pool.example/v1"
 
 
+    def test_try_nous_static_key_fallback_when_oauth_absent(self):
+        """t_ef74c62b: with OAuth/JWT gone but NOUS_API_KEY set, _try_nous must
+        fall back to the static key instead of returning (None, None)."""
+        from agent.auxiliary_client import _try_nous
+
+        static_key = "sk-n" + "s" * 37  # 40-char static key shape
+        with (
+            patch("agent.auxiliary_client._read_nous_auth", return_value=None),
+            patch("agent.auxiliary_client._resolve_nous_runtime_api", return_value=None),
+            patch("agent.auxiliary_client._nous_static_key", return_value=static_key),
+            patch("agent.auxiliary_client.OpenAI") as mock_openai,
+            patch("hermes_cli.models.get_nous_recommended_aux_model", return_value=None),
+            patch("agent.auxiliary_client._mark_provider_unhealthy"),
+        ):
+            client, model = _try_nous()
+
+        assert client is not None
+        assert mock_openai.call_args.kwargs["api_key"] == static_key
+        assert mock_openai.call_args.kwargs["base_url"] == "https://inference-api.nousresearch.com/v1"
+
+    def test_try_nous_no_auth_anywhere_returns_none(self):
+        """t_ef74c62b: with NO OAuth AND NO static key, _try_nous still returns
+        (None, None) — the static-key escape must not mask a total absence."""
+        from agent.auxiliary_client import _try_nous
+
+        with (
+            patch("agent.auxiliary_client._read_nous_auth", return_value=None),
+            patch("agent.auxiliary_client._resolve_nous_runtime_api", return_value=None),
+            patch("agent.auxiliary_client._nous_static_key", return_value=""),
+            patch("agent.auxiliary_client._mark_provider_unhealthy"),
+        ):
+            client, model = _try_nous()
+
+        assert client is None
+        assert model is None
+
+
 
 
 

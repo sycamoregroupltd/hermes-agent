@@ -2717,6 +2717,25 @@ def _nous_base_url() -> str:
     return os.getenv("NOUS_INFERENCE_BASE_URL", _NOUS_DEFAULT_BASE_URL)
 
 
+def _nous_static_key() -> str:
+    """Return the static Nous API key from env/.env, or ''.
+
+    The 2026-08-28 fleet migration deployed a static ``NOUS_API_KEY`` to
+    make the main-agent path independent of OAuth, but the auxiliary plane
+    (``_try_nous``) never consulted it: ``PROVIDER_REGISTRY['nous']`` is
+    ``auth_type='oauth_device_code'`` with empty ``api_key_env_vars``, so
+    ``credential_pool._seed_from_env`` early-returns and the static key can
+    never enter the nous pool. This is the explicit static-key escape hatch
+    so an OAuth outage degrades the aux plane instead of stopping it.
+    """
+    try:
+        from agent.credential_pool import get_env_prefer_dotenv
+
+        return (get_env_prefer_dotenv("NOUS_API_KEY") or "").strip()
+    except Exception:
+        return (os.getenv("NOUS_API_KEY") or "").strip()
+
+
 def _resolve_nous_pool_runtime_api(*, force_refresh: bool = False) -> Optional[tuple[str, str]]:
     """Resolve Nous auxiliary credentials from the selected pool entry."""
     try:
@@ -3137,14 +3156,20 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
 
     nous = _read_nous_auth()
     runtime = _resolve_nous_runtime_api(force_refresh=False)
-    if runtime is None and not nous:
+    static_key = _nous_static_key()
+    if runtime is None and not nous and not static_key:
         logger.warning(
             "Auxiliary Nous client unavailable: no Nous authentication found "
             "(run: hermes auth)."
         )
         _mark_provider_unhealthy("nous", ttl=60)
         return None, None
-    if runtime is None and nous:
+    if runtime is None and static_key:
+        logger.debug(
+            "Auxiliary Nous: OAuth/JWT unavailable; using static NOUS_API_KEY "
+            "fallback."
+        )
+    elif runtime is None and nous:
         logger.debug(
             "Auxiliary Nous: runtime JWT refresh failed; checking stored "
             "auth.json token."
@@ -3189,6 +3214,15 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
         api_key, base_url = runtime
     else:
         api_key = _nous_api_key(nous or {})
+        if not api_key and static_key:
+            # OAuth/JWT unusable — fall back to the static key the fleet
+            # migration deployed. Prefer the stored auth.json inference
+            # base_url when present, else the env/default Nous endpoint.
+            api_key = static_key
+            logger.info(
+                "Auxiliary Nous: no usable OAuth/JWT; serving via static "
+                "NOUS_API_KEY fallback."
+            )
         if not api_key:
             logger.warning(
                 "Auxiliary Nous client unavailable: no usable inference JWT found "
