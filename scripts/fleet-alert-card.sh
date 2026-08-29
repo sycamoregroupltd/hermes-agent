@@ -89,9 +89,12 @@ def glog(msg):
 
 
 class StateLock:
-    """Bounded exclusive lock. On timeout we proceed UNLOCKED and say so: a monitor
-    that hangs on a stuck lock is worse than a rare lost update (see header: this
-    script must never fail or stall its caller)."""
+    """Bounded exclusive flock. On timeout we do NOT proceed with any state WRITE
+    (t_5240b5f2 fail-clean: never clobber the shared file). `held` tells the caller
+    whether the lock was actually acquired; write paths check it and skip+log rather
+    than mutate unlocked. The alert card itself is still created (that happens
+    outside the lock), so a contended lock can never lose an alert — it only defers
+    the state pointer to the next clean run."""
 
     def __enter__(self):
         self.held = False
@@ -226,19 +229,23 @@ if mode == "resolve":
             glog("RESOLVE-FAILED target=%s card=%s rc=%s %s — pointer KEPT, next clean run retries"
                  % (k, cid, rc2, (out2 or "").strip().replace("\n", " ")[:200]))
     if cleared:
-        with StateLock():
-            state = load_state()               # RE-READ, same discipline as the alert path
-            fams = state.get("__families__", {})
-            for k in cleared:
-                state.pop(k, None)
-                for fam in list(fams):
-                    fams[fam] = [e for e in fams[fam] if e.get("key") != k]
-                    if not fams[fam]:
-                        del fams[fam]
-            try:
-                save_state(state)
-            except Exception as e:
-                glog("STATE-WRITE-FAILED(resolve) %s" % e)
+        with StateLock() as lock:
+            if not lock.held:
+                glog("RESOLVE-WRITE-SKIPPED lock contended — state left untouched, "
+                     "next clean run retries")
+            else:
+                state = load_state()               # RE-READ, same discipline as the alert path
+                fams = state.get("__families__", {})
+                for k in cleared:
+                    state.pop(k, None)
+                    for fam in list(fams):
+                        fams[fam] = [e for e in fams[fam] if e.get("key") != k]
+                        if not fams[fam]:
+                            del fams[fam]
+                try:
+                    save_state(state)
+                except Exception as e:
+                    glog("STATE-WRITE-FAILED(resolve) %s" % e)
     raise SystemExit(0)
 
 
@@ -272,21 +279,25 @@ if prev_id and prev_id != new_id:
 # ---- record + producer-side family cap (short critical section) ---------------
 family = family_of(key)
 excess = []
-with StateLock():
-    state = load_state()                      # RE-READ: never write back a pre-I/O snapshot
-    state[key] = {"card_id": new_id, "board": board, "at": stamp}
-    fams = state.setdefault("__families__", {})
-    entries = [e for e in fams.get(family, []) if e.get("card_id") != new_id]
-    entries.append({"card_id": new_id, "key": key, "at": stamp})
-    if len(entries) > family_max:
-        excess = entries[:-family_max]
-        entries = entries[-family_max:]
-    fams[family] = entries
-    try:
-        save_state(state)
-    except Exception as e:
-        glog("STATE-WRITE-FAILED %s" % e)
-        excess = []                            # do not reap on the back of an unsaved cap
+with StateLock() as lock:
+    if not lock.held:
+        glog("ALERT-WRITE-SKIPPED lock contended key=%s card=%s — state left untouched, "
+             "card already created, next run reconciles the pointer" % (key, new_id))
+    else:
+        state = load_state()                      # RE-READ: never write back a pre-I/O snapshot
+        state[key] = {"card_id": new_id, "board": board, "at": stamp}
+        fams = state.setdefault("__families__", {})
+        entries = [e for e in fams.get(family, []) if e.get("card_id") != new_id]
+        entries.append({"card_id": new_id, "key": key, "at": stamp})
+        if len(entries) > family_max:
+            excess = entries[:-family_max]
+            entries = entries[-family_max:]
+        fams[family] = entries
+        try:
+            save_state(state)
+        except Exception as e:
+            glog("STATE-WRITE-FAILED %s" % e)
+            excess = []                            # do not reap on the back of an unsaved cap
 
 for e in excess:
     cid = e.get("card_id")
