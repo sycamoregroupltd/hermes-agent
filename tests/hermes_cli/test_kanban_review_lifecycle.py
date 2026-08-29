@@ -708,3 +708,105 @@ def test_reviewer_reassigns_for_autonomous_dispatch(kanban_home: Path) -> None:
         ev = _events(conn, tid, kind="review_requested")[0][1]
         assert ev["reviewer"] == "lead-reviewer"
         assert ev["implementer"] == "worker"
+
+
+# ---------------------------------------------------------------------------
+# Reviewer-head guard (t_690530dd): recovery re-arm must check artifact moved
+# ---------------------------------------------------------------------------
+
+
+def test_review_rearm_defers_until_handoff_moves_after_verdict(
+    kanban_home: Path,
+) -> None:
+    """A REVIEW card re-armed by recovery WITHOUT a fresh review_requested
+    handoff since the last changes_requested verdict must be deferred by the
+    review-lane respawn guard (``reviewer_head_unmoved``). Once the implementer
+    submits a NEW handoff (moved PR head) after the verdict, the guard clears
+    and the reviewer can re-spawn. Regression for sycode-trading/t_27674ea2,
+    where storm-recovery auto-unblocked a review card ~22x against an UNCHANGED
+    PR head (47 crashed runs)."""
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="review PR #892", assignee="worker")
+
+        # Round 1: implementer submits work -> review_requested handoff.
+        impl1 = kb.claim_task(conn, tid)
+        assert impl1 is not None
+        assert kb.request_review(
+            conn, tid, summary="implemented v1",
+            expected_run_id=impl1.current_run_id,
+        )
+        assert kb.get_task(conn, tid).status == "review"
+
+        # Reviewer claims from review, judges the head, requests changes.
+        review1 = kb.claim_review_task(conn, tid)
+        assert review1 is not None
+        ok, implementer = kb.request_changes(
+            conn, tid, reason="fix the verifier",
+            expected_run_id=review1.current_run_id,
+        )
+        assert ok is True and implementer == "worker"
+        # Task is back with the implementer (ready), NOT in review.
+        assert kb.get_task(conn, tid).status == "ready"
+
+        # STORM-RECOVERY RE-ARM (the bug class): the card is forced back to
+        # 'review' without the implementer submitting a fresh handoff — no new
+        # review_requested event after the changes_requested verdict.
+        with kb.write_txn(conn):
+            conn.execute(
+                "UPDATE tasks SET status = 'review' WHERE id = ?", (tid,),
+            )
+        # The reviewed artifact (PR head) has NOT moved since the verdict.
+        assert kb.check_respawn_guard(conn, tid, lane="review") == "reviewer_head_unmoved"
+
+        # dispatch_once must NOT spawn the reviewer while the head is unmoved.
+        import hermes_cli.config as cfgmod
+        import hermes_cli.profiles as profmod
+        monkeypatch = __import__("pytest").MonkeyPatch()
+        monkeypatch.setattr(profmod, "profile_exists", lambda name: True)
+        monkeypatch.setattr(
+            cfgmod, "load_config",
+            lambda *a, **k: {"kanban": {"review_dispatch": True}},
+        )
+        try:
+            res = kb.dispatch_once(conn, dry_run=True)
+            assert tid not in [s[0] for s in res.spawned]
+            assert dict(res.respawn_guarded).get(tid) == "reviewer_head_unmoved"
+        finally:
+            monkeypatch.undo()
+
+        # Implementer actually reworks and submits a NEW handoff (head moved):
+        # back to ready, claim, request_review again.
+        with kb.write_txn(conn):
+            conn.execute(
+                "UPDATE tasks SET status = 'ready', claim_lock = NULL, "
+                "claim_expires = NULL, worker_pid = NULL WHERE id = ?", (tid,),
+            )
+        impl2 = kb.claim_task(conn, tid)
+        assert impl2 is not None
+        assert kb.request_review(
+            conn, tid, summary="implemented v2 (head moved)",
+            expected_run_id=impl2.current_run_id,
+        )
+        assert kb.get_task(conn, tid).status == "review"
+        # A fresh handoff after the verdict clears the guard — reviewer re-spawns.
+        assert kb.check_respawn_guard(conn, tid, lane="review") is None
+
+
+def test_review_first_request_without_verdict_is_never_deferred(
+    kanban_home: Path,
+) -> None:
+    """A REVIEW card with NO prior changes_requested verdict must always be
+    re-spawnable — there is no prior judgment to re-issue, so the reviewer-head
+    guard never fires on the first review."""
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="first review", assignee="worker")
+        impl = kb.claim_task(conn, tid)
+        assert impl is not None
+        assert kb.request_review(
+            conn, tid, summary="first handoff",
+            expected_run_id=impl.current_run_id,
+        )
+        assert kb.get_task(conn, tid).status == "review"
+        # No verdict yet -> guard clears (first review is always legitimate).
+        assert kb.check_respawn_guard(conn, tid, lane="review") is None
+
