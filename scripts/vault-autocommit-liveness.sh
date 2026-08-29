@@ -15,7 +15,10 @@
 # CHECKS, per vault:
 #   1. newest 'auto-commit vault snapshot' commit on HEAD is younger than
 #      VAULT_LIVENESS_MAX_AGE_MIN (default 90; job cadence is 30m).
-#   2. checkout is on EXPECTED_BRANCH (default main) — the 07-17..08-05 fault put
+#   3. the cron job's PROFILE-LOCAL script copy still matches ~/.hermes/scripts
+#      (hermes cron runs the profile copy; nothing syncs it — t_de78cf24).
+#   2. checkout is on the vault's expected branch (list entry PATH:BRANCH, else
+#      EXPECTED_BRANCH, default main) — the 07-17..08-05 fault put
 #      811 commits on a pm/* branch while the nightly Mac bundle backed up a
 #      19-day-stale main. Commit-age alone cannot catch this (autocommits land on
 #      whatever branch is checked out, so HEAD looks fresh while main rots).
@@ -29,7 +32,13 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export PATH="/home/frank/.local/bin:/home/frank/.hermes/hermes-agent/venv/bin:/usr/bin:/bin:$PATH"
 export HERMES_HOME=/home/frank/.hermes
 
-VAULTS="${VAULT_LIVENESS_VAULTS:-/home/frank/obsidian-fleet-vault /home/frank/obsidian/quant-team}"
+# Each entry is PATH or PATH:BRANCH. obsidian/investments was NOT watched here
+# until 2026-08-29 (t_de78cf24) — the one vault that actually suffered the 7-day
+# silent uncommitted window was the one vault this watchdog could not see, and it
+# is on `master`, so it needs a per-vault branch or it would alert forever.
+# /home/frank/obsidian/sycode-trading is a SYMLINK to quant-team; listing it would
+# double-count one repo, so it is deliberately absent.
+VAULTS="${VAULT_LIVENESS_VAULTS:-/home/frank/obsidian-fleet-vault /home/frank/obsidian/quant-team /home/frank/obsidian/investments:master}"
 MAX_AGE_MIN="${VAULT_LIVENESS_MAX_AGE_MIN:-90}"
 EXPECTED_BRANCH="${VAULT_LIVENESS_EXPECTED_BRANCH:-main}"
 MON_STATE="${MON_STATE:-/home/frank/.hermes/state/vault-autocommit-liveness-state.txt}"
@@ -88,7 +97,11 @@ clear_key() {
 unhealthy=0
 checked=0
 
-for vault in $VAULTS; do
+for spec in $VAULTS; do
+    case "$spec" in
+        *:*) vault="${spec%%:*}"; want_branch="${spec#*:}" ;;
+        *)   vault="$spec";       want_branch="$EXPECTED_BRANCH" ;;
+    esac
     vname=$(basename "$vault")
     if [ ! -d "$vault/.git" ] && [ ! -f "$vault/.git" ]; then
         unhealthy=$((unhealthy + 1))
@@ -123,13 +136,44 @@ Manual fire: HERMES_PROFILE=jarvis hermes cron run b2536429e954"
 
     # 2) branch check — autocommits must land on the branch the bundle backs up
     cur_branch=$(git -C "$vault" rev-parse --abbrev-ref HEAD 2>/dev/null)
-    if [ "${cur_branch:-}" != "$EXPECTED_BRANCH" ]; then
+    if [ "${cur_branch:-}" != "$want_branch" ]; then
         unhealthy=$((unhealthy + 1))
-        send_alert "branch_${vname}" "🚨 vault ${vname} checked out on '${cur_branch:-?}' not '${EXPECTED_BRANCH}'" \
-"Vault ${vault} is on branch '${cur_branch:-?}'. Autocommits land on the CHECKED-OUT branch, but the nightly Mac bundle backs up ${EXPECTED_BRANCH} — history accrues off-bundle (the 07-17..08-05 fault stranded 811 commits / 19 days this way).
-Fix (only if the branch is a strict descendant): cd ${vault} && git merge-base --is-ancestor ${EXPECTED_BRANCH} ${cur_branch:-BRANCH} && git checkout ${EXPECTED_BRANCH} && git merge --ff-only ${cur_branch:-BRANCH}"
+        send_alert "branch_${vname}" "🚨 vault ${vname} checked out on '${cur_branch:-?}' not '${want_branch}'" \
+"Vault ${vault} is on branch '${cur_branch:-?}'. Autocommits land on the CHECKED-OUT branch, but the off-box backup follows ${want_branch} — history accrues off-bundle (the 07-17..08-05 fault stranded 811 commits / 19 days this way).
+Fix (only if the branch is a strict descendant): cd ${vault} && git merge-base --is-ancestor ${want_branch} ${cur_branch:-BRANCH} && git checkout ${want_branch} && git merge --ff-only ${cur_branch:-BRANCH}"
     else
         clear_key "branch_${vname}"
+    fi
+done
+
+# 3) profile-copy drift — the check that would have made this whole repair inert.
+# Hermes cron resolves a job's `script` against the RUNNING GATEWAY's HERMES_HOME,
+# and the jarvis gateway runs with HERMES_HOME=/home/frank/.hermes/profiles/jarvis.
+# So b2536429e954 executes profiles/jarvis/scripts/obsidian_vault_autocommit.py, NOT
+# the git-tracked ~/.hermes/scripts/ copy that everyone edits. Nothing syncs them
+# (cron-doctor.sh only documents the manual `cp`), so a fix can be committed, run by
+# hand, verified green — and never once execute in production. t_de78cf24.
+for mirror in ${VAULT_LIVENESS_SCRIPT_MIRRORS:-obsidian_vault_autocommit.py:jarvis}; do
+    mfile="${mirror%%:*}"; mprofile="${mirror#*:}"
+    canonical="/home/frank/.hermes/scripts/${mfile}"
+    profile_copy="/home/frank/.hermes/profiles/${mprofile}/scripts/${mfile}"
+    [ -f "$canonical" ] || continue
+    if [ ! -f "$profile_copy" ]; then
+        unhealthy=$((unhealthy + 1))
+        send_alert "mirror_missing_${mprofile}_${mfile}" \
+            "🚨 cron script missing from profile: ${mprofile}/${mfile}" \
+"Hermes cron resolves scripts against the gateway's HERMES_HOME (/home/frank/.hermes/profiles/${mprofile}), so the job runs ${profile_copy} — which does not exist. The job will dead-pin.
+Fix: cp ${canonical} ${profile_copy}"
+    elif ! cmp -s "$canonical" "$profile_copy"; then
+        unhealthy=$((unhealthy + 1))
+        send_alert "mirror_drift_${mprofile}_${mfile}" \
+            "🚨 cron script DRIFT: ${mprofile}/${mfile} differs from ~/.hermes/scripts" \
+"${profile_copy} is NOT the same file as ${canonical}. Hermes cron executes the PROFILE copy, so edits to the git-tracked canonical copy are running nowhere. This is how a verified fix stays inert.
+Fix: cp ${canonical} ${profile_copy}
+Diff: diff -u ${canonical} ${profile_copy} | head -40"
+    else
+        clear_key "mirror_missing_${mprofile}_${mfile}"
+        clear_key "mirror_drift_${mprofile}_${mfile}"
     fi
 done
 
@@ -140,5 +184,5 @@ if [ "$unhealthy" -gt 0 ]; then
 fi
 
 log "OK vaults_checked=$checked max_age_min=$MAX_AGE_MIN"
-echo "[SILENT] vault autocommit healthy: $checked vault(s), newest snapshot within ${MAX_AGE_MIN}m, branch=${EXPECTED_BRANCH}"
+echo "[SILENT] vault autocommit healthy: $checked vault(s), newest snapshot within ${MAX_AGE_MIN}m, each on its expected branch"
 exit 0

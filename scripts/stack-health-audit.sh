@@ -113,6 +113,11 @@ fi
 missing=()      # expected up, not running, no OFF declaration
 unhealthy=()    # running but healthcheck failing / restarting
 declared_off=() # documented OFF entries (visible, not alerted)
+# t_cef408bd (2026-08-29): parallel NAME-ONLY arrays. The display arrays above embed
+# docker's Status string, which contains an UPTIME DURATION ("Up 2 days (unhealthy)")
+# — volatile text that must never reach the alert key. See the "alert key" block.
+missing_names=()
+unhealthy_names=()
 expected=0
 
 while IFS= read -r raw; do
@@ -127,24 +132,35 @@ while IFS= read -r raw; do
     state="${RUNNING[$name]:-absent}"
     if [ "$state" != "running" ]; then
         missing+=("$name (state=$state)")
+        missing_names+=("$name")
         continue
     fi
     case "${HEALTH[$name]:-}" in
-        *unhealthy*|*Restarting*) unhealthy+=("$name (${HEALTH[$name]})") ;;
+        *unhealthy*|*Restarting*) unhealthy+=("$name (${HEALTH[$name]})"); unhealthy_names+=("$name") ;;
     esac
 done < "$MANIFEST"
 
 # ---- bridge: active Alertmanager alerts (receivers are commented out) --------
-am_alerts=$(python3 - <<'EOF' 2>/dev/null || echo ""
+# Two lines out: line 1 = human display (truncated, carries 'since' timestamps),
+# line 2 = IDENTITY (t_cef408bd) — the full alertname set, sorted + deduped, with no
+# severities, no 'since' timestamps and no [:10] truncation. The display slice is an
+# UNORDERED first-10 of a changing list, so it is not a stable identity.
+am_probe=$(python3 - <<'EOF' 2>/dev/null || printf '\n'
 import urllib.request, json
 try:
     alerts = json.load(urllib.request.urlopen('http://localhost:9093/api/v2/alerts?active=true&silenced=false', timeout=5))
     lines = [f"{a['labels'].get('alertname','?')} ({a['labels'].get('severity','?')}) since {a['startsAt'][:16]}Z" for a in alerts]
+    names = sorted({a['labels'].get('alertname', '?') for a in alerts})
     print('; '.join(lines[:10]))
+    print(','.join(names))
 except Exception:
+    print("ALERTMANAGER-UNREACHABLE")
     print("ALERTMANAGER-UNREACHABLE")
 EOF
 )
+am_alerts="${am_probe%%$'\n'*}"
+am_names="${am_probe#*$'\n'}"
+[ "$am_names" = "$am_probe" ] && am_names=""   # probe produced <2 lines
 
 # ---- status file (consumed by seat-live-state.sh at every session boot) ------
 ok=$((expected - ${#missing[@]}))
@@ -251,13 +267,23 @@ GOAL_JUDGE_PROBE="${GOAL_JUDGE_PROBE:-/home/frank/.hermes/scripts/goal-judge-liv
 GOAL_JUDGE_HOME="${GOAL_JUDGE_HOME:-/home/frank/.hermes}"
 GOAL_JUDGE_PY="${GOAL_JUDGE_PY:-/home/frank/.hermes/hermes-agent/.venv/bin/python}"
 gj_problem=""
+gj_class=""   # t_cef408bd: stable class token for the alert key (detail stays in the body)
 if [ -f "$GOAL_JUDGE_PROBE" ] && [ -x "$GOAL_JUDGE_PY" ]; then
     gj_out=$(timeout 90 "$GOAL_JUDGE_PY" "$GOAL_JUDGE_PROBE" "$GOAL_JUDGE_HOME" 2>&1)
     gj_rc=$?
     gj_last="${gj_out##*$'\n'}"
     if [ "$gj_rc" -ne 0 ]; then
         echo "  GOAL-JUDGE: DOWN — ${gj_last:-no output} (rc=$gj_rc)" >> "$STATUS_FILE"
-        gj_problem="GOAL-JUDGE DOWN (goal-mode kanban completions fleet-wide are being REJECTED — t_9df82b30 class; check nous balance/model catalog): ${gj_last:-probe produced no output}. "
+        # t_f2360b4e (2026-08-29): this hardcoded "fleet-wide are being REJECTED".
+        # Same stale-assertion class the Alertmanager branch was fixed for on 07-29:
+        # true when written, then broadcast as fact without being measured. On
+        # 2026-08-28 it was FALSE for 6h+ — only the dormant root/default home lost
+        # its Nous session (revoked 17:10:19Z, refresh-token reuse) while all 74
+        # profile lanes kept a working judge. goal-judge-liveness.py now MEASURES
+        # the blast radius and appends it as a SCOPE clause to $gj_last; state the
+        # failure and let that measurement speak for the reach.
+        gj_problem="GOAL-JUDGE DOWN (goal-mode kanban completions in the probed home are being REJECTED — t_9df82b30 class; reach is measured in the SCOPE clause below): ${gj_last:-probe produced no output}. "
+        gj_class="down"
         log "GOAL-JUDGE-DOWN rc=$gj_rc ${gj_last:-no output}"
     else
         echo "  GOAL-JUDGE: ${gj_last}" >> "$STATUS_FILE"
@@ -266,15 +292,26 @@ if [ -f "$GOAL_JUDGE_PROBE" ] && [ -x "$GOAL_JUDGE_PY" ]; then
 else
     echo "  GOAL-JUDGE: UNMONITORED (probe or venv missing)" >> "$STATUS_FILE"
     gj_problem="GOAL-JUDGE probe missing ($GOAL_JUDGE_PROBE or $GOAL_JUDGE_PY absent) — goal-judge liveness is UNMONITORED. "
+    gj_class="unmonitored"
     log "GOAL-JUDGE-UNMONITORED probe=$GOAL_JUDGE_PROBE py=$GOAL_JUDGE_PY"
 fi
 
 # ---- alerting ----------------------------------------------------------------
+# $problems is the human BODY: it may (and should) carry counters, timestamps,
+# durations and filenames. $problem_id is the alert KEY input: identity ONLY.
+# Never merge the two. See the "alert key" block at the bottom of this file.
 problems=""
+problem_id=""
 [ ${#missing[@]}   -gt 0 ] && problems+="MISSING (no OFF declaration): ${missing[*]}. "
 [ ${#unhealthy[@]} -gt 0 ] && problems+="UNHEALTHY: ${unhealthy[*]}. "
 [ -n "${spool_fallback_msg:-}" ] && problems+="$spool_fallback_msg "
 [ -n "${gj_problem:-}" ] && problems+="$gj_problem"
+
+[ ${#missing_names[@]}   -gt 0 ] && problem_id+="missing=$(printf '%s\n' "${missing_names[@]}"   | sort -u | paste -sd, -);"
+[ ${#unhealthy_names[@]} -gt 0 ] && problem_id+="unhealthy=$(printf '%s\n' "${unhealthy_names[@]}" | sort -u | paste -sd, -);"
+# spool identity = the stale DIRECTORIES only; the file count and oldest filename churn.
+[ -n "${spool_fallback_msg:-}" ] && problem_id+="spool=$(printf '%s\n' "${stale_spools[@]%%:*}" | sort -u | paste -sd, -);"
+[ -n "${gj_problem:-}" ] && problem_id+="goal-judge=${gj_class:-unknown};"
 if [ -n "$am_alerts" ] && [ "$am_alerts" != "ALERTMANAGER-UNREACHABLE" ]; then
     # 2026-07-29 (opus5): this used to hardcode "undelivered — receivers unwired".
     # That was true when written (07-13) but the receivers were wired in-repo since,
@@ -295,15 +332,54 @@ if [ -n "$am_alerts" ] && [ "$am_alerts" != "ALERTMANAGER-UNREACHABLE" ]; then
         am_delivery="delivered via webhook — ${am_sent} sent, 0 failed"
     fi
     problems+="Alertmanager active (${am_delivery}): $am_alerts. "
+    # IDENTITY: the SUB-CHECK "alertmanager has active alerts", not the alert list.
+    # Measured 2026-08-29 over the last 150 DEGRADED runs in this log:
+    #   md5($problems)              -> 146 distinct keys  (the bug: 157 duplicate cards)
+    #   full sorted alertname set   ->  63 distinct keys, 95/149 consecutive flips
+    #   critical-only alertname set ->  13 distinct keys, 47/149 consecutive flips
+    #   failing sub-check identity  ->   4 distinct keys  <-- chosen
+    # Alertmanager's active set flaps by design (that is what Alertmanager is for, and
+    # it has its own webhook delivery path: 2800+ notifications sent). Re-exporting that
+    # flapping into the card key just re-creates the flood at 1/2 the rate. The alert
+    # NAMES are not lost: they are in $problems, i.e. in the card BODY, which is rebuilt
+    # every time this key re-fires. $am_names is logged below for forensics.
+    problem_id+="am-active;"
 elif [ "$am_alerts" = "ALERTMANAGER-UNREACHABLE" ]; then
     problems+="Alertmanager itself unreachable on :9093. "
+    problem_id+="am-unreachable;"
 fi
 
+# ---- alert key (t_cef408bd, 2026-08-29, fable-devops) ------------------------
+# WAS: key=$(echo -n "$problems" | md5sum | cut -c1-12).
+# $problems embeds a MONOTONIC alertmanager counter (am_sent), the per-alert
+# "since <ISO>" timestamps, docker uptime durations and spool file counts, so the
+# hash changed on nearly every 10-minute run. fleet-alert-card.sh supersedes only
+# the previous card FOR THE SAME KEY, so the supersede never fired and 157
+# duplicate "[host-alert] [stack-health] DGX stack degraded" cards piled up on
+# jarvis-os (156 of 170 keys in host-cron-alert-cards.json were degraded-<hash>).
+# RULE FOR ANYONE ADDING A SUB-CHECK HERE: append your volatile prose to $problems,
+# and append a stable IDENTITY token (names/ids/classes only — no counters, no
+# timestamps, no durations, no byte counts, no percentages) to $problem_id.
 if [ -n "$problems" ]; then
-    key=$(echo -n "$problems" | md5sum | cut -c1-12)
-    log "DEGRADED: $problems"
+    if [ -n "$problem_id" ]; then
+        key=$(printf '%s' "$problem_id" | md5sum | cut -c1-12)
+    else
+        # A sub-check appended to $problems without an identity token. Fail to a
+        # STABLE key and say so loudly — never fall back to md5("$problems").
+        key="unclassified"
+        log "KEY-UNCLASSIFIED: \$problems is set but \$problem_id is empty — a sub-check is missing its identity token (t_cef408bd)"
+    fi
+    log "DEGRADED key=degraded-$key id=[$problem_id] am_names=[${am_names:-}] :: $problems"
     send_alert "degraded-$key" "[stack-health] DGX stack degraded" \
         "$problems Manifest: $MANIFEST — if any of this is deliberate, add a timestamped OFF line (OFF <name> <ISO> <who> <reason>). Status: $STATUS_FILE"
 else
     log "OK: ${ok}/${expected} up, ${#declared_off[@]} declared-off"
+    # RESOLVE PATH (t_cef408bd, 2026-08-29). Before this, the only thing that ever
+    # closed a stack-health card was the SAME key re-firing, so a condition that fixed
+    # itself left its card open for ever. Family glob, because the key legitimately
+    # changes with the problem class — a clean stack closes whichever one is open.
+    # Additive and non-fatal, exactly like the raise path.
+    "$HOME/.hermes/scripts/fleet-alert-card.sh" --resolve 'degraded-*' \
+        "stack-health CLEAN at ${now_iso}: ${ok}/${expected} expected containers up, 0 unhealthy, ${#declared_off[@]} declared-off, no undrained alert spool, goal-judge probe OK, no active Alertmanager alerts. Status: $STATUS_FILE" \
+        >/dev/null 2>&1 || true
 fi

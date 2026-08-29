@@ -224,6 +224,123 @@ def test_dedupe_keys_on_cron_job_not_filename(tmp_path):
     assert book2["entries"][only_key]["occurrences"] > 2, "occurrences accumulated"
 
 
+# ── 3d. Defect-c (t_36d0acad): resolve-on-green closes blocked cards, keeps the
+#        pointer for unclosable (in_progress) ones, and reconciles lost orphans ─
+class _StatusHarness:
+    """Mock harness with a per-task status map for resolve/reconcile tests."""
+
+    def __init__(self, statuses=None):
+        self.statuses = statuses or {}
+        self.completed = []
+        self.comments = []
+
+    def status(self, task_id, board=None):
+        return self.statuses.get(task_id, "ready")
+
+    def complete(self, task_id, summary, board=None):
+        self.completed.append({"id": task_id, "summary": summary})
+
+    def comment(self, task_id, body, board=None):
+        self.comments.append({"id": task_id, "body": body})
+
+    def send_alert(self, target, message):
+        return True
+
+
+def _entry(ledger, key, task_id):
+    ledger["entries"][key] = {"task_id": task_id, "report_class": key.split("::")[0],
+                              "source": "x", "channel": "discord:fleet-reports"}
+
+
+def test_resolve_closes_blocked_card_on_green():
+    """Defect-c: a green report must close a stale BLOCKED card (the cited hole)."""
+    book = {"version": 1, "entries": {}}
+    _entry(book, "health_canary::output", "t_cited1")
+    h = _StatusHarness(statuses={"t_cited1": "blocked"})
+    r = ledger.resolve_anomaly(book, report_class="health_canary",
+                               source="output", harness=h)
+    assert r["action"] == "resolved" and r["cleared"] is True
+    assert [c["id"] for c in h.completed] == ["t_cited1"], "blocked card must be completed"
+    assert "health_canary::output" not in book["entries"], "entry cleared"
+
+
+def test_resolve_keeps_pointer_for_in_progress_then_retries():
+    """Defect-c: an unclosable (in_progress) card keeps its pointer; a later green
+    run retries and closes it — never orphaned."""
+    book = {"version": 1, "entries": {}}
+    _entry(book, "health_canary::output", "t_working")
+    h = _StatusHarness(statuses={"t_working": "in_progress"})
+    r = ledger.resolve_anomaly(book, report_class="health_canary",
+                               source="output", harness=h)
+    assert r["cleared"] is False
+    assert "health_canary::output" in book["entries"], "pointer KEPT (not orphaned)"
+    assert book["entries"]["health_canary::output"].get("resolved_pending") is True
+    assert h.completed == [], "in_progress card NOT auto-completed"
+
+    # Card is now available again (a worker released it) -> next green run closes it.
+    h.statuses["t_working"] = "ready"
+    h.completed = []
+    r2 = ledger.resolve_anomaly(book, report_class="health_canary",
+                                source="output", harness=h)
+    assert r2["cleared"] is True
+    assert [c["id"] for c in h.completed] == ["t_working"]
+    assert "health_canary::output" not in book["entries"]
+
+
+def test_reconcile_closes_orphaned_green_acradr_cards():
+    """Defect-c: cards the ledger has LOST (no entry) are re-located on the board
+    and closed when their condition is green — reproduces the 3 cited orphans."""
+    cards = [
+        {"task_id": "t_bbfdfb9b", "status": "blocked",
+         "title": "[ACRADR] WARNING health_canary: freshness.stale_overall",
+         "body": "**ACRADR Anomaly**\nSource: `.../output/health_canary.jsonl`"},
+        {"task_id": "t_505eb890", "status": "blocked",
+         "title": "[ACRADR] WARNING health_canary: freshness.stale_overall",
+         "body": "**ACRADR Anomaly**\nSource: `.../output/health_canary.jsonl`"},
+        {"task_id": "t_f88c0f48", "status": "blocked",
+         "title": "[ACRADR] WARNING health_canary: freshness.stale_overall",
+         "body": "**ACRADR Anomaly**\nSource: `.../output/health_canary.jsonl`"},
+    ]
+    h = _StatusHarness()
+    h.list_open_acradr = lambda board=None: cards
+    # Current scan is GREEN for health_canary (key NOT in current_keys) but still
+    # anomalous for fusion_calibration -> the orphan cards close, the active one stays.
+    closed = ledger.reconcile_orphan_acradr(
+        {"fusion_calibration::f05227128ac2"}, harness=h)
+    closed_ids = {c["task_id"] for c in closed}
+    assert closed_ids == {"t_bbfdfb9b", "t_505eb890", "t_f88c0f48"}
+    assert all(c["status"] == "blocked" for c in closed)
+    assert len(h.completed) == 3
+    assert all("defect-c t_36d0acad" in c["summary"] for c in h.completed)
+
+
+def test_reconcile_leaves_active_anomaly_cards_open():
+    """Reconcile must NOT close a card whose condition is still anomalous."""
+    cards = [
+        {"task_id": "t_active", "status": "blocked",
+         "title": "[ACRADR] WARNING health_canary: freshness.stale_overall",
+         "body": "**ACRADR Anomaly**\nSource: `.../output/health_canary.jsonl`"},
+    ]
+    h = _StatusHarness()
+    h.list_open_acradr = lambda board=None: cards
+    closed = ledger.reconcile_orphan_acradr({"health_canary::output"}, harness=h)
+    assert closed == [], "anomaly still present -> card must stay open"
+    assert h.completed == []
+
+
+def test_reconcile_never_touches_in_progress():
+    """Reconcile lists only ready/todo/blocked; an in_progress card is never listed
+    and therefore never auto-closed even if its condition is green."""
+    h = _StatusHarness()
+    h.list_open_acradr = lambda board=None: [
+        {"task_id": "t_live", "status": "in_progress",
+         "title": "[ACRADR] WARNING health_canary: freshness.stale_overall",
+         "body": "**ACRADR Anomaly**\nSource: `.../output/health_canary.jsonl`"},
+    ]
+    closed = ledger.reconcile_orphan_acradr(set(), harness=h)
+    assert closed == [] and h.completed == []
+
+
 # ── 4. Watchdog ──────────────────────────────────────────────────────────────
 def test_watchdog_fresh_heartbeat_silent(tmp_path):
     hb = tmp_path / "hb.txt"

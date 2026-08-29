@@ -1,174 +1,44 @@
 {
   "jobs": [
     {
-      "id": "5914a0f93c34",
-      "name": "arena-24h-monitor-watchdog",
-      "prompt": "",
+      "id": "0ecbbf944a59",
+      "name": "sje-fk-24h-validation-loop",
+      "prompt": "You are validating the sycodetrading-server FK error fix (signal_journey_events_journey_id_fkey storm) over its 24h post-restart observation window (server redeployed 2026-08-28T21:03:31Z onto origin/main tip 72ea72246ef2, fix commits pr490/pr848 confirmed ancestors and deployed code byte-identical to origin/main). The kanban task t_2d8f33ec was already completed when the loop was wired; your job is to produce the DURABLE final validation evidence note and comment, not to complete the card.\n\nYou were woken because the monitoring gate detected EITHER a REGRESSION (target error count > 0) OR the end of the 24h observation window (WINDOW_END). The gate output and its injected diff tell you which.\n\nEVIDENCE FILE (accumulated samples, JSONL, one row per tick):\n/home/frank/.hermes/kanban/boards/jarvis-os/workspaces/t_20053371/sje-fk-evidence.jsonl\n\nTASK:\n1. Read the full evidence file and summarize: number of samples, min/max ts, and confirm every row's sje_fkey value (must be 0 across the whole window = ~0 new signal_journey_events_journey_id_fkey errors). Note the separate out-of-scope signal_pnl_points orphan-guard counter (fk_terminal / signal_pnl_fk) which is EXPECTED and NOT a regression of this fix.\n2. If REGRESSION: this is a genuine failure of the FK fix \u2014 do NOT write a pass evidence note. Report the regression clearly (which rows, counts) via a kanban_comment on task t_2d8f33ec. Do not fabricate a pass. Leave the note as a FAILURE record.\n3. If WINDOW_END and all sje_fkey=0: write the formal validation evidence note to the Sycode vault at /home/frank/obsidian/sycode-trading/validation/2026-08-29-sje-fk-post-restart-24h-validation-t_2d8f33ec.md following the vault SCHEMA conventions (title, type: validation, status: done, confidence, created, updated, tags, sources, two wikilinks). Then add a kanban_comment on task t_2d8f33ec summarizing the full evidence: window_start=2026-08-28T21:03:31Z, window_end, deployed_sha=72ea72246ef2, fix_confirmed=true, sje_fkey_errors_over_window=0, sample_count=N. Do NOT call kanban_complete (card is already terminal).\n4. After finishing (either path), pause this cron job (id returned in your context) so it stops firing.\n\nFail-open rule: if you cannot read the evidence file or cannot determine the outcome, do NOT conclude a pass or fail on uncertainty you can resolve \u2014 re-read the evidence and the live metrics (curl http://localhost:3001/metrics | grep fk_terminal_total) before deciding. Only record FAILURE if there is a genuine regression.",
       "skills": [],
       "skill": null,
       "model": null,
       "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "arena-24h-monitor-gate.sh",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 30,
-        "display": "every 30m"
-      },
-      "schedule_display": "every 30m",
-      "repeat": {
-        "times": 48
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-03T10:25:49.041476+01:00",
-      "paused_reason": "migrated to jarvis store (t_0814e3b3)",
-      "created_at": "2026-07-04T15:14:48.587341+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "2a5a0f58b815",
-      "name": "arena-24h-monitor-closeout",
-      "prompt": "## Arena 24h Monitoring Closeout \u2014 t_90058b15\n\nThis is the FINAL closeout of the Arena ML activation 24h monitoring window (started ~2026-07-04T13:55Z, now completed). You are replacing the original nervous-system-engineer worker.\n\n### Background\n\nThe Arena scheduler was activated at SHA 205c21f4 with new env flags: ENABLE_PROMPT_EVOLUTION=true, ML_DATA_MINING_ENABLED=true, ENABLE_ARENA_ML_GATE_BYPASS=true. The task is to produce a 24h monitoring summary with metrics, anomalies, rollback decision, and evidence the pipeline remained paper-only.\n\n### Required Checks (read-only)\n\n1. **Runtime health**: curl http://localhost:3001/ready, /health, /version\n2. **Rollback triggers**: 0 live trade_intents, 0 closed-loop strategies with liveTradingApproved=true, healthy /ready\n3. **Arena activity**: policy snapshots, arena decisions, strategy outcomes, used_for_rating counts\n4. **ML registration**: new strategies with source=arena_ml_closed_loop, paper_autotrader versions, prompt runs, prompt drafts\n5. **Data miner**: new mining runs, actionable pattern count\n6. **Trade intents**: live=0, paper counts, any approved/executed since activation\n\n### DB Queries\n\nUse PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres. Key tables:\n- strategy_policy_snapshots (created_at, version)\n- strategy_arena_decisions (decided_at, winner_strategy_id)\n- strategy_decision_logs (created_at, would_trade)\n- strategy_outcomes (created_at, was_executed, is_simulated, used_for_rating)\n- strategies (created_at, trading_mode, meta->>source)\n- trade_intents (created_at, trading_mode, status)\n- ml_mining_runs (created_at, patterns_discovered, actionable_patterns)\n\n### Decision\n\n- If ANY rollback trigger is hit (live trading, live trade_intents, closed-loop promotion), block the final closeout and escalate.\n- If the pipeline remained paper-only with 0 live activity, produce the final summary and mark the task complete.\n- If no ML candidates were accepted (0 new arena_ml_closed_loop strategies), note this as a gap but do NOT block the task \u2014 this is the known upstream bottleneck.\n\n### Output\n\n1. Persist a final monitoring note to Obsidian: /home/frank/obsidian/quant-team/devops/2026-07-05-arena-24h-monitor-closeout-t_90058b15.md\n2. Produce the final evidence artifact in the workspace\n3. Complete the kanban task",
-      "skills": [
-        "hermes-agent",
-        "obsidian-knowledge-management"
-      ],
-      "skill": "hermes-agent",
-      "model": "tencent/hy3:free",
-      "provider": "nous",
-      "provider_snapshot": "openai-codex",
-      "model_snapshot": "gpt-5.5",
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
       "base_url": null,
       "script": null,
       "no_agent": false,
+      "monitor_script": "sje-fk-window-monitor.sh",
+      "monitor_url": null,
+      "monitor_state": null,
       "context_from": null,
       "schedule": {
-        "kind": "once",
-        "run_at": "2026-07-05T14:00:00+01:00",
-        "display": "once at 2026-07-05 14:00"
+        "kind": "cron",
+        "expr": "*/30 * * * *",
+        "display": "*/30 * * * *"
       },
-      "schedule_display": "once at 2026-07-05 14:00",
-      "repeat": {
-        "times": 1
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-07-04T15:15:04.949904+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null,
-      "disabled_by": "t_8b946730",
-      "disabled_reason": "Expired one-shot: Arena 24h monitoring window closed 2026-07-05; closeout prompt is a point-in-time check that already ran. Paused by t_8b946730 root coordination (os-reviewer approved shard).",
-      "updated_at": "2026-07-29T01:07:40.541272+00:00"
-    },
-    {
-      "id": "42b6cee6e53b",
-      "name": "persistence-health-watch",
-      "prompt": "",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "persistence-health-watch.sh",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 5,
-        "display": "every 5m"
-      },
-      "schedule_display": "every 5m",
+      "schedule_display": "*/30 * * * *",
       "repeat": {
         "times": null
       },
       "enabled": false,
       "state": "paused",
-      "paused_at": "2026-08-03T10:25:49.067213+01:00",
-      "paused_reason": "migrated to jarvis store (t_0814e3b3)",
-      "created_at": "2026-07-04T16:03:16.660541+01:00",
+      "paused_at": "2026-08-28T23:07:28+00:00",
+      "paused_reason": "dead-store-invariant-guard: profiles/nervous-system-engineer/cron/jobs.json ticker_heartbeat 5469s stale (>900s) [t_4bedf8d5]",
+      "created_at": "2026-08-28T22:13:59.289079+01:00",
+      "failure_streak": 1,
       "deliver": "local",
       "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "b9484183ca0a",
-      "name": "expire-outage-failures",
-      "prompt": "Expire consecutive_failures accrued inside fleet-wide health outage windows once unified-health-probe verdict history returns PASS (jarvis-os/t_411e72b4 standing handler). Runs the deterministic actuator; silent when clean, reports when it applied expiries/requeues.",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "expire-outage-failures-watch.sh",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 15,
-        "display": "every 15m"
-      },
-      "schedule_display": "every 15m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-03T10:25:49.097559+01:00",
-      "paused_reason": "migrated to jarvis store (t_0814e3b3)",
-      "created_at": "2026-08-03T08:44:56.762635+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
-      "id": "5ddf257feb89",
-      "name": "strategy-audit-drift-watch",
-      "prompt": "",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "strategy-audit-drift-watch.sh",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 30,
-        "display": "every 30m"
-      },
-      "schedule_display": "every 30m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-03T09:28:53+00:00",
-      "paused_reason": "auto-disabled by cron-ticker-invariant-guard: ticker_heartbeat missing/unreadable (t_0814e3b3)",
-      "created_at": "2026-08-03T10:16:26.077762+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
+      "enabled_toolsets": [
+        "terminal",
+        "file",
+        "web"
+      ],
       "workdir": null
     }
   ]

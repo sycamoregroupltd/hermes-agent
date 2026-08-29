@@ -288,44 +288,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 5
-    },
-    {
-      "id": "0adadec2b5c7",
-      "name": "verify-13c1f9279025-0037-run",
-      "prompt": "One-shot verification for kanban task t_3b5c8764 (cron 13c1f9279025 = quant-researcher-6h, schedule `37 */6 * * *`). The 00:37 BST scheduled run on 2026-08-22 should have just executed. Verify and record evidence:\n\n1. Read the live cron record: /home/frank/.hermes/profiles/jarvis/cron/jobs.json \u2014 find job id 13c1f9279025, record last_status, last_run_at, last_error, next_run_at. Acceptance requires last_status == \"ok\" and last_error == null.\n2. Find the newest report in /home/frank/.hermes/profiles/jarvis/cron/output/13c1f9279025/ \u2014 it should be named 2026-08-22_*.md. Record its full path, size in bytes, and confirm it is non-empty (>0 bytes) and that a 2026-08-22_ report exists.\n3. Read the executions ledger /home/frank/.hermes/profiles/jarvis/cron/executions.db \u2014 SELECT * FROM executions WHERE job_id='13c1f9279025' \u2014 record status (must be 'completed'), started_at, finished_at, error (must be null).\n4. Post a kanban_comment on task t_3b5c8764 (board sycode-trading) summarizing: run timestamp, exit status (completed/ok), cron log path (executions.db), report file path + size, and whether a real non-empty 2026-08-22_ report was produced.\n5. If last_status is not ok, or no 2026-08-22_ report exists, or the report is empty, treat it as a FAILURE: record the discrepancy in the comment and do NOT mark anything done \u2014 flag it for investigation.\n\nOutput a concise evidence block to stdout too. This is a read-only verification; do not modify the cron job, the script, or any DB.",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": "nous",
-      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
-      "base_url": null,
-      "script": null,
-      "no_agent": false,
-      "monitor_script": null,
-      "monitor_url": null,
-      "monitor_state": null,
-      "context_from": null,
-      "schedule": {
-        "kind": "once",
-        "run_at": "2026-08-22T00:42:00+01:00",
-        "display": "once at 2026-08-22 00:42"
-      },
-      "schedule_display": "once at 2026-08-22 00:42",
-      "repeat": {
-        "times": 1
-      },
-      "enabled": false,
-      "state": "completed",
-      "paused_at": null,
-      "paused_reason": null,
-      "created_at": "2026-08-21T21:01:36.154955+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null,
-      "run_claim": null
+      "failure_streak": 11
     },
     {
       "id": "c097aecdef5a",
@@ -441,6 +404,117 @@
         "terminal",
         "kanban"
       ],
+      "workdir": null
+    },
+    {
+      "id": "0b322629ebd5",
+      "name": "cron-ticker-invariant-guard-oob",
+      "prompt": "OUT-OF-BAND cron-ticker invariant guard (t_69f6c49a): runs trading-devops/scripts/cron_ticker_invariant_guard.sh which execs the canonical jarvis guard. Scans all profile cron stores; for any store with ENABLED jobs whose ticker_heartbeat is missing or >900s stale, emits a RED alert (stdout -> discord:#critical-alerts) and auto-disables those jobs with paused_reason. Silent when clean. Runs from the trading-devops store so it still fires when the guarded jarvis store (or others) wedge \u2014 never colocate guard with guarded store. no_agent watchdog; prompt unused.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "cron_ticker_invariant_guard.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/10 * * * *",
+        "display": "*/10 * * * *"
+      },
+      "schedule_display": "*/10 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T00:19:53.499171+01:00",
+      "failure_streak": 0,
+      "deliver": "discord:#critical-alerts",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "cb39330c9e7d",
+      "name": "provider-auth-liveness-no-agent",
+      "prompt": "No-agent provider auth-liveness rail (t_0f9d94f9): runs trading-devops/scripts/provider_auth_liveness.py. Reads on-disk auth state (nous shared store, codex pool, xai tokens) \u2014 never calls a provider. On any provider with NO usable token: opens ONE frank-gate card on jarvis-os (idempotency-keyed, exact re-auth command), spools a critical alert to the jarvis alertmanager drain (Discord #critical-alerts), and flips the codex-selective-dispatch flag as dispatch backpressure. On full recovery: auto-completes the card, resets the flag, silent. Emits DEGRADED on stderr (observable, not delivered) when a provider has a valid token but refresh is failing. no_agent watchdog; prompt unused.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "provider_auth_liveness.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 15,
+        "display": "every 15m"
+      },
+      "schedule_display": "every 15m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T00:39:05.061733+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "b3b1d29c0127",
+      "name": "gk1-conf-cal-stats-miner",
+      "prompt": "G-K1 recurring confidence_calibration_stats miner (paper/devops stats read-model writer). Runs the wrapper script which persists fresh confidence-band calibration stats to confidence_calibration_stats so the runtime confidence-calibration consumer never serves stale (fail-closed) data.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "gk1_conf_cal_stats_miner.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 */6 * * *",
+        "display": "0 */6 * * *"
+      },
+      "schedule_display": "0 */6 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T04:14:17.973088+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
       "workdir": null
     }
   ]

@@ -35,7 +35,14 @@ PG = "sycodetrading-supabase-db"
 PIPELINES = {
     "candles":                ("timestamp",   3),
     "signal_journeys":        ("created_at",  3),
-    "signal_pnl_points":      ("ts",          3),
+    # recorded_at, NOT ts (changed 2026-08-28). signal_pnl_points is partitioned with
+    # 55.6M rows and has NO index on ts, so max(ts) is a full seq scan that blew even
+    # the probe's own 60s statement_timeout — the pipeline reported ERROR for days
+    # while it was in fact perfectly fresh. recorded_at is covered by
+    # idx_signal_pnl_points_recorded_at (btree DESC): same query returns in 0.4s.
+    # recorded_at is also the more honest column here — this probe asks "are rows
+    # LANDING", which is write time, not the data's own event time.
+    "signal_pnl_points":      ("recorded_at", 3),
     "oi_snapshots":           ("created_at",  3),
     "signal_trajectory_bars": ("captured_at", 8),
     "funding_rate_history":   ("created_at",  6),

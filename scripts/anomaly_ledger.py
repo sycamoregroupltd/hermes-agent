@@ -51,6 +51,11 @@ DEFAULT_LEDGER = Path(
 HERMES_BIN = os.environ.get("HERMES_BIN", "/home/frank/.local/bin/hermes")
 RESOLVED_COMMENT_PREFIX = "RESOLVED: Report is green as of "
 ACTIVE_STATUSES = ("ready", "todo")  # statuses eligible for auto-completion
+# Defect-c (t_36d0acad): a green ACRADR condition must CLOSE the prior card even
+# when it drifted to 'blocked' (dispatcher crash / auto-block) — a blocked card is
+# not being actively worked, so closing it on green is the whole point of the fix.
+# 'in_progress' is deliberately excluded: a human may genuinely own that card.
+CLOSABLE_ON_GREEN = ("ready", "todo", "blocked")
 
 
 def utc_now() -> datetime:
@@ -204,6 +209,31 @@ class KanbanHarness:
         except Exception:
             return None
 
+    def list_open_acradr(self, board: Optional[str] = None) -> list:
+        """List open (ready/todo/blocked) '[ACRADR]' cards from the board sqlite DB.
+
+        Read-only reconciliation for defect-c (t_36d0acad): finds orphaned ACRADR
+        cards the ledger has lost track of. 'in_progress' cards are deliberately
+        excluded so we never auto-close a card a human is actively working.
+        """
+        board = board or self.board
+        import sqlite3
+        db = Path(os.environ.get("BOARDS_DIR", "/home/frank/.hermes/kanban/boards")) / board / "kanban.db"
+        if not db.exists():
+            return []
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                "SELECT id, title, body, status FROM tasks "
+                "WHERE title LIKE '[ACRADR]%' AND status IN ('ready','todo','blocked')"
+            ).fetchall()
+            con.close()
+            return [{"task_id": r["id"], "title": r["title"], "body": r["body"] or "",
+                     "status": r["status"]} for r in rows]
+        except Exception:
+            return []
+
 
 def _extract_task_id(stdout: str) -> Optional[str]:
     """Parse a task id out of `hermes kanban create --json` output."""
@@ -265,6 +295,38 @@ def _entry_key(report_class: str, source: str) -> str:
     onto a single owned incident (occurrences accumulate as comments).
     """
     return f"{report_class}::{_cron_job_id(source)}"
+
+
+# Defect-c (t_36d0acad) orphan reconciliation. The ledger may lose a card when
+# resolve_anomaly could not complete it (it used to clear the entry anyway), so a
+# green condition's last card was left open forever. These helpers re-locate open
+# '[ACRADR]' cards on the board and reconstruct their key from title + body.
+_ACRADR_TITLE_RE = re.compile(r"^\[ACRADR\]\s+\S+\s+([A-Za-z0-9_]+):")
+_ACRADR_SOURCE_RE = re.compile(r"Source:\s*`([^`]+)`")
+
+
+def _acradr_key_from_card(card: dict) -> Optional[str]:
+    """Reconstruct an ACRADR ledger key from a board card's title + body.
+
+    Title format: '[ACRADR] WARNING health_canary: freshness.stale_overall' ->
+    report_class 'health_canary'. Body carries 'Source: `.../output/<job>.md`' ->
+    cron_job_id = immediate parent dir of the source path (same as _cron_job_id).
+    Returns None when the card cannot be parsed — the caller must NOT touch it.
+    """
+    title = card.get("title") or ""
+    body = card.get("body") or ""
+    mt = _ACRADR_TITLE_RE.match(title)
+    if not mt:
+        return None
+    report_class = mt.group(1)
+    ms = _ACRADR_SOURCE_RE.search(body)
+    if not ms:
+        return None
+    try:
+        cron_job_id = _cron_job_id(ms.group(1))
+    except Exception:
+        cron_job_id = Path(ms.group(1)).name
+    return f"{report_class}::{cron_job_id}"
 
 
 def record_anomaly(
@@ -380,11 +442,10 @@ def resolve_anomaly(
     if comment_impl is None or complete_impl is None:
         raise RuntimeError("resolve_anomaly requires a harness or explicit *_fn callbacks")
 
-    # 1. resolution comment
-    comment_impl(task_id, RESOLVED_COMMENT_PREFIX + now)
-    # 2. auto-complete ONLY if the task is still in an active (ready/todo) state.
-    #    If a human already picked it up (in_progress/blocked), leave it open and
-    #    note that we did not auto-close.
+    # 2. auto-complete if the task is not being actively worked. CLOSABLE_ON_GREEN
+    #    includes 'blocked' (defect-c t_36d0acad): a green condition must close a
+    #    stale blocked card — that is the whole point of the fix. 'in_progress' is
+    #    excluded so we never stomp a card a human is genuinely working.
     completed = False
     status = None
     if status_impl is not None:
@@ -392,20 +453,30 @@ def resolve_anomaly(
             status = status_impl(task_id, board)
         except Exception:
             status = None
-    if status is None or status in ACTIVE_STATUSES:
+    if status is None or status in CLOSABLE_ON_GREEN:
+        # comment only on the first attempt (resolved_pending set on a prior skip)
+        if not entry.get("resolved_pending"):
+            comment_impl(task_id, RESOLVED_COMMENT_PREFIX + now)
         complete_impl(
             task_id,
             f"ACRADR self-heal: {report_class} on {source} returned green @ {now}.",
         )
         completed = True
+        # 3. clear ledger entry
+        del entries[key]
+        cleared = True
     else:
-        comment_impl(
-            task_id,
-            f"[ACRADR] Report green @ {now} but task already in '{status}'; leaving open for owner.",
-        )
-    # 3. clear ledger entry
-    del entries[key]
-    cleared = True
+        # Cannot safely auto-complete (e.g. in_progress). KEEP the pointer instead
+        # of orphaning the card (defect-c t_36d0acad): a later green run retries.
+        if not entry.get("resolved_pending"):
+            comment_impl(
+                task_id,
+                f"[ACRADR] Report green @ {now} but task in '{status}'; not auto-closed "
+                "(a worker may own it). Pointer kept — retried on a future green run.",
+            )
+        entry["resolved_pending"] = True
+        entry["last_seen"] = now
+        cleared = False
     # 4. recovery alert to originating channel
     alert_ok = None
     if channel and alert_impl is not None:
@@ -416,6 +487,57 @@ def resolve_anomaly(
         )
     return {"action": "resolved", "task_id": task_id, "key": key,
             "cleared": cleared, "alert_sent": alert_ok}
+
+
+def reconcile_orphan_acradr(
+    current_keys: set,
+    *,
+    board: str = "jarvis-os",
+    now: Optional[str] = None,
+    harness: Any = None,
+    _list_open_fn: Optional[Callable[[str], list]] = None,
+    _complete_fn: Optional[Callable[[str, str, Optional[str]], None]] = None,
+    _comment_fn: Optional[Callable[[str, str, Optional[str]], None]] = None,
+) -> list:
+    """Close ACRADR cards whose condition is green but that the ledger has lost.
+
+    Defect-c (t_36d0acad): resolve_anomaly used to clear its ledger entry even
+    when it could not complete a card (e.g. status=blocked), orphaning that card
+    forever — a green condition left its last card open for days. Reconciliation
+    re-locates open '[ACRADR]' cards on the board, reconstructs each card's key,
+    and completes any whose key is NOT in the current anomaly set (i.e. green this
+    run). Only ready/todo/blocked cards are listed (never in_progress), so active
+    human work is never stomped. Pure no-op when the harness cannot list cards.
+
+    Returns a list of closed card dicts: {"task_id", "key", "status"}.
+    """
+    now = now or iso_ts()
+    list_impl = _list_open_fn or (getattr(harness, "list_open_acradr", None)
+                                  if harness else None)
+    complete_impl = _complete_fn or (harness.complete if harness else None)
+    comment_impl = _comment_fn or (harness.comment if harness else None)
+    if list_impl is None or complete_impl is None:
+        return []  # cannot reconcile without list/complete capability — safe no-op
+    closed = []
+    for card in list_impl(board):
+        if (card.get("status") or "") == "in_progress":
+            continue  # defense-in-depth: never auto-close a card a human is working
+        key = _acradr_key_from_card(card)
+        if key is None:
+            continue
+        if key in current_keys:
+            continue  # still anomalous this run — leave open
+        complete_impl(
+            card["task_id"],
+            f"ACRADR reconcile: {key} green @ {now}; closing stale prior card "
+            f"(defect-c t_36d0acad).",
+            board,
+        )
+        if comment_impl is not None:
+            comment_impl(card["task_id"], RESOLVED_COMMENT_PREFIX + now, board)
+        closed.append({"task_id": card["task_id"], "key": key,
+                       "status": card.get("status")})
+    return closed
 
 
 def count_active(ledger: dict) -> int:
