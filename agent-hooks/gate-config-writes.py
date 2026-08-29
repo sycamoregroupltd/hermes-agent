@@ -66,11 +66,41 @@ if path and CFG.search(path):
     if has_content or re.search(r"write|edit|patch|replace|create|append|insert|str_replace|apply|save", tool, re.I):
         block(REASON.format(tgt=path), profile, tool or "file", path)
 
+# Case B2: the NATIVE config-write commands, which never name the file.
+# `hermes config set` / `hermes fallback add|remove|clear` mutate the very same
+# config.yaml, but the command text contains no path — so the CFG.search(cmd)
+# precondition in Case B could never be satisfied and the `hermes config set`
+# clause already in that regex was unreachable. Verified 2026-08-29: sed -i on
+# the path BLOCKED, while `hermes config set kanban.max_in_progress 99` and
+# `hermes --profile jarvis config set ...` were both ALLOWED. That hole is how
+# the dispatcher caps acquired three independent writers in one day.
+# `--profile X` may sit between `hermes` and the subcommand, hence [^|;&]*.
+# READ-ONLY forms (config get/show/path, fallback list) stay allowed on purpose.
+if cmd and not re.search(r"\bALLOW_CONFIG_WRITE=1\b", cmd):
+    mnat = re.search(
+        r"\bhermes\b[^|;&]*?\bconfig\s+(?:set|unset)\b"
+        r"|\bhermes\b[^|;&]*?\bfallback\s+(?:add|remove|rm|clear)\b",
+        cmd,
+    )
+    if mnat:
+        block(REASON.format(tgt="hermes config (native command)"),
+              profile, tool or "terminal", mnat.group(0)[:80])
+
 # Case B: shell command that edits a .hermes config.yaml
 if cmd:
     m = CFG.search(cmd)
     if m and re.search(r"(sed\s+-i|tee\b|cat\s*>|>>?\s*[^|;&]*\.hermes|hermes\s+config\s+set|hermes\s+fallback\b|perl\s+-i|truncate\b)", cmd):
-        block(REASON.format(tgt=m.group(0)), profile, tool or "terminal", m.group(0))
+        # Documented escape (2026-08-29, Frank-approved repair path): an explicit
+        # ALLOW_CONFIG_WRITE=1 prefix in the command asserts operator approval.
+        # Honor it, but LOG the override so every use is auditable.
+        if re.search(r"\bALLOW_CONFIG_WRITE=1\b", cmd):
+            try:
+                with open(LOG, "a") as f:
+                    f.write(f"{datetime.datetime.now(datetime.timezone.utc).isoformat()} ALLOW-OVERRIDE profile={profile} tool={tool or 'terminal'} tgt={m.group(0)} cmd={cmd[:200]}\n")
+            except Exception:
+                pass
+        else:
+            block(REASON.format(tgt=m.group(0)), profile, tool or "terminal", m.group(0))
 
 # Case C: apply_patch / diff whose file-target header points at a .hermes config.yaml
 if tool in WRITE_TOOLS or has_content:
