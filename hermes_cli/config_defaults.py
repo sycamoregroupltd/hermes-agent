@@ -2852,6 +2852,20 @@ DEFAULT_CONFIG = {
         # so stale rows don't accumulate and get scanned on every notifier
         # tick forever. Set 0 to disable the sweep.
         "done_sub_retention_days": 30,
+        # Postgres SKIP LOCKED claim-queue pilot (jarvis-os board only).
+        # When a board is listed here AND the KANBAN_CLAIM_QUEUE_URL env DSN is
+        # set, the dispatcher arbitrates *which* ready candidate to attempt via
+        # a Postgres SKIP LOCKED queue (short arbitration lease), while SQLite
+        # kanban.db stays the authoritative task state machine. Empty allowlist
+        # = queue disabled fleet-wide (pure SQLite claim path, unchanged).
+        "claim_queue_boards": [],
+        # Arbitration lease (seconds) between the PG-claim and the SQLite-commit
+        # window; min 30. Short because workers do NOT heartbeat PG.
+        "claim_queue_lease_seconds": 120,
+        # Intent knob: in the pilot this stays true so any PG error falls back
+        # to the SQLite claim path for that tick (fail-open). Reserved for a
+        # future opt-out that would surface PG errors as dispatch warnings.
+        "claim_queue_fail_open": True,
     },
 
     # Bot Mode cross-connection relay (tools/bot_relay.py). Envelopes queued

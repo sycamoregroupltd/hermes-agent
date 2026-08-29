@@ -10122,190 +10122,391 @@ def _dispatch_once_locked(
             # bucket it as nonspawnable if the profile genuinely isn't
             # there, with the existing diagnostic.
             _default_assignee_resolved = True
-    for row in ready_rows:
-        if ready_budget is not None and spawned >= ready_budget:
-            break
-        row_assignee = row["assignee"]
-        if not row_assignee:
-            # Honour kanban.default_assignee: when the dispatcher hits an
-            # unassigned ready task and an operator-configured fallback
-            # exists, persist the assignment and proceed. This removes the
-            # dashboard footgun where a task created without an assignee
-            # parks in 'ready' forever even though the operator's intent
-            # ("default") was perfectly clear (#27145). Mutating the row
-            # (not just the in-memory view) keeps diagnostics and the
-            # board state consistent: the task is now legitimately owned
-            # by ``kanban.default_assignee``, not "unassigned but secretly
-            # routed".
-            if _default_assignee and _default_assignee_resolved:
-                # Dry-run: show what WOULD happen (auto-assign + spawn) without
-                # mutating the DB. Real run: mutate the row + emit the
-                # 'assigned' event so the board state matches what just happened.
-                if not dry_run:
-                    try:
-                        with write_txn(conn):
-                            conn.execute(
-                                "UPDATE tasks SET assignee = ? WHERE id = ? "
-                                "AND (assignee IS NULL OR assignee = '')",
-                                (_default_assignee, row["id"]),
-                            )
-                            _append_event(
-                                conn, row["id"], "assigned",
-                                {
-                                    "assignee": _default_assignee,
-                                    "source": "kanban.default_assignee",
-                                },
-                            )
-                    except Exception:
-                        _log.debug(
-                            "kanban dispatch: failed to apply default_assignee=%r "
-                            "to task %s",
-                            _default_assignee, row["id"], exc_info=True,
-                        )
-                        result.skipped_unassigned.append(row["id"])
+    # ---- PG SKIP LOCKED claim-queue arbitration (jarvis-os pilot) ----
+    # When the claim queue is enabled for this board (env KANBAN_CLAIM_QUEUE_URL
+    # + config kanban.claim_queue_boards allowlist) and this is a real (non
+    # dry-run) tick, arbitrate *which* ready candidate to attempt through
+    # Postgres SKIP LOCKED. SQLite kanban.db stays authoritative: every pre-
+    # claim gate below runs BEFORE the authoritative claim_task, exactly as the
+    # SQLite loop does, and claim_task creates the task_runs row / current_run_id
+    # / claimed event. Gate-rejected candidates are released back to 'queued'
+    # with gate_reject=True (cooldown=0, no attempts increment); a genuine
+    # claim_task failure releases with round-robin backoff; a successful
+    # claim+spawn deletes the PG row (claimed -> deleted success terminal).
+    #
+    # FAIL-OPEN, TICK-SCOPED: the ENTIRE PG path (connect, sync_ready, claim_row,
+    # release, delete, reconcile) sits inside one try/except. ANY PG error at ANY
+    # point logs a warning and falls through to the unchanged SQLite ready loop
+    # for this tick (pg_claimed stays False) -- the board never stalls, never
+    # loses a task, never double-spawns.
+    pg_claimed = False
+    try:
+        from hermes_cli.kanban_pg_queue import queue_enabled  # local import: avoids cycle
+    except Exception:
+        # Fail-open: if the claim-queue module itself cannot import, treat the
+        # queue as disabled this tick (never crash dispatch on a module error).
+        queue_enabled = lambda _b: False  # noqa: E731
+    if queue_enabled(board) and not dry_run:
+        try:
+            from hermes_cli.kanban_pg_queue import (  # local import: avoids cycle
+                QueueUnavailable,
+                backoff_seconds,
+                claim_row,
+                delete_row,
+                queue_connect,
+                queue_lease_seconds,
+                reconcile_stale,
+                release_claim,
+                sync_ready,
+            )
+            import psycopg2  # noqa: F401  (already in the hermes venv)
+
+            pg = queue_connect()
+            sync_ready(pg, board, ready_rows)
+            claimer = _claimer_id()
+            lease_seconds = queue_lease_seconds()
+            for row in ready_rows:
+                if ready_budget is not None and spawned >= ready_budget:
+                    break
+                task_id = row["id"]
+                # per-row SKIP LOCKED + CAS claim: returns attempts on a
+                # successful queued->claimed CAS, or None when not claimable
+                # this tick (claimed by another dispatcher, or in cooldown) ->
+                # skip WITHOUT consuming the spawn budget and WITHOUT releasing
+                # (we never claimed it).
+                attempts = claim_row(pg, board, task_id, claimer, lease_seconds)
+                if attempts is None:
+                    continue
+                # ---- re-apply ALL pre-claim gates (mirror the SQLite loop) ----
+                row_assignee = row["assignee"]  # effective-assignee normalization
+                if not row_assignee:
+                    if _default_assignee and _default_assignee_resolved:
+                        # apply default_assignee exactly as the SQLite loop does
+                        if not dry_run:
+                            try:
+                                with write_txn(conn):
+                                    conn.execute(
+                                        "UPDATE tasks SET assignee = ? WHERE id = ? "
+                                        "AND (assignee IS NULL OR assignee = '')",
+                                        (_default_assignee, task_id),
+                                    )
+                                    _append_event(
+                                        conn, task_id, "assigned",
+                                        {
+                                            "assignee": _default_assignee,
+                                            "source": "kanban.default_assignee",
+                                        },
+                                    )
+                            except Exception:
+                                _log.debug(
+                                    "kanban dispatch: failed to apply default_assignee=%r "
+                                    "to task %s",
+                                    _default_assignee, task_id, exc_info=True,
+                                )
+                                result.skipped_unassigned.append(task_id)
+                                release_claim(pg, task_id, claimer, cooldown=0, gate_reject=True)
+                                continue
+                        row_assignee = _default_assignee
+                        result.auto_assigned_default.append(task_id)
+                    else:
+                        result.skipped_unassigned.append(task_id)
+                        release_claim(pg, task_id, claimer, cooldown=0, gate_reject=True)
                         continue
-                row_assignee = _default_assignee
-                result.auto_assigned_default.append(row["id"])
-            else:
-                result.skipped_unassigned.append(row["id"])
-                continue
-        # Skip ready tasks whose assignee is not a real Hermes profile.
-        # `_default_spawn` invokes ``hermes -p <assignee>`` which fails
-        # with "Profile 'X' does not exist" when the assignee names a
-        # control-plane lane (e.g. an interactive Claude Code terminal
-        # like ``orion-cc`` / ``orion-research``) rather than a Hermes
-        # profile. Those task lanes are pulled by terminals via
-        # ``claim_task`` directly and should NEVER auto-spawn — the
-        # subprocess would crash on startup, get reaped as a zombie,
-        # the task would loop back to ``ready`` on next tick, and we'd
-        # burn CPU forever (#kanban-dispatcher-crash-loop 2026-05-05).
-        try:
-            from hermes_cli.profiles import profile_exists  # local import: avoids cycle
-        except Exception:
-            profile_exists = None  # type: ignore[assignment]
-        if profile_exists is not None and not profile_exists(row_assignee):
-            # Bucket separately from skipped_unassigned: the operator
-            # cannot fix this by assigning a profile (the assignee IS the
-            # intended owner — a terminal lane). Health telemetry uses
-            # this distinction to suppress spurious "stuck" warnings on
-            # multi-lane setups where the ready queue is steadily full
-            # of human-pulled work.
-            result.skipped_nonspawnable.append(row["id"])
-            continue
-        # Per-profile concurrency cap (#21582): even if there's global
-        # headroom, refuse to spawn for an assignee that's already at
-        # its in-flight cap. Prevents one profile's local model / API
-        # quota / browser pool from being overwhelmed by a fan-out
-        # while the global max_in_progress / max_spawn caps still allow
-        # work on OTHER profiles.
-        if _per_profile_cap is not None:
-            current = _per_profile_running.get(row_assignee, 0)
-            if current >= _per_profile_cap:
-                result.skipped_per_profile_capped.append(
-                    (row["id"], row_assignee, current)
-                )
-                continue
-        # Respawn guard: refuse to re-spawn when useful work is already
-        # in-flight/recent, or when the last failure is a deterministic
-        # blocker (quota / auth). The guard defers the spawn this tick so
-        # the task gets a chance to clear (rate limits often reset in
-        # seconds-to-minutes); the existing consecutive_failures counter
-        # still trips the auto-block circuit breaker after failure_limit
-        # consecutive failures, so a persistent auth error eventually
-        # blocks via the normal path rather than on first occurrence.
-        guard_reason = check_respawn_guard(conn, row["id"])
-        if guard_reason is not None:
-            result.respawn_guarded.append((row["id"], guard_reason))
-            # Emit an event so operators can see why the task was
-            # skipped when reading `hermes kanban tail` — without
-            # this the task appears stuck in ready with no diagnosis.
-            if not dry_run:
-                with write_txn(conn):
-                    _append_event(
-                        conn, row["id"], "respawn_guarded",
-                        {"reason": guard_reason},
+                try:
+                    from hermes_cli.profiles import profile_exists  # local import: avoids cycle
+                except Exception:
+                    profile_exists = None  # type: ignore[assignment]
+                if profile_exists is not None and not profile_exists(row_assignee):
+                    result.skipped_nonspawnable.append(task_id)
+                    release_claim(pg, task_id, claimer, cooldown=0, gate_reject=True)
+                    continue
+                if _per_profile_cap is not None:
+                    current = _per_profile_running.get(row_assignee, 0)
+                    if current >= _per_profile_cap:
+                        result.skipped_per_profile_capped.append(
+                            (task_id, row_assignee, current)
+                        )
+                        release_claim(pg, task_id, claimer, cooldown=0, gate_reject=True)
+                        continue
+                guard_reason = check_respawn_guard(conn, task_id)
+                if guard_reason is not None:
+                    result.respawn_guarded.append((task_id, guard_reason))
+                    if not dry_run:
+                        with write_txn(conn):
+                            _append_event(
+                                conn, task_id, "respawn_guarded",
+                                {"reason": guard_reason},
+                            )
+                    release_claim(pg, task_id, claimer, cooldown=0, gate_reject=True)
+                    continue
+                # ---- gates passed: authoritative SQLite claim ----
+                claimed = claim_task(conn, task_id, ttl_seconds=ttl_seconds)
+                if claimed is None:
+                    # claim failed (parent demotion etc.) -- release with backoff
+                    release_claim(
+                        pg, task_id, claimer,
+                        cooldown=backoff_seconds(attempts),
                     )
-            continue
-        if dry_run:
-            result.spawned.append((row["id"], row_assignee, ""))
-            spawned += 1
-            # Increment per-profile counter even in dry_run so the cap
-            # check sees the would-be spawn on subsequent iterations.
-            # Without this, dry_run reports every task as spawnable and
-            # under-reports the capped subset (#21582).
-            if _per_profile_cap is not None and row_assignee:
-                _per_profile_running[row_assignee] = (
-                    _per_profile_running.get(row_assignee, 0) + 1
-                )
-            continue
-        claimed = claim_task(conn, row["id"], ttl_seconds=ttl_seconds)
-        if claimed is None:
-            continue
-        try:
-            resolved_branch_name = None
-            if claimed.workspace_kind == "worktree":
-                workspace, resolved_branch_name = _resolve_worktree_workspace(claimed, board=board)
-            else:
-                workspace = resolve_workspace(claimed, board=board)
-        except Exception as exc:
-            auto = _record_spawn_failure(
-                conn, claimed.id, f"workspace: {exc}",
-                failure_limit=failure_limit,
-            )
-            if auto:
-                result.auto_blocked.append(claimed.id)
-            continue
-        # Persist the resolved workspace path so the worker can cd there.
-        set_workspace_path(conn, claimed.id, str(workspace))
-        if claimed.workspace_kind == "worktree":
-            set_branch_name(conn, claimed.id, resolved_branch_name or (claimed.branch_name or "").strip() or f"wt/{claimed.id}")
-        _maybe_emit_scratch_tip(conn, claimed.id, claimed.workspace_kind)
-        _spawn = spawn_fn if spawn_fn is not None else _default_spawn
-        try:
-            # Back-compat: older spawn_fn signatures accept only
-            # (task, workspace). Test stubs in the suite rely on that.
-            # Introspect the callable and pass `board` only when supported.
-            import inspect
-            try:
-                sig = inspect.signature(_spawn)
-                if "board" in sig.parameters:
-                    pid = _spawn(claimed, str(workspace), board=board)
+                    continue
+                _pg_spawn_ok = False
+                try:
+                    resolved_branch_name = None
+                    if claimed.workspace_kind == "worktree":
+                        workspace, resolved_branch_name = _resolve_worktree_workspace(claimed, board=board)
+                    else:
+                        workspace = resolve_workspace(claimed, board=board)
+                except Exception as exc:
+                    auto = _record_spawn_failure(
+                        conn, claimed.id, f"workspace: {exc}",
+                        failure_limit=failure_limit,
+                    )
+                    if auto:
+                        result.auto_blocked.append(claimed.id)
+                    release_claim(
+                        pg, task_id, claimer,
+                        cooldown=backoff_seconds(attempts),
+                    )
+                    continue
+                set_workspace_path(conn, claimed.id, str(workspace))
+                if claimed.workspace_kind == "worktree":
+                    set_branch_name(conn, claimed.id, resolved_branch_name or (claimed.branch_name or "").strip() or f"wt/{claimed.id}")
+                _maybe_emit_scratch_tip(conn, claimed.id, claimed.workspace_kind)
+                _spawn = spawn_fn if spawn_fn is not None else _default_spawn
+                try:
+                    import inspect
+                    try:
+                        sig = inspect.signature(_spawn)
+                        if "board" in sig.parameters:
+                            pid = _spawn(claimed, str(workspace), board=board)
+                        else:
+                            pid = _spawn(claimed, str(workspace))
+                    except (TypeError, ValueError):
+                        pid = _spawn(claimed, str(workspace))
+                    if pid:
+                        _set_worker_pid(conn, claimed.id, int(pid))
+                    _fire_worker_spawned_hook(
+                        conn, claimed, str(workspace), pid, board=board,
+                    )
+                    result.spawned.append((claimed.id, claimed.assignee or "", str(workspace)))
+                    spawned += 1
+                    if _per_profile_cap is not None and claimed.assignee:
+                        _per_profile_running[claimed.assignee] = (
+                            _per_profile_running.get(claimed.assignee, 0) + 1
+                        )
+                    _pg_spawn_ok = True
+                except Exception as exc:
+                    auto = _record_spawn_failure(
+                        conn, claimed.id, str(exc),
+                        failure_limit=failure_limit,
+                    )
+                    if auto:
+                        result.auto_blocked.append(claimed.id)
+                if _pg_spawn_ok:
+                    # claimed -> deleted success terminal (SQLite committed + spawned)
+                    delete_row(pg, task_id, claimer)
                 else:
-                    pid = _spawn(claimed, str(workspace))
-            except (TypeError, ValueError):
-                pid = _spawn(claimed, str(workspace))
-            if pid:
-                _set_worker_pid(conn, claimed.id, int(pid))
-            # Worker-lifecycle observer (RFC #58548): fires AFTER spawn_fn
-            # returned and the PID (when reported) is durably persisted,
-            # per the RFC timing contract. Best-effort — can never break
-            # the dispatch loop.
-            _fire_worker_spawned_hook(
-                conn, claimed, str(workspace), pid, board=board,
+                    # spawn failed (already recorded above) -- release with backoff
+                    release_claim(
+                        pg, task_id, claimer,
+                        cooldown=backoff_seconds(attempts),
+                    )
+            reconcile_stale(pg, board)
+            pg_claimed = True  # PG path owned this tick
+        except (QueueUnavailable, psycopg2.Error) as exc:
+            # FAIL-OPEN, tick-scoped: any PG error -> unchanged SQLite loop this tick
+            _log.warning(
+                "kanban dispatch: claim queue unavailable (%s); "
+                "falling back to SQLite claim path for this tick", exc,
             )
-            # NOTE: we intentionally do NOT reset consecutive_failures
-            # here. A successful spawn proves the worker can start but
-            # doesn't prove the run will succeed. Under unified
-            # failure counting, resetting on spawn would let a task
-            # that keeps timing out after spawn loop forever. The
-            # counter is cleared only on successful completion (see
-            # complete_task).
-            result.spawned.append((claimed.id, claimed.assignee or "", str(workspace)))
-            spawned += 1
-            # Track the new in-flight count for this profile so later
-            # iterations in this same tick respect the per-profile cap
-            # (#21582). Subsequent ticks re-query from the DB.
-            if _per_profile_cap is not None and claimed.assignee:
-                _per_profile_running[claimed.assignee] = (
-                    _per_profile_running.get(claimed.assignee, 0) + 1
+            pg_claimed = False
+    # ---- SQLite claim path (existing, byte-for-byte unchanged) ----
+    # Reached when queue_enabled(board) is False OR dry_run OR any PG error.
+    # When pg_claimed is True the SQLite ready loop is SKIPPED for this tick.
+    if not pg_claimed:
+        for row in ready_rows:
+            if ready_budget is not None and spawned >= ready_budget:
+                break
+            row_assignee = row["assignee"]
+            if not row_assignee:
+                # Honour kanban.default_assignee: when the dispatcher hits an
+                # unassigned ready task and an operator-configured fallback
+                # exists, persist the assignment and proceed. This removes the
+                # dashboard footgun where a task created without an assignee
+                # parks in 'ready' forever even though the operator's intent
+                # ("default") was perfectly clear (#27145). Mutating the row
+                # (not just the in-memory view) keeps diagnostics and the
+                # board state consistent: the task is now legitimately owned
+                # by ``kanban.default_assignee``, not "unassigned but secretly
+                # routed".
+                if _default_assignee and _default_assignee_resolved:
+                    # Dry-run: show what WOULD happen (auto-assign + spawn) without
+                    # mutating the DB. Real run: mutate the row + emit the
+                    # 'assigned' event so the board state matches what just happened.
+                    if not dry_run:
+                        try:
+                            with write_txn(conn):
+                                conn.execute(
+                                    "UPDATE tasks SET assignee = ? WHERE id = ? "
+                                    "AND (assignee IS NULL OR assignee = '')",
+                                    (_default_assignee, row["id"]),
+                                )
+                                _append_event(
+                                    conn, row["id"], "assigned",
+                                    {
+                                        "assignee": _default_assignee,
+                                        "source": "kanban.default_assignee",
+                                    },
+                                )
+                        except Exception:
+                            _log.debug(
+                                "kanban dispatch: failed to apply default_assignee=%r "
+                                "to task %s",
+                                _default_assignee, row["id"], exc_info=True,
+                            )
+                            result.skipped_unassigned.append(row["id"])
+                            continue
+                    row_assignee = _default_assignee
+                    result.auto_assigned_default.append(row["id"])
+                else:
+                    result.skipped_unassigned.append(row["id"])
+                    continue
+            # Skip ready tasks whose assignee is not a real Hermes profile.
+            # `_default_spawn` invokes ``hermes -p <assignee>`` which fails
+            # with "Profile 'X' does not exist" when the assignee names a
+            # control-plane lane (e.g. an interactive Claude Code terminal
+            # like ``orion-cc`` / ``orion-research``) rather than a Hermes
+            # profile. Those task lanes are pulled by terminals via
+            # ``claim_task`` directly and should NEVER auto-spawn — the
+            # subprocess would crash on startup, get reaped as a zombie,
+            # the task would loop back to ``ready`` on next tick, and we'd
+            # burn CPU forever (#kanban-dispatcher-crash-loop 2026-05-05).
+            try:
+                from hermes_cli.profiles import profile_exists  # local import: avoids cycle
+            except Exception:
+                profile_exists = None  # type: ignore[assignment]
+            if profile_exists is not None and not profile_exists(row_assignee):
+                # Bucket separately from skipped_unassigned: the operator
+                # cannot fix this by assigning a profile (the assignee IS the
+                # intended owner — a terminal lane). Health telemetry uses
+                # this distinction to suppress spurious "stuck" warnings on
+                # multi-lane setups where the ready queue is steadily full
+                # of human-pulled work.
+                result.skipped_nonspawnable.append(row["id"])
+                continue
+            # Per-profile concurrency cap (#21582): even if there's global
+            # headroom, refuse to spawn for an assignee that's already at
+            # its in-flight cap. Prevents one profile's local model / API
+            # quota / browser pool from being overwhelmed by a fan-out
+            # while the global max_in_progress / max_spawn caps still allow
+            # work on OTHER profiles.
+            if _per_profile_cap is not None:
+                current = _per_profile_running.get(row_assignee, 0)
+                if current >= _per_profile_cap:
+                    result.skipped_per_profile_capped.append(
+                        (row["id"], row_assignee, current)
+                    )
+                    continue
+            # Respawn guard: refuse to re-spawn when useful work is already
+            # in-flight/recent, or when the last failure is a deterministic
+            # blocker (quota / auth). The guard defers the spawn this tick so
+            # the task gets a chance to clear (rate limits often reset in
+            # seconds-to-minutes); the existing consecutive_failures counter
+            # still trips the auto-block circuit breaker after failure_limit
+            # consecutive failures, so a persistent auth error eventually
+            # blocks via the normal path rather than on first occurrence.
+            guard_reason = check_respawn_guard(conn, row["id"])
+            if guard_reason is not None:
+                result.respawn_guarded.append((row["id"], guard_reason))
+                # Emit an event so operators can see why the task was
+                # skipped when reading `hermes kanban tail` — without
+                # this the task appears stuck in ready with no diagnosis.
+                if not dry_run:
+                    with write_txn(conn):
+                        _append_event(
+                            conn, row["id"], "respawn_guarded",
+                            {"reason": guard_reason},
+                        )
+                continue
+            if dry_run:
+                result.spawned.append((row["id"], row_assignee, ""))
+                spawned += 1
+                # Increment per-profile counter even in dry_run so the cap
+                # check sees the would-be spawn on subsequent iterations.
+                # Without this, dry_run reports every task as spawnable and
+                # under-reports the capped subset (#21582).
+                if _per_profile_cap is not None and row_assignee:
+                    _per_profile_running[row_assignee] = (
+                        _per_profile_running.get(row_assignee, 0) + 1
+                    )
+                continue
+            claimed = claim_task(conn, row["id"], ttl_seconds=ttl_seconds)
+            if claimed is None:
+                continue
+            try:
+                resolved_branch_name = None
+                if claimed.workspace_kind == "worktree":
+                    workspace, resolved_branch_name = _resolve_worktree_workspace(claimed, board=board)
+                else:
+                    workspace = resolve_workspace(claimed, board=board)
+            except Exception as exc:
+                auto = _record_spawn_failure(
+                    conn, claimed.id, f"workspace: {exc}",
+                    failure_limit=failure_limit,
                 )
-        except Exception as exc:
-            auto = _record_spawn_failure(
-                conn, claimed.id, str(exc),
-                failure_limit=failure_limit,
-            )
-            if auto:
-                result.auto_blocked.append(claimed.id)
+                if auto:
+                    result.auto_blocked.append(claimed.id)
+                continue
+            # Persist the resolved workspace path so the worker can cd there.
+            set_workspace_path(conn, claimed.id, str(workspace))
+            if claimed.workspace_kind == "worktree":
+                set_branch_name(conn, claimed.id, resolved_branch_name or (claimed.branch_name or "").strip() or f"wt/{claimed.id}")
+            _maybe_emit_scratch_tip(conn, claimed.id, claimed.workspace_kind)
+            _spawn = spawn_fn if spawn_fn is not None else _default_spawn
+            try:
+                # Back-compat: older spawn_fn signatures accept only
+                # (task, workspace). Test stubs in the suite rely on that.
+                # Introspect the callable and pass `board` only when supported.
+                import inspect
+                try:
+                    sig = inspect.signature(_spawn)
+                    if "board" in sig.parameters:
+                        pid = _spawn(claimed, str(workspace), board=board)
+                    else:
+                        pid = _spawn(claimed, str(workspace))
+                except (TypeError, ValueError):
+                    pid = _spawn(claimed, str(workspace))
+                if pid:
+                    _set_worker_pid(conn, claimed.id, int(pid))
+                # Worker-lifecycle observer (RFC #58548): fires AFTER spawn_fn
+                # returned and the PID (when reported) is durably persisted,
+                # per the RFC timing contract. Best-effort — can never break
+                # the dispatch loop.
+                _fire_worker_spawned_hook(
+                    conn, claimed, str(workspace), pid, board=board,
+                )
+                # NOTE: we intentionally do NOT reset consecutive_failures
+                # here. A successful spawn proves the worker can start but
+                # doesn't prove the run will succeed. Under unified
+                # failure counting, resetting on spawn would let a task
+                # that keeps timing out after spawn loop forever. The
+                # counter is cleared only on successful completion (see
+                # complete_task).
+                result.spawned.append((claimed.id, claimed.assignee or "", str(workspace)))
+                spawned += 1
+                # Track the new in-flight count for this profile so later
+                # iterations in this same tick respect the per-profile cap
+                # (#21582). Subsequent ticks re-query from the DB.
+                if _per_profile_cap is not None and claimed.assignee:
+                    _per_profile_running[claimed.assignee] = (
+                        _per_profile_running.get(claimed.assignee, 0) + 1
+                    )
+            except Exception as exc:
+                auto = _record_spawn_failure(
+                    conn, claimed.id, str(exc),
+                    failure_limit=failure_limit,
+                )
+                if auto:
+                    result.auto_blocked.append(claimed.id)
 
     # ---- review column dispatch ----
     # Review tasks are tasks that a worker moved to 'review' after
