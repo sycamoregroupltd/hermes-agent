@@ -334,6 +334,45 @@ else
     log "NOUS-BALANCE-UNMONITORED probe=$NOUS_BALANCE_PROBE py=$NOUS_BALANCE_PY"
 fi
 
+# ---- model-pin drift (t_f21d5a0b, 2026-08-29) --------------------------------
+# The fleet was repinned (68 config files) to the DATED build
+# deepseek/deepseek-v4-flash-0731 on nous for a 7-day 90%-off promo. Two silent-rot
+# classes: (a) served model DRIFTS off the pin (fallback_providers kick in, a profile
+# .env overrides, a new profile ships another default) -> we quietly pay list price or
+# lose capability; (b) the promo expires and we keep paying full list. model-pin-drift-
+# check.py reads session_model_usage across the fleet state DBs (READ-ONLY) and reports
+# any nous-billed (model,provider) in the window that is neither the pin nor a declared
+# default nor a deliberate exception (free aux tiers, codex/grok/claude seats). Exit
+# 1 on drift, 0 clean. The WRAPPER below captures that rc and feeds $problems/
+# $problem_id only — it NEVER propagates the checker's nonzero exit, because a --no-agent
+# cron would then spam a failure summary on EVERY tick (silent-green contract;
+# kanban-audit-chain-monitor.sh pattern). Env overrides (MODEL_PIN_DB / WINDOW_HOURS /
+# NO_CONFIG) exist for RED-PATH DRILLS ONLY — point MODEL_PIN_DB at a scratch copy so a
+# drill never reads/writes anything but scratch.
+MODEL_PIN_PROBE="${MODEL_PIN_PROBE:-/home/frank/.hermes/scripts/model-pin-drift-check.py}"
+mp_problem=""
+mp_class=""   # stable identity token for the alert key ("drift"|"unmonitored")
+if [ -f "$MODEL_PIN_PROBE" ] && [ -x "$MODEL_PIN_PROBE" ]; then
+    mp_out=$(timeout 120 "$MODEL_PIN_PROBE" 2>&1)
+    mp_rc=$?
+    mp_last="${mp_out##*$'\n'}"
+    if [ "$mp_rc" -ne 0 ]; then
+        # BODY carries the drift detail (model|provider|db|last); KEY token is stable so
+        # a persistent drift creates ONE card, not one per 10-min tick.
+        mp_problem="MODEL-PIN DRIFT (a served model is off the discounted pin — t_f21d5a0b): ${mp_last:-probe produced no output}. "
+        mp_class="drift"
+        log "MODEL-PIN-DRIFT rc=$mp_rc :: ${mp_last:-no output}"
+    else
+        echo "  MODEL-PIN: ${mp_last}" >> "$STATUS_FILE"
+        log "MODEL-PIN-CLEAN ${mp_last}"
+    fi
+else
+    echo "  MODEL-PIN: UNMONITORED (probe missing)" >> "$STATUS_FILE"
+    mp_problem="MODEL-PIN probe missing ($MODEL_PIN_PROBE absent) — served-model pin drift is UNMONITORED. "
+    mp_class="unmonitored"
+    log "MODEL-PIN-UNMONITORED probe=$MODEL_PIN_PROBE"
+fi
+
 # ---- alerting ----------------------------------------------------------------
 # $problems is the human BODY: it may (and should) carry counters, timestamps,
 # durations and filenames. $problem_id is the alert KEY input: identity ONLY.
@@ -345,6 +384,7 @@ problem_id=""
 [ -n "${spool_fallback_msg:-}" ] && problems+="$spool_fallback_msg "
 [ -n "${gj_problem:-}" ] && problems+="$gj_problem"
 [ -n "${nb_problem:-}" ] && problems+="$nb_problem"
+[ -n "${mp_problem:-}" ] && problems+="$mp_problem"
 
 [ ${#missing_names[@]}   -gt 0 ] && problem_id+="missing=$(printf '%s\n' "${missing_names[@]}"   | sort -u | paste -sd, -);"
 [ ${#unhealthy_names[@]} -gt 0 ] && problem_id+="unhealthy=$(printf '%s\n' "${unhealthy_names[@]}" | sort -u | paste -sd, -);"
@@ -352,6 +392,7 @@ problem_id=""
 [ -n "${spool_fallback_msg:-}" ] && problem_id+="spool=$(printf '%s\n' "${stale_spools[@]%%:*}" | sort -u | paste -sd, -);"
 [ -n "${gj_problem:-}" ] && problem_id+="goal-judge=${gj_class:-unknown};"
 [ -n "${nb_problem:-}" ] && problem_id+="nous-balance=${nb_class:-unknown};"
+[ -n "${mp_problem:-}" ] && problem_id+="model-pin=${mp_class:-unknown};"
 if [ -n "$am_alerts" ] && [ "$am_alerts" != "ALERTMANAGER-UNREACHABLE" ]; then
     # 2026-07-29 (opus5): this used to hardcode "undelivered — receivers unwired".
     # That was true when written (07-13) but the receivers were wired in-repo since,
