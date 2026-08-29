@@ -293,8 +293,6 @@ const NO_DESKTOP_SURFACE: Record<DesktopUnavailableReason, readonly string[]> = 
     '/sb',
     '/set-home',
     '/sethome',
-    '/snap',
-    '/snapshot',
     '/statusbar',
     '/toolsets',
     '/update',
