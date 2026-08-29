@@ -18,8 +18,14 @@
 #   - manifest container running but unhealthy     -> ALERT
 #   - OFF-declared container                       -> reported (visible), never alerted
 #   - running container not in manifest            -> reported as unmanifested (no alert)
-#   - Alertmanager has active alerts               -> relayed in the alert body
-#     (bridges the receivers-all-commented-out delivery hole until fixed in-repo)
+#   - Alertmanager has active alerts               -> CONTEXT, not a page driver
+#     (t_d9fdac65, 2026-08-29: every active alert is the sycode-trading APPLICATION's
+#     own alert — job=sycodetrading-server app rules. They are NOT DGX docker-stack
+#     health, they page via their own verified webhook, and relaying them into
+#     $problems kept the 'DGX stack degraded' page red for 44 days while the stack
+#     was healthy. Now: always visible in the status file, appended to the alert BODY
+#     only when a real stack problem also fires, never in the alert key. Alertmanager
+#     ITSELF unreachable remains a page driver (am-unreachable).)
 #
 # Runs from the SYSTEM crontab (*/10 + @reboot). Observe-only: never starts,
 # stops, or restarts anything. Alerts via `hermes send` (throttled per key).
@@ -412,19 +418,24 @@ if [ -n "$am_alerts" ] && [ "$am_alerts" != "ALERTMANAGER-UNREACHABLE" ]; then
     else
         am_delivery="delivered via webhook — ${am_sent} sent, 0 failed"
     fi
-    problems+="Alertmanager active (${am_delivery}): $am_alerts. "
-    # IDENTITY: the SUB-CHECK "alertmanager has active alerts", not the alert list.
-    # Measured 2026-08-29 over the last 150 DEGRADED runs in this log:
-    #   md5($problems)              -> 146 distinct keys  (the bug: 157 duplicate cards)
-    #   full sorted alertname set   ->  63 distinct keys, 95/149 consecutive flips
-    #   critical-only alertname set ->  13 distinct keys, 47/149 consecutive flips
-    #   failing sub-check identity  ->   4 distinct keys  <-- chosen
-    # Alertmanager's active set flaps by design (that is what Alertmanager is for, and
-    # it has its own webhook delivery path: 2800+ notifications sent). Re-exporting that
-    # flapping into the card key just re-creates the flood at 1/2 the rate. The alert
-    # NAMES are not lost: they are in $problems, i.e. in the card BODY, which is rebuilt
-    # every time this key re-fires. $am_names is logged below for forensics.
-    problem_id+="am-active;"
+    # 2026-08-29 (devops, t_d9fdac65): DEMOTED from $problems to CONTEXT.
+    # Every active alert here is the sycode-trading APPLICATION's own alert
+    # (job=sycodetrading-server / app rules from monitoring/prometheus/alerts.yml:
+    # SLO burn-rate, queue failures, decision-log, staleness). They are NOT DGX
+    # docker-stack health. The audit already measures the actual stack via the
+    # manifest/docker branch (currently 34/34 up, 0 unhealthy). Relaying these app
+    # alerts into $problems kept the 'DGX stack degraded' page permanently red
+    # (44 days) while the stack was healthy, because genuine sycode SLO/queue
+    # incidents legitimately keep firing until the app problems are fixed — and they
+    # already page via their OWN verified alertmanager webhook (am_sent/am_failed).
+    # So: report them as CONTEXT — always visible in the status file (written by the
+    # status-file block above), appended to the alert BODY only when a real stack
+    # problem is also firing, and NEVER in the identity key. Alertmanager ITSELF
+    # being unreachable (am-unreachable below) remains a genuine stack/monitoring
+    # failure and still drives the page.
+    if [ -n "$problems" ]; then
+        problems+="Alertmanager active (sycode APPLICATION alerts — paged via their own webhook, ${am_delivery}; not DGX stack): $am_alerts. "
+    fi
 elif [ "$am_alerts" = "ALERTMANAGER-UNREACHABLE" ]; then
     problems+="Alertmanager itself unreachable on :9093. "
     problem_id+="am-unreachable;"
