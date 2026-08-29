@@ -25,9 +25,13 @@ browser still owned by a live agent (cross-process safe via ``owner_pid``).
 
 Self-termination (so the watchdog cannot itself become a leak):
   1. Owner death  -> reap, then exit.
-  2. All ``agent-browser-*`` socket dirs gone (sessions cleanly closed) and
-     we've been alive past a short grace -> exit, nothing left to guard.
-  3. Absolute lifetime cap (default 24h) -> hard exit regardless.
+  2. Absolute lifetime cap (default 24h) -> hard exit regardless.
+
+The watchdog does NOT exit while the owner is alive even when no /tmp socket
+dirs remain: it is spawned once per agent process and guards the owner for its
+whole lifetime, so every browser session in a long-lived gateway/CLI process is
+covered. Exiting on empty dirs would leave later sessions unprotected
+(t_8a1037d1 review, round 1).
 
 Stdlib-only, POSIX-only (the spawn site gates on ``os.name == "posix"``), and
 fast to start. It does NOT import the heavy ``tools.browser_tool`` module.
@@ -39,7 +43,6 @@ Usage (see the spawn site in ``tools/browser_tool.py``)::
 Env:
   BROWSER_OWNER_WATCHDOG_POLL_S   poll interval in seconds (default 2)
   BROWSER_OWNER_WATCHDOG_MAX_S    absolute lifetime cap in seconds (default 86400)
-  BROWSER_OWNER_WATCHDOG_GRACE_S  grace after all socket dirs vanish (default 10)
   BROWSER_OWNER_WATCHDOG_DRY_RUN  set to 1 to log without killing/removing
 """
 
@@ -55,7 +58,6 @@ from pathlib import Path
 
 _POLL_S = float(os.environ.get("BROWSER_OWNER_WATCHDOG_POLL_S", "2"))
 _MAX_S = float(os.environ.get("BROWSER_OWNER_WATCHDOG_MAX_S", str(24 * 3600)))
-_GRACE_S = float(os.environ.get("BROWSER_OWNER_WATCHDOG_GRACE_S", "10"))
 _DRY_RUN = os.environ.get("BROWSER_OWNER_WATCHDOG_DRY_RUN") == "1"
 
 UDD_PREFIX = "--user-data-dir=/tmp/agent-browser-chrome-"
@@ -332,22 +334,24 @@ def _cleanup_orphan_profile_dirs() -> None:
 
 
 def _run(original_ppid: int) -> int:
+    """Watch the owner for its WHOLE lifetime.
+
+    We deliberately do NOT self-terminate when the /tmp socket dirs are empty
+    while the owner is still alive. The browser tool spawns (and keeps) one
+    watchdog per live agent process, so if it exited on empty dirs it would
+    leave later sessions in a long-lived gateway/CLI process with NO watchdog —
+    and a SIGKILL during that session would leak orphan Chromium exactly as
+    before (t_8a1037d1 review, round 1). The watchdog is stdlib-only and sleeps
+    2s per poll, so a single instance guarding the owner for its whole life is
+    trivially cheap. Exit only on owner death (after reaping) or the absolute
+    ``_MAX_S`` lifetime cap (a safety net so a wedged watchdog can never
+    accumulate).
+    """
     start = time.time()
-    dirs_gone_since: float | None = None
     while True:
         if _owner_is_gone(original_ppid):
             _reap_owner_browsers()
             return 0
-
-        socket_dirs = _socket_dirs()
-        if not socket_dirs:
-            if dirs_gone_since is None:
-                dirs_gone_since = time.time()
-            elif time.time() - dirs_gone_since >= _GRACE_S:
-                # All sessions closed cleanly; nothing left to guard.
-                return 0
-        else:
-            dirs_gone_since = None
 
         if time.time() - start >= _MAX_S:
             return 0

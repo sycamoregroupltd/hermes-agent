@@ -2526,12 +2526,16 @@ def _stop_browser_cleanup_thread():
         _cleanup_thread.join(timeout=5)
 
 
-# Guard so we only spawn one watchdog per agent process.
-_owner_watchdog_spawned = False
+# Guard so we only keep ONE live watchdog per agent process. We spawn once and
+# keep it for the owner's whole lifetime (it no longer self-terminates on empty
+# /tmp socket dirs — see tools/browser_owner_watchdog.py), but if that watchdog
+# ever dies for any reason (e.g. the 24h _MAX_S hard cap, or a crash) we spawn a
+# fresh one on the next session rather than leaving later sessions unprotected.
+_owner_watchdog_proc = None
 
 
 def _spawn_owner_watchdog():
-    """Spawn the detached owner-death watchdog (once per process).
+    """Spawn (or respawn) the detached owner-death watchdog.
 
     The watchdog survives the agent's SIGKILL (it is reparented to init, not
     killed) and reaps any agent-browser daemon + Chromium tree left behind when
@@ -2540,16 +2544,22 @@ def _spawn_owner_watchdog():
 
     Pure belt-and-braces layer: the in-process atexit/thread cleanup already
     handles graceful exits; the watchdog only matters for hard kills. It is a
-    tiny stdlib-only POSIX process and self-terminates on owner death, when all
-    socket dirs are gone, or after a hard lifetime cap — so it cannot itself
+    tiny stdlib-only POSIX process that stays up for the owner's whole lifetime
+    and exits only on owner death or the 24h hard cap — so it cannot itself
     become a leak.
+
+    Idempotent per-live-watchdog, not per-process-lifetime: if a previously
+    spawned watchdog is still alive we do nothing; if it died we respawn so
+    every session in a long-lived gateway/CLI process stays protected
+    (t_8a1037d1 review, round 1).
     """
-    global _owner_watchdog_spawned
-    if _owner_watchdog_spawned:
-        return
+    global _owner_watchdog_proc
     if os.name != "posix":
         return  # PR_SET_PDEATHSIG-equivalent and /proc scans are POSIX-only
-    _owner_watchdog_spawned = True
+
+    # A live watchdog already guards this process -> nothing to do.
+    if _owner_watchdog_proc is not None and _owner_watchdog_proc.poll() is None:
+        return
 
     script = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "browser_owner_watchdog.py"
@@ -2558,7 +2568,7 @@ def _spawn_owner_watchdog():
         logger.warning("browser owner watchdog script missing: %s", script)
         return
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [sys.executable, script, "--ppid", str(os.getpid())],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -2566,6 +2576,7 @@ def _spawn_owner_watchdog():
             start_new_session=True,
             close_fds=True,
         )
+        _owner_watchdog_proc = proc
         logger.debug("Spawned detached browser owner watchdog (ppid=%s)",
                      os.getpid())
     except (OSError, subprocess.SubprocessError) as e:

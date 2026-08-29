@@ -154,7 +154,6 @@ def fake_session_factory():
 def _watchdog_env():
     env = dict(os.environ)
     env["BROWSER_OWNER_WATCHDOG_POLL_S"] = "0.2"
-    env["BROWSER_OWNER_WATCHDOG_GRACE_S"] = "0.5"
     return env
 
 
@@ -163,6 +162,49 @@ def _run_watchdog(ppid, timeout=30):
         [sys.executable, WATCHDOG, "--ppid", str(ppid)],
         env=_watchdog_env(), capture_output=True, text=True, timeout=timeout,
     )
+
+
+# An "owner host" that launches the watchdog as its OWN child. This matters for
+# the watchdog's owner-death detection, which is `os.getppid() != original_ppid`:
+# the watchdog must be a child of the owner for a live owner to read as alive.
+# Spawning the watchdog from pytest would make the watchdog's parent pytest, so
+# it would conclude the owner is gone immediately. The host prints its own pid
+# and the watchdog's pid on one line, then sleeps.
+_OWNER_HOST_SRC = r"""
+import os, subprocess, sys, time
+watchdog = sys.argv[1]
+env = dict(os.environ)
+env["BROWSER_OWNER_WATCHDOG_POLL_S"] = "0.2"
+wd = subprocess.Popen(
+    [sys.executable, watchdog, "--ppid", str(os.getpid())],
+    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+)
+print(os.getpid(), wd.pid, flush=True)
+time.sleep(600)
+"""
+
+
+def _spawn_owner_host():
+    """Spawn an owner-host whose child is the watchdog. The watchdog sees a
+    live parent (its own ppid == owner pid), exactly as in production where the
+    browser tool spawns the watchdog as its child. Returns
+    ``(owner_popen, owner_pid, watchdog_pid)``."""
+    p = subprocess.Popen(
+        [sys.executable, "-c", _OWNER_HOST_SRC, WATCHDOG],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    line = p.stdout.readline().strip().split()
+    owner_pid, watchdog_pid = int(line[0]), int(line[1])
+    time.sleep(0.3)
+    return p, owner_pid, watchdog_pid
+
+
+def _kill_pid(pid):
+    if _pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def test_reaps_owner_browsers_on_sigkill(fake_session_factory):
@@ -209,6 +251,26 @@ def test_leaves_owned_browser_alone(fake_session_factory):
     owner.wait()
 
 
+def test_does_not_self_terminate_on_empty_dirs_while_owner_alive(fake_session_factory):
+    """The watchdog must NOT exit when no socket dirs exist while the owner is
+    alive — that was the round-1 review finding (a one-shot watchdog that dies
+    on empty dirs leaves later sessions unprotected)."""
+    owner, owner_pid, wd_pid = _spawn_owner_host()
+    try:
+        # No socket dirs present; owner alive. Watchdog must keep running.
+        time.sleep(2.0)
+        assert _pid_alive(wd_pid), (
+            "watchdog self-terminated on empty dirs while owner alive — "
+            "later sessions would be unprotected"
+        )
+        # Owner still alive; no reap should have occurred.
+        assert _pid_alive(owner_pid)
+    finally:
+        _kill_pid(wd_pid)
+        _kill_pid(owner_pid)
+        owner.wait()
+
+
 def test_noop_when_no_sessions():
     """No browser sessions -> watchdog exits quietly without error."""
     dead = _spawn_sleeper()
@@ -216,3 +278,65 @@ def test_noop_when_no_sessions():
     dead.wait()
     result = _run_watchdog(dead.pid)
     assert result.returncode == 0
+
+
+def test_multi_session_lifecycle(fake_session_factory):
+    """Session 1 -> clean close -> session 2 -> SIGKILL owner: no orphan.
+
+    This is the round-1 review acceptance gap: a watchdog that self-terminated
+    on the clean close of session 1 and was never respawned would leave session
+    2 unprotected. With the fix (A) the watchdog lives for the owner's whole
+    lifetime, so it is present across both sessions.
+    """
+    owner, owner_pid, wd_pid = _spawn_owner_host()
+    try:
+        # Session 1: create a browser under the live owner.
+        fs1 = fake_session_factory(owner_pid)
+        fs1.assert_all_alive()
+
+        # Clean close of session 1: the daemon + chromium are closed and the
+        # socket dir + profile dir are removed, as the browser tool does on a
+        # graceful close.
+        import shutil as _sh
+        for p in (fs1.daemon,):
+            if _pid_alive(p.pid):
+                os.kill(p.pid, signal.SIGTERM)
+        time.sleep(0.5)
+        _sh.rmtree(fs1.socket_dir, ignore_errors=True)
+        _sh.rmtree(fs1.profile_dir, ignore_errors=True)
+
+        # Watchdog must survive the clean close of session 1 (owner alive).
+        time.sleep(1.0)
+        assert _pid_alive(wd_pid), (
+            "watchdog died after clean close of session 1 — session 2 unprotected"
+        )
+
+        # Session 2: a new browser session.
+        fs2 = fake_session_factory(owner_pid)
+        fs2.assert_all_alive()
+
+        # SIGKILL the owner during session 2 (the acceptance scenario).
+        os.kill(owner_pid, signal.SIGKILL)
+        owner.wait()
+
+        # Watchdog (still alive, guarding this owner) reaps session 2's tree.
+        time.sleep(3.0)  # poll 0.2s + reap
+        assert not _pid_alive(fs2.daemon.pid), (
+            "session-2 daemon survived owner SIGKILL — multi-session leak"
+        )
+        assert not _pid_alive(fs2.chromium_pid), (
+            "session-2 Chromium survived owner SIGKILL — multi-session leak"
+        )
+        assert not os.path.exists(fs2.socket_dir)
+        assert not os.path.exists(fs2.profile_dir)
+        # Watchdog should have exited after reaping on owner death.
+        for _ in range(50):
+            if not _pid_alive(wd_pid):
+                break
+            time.sleep(0.2)
+        assert not _pid_alive(wd_pid), "watchdog did not exit after owner death"
+    finally:
+        _kill_pid(wd_pid)
+        if _pid_alive(owner_pid):
+            os.kill(owner_pid, signal.SIGKILL)
+            owner.wait()
