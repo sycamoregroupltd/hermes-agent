@@ -25,9 +25,16 @@ import uuid
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    os.name != "posix", reason="browser owner watchdog is POSIX-only"
-)
+# These tests genuinely deliver real SIGKILLs: the acceptance criterion for
+# t_8a1037d1 is that killing the agent (SIGKILL) leaves no surviving Chromium.
+# The watchdog under test is a real subprocess that must tree-kill real child
+# processes across process groups — this is not something mocks can prove and
+# the whole point of the test is to exercise real signal delivery. The
+# conftest live-system guard would otherwise block these real os.kill calls.
+pytestmark = [
+    pytest.mark.skipif(os.name != "posix", reason="browser owner watchdog is POSIX-only"),
+    pytest.mark.live_system_guard_bypass,
+]
 
 WATCHDOG = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
