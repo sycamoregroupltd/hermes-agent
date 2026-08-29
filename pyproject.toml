@@ -488,6 +488,7 @@ markers = [
     "linux_only: exercises Linux-specific behaviour; skipped on other hosts",
     "macos_only: exercises macOS-specific behaviour; skipped on other hosts",
     "windows_only: exercises native-Windows behaviour; skipped on other hosts",
+    "real_cpu_guard: opt out of the autouse stub that pins os.getloadavg to idle (CPU-load dispatch guard)",
 ]
 # integration tests take way too long to run in the normal CI environments
 addopts = "-m 'not integration'"
