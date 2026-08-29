@@ -5925,7 +5925,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T02:43:01.666091+01:00",
-      "failure_streak": 1,
+      "failure_streak": 3,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
