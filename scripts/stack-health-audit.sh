@@ -296,6 +296,83 @@ else
     log "GOAL-JUDGE-UNMONITORED probe=$GOAL_JUDGE_PROBE py=$GOAL_JUDGE_PY"
 fi
 
+# ---- nous-balance liveness (t_141e28ed, 2026-08-29) --------------------------
+# 2026-08-03: nous balance emptied and every PAID-pinned worker exited rc=0
+# WITHOUT a kanban lifecycle (protocol_violation) or died pid-not-alive across
+# all boards — silently shredding retries. The goal-judge lane was rescued by a
+# free pin (tencent/hy3:free); the pool was later re-pinned to
+# deepseek/deepseek-v4-flash-0731. An empty balance must ALERT, not silently
+# eat retries. One synthetic read of the real Nous Portal usable-credit balance
+# through the same production path the 15m guard-bundle watchdog uses
+# (hermes_cli.nous_account). Threshold env-overridable; default $5 (watchdog
+# parity). This surfaces in the 10-minute audit even though the watchdog also
+# runs via guard-bundle-tick-15m.
+NOUS_BALANCE_PROBE="${NOUS_BALANCE_PROBE:-/home/frank/.hermes/scripts/nous-balance-liveness.py}"
+NOUS_BALANCE_PY="${NOUS_BALANCE_PY:-/home/frank/.hermes/hermes-agent/.venv/bin/python}"
+NOUS_BALANCE_THRESHOLD="${NOUS_BALANCE_THRESHOLD_USD:-5.0}"
+nb_problem=""
+nb_class=""   # stable identity token for the alert key
+if [ -f "$NOUS_BALANCE_PROBE" ] && [ -x "$NOUS_BALANCE_PY" ]; then
+    nb_out=$(timeout 90 "$NOUS_BALANCE_PY" "$NOUS_BALANCE_PROBE" "$NOUS_BALANCE_THRESHOLD" 2>&1)
+    nb_rc=$?
+    nb_last="${nb_out##*$'\n'}"
+    if [ "$nb_rc" -ne 0 ]; then
+        echo "  NOUS-BALANCE: DOWN — ${nb_last:-no output} (rc=$nb_rc)" >> "$STATUS_FILE"
+        # The BODY carries the measured usable figure / error; the KEY token is
+        # stable so an empty balance creates ONE card, not one per 10-min tick.
+        nb_problem="NOUS-BALANCE problem (worker/provider exhaustion risk — t_141e28ed): ${nb_last:-probe produced no output}. "
+        nb_class="down"
+        log "NOUS-BALANCE-DOWN rc=$nb_rc ${nb_last:-no output}"
+    else
+        echo "  NOUS-BALANCE: ${nb_last}" >> "$STATUS_FILE"
+        log "NOUS-BALANCE-OK ${nb_last}"
+    fi
+else
+    echo "  NOUS-BALANCE: UNMONITORED (probe or venv missing)" >> "$STATUS_FILE"
+    nb_problem="NOUS-BALANCE probe missing ($NOUS_BALANCE_PROBE or $NOUS_BALANCE_PY absent) — nous balance liveness is UNMONITORED. "
+    nb_class="unmonitored"
+    log "NOUS-BALANCE-UNMONITORED probe=$NOUS_BALANCE_PROBE py=$NOUS_BALANCE_PY"
+fi
+
+# ---- model-pin drift (t_f21d5a0b, 2026-08-29) --------------------------------
+# The fleet was repinned (68 config files) to the DATED build
+# deepseek/deepseek-v4-flash-0731 on nous for a 7-day 90%-off promo. Two silent-rot
+# classes: (a) served model DRIFTS off the pin (fallback_providers kick in, a profile
+# .env overrides, a new profile ships another default) -> we quietly pay list price or
+# lose capability; (b) the promo expires and we keep paying full list. model-pin-drift-
+# check.py reads session_model_usage across the fleet state DBs (READ-ONLY) and reports
+# any nous-billed (model,provider) in the window that is neither the pin nor a declared
+# default nor a deliberate exception (free aux tiers, codex/grok/claude seats). Exit
+# 1 on drift, 0 clean. The WRAPPER below captures that rc and feeds $problems/
+# $problem_id only — it NEVER propagates the checker's nonzero exit, because a --no-agent
+# cron would then spam a failure summary on EVERY tick (silent-green contract;
+# kanban-audit-chain-monitor.sh pattern). Env overrides (MODEL_PIN_DB / WINDOW_HOURS /
+# NO_CONFIG) exist for RED-PATH DRILLS ONLY — point MODEL_PIN_DB at a scratch copy so a
+# drill never reads/writes anything but scratch.
+MODEL_PIN_PROBE="${MODEL_PIN_PROBE:-/home/frank/.hermes/scripts/model-pin-drift-check.py}"
+mp_problem=""
+mp_class=""   # stable identity token for the alert key ("drift"|"unmonitored")
+if [ -f "$MODEL_PIN_PROBE" ] && [ -x "$MODEL_PIN_PROBE" ]; then
+    mp_out=$(timeout 120 "$MODEL_PIN_PROBE" 2>&1)
+    mp_rc=$?
+    mp_last="${mp_out##*$'\n'}"
+    if [ "$mp_rc" -ne 0 ]; then
+        # BODY carries the drift detail (model|provider|db|last); KEY token is stable so
+        # a persistent drift creates ONE card, not one per 10-min tick.
+        mp_problem="MODEL-PIN DRIFT (a served model is off the discounted pin — t_f21d5a0b): ${mp_last:-probe produced no output}. "
+        mp_class="drift"
+        log "MODEL-PIN-DRIFT rc=$mp_rc :: ${mp_last:-no output}"
+    else
+        echo "  MODEL-PIN: ${mp_last}" >> "$STATUS_FILE"
+        log "MODEL-PIN-CLEAN ${mp_last}"
+    fi
+else
+    echo "  MODEL-PIN: UNMONITORED (probe missing)" >> "$STATUS_FILE"
+    mp_problem="MODEL-PIN probe missing ($MODEL_PIN_PROBE absent) — served-model pin drift is UNMONITORED. "
+    mp_class="unmonitored"
+    log "MODEL-PIN-UNMONITORED probe=$MODEL_PIN_PROBE"
+fi
+
 # ---- alerting ----------------------------------------------------------------
 # $problems is the human BODY: it may (and should) carry counters, timestamps,
 # durations and filenames. $problem_id is the alert KEY input: identity ONLY.
@@ -306,12 +383,16 @@ problem_id=""
 [ ${#unhealthy[@]} -gt 0 ] && problems+="UNHEALTHY: ${unhealthy[*]}. "
 [ -n "${spool_fallback_msg:-}" ] && problems+="$spool_fallback_msg "
 [ -n "${gj_problem:-}" ] && problems+="$gj_problem"
+[ -n "${nb_problem:-}" ] && problems+="$nb_problem"
+[ -n "${mp_problem:-}" ] && problems+="$mp_problem"
 
 [ ${#missing_names[@]}   -gt 0 ] && problem_id+="missing=$(printf '%s\n' "${missing_names[@]}"   | sort -u | paste -sd, -);"
 [ ${#unhealthy_names[@]} -gt 0 ] && problem_id+="unhealthy=$(printf '%s\n' "${unhealthy_names[@]}" | sort -u | paste -sd, -);"
 # spool identity = the stale DIRECTORIES only; the file count and oldest filename churn.
 [ -n "${spool_fallback_msg:-}" ] && problem_id+="spool=$(printf '%s\n' "${stale_spools[@]%%:*}" | sort -u | paste -sd, -);"
 [ -n "${gj_problem:-}" ] && problem_id+="goal-judge=${gj_class:-unknown};"
+[ -n "${nb_problem:-}" ] && problem_id+="nous-balance=${nb_class:-unknown};"
+[ -n "${mp_problem:-}" ] && problem_id+="model-pin=${mp_class:-unknown};"
 if [ -n "$am_alerts" ] && [ "$am_alerts" != "ALERTMANAGER-UNREACHABLE" ]; then
     # 2026-07-29 (opus5): this used to hardcode "undelivered — receivers unwired".
     # That was true when written (07-13) but the receivers were wired in-repo since,

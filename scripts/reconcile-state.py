@@ -22,7 +22,7 @@ only network call is one bounded `git fetch`). NO psql (classifier-gated). Every
 call is timeout-wrapped; a failed probe renders `PROBE FAILED`, never blank/0. Always
 exits 0. Self-dated + content-hashed so staleness is visible.
 """
-import subprocess, sqlite3, hashlib, os, re, time, datetime
+import subprocess, sqlite3, hashlib, os, re, sys, time, datetime
 
 REPO      = "/home/frank/sycode-trading"
 VAULT     = "/home/frank/obsidian/sycode-trading"
@@ -177,6 +177,35 @@ try:
 except Exception:
     FAILS.append("phases-file")
 
+# ── 7b. event-signature audit (t_3f244a06) — REPORT-ONLY, blocks nothing ──
+# Per-agent kanban event signatures are written to a sidecar by _append_event
+# (hermes_cli/kanban_event_signing). This section reports how many events on
+# this board carry GOOD / UNTRUSTED / BAD / unsigned signatures. It NEVER
+# blocks any event or deploy — enforcement is a separate future gate.
+sig_report = None
+try:
+    sys.path.insert(0, "/home/frank/.hermes/hermes-agent")
+    from hermes_cli.kanban_event_signing import verify_sidecar, DEFAULT_SIDECAR
+
+    sig_boards = [
+        b.strip() for b in os.environ.get(
+            "EVENT_SIG_BOARDS",
+            os.path.basename(os.path.dirname(BOARD_DB)) or "default",
+        ).split(",") if b.strip()
+    ]
+    sig_counts = {}
+    for b in sig_boards:
+        bdb = f"/home/frank/.hermes/kanban/boards/{b}/kanban.db"
+        if not os.path.isfile(bdb):
+            sig_counts[b] = "no-board"
+            continue
+        c = verify_sidecar(bdb, DEFAULT_SIDECAR, "/home/frank/.hermes/governance/allowed_signers", board=b)
+        sig_counts[b] = c
+    sig_report = sig_counts
+except Exception as e:
+    FAILS.append("event-sig")
+    sig_report = None
+
 # ── 8. render STATE.md ─────────────────────────────────────────────────────────
 gap_tag = "up-to-date" if behind == "0" else (f"+{behind} merged, UNDEPLOYED" if behind not in ("unknown","PROBE FAILED") else "gap unknown")
 head_flag = "" if head_branch in ("main","PROBE FAILED") else f"  ⚠ OFF-MAIN (deploy from origin/main; fresh worktree)"
@@ -208,6 +237,18 @@ for p in phases:
 body.append("\n## Board health\n")
 body.append(f"- **Active**: {counts.get('running',0)} running · {counts.get('ready',0)} ready · {counts.get('todo',0)} todo · {counts.get('scheduled',0)} scheduled · {counts.get('done',0)} done")
 body.append(f"- **Blocked: {blk_total}** — but **{crash} carry `pid not alive` (crash graveyard, not backlog)**; ~{spam} diagnostic-storm spam; **~{max(blk_total-crash,0)} genuinely gated**. ⚠ Triage the pile as noise, not work.")
+
+# Event-signature audit (t_3f244a06) — report-only, blocks nothing.
+if sig_report:
+    for b, c in sig_report.items():
+        if isinstance(c, str):
+            body.append(f"- **Event sigs [{b}]**: {c} (report-only, blocks nothing)")
+        else:
+            body.append(
+                f"- **Event sigs [{b}]**: GOOD={c.get('GOOD',0)} UNTRUSTED={c.get('UNTRUSTED',0)} "
+                f"BAD={c.get('BAD',0)} UNSIGNED={c.get('UNSIGNED',0)} STALE={c.get('STALE',0)} "
+                f"— report-only (t_3f244a06), blocks nothing"
+            )
 
 body.append("\n## Work lineage (active + recent, joined on task_id)\n")
 body.append("| task_id | card | PR | deployed? | notes | title |")

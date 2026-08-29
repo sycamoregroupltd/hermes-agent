@@ -853,7 +853,8 @@
         "obsidian-knowledge-management"
       ],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -2064,7 +2065,7 @@
       "base_url": null,
       "context_from": null,
       "created_at": "2026-07-03T21:29:00.582297+01:00",
-      "deliver": "local",
+      "deliver": "discord:#critical-alerts",
       "enabled": true,
       "enabled_toolsets": null,
       "id": "b0e293bc701c",
@@ -2132,7 +2133,7 @@
       "base_url": null,
       "context_from": null,
       "created_at": "2026-07-03T21:29:01.344837+01:00",
-      "deliver": "local",
+      "deliver": "discord:#critical-alerts",
       "enabled": true,
       "enabled_toolsets": null,
       "id": "abc411626232",
@@ -4186,7 +4187,7 @@
       "context_from": null,
       "created_at": "2026-08-03T10:25:49.132475+01:00",
       "deliver": "local",
-      "enabled": false,
+      "enabled": true,
       "enabled_toolsets": [
         "terminal",
         "file"
@@ -4197,9 +4198,9 @@
       "name": "blocked-card-24h-soak-monitor",
       "no_agent": false,
       "origin": null,
-      "paused_at": "2026-08-17T12:31:01.146716+01:00",
+      "paused_at": null,
       "paused_reason": null,
-      "prompt": "Run the blocked-card 24h soak monitor audit script and report findings.\n\nScript: /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n\nThe script audits the production jarvis-os kanban DB for any blocked\u2192running transitions without a legitimate unblock path (unblocked/promoted_manual/promoted events) since the fix deployment. It returns SILENT when clean, or VIOLATION: lines when violations are found.\n\n1. Run the script: python3 /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n2. Capture the full output (stdout + stderr) and exit code.\n3. If exit code is 0 (SILENT/clean): report that the soak check passed with the [INFO] line timestamp.\n4. If exit code is 1 (VIOLATIONS found): THIS IS CRITICAL \u2014 report the full violation list immediately.\n5. If exit code is anything else (script error/DB unavailable): report the error for investigation.\n6. If violations are found, create a new bug card on the jarvis-os board with title \"REGRESSION: blocked card dispatched without unblock in soak\", body containing the violation evidence.\n\nReport the result concisely. This task is part of the 24-hour blocked-card soak verification.",
+      "prompt": "Run the blocked-card 24h soak monitor audit script and report findings.\n\nScript: /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n\nThe script audits the production jarvis-os kanban DB for any blocked\u2192running transitions without a legitimate unblock path (unblocked/promoted_manual/promoted events) since an adjudicated watermark baseline. The 5 known historical violations (2026-08-04/05/08/13, root-caused in t_16129817 and dispositioned) are suppressed by KNOWN_ADJUDICATED, so the script returns SILENT when clean. It returns VIOLATION: lines only for NEW violations newer than the adjudicated watermark.\n\n1. Run the script: python3 /home/frank/.hermes/profiles/test-engineer/scripts/blocked_card_soak_monitor.py\n2. Capture the full output (stdout + stderr) and exit code.\n3. If exit code is 0 (SILENT/clean): report that the soak check passed with the [INFO] line timestamp. Do NOT create or modify any card.\n4. If exit code is 1 (VIOLATIONS found): THIS IS CRITICAL \u2014 report the full violation list immediately, then:\n   a. Before creating anything, CHECK for an EXISTING OPEN card on the jarvis-os board titled \"REGRESSION: blocked card dispatched without unblock in soak\" (query the board for any non-done, non-archived card with that exact title \u2014 status in ready/running/blocked/todo).\n   b. If such an open REGRESSION card ALREADY EXISTS: DO NOT create a new card. Instead, COMMENT the new violation evidence onto that existing open card (post a comment with the violation lines and the audit timestamp). This prevents duplicate-card floods (t_49f91ec3).\n   c. If NO open REGRESSION card exists: create ONE new bug card on the jarvis-os board with title \"REGRESSION: blocked card dispatched without unblock in soak\", body containing the violation evidence, assigned to the appropriate profile (e.g. jarvis-os-pm) for disposition.\n5. If exit code is anything else (script error/DB unavailable): report the error for investigation.\n\nReport the result concisely. This task is part of the 24-hour blocked-card soak verification.",
       "provider": "nous",
       "provider_snapshot": null,
       "repeat": {
@@ -4214,8 +4215,9 @@
       "script": null,
       "skill": null,
       "skills": [],
-      "state": "paused",
-      "workdir": null
+      "state": "scheduled",
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4463,7 +4465,7 @@
       "model": "deepseek/deepseek-v4-flash-0731",
       "model_snapshot": null,
       "name": "quant-pattern-mining-loop",
-      "no_agent": false,
+      "no_agent": true,
       "origin": null,
       "paused_at": null,
       "paused_reason": null,
@@ -4479,14 +4481,15 @@
         "minutes": 360
       },
       "schedule_display": "every 360m",
-      "script": null,
+      "script": "quant_pattern_mine_loop.py",
       "skill": "quant-pattern-mining",
       "skills": [
         "quant-pattern-mining",
         "obsidian-knowledge-management"
       ],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -4524,7 +4527,8 @@
         "obsidian-knowledge-management"
       ],
       "state": "scheduled",
-      "workdir": null
+      "workdir": null,
+      "failure_streak": 0
     },
     {
       "base_url": null,
@@ -5958,6 +5962,43 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T02:43:03.688978+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "e7bbe861ce43",
+      "name": "pv-rate-6h (t_44cfa735)",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "pv_rate_6h.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T06:41:54.744260+01:00",
       "failure_streak": 0,
       "deliver": "local",
       "origin": null,

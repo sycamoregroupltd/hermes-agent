@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# verify-commit-signatures.sh — REPORT-ONLY commit-signature audit for the Hermes fleet.
+# verify-commit-signatures.sh — commit-signature audit for the Hermes fleet.
 #
 # Usage:
-#   verify-commit-signatures.sh <repo-path> [rev-range]
+#   verify-commit-signatures.sh <repo-path> [rev-range] [--bypass <reason>]
 #     repo-path   path to a git repo or worktree
 #     rev-range   any git rev-range (e.g. main..HEAD, HEAD~10..HEAD, abc123..HEAD)
 #                 default: last 20 commits reachable from HEAD
+#     --bypass <reason>   (or --bypass=<reason>) emergency override — forces exit 0
+#                 and logs the bypass. NOT the default. Requires a reason.
 #
 # Output: one line per commit:
 #   <short-hash>  <STATUS>     <principal-or-->  <author-email>  <subject>
@@ -16,27 +18,70 @@
 #   UNSIGNED   no signature
 #   OTHER(x)   anything else (expired/revoked/unverifiable); x = raw git %G? code
 #
-# THIS SCRIPT ALWAYS EXITS 0 — it is report mode only. Enforcement (blocking a
-# merge/deploy on BAD/UNSIGNED) is explicitly OUT OF SCOPE; flipping to blocking
-# is a separate policy decision (see kanban card signing-keys-enforcement-gate).
+# EXIT STATUS (report is always printed first, then this decides the code):
+#   0  verification passed — no BAD, UNTRUSTED, or UNSIGNED commits
+#      (GOOD and OTHER(x) commits do not fail verification)
+#   1  one or more BAD or UNTRUSTED commits (reported first — takes precedence
+#      over UNSIGNED-only)
+#   2  no BAD/UNTRUSTED commits, but one or more UNSIGNED commits
+#   3  usage error (e.g. --bypass without a reason)
 #
-# Verification config is passed per-invocation (-c); this script never writes
-# any git config, global or local.
+# EMERGENCY BYPASS:
+#   Pass --bypass <reason> (or set VERIFY_SIGNATURES_BYPASS=<reason>) to force
+#   exit 0 regardless of findings. The bypass reason is logged to stderr and
+#   appended to VERIFY_SIGNATURES_LOG (default:
+#   /home/frank/.hermes/var/log/verify-signatures-bypass.log). Bypass is never
+#   the default and always requires a reason, so it is auditable.
+#
+# NOTE ON BEHAVIOUR: this script REPORTS by default (it never writes git config
+# and is invoked with -c per call). The exit codes above are the enforcement
+# signal. Callers, CI jobs, hooks, and deployment config that invoke this
+# helper are deliberately NOT changed here — wiring any of them to act on the
+# nonzero exit is a separate policy task (see signing-keys-enforcement-gate).
 
 set -u
 
 ALLOWED_SIGNERS="${ALLOWED_SIGNERS_FILE:-/home/frank/.hermes/governance/allowed_signers}"
+BYPASS_LOG="${VERIFY_SIGNATURES_LOG:-/home/frank/.hermes/var/log/verify-signatures-bypass.log}"
 
-if [ $# -lt 1 ]; then
+# --- argument parsing: extract optional --bypass, keep positional repo/range ---
+BYPASS_REASON=""
+if [ -n "${VERIFY_SIGNATURES_BYPASS:-}" ]; then
+  BYPASS_REASON="$VERIFY_SIGNATURES_BYPASS"
+fi
+POSITIONAL=()
+i=1
+while [ $i -le $# ]; do
+  arg="${!i}"
+  case "$arg" in
+    --bypass=*)
+      BYPASS_REASON="${arg#--bypass=}" ;;
+    --bypass)
+      i=$((i+1))
+      if [ $i -gt $# ]; then
+        echo "ERROR: --bypass requires a reason (e.g. --bypass 'incident 1234')" >&2
+        exit 3
+      fi
+      BYPASS_REASON="${!i}" ;;
+    -h|--help)
+      sed -n '2,20p' "$0"
+      exit 0 ;;
+    *)
+      POSITIONAL+=("$arg") ;;
+  esac
+  i=$((i+1))
+done
+
+if [ "${#POSITIONAL[@]}" -lt 1 ]; then
   sed -n '2,20p' "$0"
   exit 0
 fi
 
-REPO="$1"
-RANGE="${2:-}"
+REPO="${POSITIONAL[0]}"
+RANGE="${POSITIONAL[1]:-}"
 
 if ! git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
-  echo "NOT A GIT REPO: $REPO (report mode: exiting 0)"
+  echo "NOT A GIT REPO: $REPO (no commits scanned: exit 0)"
   exit 0
 fi
 
@@ -62,7 +107,7 @@ if [ -n "$RANGE" ]; then
   # Fail loudly (but still rc=0) on an unresolvable range instead of silently
   # reporting total=0 — a verifier that reports clean on bad input is a bug.
   if ! git -C "$REPO" rev-list --quiet "$RANGE" -- 2>/dev/null; then
-    echo "WARNING: rev-range '$RANGE' did not resolve in $REPO — no commits scanned (report mode: exiting 0)"
+    echo "WARNING: rev-range '$RANGE' did not resolve in $REPO — no commits scanned (exit 0)"
     exit 0
   fi
   LOG_ARGS=("$RANGE")
@@ -103,5 +148,31 @@ done < <(git -C "$REPO" -c gpg.ssh.allowedSignersFile="$ALLOWED_SIGNERS" \
 
 echo "----"
 echo "total=$total good=$good untrusted=$untrusted bad=$bad unsigned=$unsigned other=$other"
-echo "(report mode: exit 0 regardless of findings; enforcement is a separate future card)"
+
+# --- emergency bypass: logged, never the default, forces exit 0 ---
+if [ -n "$BYPASS_REASON" ]; then
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
+  msg="verify-commit-signatures BYPASS reason='$BYPASS_REASON' repo='$REPO' range='${RANGE:-default}' findings(total=$total good=$good untrusted=$untrusted bad=$bad unsigned=$unsigned other=$other) at $ts"
+  echo "BYPASS: $msg" >&2
+  if [ -n "$BYPASS_LOG" ]; then
+    if printf '%s\n' "$msg" >> "$BYPASS_LOG" 2>/dev/null; then
+      echo "BYPASS: logged to $BYPASS_LOG" >&2
+    else
+      echo "BYPASS WARNING: could not append to $BYPASS_LOG (stderr above is the audit record)" >&2
+    fi
+  fi
+  echo "(bypass active: exit 0 regardless of findings)"
+  exit 0
+fi
+
+# --- exit code: precedence BAD/UNTRUSTED > UNSIGNED > all-trusted ---
+if [ "$bad" -gt 0 ] || [ "$untrusted" -gt 0 ]; then
+  echo "VERIFY FAILED: $((bad+untrusted)) BAD/UNTRUSTED commit(s) — exit 1"
+  exit 1
+fi
+if [ "$unsigned" -gt 0 ]; then
+  echo "VERIFY FAILED: $unsigned UNSIGNED commit(s) — exit 2"
+  exit 2
+fi
+echo "VERIFY OK: all commits trusted — exit 0"
 exit 0

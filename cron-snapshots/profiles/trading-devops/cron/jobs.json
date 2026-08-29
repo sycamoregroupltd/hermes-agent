@@ -288,7 +288,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 11
+      "failure_streak": 1
     },
     {
       "id": "c097aecdef5a",
@@ -358,7 +358,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-22T15:34:20.145775+01:00",
-      "failure_streak": 3,
+      "failure_streak": 4,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": [
@@ -392,8 +392,8 @@
       "repeat": {
         "times": 1
       },
-      "enabled": true,
-      "state": "scheduled",
+      "enabled": false,
+      "state": "completed",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-28T17:36:58.524805+01:00",
@@ -404,7 +404,8 @@
         "terminal",
         "kanban"
       ],
-      "workdir": null
+      "workdir": null,
+      "run_claim": null
     },
     {
       "id": "0b322629ebd5",
@@ -513,6 +514,43 @@
       "created_at": "2026-08-29T04:14:17.973088+01:00",
       "failure_streak": 0,
       "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "cd2160ceaf7e",
+      "name": "cron-necromancer-sweep",
+      "prompt": "Deterministic cron-necromancer sweep (t_8645b1fc): dead-pin/script-missing/error-streak scan across all stores; files deduped jarvis-os cards (assignee devops); digest delivered to bot-chat:jarvis. Silent when clean.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "cron_necromancer_sweep.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 8 * * *",
+        "display": "0 8 * * *"
+      },
+      "schedule_display": "0 8 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T09:05:30.906397+01:00",
+      "failure_streak": 0,
+      "deliver": "bot-chat:jarvis",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null

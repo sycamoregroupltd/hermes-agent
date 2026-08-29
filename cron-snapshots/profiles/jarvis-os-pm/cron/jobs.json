@@ -240,39 +240,6 @@
       "failure_streak": 0
     },
     {
-      "id": "604a198683fc",
-      "name": "kanban-dedupe-guard",
-      "prompt": "No-agent cron job running kanban deduplication sweeps",
-      "skills": [],
-      "skill": null,
-      "model": null,
-      "provider": null,
-      "provider_snapshot": null,
-      "model_snapshot": null,
-      "base_url": null,
-      "script": "kanban_dedupe_guard_all.sh",
-      "no_agent": true,
-      "context_from": null,
-      "schedule": {
-        "kind": "interval",
-        "minutes": 15,
-        "display": "every 15m"
-      },
-      "schedule_display": "every 15m",
-      "repeat": {
-        "times": null
-      },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-07-11T13:52:26.644935+01:00",
-      "paused_reason": null,
-      "created_at": "2026-07-06T22:18:53.350930+01:00",
-      "deliver": "local",
-      "origin": null,
-      "enabled_toolsets": null,
-      "workdir": null
-    },
-    {
       "id": "c7226b0fbbe5",
       "name": "dqsh-self-healer-daemon",
       "prompt": "Execute DQSH Self-Healing Daemon in paper-mode on 15m interval",

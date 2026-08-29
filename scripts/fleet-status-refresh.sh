@@ -178,6 +178,18 @@ if [ "${FLEET_STATUS_WORKER_PREFLIGHT:-1}" != "0" ] && [ -x "$WORKER_PREFLIGHT_S
   rm -f "$OUT.worker-preflight.tmp"
 fi
 
+# Compute pulse (t_a737a025, RESHAPE POR decision 8 "Compute is capital"): add
+# dispatch-share by lane (research vs process/review, >=40% research target) and
+# cost-per-verified-experiment (ledger rows per token spend) to the fleet pulse.
+# Read-only over kanban.db task_runs + per-profile state.db session_model_usage +
+# the MULTIPLE-TESTING-LEDGER. Fail-open: never breaks the status refresh.
+COMPUTE_PULSE_SCRIPT="/home/frank/.hermes/scripts/fleet_compute_pulse.py"
+if [ "${FLEET_STATUS_COMPUTE_PULSE:-1}" != "0" ] && [ -x "$COMPUTE_PULSE_SCRIPT" ]; then
+  if "$COMPUTE_PULSE_SCRIPT" >> "$OUT" 2>/dev/null; then
+    :
+  fi
+fi
+
 # Terminal-lane queue report (GAP t_2e808b44, no-black-holes rule).
 # Terminal lanes (fable/codex/grok, external-*, orion-*) are non-spawnable by
 # design — only a human (Frank) or a seat can drain them. Surface the parked

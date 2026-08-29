@@ -596,6 +596,8 @@ updates:
   backup_keep: 5
   non_interactive_local_changes: stash
   pre_update_backup: true
+  parked_branch_strategy: update_in_place
+  auto_switch_parked_branch: true
 voice:
   auto_tts: false
   beep_enabled: true
