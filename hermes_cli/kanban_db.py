@@ -3166,6 +3166,98 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     return normalize_profile_name(assignee)
 
 
+# ---------------------------------------------------------------------------
+# Skill catalog helpers — shared by kanban_specify.py and kanban_decompose.py
+# so both the triage specifier and the decomposer LLM select skills from the
+# SAME installed-skill ground truth instead of inventing names. See spec at
+# t_4074165b: skills on cards should be standard, never fabricated.
+# ---------------------------------------------------------------------------
+
+def installed_skill_names() -> set[str]:
+    """Return the set of skill names actually installed for this profile.
+
+    Best-effort: an import or scan failure returns an empty set (callers
+    treat that as "cannot validate, drop everything" — never invent a
+    skill name that might not exist).
+    """
+    try:
+        from tools.skills_tool import _find_all_skills
+        return {
+            s["name"]
+            for s in _find_all_skills(skip_disabled=True)
+            if s.get("name")
+        }
+    except Exception:
+        _log.debug("installed_skill_names: skill scan failed", exc_info=True)
+        return set()
+
+
+def skill_catalog_prompt_block(*, char_limit: int = 12000) -> str:
+    """Render 'name: description' lines for every installed skill.
+
+    Fed to the specifier / decomposer LLM so it picks from real skills
+    instead of guessing. Truncated (not silently dropped) when the full
+    catalog would blow the prompt budget — callers still validate every
+    LLM-selected name against ``installed_skill_names()`` afterward, so a
+    truncated catalog only risks under-selection, never a fabricated name.
+    """
+    try:
+        from tools.skills_tool import _find_all_skills, _sort_skills
+        skills = _sort_skills(_find_all_skills(skip_disabled=True))
+    except Exception:
+        _log.debug("skill_catalog_prompt_block: skill scan failed", exc_info=True)
+        return "(skill catalog unavailable — leave skills empty)"
+    if not skills:
+        return "(no skills installed)"
+    lines = []
+    total = 0
+    for s in skills:
+        name = s.get("name") or ""
+        if not name:
+            continue
+        desc = (s.get("description") or "").strip()
+        line = f"  - {name}: {desc}" if desc else f"  - {name}"
+        if total + len(line) > char_limit:
+            lines.append(f"  ... ({len(skills) - len(lines)} more skills omitted for length)")
+            break
+        lines.append(line)
+        total += len(line)
+    return "\n".join(lines)
+
+
+def validate_skill_selection(
+    candidates: object,
+    *,
+    valid_names: Optional[set[str]] = None,
+    max_count: int = 3,
+) -> list[str]:
+    """Filter an LLM-proposed skill list down to real, installed skills.
+
+    Never invents names: anything not in ``valid_names`` (computed via
+    ``installed_skill_names()`` when not supplied) is silently dropped.
+    Dedupes preserving order and caps at ``max_count`` (spec: 1-3 skills).
+    """
+    if not isinstance(candidates, list):
+        return []
+    if valid_names is None:
+        valid_names = installed_skill_names()
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for c in candidates:
+        if not isinstance(c, str):
+            continue
+        name = c.strip()
+        if not name or name in seen:
+            continue
+        if name not in valid_names:
+            continue
+        seen.add(name)
+        cleaned.append(name)
+        if len(cleaned) >= max_count:
+            break
+    return cleaned
+
+
 def create_task(
     conn: sqlite3.Connection,
     *,
@@ -7244,30 +7336,38 @@ def specify_triage_task(
     title: Optional[str] = None,
     body: Optional[str] = None,
     assignee: Optional[str] = None,
+    skills: Optional[list] = None,
     author: Optional[str] = None,
 ) -> bool:
     """Flesh out a triage task and promote it to ``todo``.
 
-    Atomically updates ``title`` / ``body`` / ``assignee`` (when provided)
-    and transitions ``status: triage -> todo`` in a single write txn. Returns
-    False when the task is missing or not in the ``triage`` column — callers
-    should surface that as "nothing to specify" rather than an error.
+    Atomically updates ``title`` / ``body`` / ``assignee`` / ``skills`` (when
+    provided) and transitions ``status: triage -> todo`` in a single write
+    txn. Returns False when the task is missing or not in the ``triage``
+    column — callers should surface that as "nothing to specify" rather
+    than an error.
 
     ``todo`` (not ``ready``) is the correct landing column: ``recompute_ready``
     promotes parent-free / parent-done todos to ``ready`` on the next
     dispatcher tick, which keeps the normal parent-gating behaviour intact
     for specified tasks that happen to have open parents.
 
+    ``skills`` (when not None) REPLACES the task's force-loaded skill list —
+    already validated by the caller (see ``validate_skill_selection`` in
+    this module) against the installed catalog. Pass ``None`` to leave the
+    existing skills untouched (e.g. a plain title/body-only specify call);
+    pass ``[]`` to explicitly clear.
+
     ``author`` is recorded on an audit comment only when at least one of
-    ``title`` / ``body`` / ``assignee`` actually changed — avoids noisy
-    comment spam for status-only promotions.
+    ``title`` / ``body`` / ``assignee`` / ``skills`` actually changed —
+    avoids noisy comment spam for status-only promotions.
     """
     if title is not None and not title.strip():
         raise ValueError("title cannot be blank")
     assignee = _canonical_assignee(assignee)
     with write_txn(conn):
         existing = conn.execute(
-            "SELECT title, body, assignee FROM tasks WHERE id = ? AND status = 'triage'",
+            "SELECT title, body, assignee, skills FROM tasks WHERE id = ? AND status = 'triage'",
             (task_id,),
         ).fetchone()
         if existing is None:
@@ -7287,6 +7387,12 @@ def specify_triage_task(
             sets.append("assignee = ?")
             params.append(assignee)
             changed_fields.append("assignee")
+        if skills is not None:
+            new_skills_json = json.dumps(list(skills)) if skills else None
+            if new_skills_json != (existing["skills"] or None):
+                sets.append("skills = ?")
+                params.append(new_skills_json)
+                changed_fields.append("skills")
         params.append(task_id)
         cur = conn.execute(
             f"UPDATE tasks SET {', '.join(sets)} "
@@ -7350,6 +7456,7 @@ def decompose_triage_task(
             "title": "...",
             "body": "...",                     # optional
             "assignee": "profile-name",        # optional, None -> default fallback
+            "skills": ["skill-a"],             # optional, [] means "explicitly none"
             "parents": [0, 2],                 # indices into this same children list
         }
 
@@ -7362,6 +7469,15 @@ def decompose_triage_task(
     Validation of titles/assignees happens inside the same write_txn as
     the inserts so a malformed entry aborts the whole decomposition
     cleanly (no orphan children).
+
+    ``skills`` inheritance: a child dict WITHOUT a ``"skills"`` key inherits
+    the root task's ``skills`` list verbatim (same reasoning as workspace
+    inheritance above — a fan-out shouldn't strand children with none of the
+    context the root was given). A child dict that explicitly sets
+    ``"skills"`` (including ``[]``) overrides that inheritance. Skill names
+    here are assumed already-validated by the caller (see
+    ``validate_skill_selection``) — this function does not re-validate
+    against the installed catalog.
     """
     if not children:
         return None
@@ -7421,7 +7537,7 @@ def decompose_triage_task(
     child_ids: list[str] = []
     with write_txn(conn):
         root_row = conn.execute(
-            "SELECT id, status, tenant, workspace_kind, workspace_path "
+            "SELECT id, status, tenant, workspace_kind, workspace_path, skills "
             "FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
@@ -7436,6 +7552,14 @@ def decompose_triage_task(
         # override with its own 'workspace_kind' / 'workspace_path'.
         root_ws_kind = root_row["workspace_kind"] or "scratch"
         root_ws_path = root_row["workspace_path"]
+        # Root skills, parsed once, reused as the inheritance default for
+        # every child that doesn't set its own "skills" key.
+        try:
+            root_skills = json.loads(root_row["skills"]) if root_row["skills"] else []
+            if not isinstance(root_skills, list):
+                root_skills = []
+        except Exception:
+            root_skills = []
 
         # Create children. Status is 'todo' regardless of parents — we
         # link them under the root AFTER creation so the dispatcher
@@ -7467,11 +7591,20 @@ def decompose_triage_task(
                 child_ws_path = root_ws_path
             else:
                 child_ws_path = None
+            # Skills: explicit "skills" key (even []) overrides; absent key
+            # inherits the root's skills verbatim.
+            if "skills" in child:
+                child_skills = child.get("skills") or []
+                if not isinstance(child_skills, list):
+                    child_skills = []
+            else:
+                child_skills = list(root_skills)
+            child_skills_json = json.dumps(child_skills) if child_skills else None
             conn.execute(
                 "INSERT INTO tasks "
                 "(id, title, body, assignee, status, workspace_kind, "
-                " workspace_path, tenant, created_at, created_by) "
-                "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?)",
+                " workspace_path, tenant, created_at, created_by, skills) "
+                "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?)",
                 (
                     new_id,
                     title,
@@ -7482,6 +7615,7 @@ def decompose_triage_task(
                     tenant,
                     now,
                     (author or "decomposer"),
+                    child_skills_json,
                 ),
             )
             _append_event(
@@ -10504,6 +10638,18 @@ def _dispatch_once_locked(
         if claimed.workspace_kind == "worktree":
             set_branch_name(conn, claimed.id, resolved_branch_name or (claimed.branch_name or "").strip() or f"wt/{claimed.id}")
         _maybe_emit_scratch_tip(conn, claimed.id, claimed.workspace_kind)
+        # Coverage nudge (t_4074165b spec #3): no hard gate, just a WARN so
+        # skill coverage is visible in worker/dispatcher logs. A spawning
+        # card with no force-loaded skills isn't wrong — plenty of tasks
+        # genuinely need none — but silent zero-skill dispatch is exactly
+        # what made specify/decompose ship cards naked in the first place.
+        if not claimed.skills:
+            _log.warning(
+                "kanban dispatch: task %s (assignee=%s) spawning with EMPTY "
+                "skills — consider `hermes kanban specify` / `decompose` "
+                "attaching skills, or pass --skill explicitly at create time.",
+                claimed.id, claimed.assignee or "-",
+            )
         _spawn = spawn_fn if spawn_fn is not None else _default_spawn
         try:
             # Back-compat: older spawn_fn signatures accept only

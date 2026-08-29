@@ -161,3 +161,80 @@ def test_decompose_returns_false_when_task_not_triage(kanban_home):
     assert "not in triage" in outcome.reason
 
 
+def test_decompose_fanout_children_get_llm_selected_skills(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="ship a feature", triage=True)
+
+    llm_payload = jsonlib.dumps({
+        "fanout": True,
+        "rationale": "test split",
+        "tasks": [
+            {
+                "title": "research", "body": "look it up", "assignee": "researcher",
+                "skills": ["real-skill-a", "fake-skill"], "parents": [],
+            },
+            {
+                # No "skills" key → must inherit root's skills (none here,
+                # since the root task was created with no skills).
+                "title": "build", "body": "code it", "assignee": "engineer",
+                "parents": [0],
+            },
+        ],
+    })
+
+    patches = _patch_list_profiles(["orchestrator", "researcher", "engineer"])
+    for p in patches:
+        p.start()
+    try:
+        with _patch_aux_client(llm_payload), _patch_extra_body(), patch(
+            "hermes_cli.kanban_db.installed_skill_names",
+            return_value={"real-skill-a"},
+        ):
+            outcome = decomp.decompose_task(tid, author="me")
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert outcome.ok, outcome.reason
+    assert outcome.child_ids and len(outcome.child_ids) == 2
+    with kb.connect() as conn:
+        c0 = kb.get_task(conn, outcome.child_ids[0])
+        c1 = kb.get_task(conn, outcome.child_ids[1])
+    # Hallucinated "fake-skill" dropped, valid one kept.
+    assert c0.skills == ["real-skill-a"]
+    # No key on the LLM's entry → inherits root skills (empty here).
+    assert not c1.skills
+
+
+def test_decompose_single_task_fanout_false_selects_skills(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="single unit", triage=True)
+
+    llm_payload = jsonlib.dumps({
+        "fanout": False,
+        "rationale": "single unit",
+        "title": "Tightened title",
+        "body": "Just do it.",
+        "assignee": "fallback",
+        "skills": ["real-skill-a", "fake-skill"],
+    })
+
+    patches = _patch_list_profiles(["orchestrator", "fallback"])
+    for p in patches:
+        p.start()
+    try:
+        with _patch_aux_client(llm_payload), _patch_extra_body(), patch(
+            "hermes_cli.kanban_db.installed_skill_names",
+            return_value={"real-skill-a"},
+        ):
+            outcome = decomp.decompose_task(tid, author="me")
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert outcome.ok, outcome.reason
+    with kb.connect() as conn:
+        task = kb.get_task(conn, tid)
+    assert task.skills == ["real-skill-a"]
+
+

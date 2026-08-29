@@ -55,11 +55,12 @@ A user dropped a rough idea into the Triage column. Your job is to turn it
 into a concrete, actionable task spec that an autonomous worker can pick up
 and execute without further clarification.
 
-Output a single JSON object with exactly two keys:
+Output a single JSON object with exactly three keys:
 
   {
     "title": "<tightened task title, <= 80 chars, imperative voice>",
-    "body":  "<multi-line spec, see structure below>"
+    "body":  "<multi-line spec, see structure below>",
+    "skills": ["<skill-name>", ...]
   }
 
 The body MUST include these sections, each prefixed with a bold markdown
@@ -70,6 +71,16 @@ heading, in this order:
   **Acceptance criteria** — checklist of concrete, verifiable conditions.
   **Out of scope** — short list of things NOT to touch (omit if nothing
       obvious; never invent scope creep).
+
+"skills" rules:
+  - Pick 1-3 skill names from the AVAILABLE SKILLS list below whose stated
+    trigger genuinely matches this task. Copy names EXACTLY as listed —
+    never invent, abbreviate, or guess a name that isn't in the list.
+  - If nothing in the list is a good match, return an empty list []. An
+    empty list is correct and expected for generic tasks; do not force a
+    weak match just to fill the field.
+  - Never list a toolset name (e.g. "web", "browser", "terminal") here —
+    those are runtime capabilities, not skills.
 
 Rules:
   - Keep the tightened title close in meaning to the original idea — do
@@ -86,6 +97,9 @@ _USER_TEMPLATE = """Task id: {task_id}
 Current title: {title}
 Current body:
 {body}
+
+AVAILABLE SKILLS (pick 1-3 by exact name, or none):
+{skill_catalog}
 """
 
 
@@ -97,6 +111,7 @@ class SpecifyOutcome:
     ok: bool
     reason: str = ""
     new_title: Optional[str] = None
+    new_skills: Optional[list] = None
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -171,6 +186,7 @@ def specify_task(
         task_id=task.id,
         title=_truncate(task.title or "", 400),
         body=_truncate(task.body or "(no body)", 4000),
+        skill_catalog=kb.skill_catalog_prompt_block(),
     )
 
     try:
@@ -205,10 +221,12 @@ def specify_task(
 
     new_title: Optional[str]
     new_body: Optional[str]
+    new_skills: Optional[list] = None
     if parsed is None:
         # Fall back: treat the whole reply as the body, leave title as-is.
         # Worst case the user edits afterward — still better than stranding
-        # the task in triage on a malformed LLM reply.
+        # the task in triage on a malformed LLM reply. No skills field to
+        # parse here, so leave skills untouched (None = "don't touch").
         stripped_raw = raw.strip()
         if not stripped_raw:
             return SpecifyOutcome(
@@ -231,6 +249,11 @@ def specify_task(
             return SpecifyOutcome(
                 task_id, False, "LLM response missing title and body"
             )
+        # Validate every proposed skill name against the installed catalog —
+        # never write a fabricated skill name to the task row. An LLM
+        # hallucination here silently drops to []; that is the safe
+        # fallback per the spec (empty is fine, invented names are not).
+        new_skills = kb.validate_skill_selection(parsed.get("skills"))
 
     with kb.connect_closing() as conn:
         ok = kb.specify_triage_task(
@@ -238,6 +261,7 @@ def specify_task(
             task_id,
             title=new_title,
             body=new_body,
+            skills=new_skills,
             author=author or _profile_author(),
         )
     if not ok:
@@ -246,7 +270,9 @@ def specify_task(
         return SpecifyOutcome(
             task_id, False, "task moved out of triage before promotion"
         )
-    return SpecifyOutcome(task_id, True, "specified", new_title=new_title)
+    return SpecifyOutcome(
+        task_id, True, "specified", new_title=new_title, new_skills=new_skills,
+    )
 
 
 def list_triage_ids(*, tenant: Optional[str] = None) -> list[str]:

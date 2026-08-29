@@ -59,6 +59,7 @@ You will be given:
   - The original task title and body
   - The list of available profiles (each with name + description)
   - The fallback "default_assignee" used when no profile fits
+  - The list of installed skills (each with name + trigger description)
 
 Output a single JSON object with this exact shape:
 
@@ -70,6 +71,7 @@ Output a single JSON object with this exact shape:
         "title": "<concrete task title, imperative voice, <= 80 chars>",
         "body":  "<detailed spec for the worker on this child task>",
         "assignee": "<profile name from the roster, or null for default>",
+        "skills": ["<skill-name>", ...],
         "parents": [<int>, ...]
       },
       ...
@@ -87,6 +89,11 @@ Rules:
   - Pick assignees from the roster by matching the task to the profile's
     DESCRIPTION (not just the name). When nothing matches well, use null
     and the system will route to the default_assignee.
+  - "skills": pick 1-3 skill names from the AVAILABLE SKILLS list whose
+    stated trigger genuinely matches THIS CHILD's work (not the parent
+    task as a whole — each child may need different skills). Copy names
+    EXACTLY as listed; never invent one. Omit the key or use [] when
+    nothing matches — an empty list is correct and expected.
   - Each child task body is what a fresh worker will read with no other
     context — be specific about goal, approach, and acceptance criteria.
 
@@ -98,12 +105,13 @@ return:
     "rationale": "<one sentence>",
     "title": "<tightened title>",
     "body":  "<concrete spec for a single worker>",
-    "assignee": "<profile name from the roster, or null for default>"
+    "assignee": "<profile name from the roster, or null for default>",
+    "skills": ["<skill-name>", ...]
   }
 
 In that case the task stays as one work item, just with a tightened spec and
 a concrete assignee. If no profile fits, use null and the system will route to
-the default_assignee.
+the default_assignee. Same "skills" rules apply: 1-3 exact names or [].
 
 No preamble, no closing remarks, no code fences. Output only the JSON object.
 """
@@ -118,6 +126,9 @@ Available profiles (assignees you may pick from):
 {roster}
 
 Default assignee (used when no profile fits a task): {default_assignee}
+
+AVAILABLE SKILLS (pick 1-3 per task by exact name, or none):
+{skill_catalog}
 """
 
 
@@ -309,6 +320,7 @@ def decompose_task(
         body=_truncate(task.body or "(no body)", 4000),
         roster=_format_roster(roster),
         default_assignee=default_assignee,
+        skill_catalog=kb.skill_catalog_prompt_block(),
     )
 
     try:
@@ -343,6 +355,10 @@ def decompose_task(
 
     fanout = bool(parsed.get("fanout"))
     audit_author = author or _profile_author()
+    # Resolve the installed-skill catalog once and reuse for validating
+    # every skills selection below (single-task fallback + every child) —
+    # avoids one filesystem scan per child.
+    valid_skill_names = kb.installed_skill_names()
 
     if not fanout:
         # Fall back to single-task spec promotion (same effect as specify).
@@ -357,6 +373,9 @@ def decompose_task(
                 default_assignee=default_assignee,
                 valid_names=valid_names,
             )
+        skills_val = kb.validate_skill_selection(
+            parsed.get("skills"), valid_names=valid_skill_names,
+        )
         if title_val is None and body_val is None:
             return DecomposeOutcome(
                 task_id, False, "decomposer returned fanout=false with no title/body",
@@ -368,6 +387,7 @@ def decompose_task(
                 title=title_val,
                 body=body_val,
                 assignee=assignee_val,
+                skills=skills_val,
                 author=audit_author,
             )
         if not ok:
@@ -422,12 +442,21 @@ def decompose_task(
             parents = []
         # Clean parent indices: drop non-int and out-of-range.
         clean_parents = [p for p in parents if isinstance(p, int) and 0 <= p < len(raw_tasks) and p != idx]
-        children.append({
+        child_dict = {
             "title": title.strip()[:200],
             "body": body.strip(),
             "assignee": chosen,
             "parents": clean_parents,
-        })
+        }
+        # Only set "skills" when the LLM actually included the key — an
+        # absent key lets decompose_triage_task() inherit the root's
+        # skills (spec requirement #2); an explicit (possibly empty) list
+        # is validated against the installed catalog and used verbatim.
+        if "skills" in entry:
+            child_dict["skills"] = kb.validate_skill_selection(
+                entry.get("skills"), valid_names=valid_skill_names,
+            )
+        children.append(child_dict)
 
     try:
         with kb.connect_closing() as conn:

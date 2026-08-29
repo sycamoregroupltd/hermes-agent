@@ -79,3 +79,69 @@ def test_specify_records_audit_comment_only_when_author_given(kanban_home):
     assert comments2 == []
 
 
+# ---------------------------------------------------------------------------
+# skills param (t_4074165b: specify attaches skills as standard)
+# ---------------------------------------------------------------------------
+
+def test_specify_persists_skills(kanban_home):
+    with kb.connect() as conn:
+        tid = _create_triage(conn, title="rough idea")
+    with kb.connect() as conn:
+        ok = kb.specify_triage_task(
+            conn, tid, title="Refined", body="b",
+            skills=["hermes-native-improvements", "graph-engineering"],
+            author="specifier-bot",
+        )
+    assert ok is True
+    with kb.connect() as conn:
+        task = kb.get_task(conn, tid)
+    assert task.skills == ["hermes-native-improvements", "graph-engineering"]
+
+
+def test_specify_skills_none_leaves_existing_untouched(kanban_home):
+    """skills=None (the default) must not clobber skills set at create time."""
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn, title="pre-skilled", triage=True, skills=["skill-hygiene"],
+        )
+    with kb.connect() as conn:
+        ok = kb.specify_triage_task(conn, tid, title="Refined", body="b")
+    assert ok is True
+    with kb.connect() as conn:
+        task = kb.get_task(conn, tid)
+    assert task.skills == ["skill-hygiene"]
+
+
+def test_specify_skills_empty_list_explicitly_clears(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn, title="pre-skilled", triage=True, skills=["skill-hygiene"],
+        )
+    with kb.connect() as conn:
+        ok = kb.specify_triage_task(conn, tid, title="Refined", body="b", skills=[])
+    assert ok is True
+    with kb.connect() as conn:
+        task = kb.get_task(conn, tid)
+    assert not task.skills
+
+
+def test_validate_skill_selection_drops_unknown_names():
+    valid = {"real-skill-a", "real-skill-b"}
+    out = kb.validate_skill_selection(
+        ["real-skill-a", "invented-skill", "real-skill-b", "another-fake"],
+        valid_names=valid,
+    )
+    assert out == ["real-skill-a", "real-skill-b"]
+
+
+def test_validate_skill_selection_caps_at_max_count():
+    valid = {"a", "b", "c", "d"}
+    out = kb.validate_skill_selection(["a", "b", "c", "d"], valid_names=valid, max_count=3)
+    assert out == ["a", "b", "c"]
+
+
+def test_validate_skill_selection_rejects_non_list():
+    assert kb.validate_skill_selection(None, valid_names={"a"}) == []
+    assert kb.validate_skill_selection("a", valid_names={"a"}) == []
+
+

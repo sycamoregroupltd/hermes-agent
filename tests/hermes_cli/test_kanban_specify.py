@@ -92,6 +92,54 @@ def test_specify_task_happy_path(kanban_home):
     assert "**Goal**" in (task.body or "")
 
 
+def test_specify_task_selects_valid_skills(kanban_home):
+    """The specifier LLM proposes skills; only installed ones land on the row."""
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="rough", triage=True)
+
+    content = jsonlib.dumps({
+        "title": "Refined rough",
+        "body": "**Goal**\nA concrete goal.",
+        "skills": ["real-skill-one", "hallucinated-skill", "real-skill-two"],
+    })
+    p, _ = _patch_aux_client(content)
+    with p, patch(
+        "hermes_cli.kanban_db.installed_skill_names",
+        return_value={"real-skill-one", "real-skill-two"},
+    ):
+        outcome = spec.specify_task(tid, author="ace")
+
+    assert outcome.ok is True
+    assert outcome.new_skills == ["real-skill-one", "real-skill-two"]
+    with kb.connect() as conn:
+        task = kb.get_task(conn, tid)
+    assert task.skills == ["real-skill-one", "real-skill-two"]
+
+
+def test_specify_task_no_matching_skills_leaves_empty(kanban_home):
+    """A weak/no match must NOT invent a skill — empty is correct."""
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="rough", triage=True)
+
+    content = jsonlib.dumps({
+        "title": "Refined rough",
+        "body": "**Goal**\nA concrete goal.",
+        "skills": [],
+    })
+    p, _ = _patch_aux_client(content)
+    with p, patch(
+        "hermes_cli.kanban_db.installed_skill_names",
+        return_value={"real-skill-one"},
+    ):
+        outcome = spec.specify_task(tid, author="ace")
+
+    assert outcome.ok is True
+    assert outcome.new_skills == []
+    with kb.connect() as conn:
+        task = kb.get_task(conn, tid)
+    assert not task.skills
+
+
 
 
 

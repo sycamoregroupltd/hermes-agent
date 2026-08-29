@@ -88,5 +88,69 @@ def test_decompose_records_audit_comment_and_event(kanban_home):
     assert any(ev.kind == "decomposed" for ev in events)
 
 
+# ---------------------------------------------------------------------------
+# skills inheritance (t_4074165b: decompose children inherit parent skills)
+# ---------------------------------------------------------------------------
+
+def test_decompose_children_inherit_root_skills_by_default(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn, title="ship a feature", triage=True,
+            skills=["hermes-native-improvements", "graph-engineering"],
+        )
+    children = [
+        # No "skills" key at all → must inherit the root's skills verbatim.
+        {"title": "research", "assignee": "researcher", "parents": []},
+    ]
+    with kb.connect() as conn:
+        child_ids = kb.decompose_triage_task(
+            conn, tid, root_assignee="orchestrator", children=children,
+            author="decomposer",
+        )
+    assert child_ids is not None
+    with kb.connect() as conn:
+        child = kb.get_task(conn, child_ids[0])
+    assert child.skills == ["hermes-native-improvements", "graph-engineering"]
+
+
+def test_decompose_child_explicit_skills_overrides_inheritance(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(
+            conn, title="ship a feature", triage=True,
+            skills=["hermes-native-improvements"],
+        )
+    children = [
+        {"title": "build", "assignee": "engineer", "skills": ["skill-hygiene"], "parents": []},
+        {"title": "no-op", "assignee": "engineer", "skills": [], "parents": []},
+    ]
+    with kb.connect() as conn:
+        child_ids = kb.decompose_triage_task(
+            conn, tid, root_assignee="orchestrator", children=children,
+            author="decomposer",
+        )
+    assert child_ids is not None
+    with kb.connect() as conn:
+        c0 = kb.get_task(conn, child_ids[0])
+        c1 = kb.get_task(conn, child_ids[1])
+    # Explicit override wins over root's skills.
+    assert c0.skills == ["skill-hygiene"]
+    # Explicit empty list means "explicitly none", not "inherit".
+    assert not c1.skills
+
+
+def test_decompose_root_with_no_skills_children_get_none(kanban_home):
+    with kb.connect() as conn:
+        tid = _create_triage(conn, title="no skills here")
+    children = [{"title": "task A", "assignee": "researcher"}]
+    with kb.connect() as conn:
+        child_ids = kb.decompose_triage_task(
+            conn, tid, root_assignee="orch", children=children, author="d",
+        )
+    assert child_ids is not None
+    with kb.connect() as conn:
+        child = kb.get_task(conn, child_ids[0])
+    assert not child.skills
+
+
 
 
