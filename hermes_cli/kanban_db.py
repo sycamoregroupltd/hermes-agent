@@ -81,6 +81,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import random
@@ -9506,6 +9507,13 @@ class DispatchResult:
     spawned. ``None`` when memory was fine/unknown and the guard imposed
     no restriction. Reclaim/promotion bookkeeping still ran either way;
     deferred tasks stay queued for the next tick."""
+    cpu_load: Optional[str] = None
+    """Host CPU load classification observed at spawn time when the CPU-load
+    guard restricted this tick (t_886aca25): ``"critical"`` — no new workers
+    were spawned this tick; ``"elevated"`` — at most one new worker was
+    spawned. ``None`` when load was fine/unknown and the guard imposed no
+    restriction. Mirrors :attr:`memory_pressure`: both guards can restrict
+    the same tick independently, and both defer (never drop) tasks."""
 
     skipped_block_gate: list[str] = field(default_factory=list)
     """Ready task ids skipped because the task has an unresolved block gate
@@ -11826,6 +11834,79 @@ DERIVED_MAX_IN_PROGRESS_FLOOR = 2
 DERIVED_MAX_IN_PROGRESS_CEILING = 8
 
 
+# ---------------------------------------------------------------------------
+# CPU-load-aware dispatch backoff (t_886aca25)
+#
+# The memory-pressure guard (above) can't see CPU starvation: spark-4be3
+# runs oversubscribed (load 40-47 on 20 cores, up to 96-115 after reboot)
+# while memory still looks healthy, cron subprocesses get claimed by the
+# scheduler but stall pre-spawn, and the liveness monitor fires a 100+ job
+# recovery wave. This guard compares the 1-minute load average against the
+# core count and defers NEW worker spawns when the host is already
+# CPU-starved, so the dispatcher never adds load on top of a starved box.
+#
+# Fail-open by construction: any read failure (non-Unix, undeterminable
+# core count) classifies as "unknown" which imposes no restriction — the
+# guard must never brick dispatch where loadavg isn't available.
+# ---------------------------------------------------------------------------
+
+# Load-average oversubscription thresholds as multiples of ``os.cpu_count()``:
+#   load > 1.5 x nproc  -> "elevated"  -> at most 1 new worker this tick
+#   load > 2.5 x nproc  -> "critical"  -> spawn nothing this tick
+# The elevated factor is config-overridable (``kanban.max_cpu_load_factor``);
+# critical is always exactly one load-factor above elevated so the two
+# thresholds can never cross regardless of the configured value.
+CPU_LOAD_ELEVATED_FACTOR = 1.5
+CPU_LOAD_CRITICAL_DELTA = 1.0  # critical = elevated_factor + this (default 2.5)
+
+
+def configured_cpu_load_factor() -> float:
+    """Read ``kanban.max_cpu_load_factor`` from config; default 1.5.
+
+    Mirrors ``configured_max_in_progress``: an explicit operator-configured
+    positive finite factor >= 1.0 wins; anything else (unset, invalid,
+    unreadable config) falls back to the default so the guard stays
+    permissive-by-default. A value below 1.0 is rejected because it would
+    throttle even an idle-ish box — operators who want tighter bounds than
+    the defaults should say so with a number that still lets a single core
+    make progress.
+    """
+    try:
+        from hermes_cli.config import load_config_readonly
+        raw = (load_config_readonly() or {}).get("kanban", {}).get(
+            "max_cpu_load_factor"
+        )
+    except Exception:
+        return CPU_LOAD_ELEVATED_FACTOR
+    if raw is None:
+        return CPU_LOAD_ELEVATED_FACTOR
+    try:
+        fval = float(raw)
+    except (TypeError, ValueError):
+        return CPU_LOAD_ELEVATED_FACTOR
+    if not math.isfinite(fval) or fval < 1.0:
+        return CPU_LOAD_ELEVATED_FACTOR
+    return fval
+
+
+def _system_load_sample() -> Optional[float]:
+    """Best-effort 1-minute load average, ``None`` when unknown.
+
+    Pure ``os.getloadavg`` read wrapped so the CPU-load guard can never
+    crash dispatch (non-Linux hosts raise; some containers return
+    ``(0, 0, 0)`` — an idle signal, not an error). The shared test conftest
+    neutralizes the guard by patching ``os.getloadavg`` (not this seam) to
+    an idle sample, because some fixtures purge and re-import
+    ``hermes_cli.kanban_db`` — an ``os``-level patch survives that while a
+    module-attribute patch would not. This indirection mirrors
+    ``_system_memory_sample`` for the memory guard.
+    """
+    try:
+        return float(os.getloadavg()[0])
+    except Exception:
+        return None
+
+
 def _system_memory_sample() -> dict:
     """Best-effort system memory snapshot (KiB values), ``{}`` when unknown.
 
@@ -12043,6 +12124,54 @@ def _memory_pressure_level(sample: Optional[Mapping[str, Any]] = None) -> str:
         )
     except Exception:
         return "unknown"
+
+
+def _cpu_load_level(
+    load: Optional[float] = None,
+    nproc: Optional[int] = None,
+    elevated_factor: Optional[float] = None,
+) -> str:
+    """Classify current host CPU load: ok/elevated/critical/unknown.
+
+    Compares the 1-minute load average against the logical core count
+    (``os.getloadavg()[0]`` vs ``os.cpu_count()``), the standard
+    oversubscription heuristic: load > 1.5 x nproc means the run queue
+    exceeds the cores available (``elevated`` — at most one new worker),
+    load > 2.5 x nproc means the box is badly starved (``critical`` — no
+    new workers). Both thresholds are multiples of ``nproc``; the elevated
+    factor is config-overridable via ``kanban.max_cpu_load_factor``, and
+    critical is always exactly one factor above elevated.
+
+    ``load`` / ``nproc`` / ``elevated_factor`` are injectable for tests;
+    ``None`` falls through to the live host. Fails open: ``unknown`` on
+    any read failure, non-numeric input, undeterminable core count, or
+    negative/infinite ratio — the guard must never brick dispatch where
+    loadavg isn't available.
+    """
+    if load is None:
+        try:
+            load = _system_load_sample()
+        except Exception:
+            return "unknown"
+    if load is None:
+        return "unknown"
+    if nproc is None:
+        nproc = os.cpu_count() or 0
+    if not isinstance(nproc, int) or nproc <= 0:
+        return "unknown"
+    try:
+        ratio = float(load) / float(nproc)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return "unknown"
+    if not math.isfinite(ratio) or ratio < 0:
+        return "unknown"
+    if elevated_factor is None:
+        elevated_factor = configured_cpu_load_factor()
+    if ratio > elevated_factor + CPU_LOAD_CRITICAL_DELTA:
+        return "critical"
+    if ratio > elevated_factor:
+        return "elevated"
+    return "ok"
 
 
 def dispatch_once(
@@ -12288,6 +12417,32 @@ def _dispatch_once_locked(
         if spawn_budget is None or spawn_budget > 1:
             _log.warning(
                 "kanban dispatch: system memory pressure is elevated; "
+                "limiting to at most 1 new worker this tick"
+            )
+            spawn_budget = 1
+
+    # CPU-load guard (t_886aca25): the memory guard can't see CPU
+    # starvation — spark-4be3 runs load 40-47 on 20 cores while memory
+    # still looks healthy, and adding more workers on top of a starved
+    # box only deepens the starvation (cron subprocesses stall pre-spawn
+    # and the liveness monitor fires recovery waves). Same defer-not-drop
+    # semantics as the memory guard: critical -> spawn nothing this tick;
+    # elevated -> at most one new worker. Reclaim/promotion above already
+    # ran, so board bookkeeping stays live either way, and deferred tasks
+    # simply wait for a later tick. "unknown" imposes no restriction.
+    cpu_level = _cpu_load_level()
+    if cpu_level == "critical":
+        result.cpu_load = cpu_level
+        _log.warning(
+            "kanban dispatch: host CPU load is critical; "
+            "spawning no new workers this tick (deferred, not dropped)"
+        )
+        return result
+    if cpu_level == "elevated":
+        result.cpu_load = cpu_level
+        if spawn_budget is None or spawn_budget > 1:
+            _log.warning(
+                "kanban dispatch: host CPU load is elevated; "
                 "limiting to at most 1 new worker this tick"
             )
             spawn_budget = 1

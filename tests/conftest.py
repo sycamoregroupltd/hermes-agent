@@ -595,6 +595,32 @@ def _neutralize_kanban_memory_guard(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _neutralize_kanban_cpu_guard(request, monkeypatch):
+    """Pin the kanban dispatcher's CPU-load guard to idle for every test.
+
+    The dispatcher consults the live 1-minute load average before spawning
+    (t_886aca25: CPU-load-aware dispatch backoff). Left un-patched,
+    dispatch tests would pass or fail based on how loaded the CI runner
+    happens to be (spark-4be3 routinely runs >1.5x oversubscribed).
+    Patching ``os.getloadavg`` (not the ``kanban_db`` seam) survives the
+    sys.modules purge some fixtures perform before re-importing
+    ``hermes_cli.kanban_db``, so even a freshly-imported module sees idle
+    load and classifies ``"ok"`` — the pre-guard behaviour every existing
+    test was written against. Tests that exercise the guard itself opt out
+    with ``@pytest.mark.real_cpu_guard`` or patch the seam directly.
+    """
+    if request.node.get_closest_marker("real_cpu_guard"):
+        return
+    try:
+        import os as _os
+    except Exception:
+        return
+    monkeypatch.setattr(
+        _os, "getloadavg", lambda: (0.0, 0.0, 0.0), raising=False,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _neutralize_webbrowser(monkeypatch):
     """Record browser-open attempts instead of opening real browser windows."""
     import webbrowser as _webbrowser
