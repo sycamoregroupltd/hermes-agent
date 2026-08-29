@@ -272,19 +272,22 @@ def _jobs_lock_file() -> Path:
 def _open_cron_lock_file(path: Path):
     """Open a cron advisory-lock file with a non-inheritable (O_CLOEXEC) fd.
 
-    The fd that carries the cross-process flock must never be inherited by a
-    forked/exec'd child. If it were, a child spawned by a cron job (agent
-    run, ``subprocess``) would inherit the open file description and keep the
-    flock alive after this scheduler process exits — so every other cron
-    writer would keep timing out on ``.jobs.lock`` / ``.fire-*.lock`` even
-    though the real scheduler is gone (#60703). Clearing the inheritance flag
-    (O_CLOEXEC) drops the fd on any exec, so a child can never inherit the
-    lock.
+    DEFENSIVE HARDENING ONLY — this does NOT change behavior on Python 3.4+
+    (PEP 446) and is NOT the mechanism that resolves #60703. ``open(path,
+    "a+")`` already produces a non-inheritable fd on any interpreter shipping
+    PEP 446, and #60703 was four SEPARATE processes each opening+flocking the
+    same lock — which no fd-inheritance setting can prevent. The primary
+    durable fix for #60703 is the periodic orphaned desktop-serve reap
+    (gateway housekeeping + desktop-boot sweep) that removes the competing
+    multiplex cron schedulers holding the lock.
 
-    ``open(path, "a+")`` already sets O_CLOEXEC on modern Pythons (PEP 446),
-    but we open explicitly and mark non-inheritable so the guarantee holds
-    regardless of interpreter defaults, and so ``flock`` shares nothing with
-    a future ``os.fork()``-based child that hasn't exec'd yet.
+    What this DOES guarantee, independent of interpreter defaults: the fd
+    that carries the cross-process flock is explicitly marked non-inheritable
+    (O_CLOEXEC + ``os.set_inheritable(fd, False)``), so a forked/exec'd child
+    of the scheduler (agent run, ``subprocess``) can never inherit the open
+    file description and keep the flock alive after the scheduler exits. This
+    closes a class of 'lock held by a long-gone process' bugs and is kept as
+    cheap belt-and-braces.
     """
     flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
     fd = os.open(str(path), flags | getattr(os, "O_CLOEXEC", 0))

@@ -31005,6 +31005,7 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
     AUTO_ARCHIVE_EVERY = 60  # ticks — poll hourly (state_meta gate owns the real cadence)
     MEMORY_TRIM_EVERY = 1    # shared helper cooldown bounds actual allocator work
     MISFIRE_SWEEP_EVERY = 5  # ticks — every 5 minutes (grace window gates real work)
+    ORPHAN_REAP_EVERY = 5    # ticks — every 5 minutes (#60703: periodic orphan desktop-serve sweep)
 
     # Every platform media cache prunes on the same hourly cadence — one loop
     # over (name, cleanup_fn), not a copy-pasted try/except per cache.
@@ -31153,6 +31154,36 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
                 # 60s forever.
                 logger.debug(
                     "gateway housekeeping memory trim failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+
+        # Periodic orphaned desktop-local serve sweep (#60703). The desktop
+        # backend reaps these at boot, but a backend that goes orphaned
+        # (ppid→1, idle, listening only on loopback with no client) AFTER boot
+        # — the exact shape that held the cron .jobs.lock/.fire-*.lock and
+        # starved this gateway — would otherwise persist until the next desktop
+        # boot. This long-lived process owns the cron, so it sweeps on a bounded
+        # interval. The helper's own safety gates apply unchanged: only a
+        # genuinely orphaned AND idle (no active client) AND old-enough
+        # lock-owned backend is reaped; a live SSH remote backend is spared
+        # (#78872). Best-effort; never raises to this loop.
+        if tick_count % ORPHAN_REAP_EVERY == 0:
+            try:
+                from hermes_cli.dashboard_procs import _reap_orphaned_desktop_local_serves
+
+                result = _reap_orphaned_desktop_local_serves()
+                killed = result.get("killed") or []
+                if killed:
+                    logger.warning(
+                        "Gateway housekeeping reaped %d orphaned desktop-local "
+                        "serve backend(s): %s",
+                        len(killed),
+                        killed,
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "gateway housekeeping orphan desktop-serve reap failed: %s: %s",
                     type(exc).__name__,
                     exc,
                 )
