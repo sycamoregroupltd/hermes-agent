@@ -29,9 +29,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Default: check only post-fix events. The fix was deployed around
-# 2026-07-28 22:50-23:00 UTC. Setting cutoff a few minutes before to be safe.
-FIX_DEPLOYED_AT = 1785918991  # 2026-08-05 08:36:31Z — guard deployed via a7462ba7a
+# Default: check only post-fix events. The original block-gate fix was
+# deployed around 2026-07-28 22:50-23:00 UTC (epoch 1785279300). This cutoff
+# MUST stay at the original fix-deploy time so the soak monitor keeps
+# surfacing any blocked->claimed regression since that baseline. It was
+# previously bumped to 1785918991 (2026-08-05) which masked the historical
+# violations and made SILENT meaningless (t_bffc6b89).
+FIX_DEPLOYED_AT = 1785279300  # 2026-07-28 22:55:00Z — original block-gate deploy
 
 DB_PATH = Path("/home/frank/.hermes/kanban/boards/jarvis-os/kanban.db")
 
