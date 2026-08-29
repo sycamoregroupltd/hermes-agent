@@ -1647,7 +1647,7 @@ def _create_quick_snapshot_locked(
         )
         print(
             "  ⚠ If sessions disappear after update, check "
-            f"{root} and run: hermes snapshot list"
+            f"{root} and run: /snapshot list"
         )
         logger.error(
             "Quick snapshot failed to capture DB file(s): %s",

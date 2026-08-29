@@ -4011,8 +4011,8 @@ def quarantine_zeroed_state_db(path: Path) -> Optional[Path]:
                 "quarantine lock for %s not acquired within 5s — refusing to "
                 "quarantine without the cross-process lock. The zeroed file "
                 "is left in place. If sessions fail to load, restore from "
-                "state-snapshots via `hermes snapshot list` / "
-                "`hermes snapshot restore <id>`.",
+                "state-snapshots via `/snapshot list` / "
+                "`/snapshot restore <id>`.",
                 path,
             )
             return None
@@ -4683,8 +4683,8 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
                 msg = (
                     f"state.db looks ZEROED ({zsize} bytes, no SQLite header). "
                     f"Preserved at {qpath or '(quarantine failed — file left in place)'}. "
-                    f"Restore from {snaps} via `hermes snapshot list` / "
-                    f"`hermes snapshot restore <id>` if available. "
+                    f"Restore from {snaps} via `/snapshot list` / "
+                    f"`/snapshot restore <id>` if available. "
                     "Opening a fresh empty database so the agent can start."
                 )
                 logger.error(msg)
