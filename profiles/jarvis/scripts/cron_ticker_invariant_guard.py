@@ -29,17 +29,27 @@ paused ~9h after a transient restart). Re-arm is:
     operator manual) are never touched.
   - ONCE-KIND SAFE: a guard-paused one-shot (schedule.kind == "once") is
     re-armed ONLY if it is still fire-eligible per the scheduler's own contract
-    (schedule.run_at within the ONESHOT_GRACE_SECONDS window, or a live
-    run_claim/fire_claim). A stale one-shot is NOT silently re-enabled with a
-    NULL next_run_at — the due-scan can never recover a once job's run time
-    from null, and the scheduler's missed-oneshot diagnostic only fires on a
-    stale timestamp, so that would leave a permanent ghost. Fire-eligible
-    one-shots are re-armed with a REAL due timestamp — their run_at when still
-    within grace, or a fresh `now` when a live dispatch claim made them
-    eligible (their raw run_at may be hours stale and re-arming with it would
-    create a second ghost, since a stale-but-present claim blocks the
-    scheduler's missed-oneshot retirement). Ineligible ones stay guard-paused
-    with a distinct 🟡 GUARD ONESHOT-MISSED manual-triage alert.
+    (schedule.run_at within the ONESHOT_GRACE_SECONDS window, or a STALE
+    run_claim/fire_claim whose claiming tick died). A stale one-shot is NOT
+    silently re-enabled with a NULL next_run_at — the due-scan can never
+    recover a once job's run time from null, and the scheduler's missed-oneshot
+    diagnostic only fires on a stale timestamp, so that would leave a permanent
+    ghost. Fire-eligible one-shots are re-armed with a REAL due timestamp —
+    their run_at when still within grace, or a fresh `now` when a STALE claim
+    made them recoverable (their raw run_at may be hours stale; re-arming with
+    it, or re-arming while the stale claim is still present, would hand the
+    scheduler a timestamp/record the missed-oneshot retirement cannot clear,
+    because jobs.py:4049 tests claim PRESENCE not liveness -> permanent ghost).
+    A GENUINELY LIVE claim (a run may still be in flight) is NEVER re-armed
+    over and NEVER cleared: mirroring the scheduler's own rearm_oneshot()
+    trade-off, the guard refuses to touch it and leaves the job guard-paused
+    with a distinct 🟠 GUARD ONESHOT-CLAIMED alert (a live claim means the
+    due-scan skips the job anyway, and clearing it risks double-dispatch of a
+    run that may actually be executing). When it DOES re-arm over a stale
+    claim, it clears that claim as part of the re-arm (same as mark_job_run's
+    completion and rearm_oneshot's require-the-claim-gone contract). Ineligible
+    ones stay guard-paused with a distinct 🟡 GUARD ONESHOT-MISSED
+    manual-triage alert.
   - SERIALIZED: re-arm writes to a FRESH store while its ticker is live, so we
     take a blocking flock on .jobs.lock (mirroring the scheduler) and re-read
     the store under the lock before writing, to avoid clobbering a concurrent
@@ -131,36 +141,55 @@ def _claim_is_live(claim, now: datetime, ttl_seconds: float) -> bool:
     return 0 <= age < ttl_seconds
 
 
-def _oneshot_rearm_next_run(job: dict, now: datetime) -> str | None:
-    """Return the next_run_at value to set when re-arming a guard-paused once
-    job, or None if it is no longer fire-eligible (must stay guard-paused).
+def _oneshot_rearm_next_run(job: dict, now: datetime) -> tuple[str, str | None, bool, bool]:
+    """Decide how to re-arm a guard-paused once job.
 
-    Mirrors the scheduler's own eligibility rule (cron/jobs.py) but returns a
-    value the due-scan can actually act on — this is what distinguishes a safe
-    re-arm from a permanent ghost:
-      - run_at within ONESHOT_GRACE_SECONDS of now -> return the real run_at
+    Returns (status, next_run_at, clear_run_claim, clear_fire_claim):
+      status == "rearm"      -> restore to enabled/scheduled with next_run_at
+        (a REAL due timestamp the due-scan can act on). If a STALE claim is being
+        re-armed over, clear_run_claim/clear_fire_claim are True so the stale-
+        but-present claim cannot later block the scheduler's missed-oneshot
+        retirement (jobs.py:4049 tests claim PRESENCE, not liveness -> ghost).
+      status == "refuse-live"-> a GENUINELY LIVE claim is present. Mirror the
+        scheduler's own rearm_oneshot() trade-off (jobs.py:2797-2800): refuse to
+        re-arm over (or clear) a live claim. The due-scan skips a job with a
+        fresh claim (jobs.py:3811-3822) so re-arming now is a no-op; and if the
+        run is genuinely in-flight, clearing the claim risks double-dispatch.
+        Leave it guard-paused with a distinct ONESHOT-CLAIMED alert; a later
+        guard run re-arms it once the claim ages past its TTL.
+      status == "missed"     -> never claimed and run_at is past grace: it will
+        never fire. Leave guard-paused with an ONESHOT-MISSED manual-triage alert.
+
+    Mirrors the scheduler's own fire-eligibility contract (cron/jobs.py) but
+    returns a value the due-scan can actually act on — this is what distinguishes
+    a safe re-arm from a permanent ghost:
+      - run_at within ONESHOT_GRACE_SECONDS of now -> re-arm with the real run_at
         (a genuine near-term occurrence the scheduler fires immediately).
-      - otherwise a LIVE run_claim/fire_claim (job was mid-dispatch) -> return
-        now. The raw schedule.run_at here can be arbitrarily stale (hours)
-        while the claim is still live, and re-arming with it would hand the
-        due-scan a timestamp past the grace gate; the scheduler's missed-
-        oneshot retirement (cron/jobs.py:4048-4059) only clears a record whose
-        claim is ABSENT, so a stale-but-present claim blocks retirement forever
-        -> a second permanent ghost (enabled+scheduled, never fires, never
-        diagnosed). next_run_at=now is a fresh, due timestamp the scheduler
-        treats as in-grace and dispatches; the still-live claim then prevents a
-        duplicate dispatch (fire_claim_fence) until the in-flight run lands.
-      - otherwise -> None (ineligible; leave paused + manual-triage alert).
+      - otherwise a STALE run_claim/fire_claim (past its TTL, so the claiming
+        tick died mid-dispatch) -> re-arm with now (fresh), clearing the stale
+        claim so the scheduler can dispatch it. The raw schedule.run_at here can
+        be arbitrarily stale (hours) while the claim is still present; re-arming
+        with it, or re-arming while the stale claim stays in the record, hands
+        the due-scan a timestamp the missed-oneshot retirement cannot clear
+        (jobs.py:4048-4059 only retires a record whose claim is ABSENT).
+      - otherwise -> "missed" (leave paused + manual-triage alert).
     """
+    run_claim = job.get("run_claim")
+    fire_claim = job.get("fire_claim")
+    if _claim_is_live(run_claim, now, ONESHOOT_RUN_CLAIM_TTL_SECONDS) or _claim_is_live(
+        fire_claim, now, ONESHOT_FIRE_CLAIM_TTL_SECONDS
+    ):
+        return ("refuse-live", None, False, False)
     schedule = job.get("schedule") or {}
     run_at = _parse_dt(schedule.get("run_at"))
     if run_at is not None and run_at >= now - timedelta(seconds=ONESHOT_GRACE_SECONDS):
-        return schedule.get("run_at")
-    if _claim_is_live(job.get("run_claim"), now, ONESHOOT_RUN_CLAIM_TTL_SECONDS) or _claim_is_live(
-        job.get("fire_claim"), now, ONESHOT_FIRE_CLAIM_TTL_SECONDS
-    ):
-        return now.isoformat()
-    return None
+        return ("rearm", schedule.get("run_at"), run_claim is not None, fire_claim is not None)
+    if run_claim or fire_claim:
+        # Stale claim (past TTL): the claiming tick died mid-dispatch. Clear it
+        # and re-arm with a fresh `now` so the scheduler recovers the job instead
+        # of leaving a stale-but-present claim that blocks retirement forever.
+        return ("rearm", now.isoformat(), True, True)
+    return ("missed", None, False, False)
 
 
 def _oneshot_miss_reason(job: dict, now: datetime) -> str:
@@ -346,6 +375,7 @@ def _rearm_store(store: Path, real_home: Path) -> tuple[list[str], list[str]]:
             return [], [f"🔴 GUARD-ERROR {_store_relative(store, real_home)}: unreadable store on re-arm ({exc})"]
         rearmed: list[tuple[str, str]] = []  # (name, id)
         missed_oneshots: list[tuple[str, str, str]] = []  # (name, id, reason)
+        claimed_oneshots: list[tuple[str, str, str]] = []  # (name, id, reason)
         now = _utcnow()
         for job in jobs:
             if not isinstance(job, dict):
@@ -366,20 +396,47 @@ def _rearm_store(store: Path, real_home: Path) -> tuple[list[str], list[str]]:
                 # silent ghost (enabled+scheduled, never fires, never diagnosed).
                 # _oneshot_rearm_next_run returns a value the due-scan can
                 # actually act on (real run_at when still within grace; now when
-                # a live claim made it eligible), or None when ineligible.
-                next_run = _oneshot_rearm_next_run(job, now)
-                if next_run is not None:
+                # a STALE claim made it recoverable), or signals refuse/missed.
+                status, next_run, clear_run_claim, clear_fire_claim = _oneshot_rearm_next_run(job, now)
+                if status == "rearm":
                     # Fire-eligible: restore to a REAL due timestamp the
-                    # scheduler will dispatch — run_at if still within grace,
-                    # or a fresh `now` when a live dispatch claim is the reason
-                    # (raw run_at may be hours stale and would create a ghost).
+                    # scheduler will dispatch — run_at if still within grace, or
+                    # a fresh `now` when a stale dispatch claim is the reason
+                    # (raw run_at may be hours stale). ALWAYS clear any stale
+                    # claim we are re-arming over: a stale-but-present claim
+                    # blocks the scheduler's missed-oneshot retirement (jobs.py
+                    # :4049 tests PRESENCE not liveness), so leaving it would
+                    # ghost the job once the fresh next_run_at itself ages past
+                    # grace. We only reach here when NO claim is LIVE (a live
+                    # claim -> "refuse-live"), so clearing cannot double-dispatch
+                    # a genuinely in-flight run.
                     job["enabled"] = True
                     job["state"] = "scheduled"
                     job["paused_at"] = None
                     job["paused_reason"] = None
                     job["next_run_at"] = next_run
+                    if clear_run_claim:
+                        job["run_claim"] = None
+                    if clear_fire_claim:
+                        job["fire_claim"] = None
                     rearmed.append((job.get("name", "(unnamed)"), job.get("id", "?")))
-                else:
+                elif status == "refuse-live":
+                    # A genuinely live claim means a run may still be in flight.
+                    # Mirror the scheduler's own rearm_oneshot() trade-off:
+                    # refuse to re-arm over (or clear) a live claim, to avoid
+                    # double-dispatching a run that is actually executing. Leave
+                    # it guard-paused with a distinct alert; a later guard run
+                    # re-arms it once the claim ages past its TTL.
+                    claimed_oneshots.append(
+                        (
+                            job.get("name", "(unnamed)"),
+                            job.get("id", "?"),
+                            "has a LIVE run/fire claim (a run may still be "
+                            "in flight); refusing to re-arm to avoid "
+                            "double-dispatch",
+                        )
+                    )
+                else:  # "missed"
                     # Outside the grace window with no live claim: this one-shot
                     # will never fire. Do NOT silently re-enable it (that is the
                     # ghost bug). Leave it guard-paused and emit a distinct
@@ -403,7 +460,7 @@ def _rearm_store(store: Path, real_home: Path) -> tuple[list[str], list[str]]:
             job["paused_reason"] = None
             job["next_run_at"] = None
             rearmed.append((job.get("name", "(unnamed)"), job.get("id", "?")))
-        if not rearmed and not missed_oneshots:
+        if not rearmed and not missed_oneshots and not claimed_oneshots:
             return [], []
         _atomic_write(store, raw)
         age = _epoch_file_age(store.parent / "ticker_heartbeat")
@@ -420,6 +477,13 @@ def _rearm_store(store: Path, real_home: Path) -> tuple[list[str], list[str]]:
             f"{reason}; left paused — re-arm or retire deliberately "
             f"[t_a8fdd2db]"
             for name, jid, reason in missed_oneshots
+        ]
+        alerts += [
+            f"🟠 GUARD ONESHOT-CLAIMED (not re-armed): {_store_relative(store, real_home)} "
+            f"one-shot job '{name}' ({jid}) {reason}; left guard-paused — will "
+            f"re-arm once the claim ages past its TTL "
+            f"[t_a8fdd2db]"
+            for name, jid, reason in claimed_oneshots
         ]
         return alerts, []
     finally:
