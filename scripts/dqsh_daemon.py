@@ -109,8 +109,33 @@ def send_discord_alert(message, target, live_mode=False):
 # STATE MANAGEMENT
 # ----------------------------------------------------------------------------
 
+# ADOPT item 5: durable per-job state lives in the cron notepad (native KV)
+# for job c7226b0fbbe5 (dqsh-self-healer-daemon, jarvis-os-pm profile). The
+# loose JSON file remains as a read-only rollback mirror; the notepad is the
+# source of truth. Self-tests that redirect STATE_FILE to a temp path bypass
+# the notepad (STATE_FILE != production path), preserving test isolation.
+try:
+    from notepad_state import NotepadStore  # type: ignore
+    _DQSH_NOTEPAD = NotepadStore(
+        "c7226b0fbbe5", "/home/frank/.hermes/profiles/jarvis-os-pm"
+    )
+except Exception:
+    _DQSH_NOTEPAD = None
+
+
+def _use_notepad():
+    return _DQSH_NOTEPAD is not None and STATE_FILE == "/home/frank/.hermes/dqsh_state.json"
+
+
 def load_state():
     """Loads state from JSON to keep track of execution history and safety caps."""
+    if _use_notepad():
+        raw = _DQSH_NOTEPAD.get("dqsh:state")
+        if raw is not None:
+            try:
+                return json.loads(raw)
+            except (ValueError, TypeError):
+                pass
     if not os.path.exists(STATE_FILE):
         return {"remediation_history": []}
     try:
@@ -122,7 +147,9 @@ def load_state():
 
 
 def save_state(state):
-    """Saves state atomically to state JSON file."""
+    """Saves state atomically to state JSON file (and notepad when production)."""
+    if _use_notepad():
+        _DQSH_NOTEPAD.set("dqsh:state", json.dumps(state, separators=(",", ":")))
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
     fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(STATE_FILE), suffix=".tmp")
     try:

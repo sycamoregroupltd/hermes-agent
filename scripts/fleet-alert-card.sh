@@ -290,7 +290,14 @@ rc, out = hermes(
     f"Delivered to the BOARD because the script's own target "
     f"(whatsapp/discord) is a channel Frank does not read.\n"
     f"The voice line reads this card on every call.",
-    "--idempotency-key", f"hostalert-{key}-{int(time.time()//3600)}")
+    # Idempotency key must be STABLE for an unresolved alert. It previously
+    # appended int(time.time()//3600), so the same ongoing condition minted a
+    # NEW card every hour (169 redundant cards/24h, 226 of 227 never
+    # dispatched) and each one superseded+completed its predecessor — inflating
+    # the board's "done" rate to ~27/hr when genuine worked throughput was
+    # ~16/hr. Keyed on the condition alone, a persisting alert now reuses one
+    # card. Fixed 2026-08-30.
+    "--idempotency-key", f"hostalert-{key}")
 m = re.search(r"\b(t_[0-9a-f]{8})\b", out)
 new_id = m.group(1) if (rc == 0 and m) else None
 

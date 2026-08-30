@@ -433,6 +433,41 @@
     {
       "base_url": null,
       "context_from": null,
+      "created_at": "2026-08-03T10:02:24.125044+01:00",
+      "deliver": "local",
+      "enabled": true,
+      "enabled_toolsets": null,
+      "id": "32121fb396af",
+      "timeout": 10800,
+      "model": null,
+      "model_snapshot": null,
+      "name": "nightly-fleet-backup",
+      "no_agent": true,
+      "origin": null,
+      "paused_at": null,
+      "paused_reason": null,
+      "prompt": "",
+      "provider": null,
+      "provider_snapshot": null,
+      "repeat": {
+        "times": null
+      },
+      "schedule": {
+        "display": "30 4 * * *",
+        "expr": "30 4 * * *",
+        "kind": "cron"
+      },
+      "schedule_display": "30 4 * * *",
+      "script": "nightly-backup.sh",
+      "skill": null,
+      "skills": [],
+      "state": "scheduled",
+      "workdir": null,
+      "failure_streak": 2
+    },
+    {
+      "base_url": null,
+      "context_from": null,
       "created_at": "2026-06-24T18:53:04.008047+01:00",
       "deliver": "discord:#fleet-reports",
       "enabled": false,
@@ -4217,7 +4252,12 @@
       "skills": [],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 0,
+      "monitor_script": "blocked-card-soak-probe.sh",
+      "monitor_state": {
+        "last_output_hash": "f4726202f85a8f5dff6e08a5f2f491a9a9b3f35a57e999993cf539cf0b1923fe",
+        "last_changed_at": "2026-08-30T15:23:54.464387+01:00"
+      }
     },
     {
       "base_url": null,
@@ -4489,7 +4529,7 @@
       ],
       "state": "scheduled",
       "workdir": null,
-      "failure_streak": 0
+      "failure_streak": 1
     },
     {
       "base_url": null,
@@ -5925,7 +5965,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T02:43:01.666091+01:00",
-      "failure_streak": 22,
+      "failure_streak": 0,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -6073,7 +6113,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T19:18:53.850521+01:00",
-      "failure_streak": 3,
+      "failure_streak": 1,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -6110,7 +6150,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T21:20:16.437538+01:00",
-      "failure_streak": 1,
+      "failure_streak": 4,
       "deliver": "discord",
       "origin": null,
       "enabled_toolsets": null,
@@ -6210,8 +6250,8 @@
       "monitor_script": "p0-lane-probe.sh",
       "monitor_url": null,
       "monitor_state": {
-        "last_output_hash": "6878d658c35a32e8a76cb410416792bf1947c3d19c09dc67b2b60e61903b8096",
-        "last_changed_at": "2026-08-30T13:53:44.993224+01:00"
+        "last_output_hash": "e91599f981bb466638d3ee2d8c828c7cb1408ba5ce2608190716f9684389b54c",
+        "last_changed_at": "2026-08-30T14:26:57.414621+01:00"
       },
       "context_from": [
         "self"
@@ -6262,7 +6302,7 @@
       },
       "schedule_display": "every 5m",
       "repeat": {
-        "times": 72
+        "times": null
       },
       "enabled": true,
       "state": "scheduled",
