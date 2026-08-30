@@ -27,6 +27,15 @@ paused ~9h after a transient restart). Re-arm is:
   - GUARD-MARKER ONLY: we only re-arm jobs carrying OUR paused_reason marker
     ("dead-store-invariant-guard:"). Intentional pauses (CONDENSE, retired,
     operator manual) are never touched.
+  - ONCE-KIND SAFE: a guard-paused one-shot (schedule.kind == "once") is
+    re-armed ONLY if it is still fire-eligible per the scheduler's own contract
+    (schedule.run_at within the ONESHOT_GRACE_SECONDS window, or a live
+    run_claim/fire_claim). A stale one-shot is NOT silently re-enabled with a
+    NULL next_run_at — the due-scan can never recover a once job's run time
+    from null, and the scheduler's missed-oneshot diagnostic only fires on a
+    stale timestamp, so that would leave a permanent ghost. Fire-eligible
+    one-shots are re-armed with their real run_at; ineligible ones stay
+    guard-paused with a distinct 🟡 GUARD ONESHOT-MISSED manual-triage alert.
   - SERIALIZED: re-arm writes to a FRESH store while its ticker is live, so we
     take a blocking flock on .jobs.lock (mirroring the scheduler) and re-read
     the store under the lock before writing, to avoid clobbering a concurrent
@@ -54,6 +63,7 @@ import os
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REAL_HERMES_HOME = Path(os.environ.get("HERMES_REAL_HOME", "/home/frank/.hermes")).expanduser()
@@ -70,6 +80,90 @@ STALE_SECONDS = int(os.environ.get("TICKER_STALE_SECONDS", "900"))  # 15m
 LOCK_TIMEOUT_SECONDS = float(os.environ.get("JOBS_LOCK_TIMEOUT_SECONDS", "25"))
 
 GUARD_MARKER = "dead-store-invariant-guard:"
+
+# One-shot grace window, mirrored from the scheduler (hermes-agent/cron/jobs.py
+# ONESHOT_GRACE_SECONDS = 120). A `once` job whose persisted run time has fallen
+# more than this far in the past is outside the scheduler's "will never fire"
+# contract — it must NOT be re-armed with next_run_at=None (which the due-scan
+# can never recover for a once job), or it becomes a permanent silent ghost
+# (enabled+scheduled, never fires, never diagnosed). Keep this value in lock-step
+# with cron/jobs.py so eligibility matches the scheduler's exactly.
+ONESHOT_GRACE_SECONDS = 120
+
+# Liveness TTL for a one-shot's in-flight claims, mirrored from the scheduler's
+# fire_claim TTL (300s) and its default run_claim stale-recovery TTL (1800s).
+# A job with a LIVE claim was actually dispatched (or is still in flight) — it
+# was never silently missed, so re-arming it is safe even if run_at is stale.
+ONESHOOT_RUN_CLAIM_TTL_SECONDS = 1800
+ONESHOT_FIRE_CLAIM_TTL_SECONDS = 300
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_dt(value) -> datetime | None:
+    """Parse an ISO datetime string to an aware UTC datetime, or None."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _claim_is_live(claim, now: datetime, ttl_seconds: float) -> bool:
+    """True when a one-shot dispatch claim is still live (in-flight). Mirrors
+    the scheduler's cron/jobs.py `_claim_is_live` (mirror)."""
+    if not isinstance(claim, dict) or not claim.get("at"):
+        return False
+    at = _parse_dt(claim.get("at"))
+    if at is None:
+        return False
+    age = (now - at).total_seconds()
+    return 0 <= age < ttl_seconds
+
+
+def _oneshot_fire_eligible(job: dict, now: datetime) -> bool:
+    """True when a guard-paused one-shot can be safely re-armed.
+
+    Mirrors the scheduler's own fire-eligibility rule (cron/jobs.py):
+      - a LIVE run_claim/fire_claim means the job WAS dispatched (or is still
+        in flight) — it was not silently missed, so re-arming is safe.
+      - otherwise the job is only eligible if its schedule.run_at is still
+        within ONESHOT_GRACE_SECONDS of now (the same window
+        `_recoverable_oneshot_run_at` uses). A run_at older than that is the
+        "will never fire" contract — re-arming it with a null next_run_at
+        would orphan it forever, so it must be reported for manual triage
+        instead.
+    """
+    schedule = job.get("schedule") or {}
+    if _claim_is_live(job.get("run_claim"), now, ONESHOOT_RUN_CLAIM_TTL_SECONDS) or _claim_is_live(
+        job.get("fire_claim"), now, ONESHOT_FIRE_CLAIM_TTL_SECONDS
+    ):
+        return True
+    if schedule.get("kind") != "once":
+        return False
+    run_at = _parse_dt(schedule.get("run_at"))
+    if run_at is None:
+        return False
+    return run_at >= now - timedelta(seconds=ONESHOT_GRACE_SECONDS)
+
+
+def _oneshot_miss_reason(job: dict, now: datetime) -> str:
+    """Short human-readable reason a guard-paused one-shot is no longer
+    fire-eligible (for the manual-triage alert)."""
+    schedule = job.get("schedule") or {}
+    run_at = _parse_dt(schedule.get("run_at"))
+    if run_at is None:
+        return "run_at missing/unparseable"
+    age = (now - run_at).total_seconds()
+    if age > ONESHOT_GRACE_SECONDS:
+        return f"{int(age)}s past its run time (beyond {ONESHOT_GRACE_SECONDS}s grace)"
+    return f"outside grace window (run_at {schedule.get('run_at')!r})"
 
 
 def _epoch_file_age(path: Path) -> float | None:
@@ -241,6 +335,8 @@ def _rearm_store(store: Path, real_home: Path) -> tuple[list[str], list[str]]:
         except Exception as exc:
             return [], [f"🔴 GUARD-ERROR {_store_relative(store, real_home)}: unreadable store on re-arm ({exc})"]
         rearmed: list[tuple[str, str]] = []  # (name, id)
+        missed_oneshots: list[tuple[str, str, str]] = []  # (name, id, reason)
+        now = _utcnow()
         for job in jobs:
             if not isinstance(job, dict):
                 continue
@@ -248,16 +344,51 @@ def _rearm_store(store: Path, real_home: Path) -> tuple[list[str], list[str]]:
                 continue
             if job.get("enabled", False):
                 continue  # already enabled; nothing to do
+            schedule = job.get("schedule") or {}
+            kind = schedule.get("kind") if isinstance(schedule, dict) else None
+            if kind == "once":
+                # One-shot re-arm must respect the scheduler's fire-eligibility
+                # contract. A `once` job with a NULL next_run_at is never
+                # recovered by the due-scan once run_at falls outside
+                # ONESHOT_GRACE_SECONDS, and the scheduler's missed-oneshot
+                # diagnostic only fires on a stale *timestamp* — so re-arming a
+                # stale one-shot with next_run_at=None creates a permanent
+                # silent ghost (enabled+scheduled, never fires, never diagnosed).
+                if _oneshot_fire_eligible(job, now):
+                    # Fire-eligible: restore to a REAL due timestamp (run_at),
+                    # not None, so the scheduler sees a valid occurrence and can
+                    # run it now (within grace) or at run_at if still future.
+                    job["enabled"] = True
+                    job["state"] = "scheduled"
+                    job["paused_at"] = None
+                    job["paused_reason"] = None
+                    job["next_run_at"] = schedule.get("run_at")
+                    rearmed.append((job.get("name", "(unnamed)"), job.get("id", "?")))
+                else:
+                    # Outside the grace window with no live claim: this one-shot
+                    # will never fire. Do NOT silently re-enable it (that is the
+                    # ghost bug). Leave it guard-paused and emit a distinct
+                    # alert so an operator/agent re-arms or retires it
+                    # deliberately.
+                    missed_oneshots.append(
+                        (
+                            job.get("name", "(unnamed)"),
+                            job.get("id", "?"),
+                            _oneshot_miss_reason(job, now),
+                        )
+                    )
+                continue
+            # cron / interval (or unknown): next_run_at=None lets the
+            # scheduler's due-scan recompute the next future occurrence
+            # (verified in get_due_jobs: no burst-fire, picks up at the next
+            # scheduled tick). Avoids bundling croniter here.
             job["enabled"] = True
             job["state"] = "scheduled"
             job["paused_at"] = None
             job["paused_reason"] = None
-            # next_run_at=None lets the scheduler's due-scan recompute the next
-            # future occurrence (verified in get_due_jobs: no burst-fire, picks
-            # up at the next scheduled tick). Avoids bundling croniter here.
             job["next_run_at"] = None
             rearmed.append((job.get("name", "(unnamed)"), job.get("id", "?")))
-        if not rearmed:
+        if not rearmed and not missed_oneshots:
             return [], []
         _atomic_write(store, raw)
         age = _epoch_file_age(store.parent / "ticker_heartbeat")
@@ -267,6 +398,13 @@ def _rearm_store(store: Path, real_home: Path) -> tuple[list[str], list[str]]:
             f"heartbeat fresh ({age_s}) -> re-armed job '{name}' ({jid}) "
             f"[t_a8fdd2db]"
             for name, jid in rearmed
+        ]
+        alerts += [
+            f"🟡 GUARD ONESHOT-MISSED (manual triage): {_store_relative(store, real_home)} "
+            f"one-shot job '{name}' ({jid}) was guard-paused but its run time is "
+            f"{reason}; left paused — re-arm or retire deliberately "
+            f"[t_a8fdd2db]"
+            for name, jid, reason in missed_oneshots
         ]
         return alerts, []
     finally:
