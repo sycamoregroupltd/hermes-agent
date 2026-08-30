@@ -664,6 +664,7 @@ def _fire_dispatch_tick_hook(
             result.skipped_reviewer_incapable,
             result.skipped_block_gate,
             result.blocked_claim_attempts,
+            result.skipped_quota_suppressed,
         )):
             outcome = "idle"
         invoke_hook(
@@ -9507,6 +9508,26 @@ class DispatchResult:
     no restriction. Reclaim/promotion bookkeeping still ran either way;
     deferred tasks stay queued for the next tick."""
 
+    quota_pressure: Optional[str] = None
+    """Provider quota pressure observed at spawn time when the quota guard
+    restricted this tick (t_58da250a): ``"critical"`` — sustained
+    ``rate_limited`` run outcomes inside the sliding window; no new workers
+    were spawned this tick. ``"elevated"`` — recent ``rate_limited``
+    outcomes; spawns for the affected assignee(s) were suppressed and the
+    shared spawn budget shrank by one. ``None`` when the window was clean,
+    the guard was disabled, or pressure was unknown (fail-open — no
+    restriction). Reclaim/promotion bookkeeping still ran either way;
+    deferred tasks stay queued for the next tick."""
+
+    skipped_quota_suppressed: list[tuple[str, str]] = field(default_factory=list)
+    """Ready/review tasks skipped this tick because their assignee recently
+    hit a provider rate-limit wall, as ``(task_id, assignee)`` pairs. Only
+    populated under ``quota_pressure == "elevated"``: the per-task respawn
+    guard already defers the individual rate-limited task, and this adds
+    budget-level backpressure so OTHER tasks on the same starved provider
+    don't take its place and burn the same quota. Suppressed tasks stay
+    ``ready`` and spawn normally once the window clears."""
+
     skipped_block_gate: list[str] = field(default_factory=list)
     """Ready task ids skipped because the task has an unresolved block gate
     (t_fc1fdf31). A task that was worker/operator-blocked but somehow
@@ -11987,6 +12008,138 @@ def _memory_pressure_level(sample: Optional[Mapping[str, Any]] = None) -> str:
         return "unknown"
 
 
+# ---------------------------------------------------------------------------
+# Quota-pressure-aware dispatch guard (t_58da250a)
+#
+# Static concurrency caps can't see provider rate-limit walls: when workers
+# start dying with quota/429 exits (classified as ``rate_limited`` run
+# outcomes by the reap classifier), the per-task respawn guard defers THAT
+# task — but the dispatcher would happily spawn replacement workers for
+# OTHER tasks on the same starved provider, burning the same quota. This
+# guard adds budget-level backpressure, architecturally symmetric with the
+# memory-pressure guard above:
+#
+#   * ``_quota_pressure_snapshot`` counts recent ``rate_limited`` run
+#     outcomes in a sliding window (default 15 minutes) and classifies:
+#     ok / elevated / critical / unknown, plus per-assignee hit counts.
+#   * critical  -> spawn nothing this tick (deferred, not dropped).
+#   * elevated  -> suppress spawns for the AFFECTED assignee(s) and shrink
+#     the shared spawn budget by one.
+#   * unknown   -> no restriction (fail-open, same as the memory guard).
+#
+# The guard only ever REDUCES below the operator-configured caps
+# (``max_spawn`` / ``max_in_progress``); it never raises them. Once the
+# window is clean the configured caps apply unchanged — no sticky throttle
+# state survives the window.
+#
+# Config (all optional, read like other ``kanban.*`` keys):
+#
+#   kanban:
+#     quota_guard:
+#       enabled: true            # kill switch
+#       window_seconds: 900      # sliding window over task_runs.ended_at
+#       elevated_threshold: 1    # >= this many hits in window -> elevated
+#       critical_threshold: 3    # >= this many hits in window -> critical
+# ---------------------------------------------------------------------------
+
+DEFAULT_QUOTA_GUARD_WINDOW_SECONDS = 15 * 60
+DEFAULT_QUOTA_GUARD_ELEVATED_THRESHOLD = 1
+DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD = 3
+
+
+def _quota_guard_config() -> "dict[str, Any]":
+    """Read ``kanban.quota_guard.*`` from config with validated defaults.
+
+    Returns a dict with keys ``enabled``, ``window_seconds``,
+    ``elevated_threshold``, ``critical_threshold``. Invalid values (wrong
+    type, non-positive) fall back to the shipped defaults individually —
+    one bad key must not disable the whole guard or brick dispatch.
+    """
+    raw: "dict[str, Any]" = {}
+    try:
+        from hermes_cli.config import load_config_readonly
+        cfg = load_config_readonly() or {}
+        section = (cfg.get("kanban") or {}).get("quota_guard")
+        if isinstance(section, dict):
+            raw = section
+    except Exception:
+        raw = {}
+
+    def _positive_int(value: Any, default: int) -> int:
+        try:
+            ival = int(value)
+        except (TypeError, ValueError):
+            return default
+        # bool is an int subclass — True/False are not sane thresholds.
+        if isinstance(value, bool) or ival < 1:
+            return default
+        return ival
+
+    return {
+        "enabled": bool(raw.get("enabled", True)),
+        "window_seconds": _positive_int(
+            raw.get("window_seconds"), DEFAULT_QUOTA_GUARD_WINDOW_SECONDS
+        ),
+        "elevated_threshold": _positive_int(
+            raw.get("elevated_threshold"),
+            DEFAULT_QUOTA_GUARD_ELEVATED_THRESHOLD,
+        ),
+        "critical_threshold": _positive_int(
+            raw.get("critical_threshold"),
+            DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD,
+        ),
+    }
+
+
+def _quota_pressure_snapshot(
+    conn: sqlite3.Connection,
+) -> "tuple[str, dict[str, int]]":
+    """Classify provider quota pressure from recent ``rate_limited`` runs.
+
+    Returns ``(level, hits)`` where ``level`` is one of ``"ok"`` /
+    ``"elevated"`` / ``"critical"`` / ``"unknown"`` and ``hits`` maps
+    assignee -> count of ``rate_limited`` run outcomes whose ``ended_at``
+    falls inside the configured sliding window.
+
+    ``rate_limited`` outcomes are exactly what the reap classifier persists
+    for EX_TEMPFAIL (quota wall) worker deaths — see
+    ``detect_crashed_workers``. Counting run outcomes (not task_events)
+    keys the guard off the same durable record the rest of the rate-limit
+    machinery already trusts.
+
+    Fail-open contract (mirrors ``_memory_pressure_level``): a disabled
+    guard reports ``"ok"``; any query/config failure reports ``"unknown"``
+    — neither may ever brick dispatch.
+    """
+    try:
+        cfg = _quota_guard_config()
+        if not cfg["enabled"]:
+            return ("ok", {})
+        cutoff = int(time.time()) - int(cfg["window_seconds"])
+        rows = conn.execute(
+            "SELECT COALESCE(t.assignee, r.profile) AS who, COUNT(*) AS n "
+            "FROM task_runs r LEFT JOIN tasks t ON t.id = r.task_id "
+            "WHERE r.outcome = 'rate_limited' AND r.ended_at IS NOT NULL "
+            "AND r.ended_at >= ? "
+            "GROUP BY COALESCE(t.assignee, r.profile)",
+            (cutoff,),
+        ).fetchall()
+        hits: "dict[str, int]" = {}
+        total = 0
+        for row in rows:
+            n = int(row["n"])
+            total += n
+            if row["who"]:
+                hits[row["who"]] = hits.get(row["who"], 0) + n
+        if total >= int(cfg["critical_threshold"]):
+            return ("critical", hits)
+        if total >= int(cfg["elevated_threshold"]):
+            return ("elevated", hits)
+        return ("ok", hits)
+    except Exception:
+        return ("unknown", {})
+
+
 def dispatch_once(
     conn: sqlite3.Connection,
     *,
@@ -12234,6 +12387,41 @@ def _dispatch_once_locked(
             )
             spawn_budget = 1
 
+    # Quota-pressure guard (t_58da250a): static caps can't see provider
+    # rate-limit walls. When recent worker deaths classified ``rate_limited``
+    # (quota/429, EX_TEMPFAIL) accumulate inside the sliding window, stop
+    # adding load on the starved provider: critical -> spawn nothing this
+    # tick; elevated -> suppress spawns for the affected assignee(s) and
+    # shrink the shared budget by one. Same defer-not-drop semantics as the
+    # memory guard above — reclaim/promotion already ran, deferred tasks
+    # wait for a later tick, and the guard only ever REDUCES below the
+    # configured caps. "unknown" (query/config failure) and a disabled
+    # guard impose no restriction (fail-open).
+    quota_level, quota_hits = _quota_pressure_snapshot(conn)
+    quota_suppressed_assignees: "set[str]" = set()
+    if quota_level == "critical":
+        result.quota_pressure = quota_level
+        _log.warning(
+            "kanban dispatch: provider quota pressure is critical "
+            "(%d rate-limited worker exit(s) in window; assignees: %s); "
+            "spawning no new workers this tick (deferred, not dropped)",
+            sum(quota_hits.values()),
+            ", ".join(sorted(quota_hits)) or "unknown",
+        )
+        return result
+    if quota_level == "elevated":
+        result.quota_pressure = quota_level
+        quota_suppressed_assignees = set(quota_hits)
+        _log.warning(
+            "kanban dispatch: provider quota pressure is elevated "
+            "(%d rate-limited worker exit(s) in window); suppressing "
+            "spawns for affected assignee(s): %s; shrinking spawn budget",
+            sum(quota_hits.values()),
+            ", ".join(sorted(quota_suppressed_assignees)) or "unknown",
+        )
+        if spawn_budget is not None and spawn_budget > 1:
+            spawn_budget = spawn_budget - 1
+
     ready_rows = conn.execute(
         "SELECT id, assignee FROM tasks "
         "WHERE status = 'ready' AND claim_lock IS NULL "
@@ -12473,6 +12661,16 @@ def _dispatch_once_locked(
             # of human-pulled work.
             result.skipped_nonspawnable.append(row["id"])
             continue
+        # Quota-guard per-assignee suppression (t_58da250a): under elevated
+        # quota pressure, refuse to spawn ANY task for an assignee that
+        # recently hit a provider rate-limit wall. The per-task respawn
+        # guard already defers the individual rate-limited task; without
+        # this, the NEXT ready task for the same starved profile would take
+        # its slot and burn the same quota. Suppressed tasks stay ready and
+        # spawn normally once the window clears.
+        if row_assignee in quota_suppressed_assignees:
+            result.skipped_quota_suppressed.append((row["id"], row_assignee))
+            continue
         # Per-profile concurrency cap (#21582): even if there's global
         # headroom, refuse to spawn for an assignee that's already at
         # its in-flight cap. Prevents one profile's local model / API
@@ -12630,6 +12828,14 @@ def _dispatch_once_locked(
             profile_exists = None  # type: ignore[assignment]
         if profile_exists is not None and not profile_exists(row["assignee"]):
             result.skipped_nonspawnable.append(row["id"])
+            continue
+        # Quota-guard per-assignee suppression (t_58da250a) — same contract
+        # as the ready loop: a review spawn for a quota-starved assignee
+        # burns the same provider quota as a ready spawn.
+        if row["assignee"] in quota_suppressed_assignees:
+            result.skipped_quota_suppressed.append(
+                (row["id"], row["assignee"])
+            )
             continue
         # Terminal-capability gate (t_a2ef2ea2): a review card needs a
         # worker that can actually run the verification (pytest/psql/gh).

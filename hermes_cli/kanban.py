@@ -2846,6 +2846,12 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
                 for (tid, who, current) in res.skipped_per_profile_capped
             ],
             "auto_assigned_default": res.auto_assigned_default,
+            "memory_pressure": res.memory_pressure,
+            "quota_pressure": res.quota_pressure,
+            "skipped_quota_suppressed": [
+                {"task_id": tid, "assignee": who}
+                for (tid, who) in res.skipped_quota_suppressed
+            ],
         }, indent=2))
         return 0
     print(f"Reclaimed:    {res.reclaimed}")
@@ -2886,6 +2892,11 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             f"Skipped (non-spawnable assignee — terminal lane, OK): "
             f"{', '.join(res.skipped_nonspawnable)}"
         )
+    if res.quota_pressure:
+        print(f"Quota pressure: {res.quota_pressure}")
+    if res.skipped_quota_suppressed:
+        for tid, who in res.skipped_quota_suppressed:
+            print(f"Deferred ({who} quota-starved, rate-limit window): {tid}")
     return 0
 
 
