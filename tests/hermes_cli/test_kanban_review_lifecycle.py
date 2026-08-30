@@ -763,6 +763,7 @@ def test_review_rearm_defers_until_handoff_moves_after_verdict(
         import hermes_cli.profiles as profmod
         monkeypatch = __import__("pytest").MonkeyPatch()
         monkeypatch.setattr(profmod, "profile_exists", lambda name: True)
+        monkeypatch.setattr(profmod, "profile_has_terminal", lambda name: True)
         monkeypatch.setattr(
             cfgmod, "load_config",
             lambda *a, **k: {"kanban": {"review_dispatch": True}},
