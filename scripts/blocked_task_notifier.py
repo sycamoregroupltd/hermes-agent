@@ -95,6 +95,34 @@ def table_exists(con, table: str) -> bool:
     return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
 
 
+def subscribed_task_ids(con, task_ids: list[str]) -> set[str]:
+    """Return task_ids that have an active native notify-subscription on this board.
+
+    Native kanban notify-subscribe (adoption item 7, jarvis-os t_8d2b855a) delivers
+    per-task terminal events (blocked/completed/...) to the subscribed chat via the
+    gateway notifier (gateway/kanban_watchers.py::_kanban_notifier_watcher). A task
+    with an active subscription is therefore already natively notified on block; the
+    polling notifier must NOT also escalate it, or the same event is double-flagged
+    (native + notifier). This is the 'per-task notification leg' that native
+    notify-subscribe replaces. Tasks WITHOUT a subscription keep the full
+    critical-classification + time-based-escalation safety net below.
+
+    Fail-open: if the subscription table cannot be read, return empty so a critical
+    alert is never suppressed because of a lookup error.
+    """
+    if not task_ids or not table_exists(con, 'kanban_notify_subs'):
+        return set()
+    placeholders = ','.join('?' * len(task_ids))
+    try:
+        rows = con.execute(
+            f'SELECT DISTINCT task_id FROM kanban_notify_subs WHERE task_id IN ({placeholders})',
+            list(task_ids),
+        ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
 def fetch_context(con, task_id: str, row) -> str:
     parts = [row['title'] or '', row['body'] or '', row['result'] or '', row['last_failure_error'] or '']
     if table_exists(con, 'task_comments'):
@@ -250,7 +278,14 @@ def main():
         try:
             con = kb.connect(db_path=db)
             rows = con.execute("SELECT id, title, body, result, last_failure_error FROM tasks WHERE status='blocked'").fetchall()
+            # ADOPT-7 (t_8d2b855a): tasks with an active native notify-subscription
+            # are already natively notified on block by the gateway notifier; skip
+            # them here so the same event is not double-flagged (native + notifier).
+            # Tasks without a subscription keep the full critical escalation path.
+            subscribed = subscribed_task_ids(con, [row['id'] for row in rows])
             for row in rows:
+                if row['id'] in subscribed:
+                    continue
                 key = f"{board}:{row['id']}"
                 label, cat = classify(fetch_context(con, row['id'], row))
                 now[key] = {'board': board, 'id': row['id'], 'title': (row['title'] or '').replace('\n', ' ')[:100], 'label': label, 'category': cat}
