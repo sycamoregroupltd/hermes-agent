@@ -5888,7 +5888,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T02:42:55.097404+01:00",
-      "failure_streak": 0,
+      "failure_streak": 1,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -5925,7 +5925,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T02:43:01.666091+01:00",
-      "failure_streak": 11,
+      "failure_streak": 17,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -5962,7 +5962,7 @@
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-08-29T02:43:03.688978+01:00",
-      "failure_streak": 0,
+      "failure_streak": 1,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
@@ -6151,6 +6151,45 @@
       "deliver": "discord",
       "origin": null,
       "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "443eeaaa25fa",
+      "name": "profile-refactor-p6-dispatch-watch",
+      "prompt": "Monitor the approved Hermes profile refactor P6 batches on jarvis-os: t_0d7a21dd, t_1cb5de07, t_6114009a, t_d053ebdc, t_f13b5b7b, t_9f0d50db. Inspect authoritative DB /home/frank/.hermes/kanban/boards/jarvis-os/kanban.db and count all running tasks across board DBs. If no P6 batch is running and total running fleet tasks is below 12, run `env -u HERMES_DELEGATED_CHILD_CONTEXT hermes kanban --board jarvis-os dispatch` and verify whether a P6 worker spawned. Never change priorities, configs, task dependencies, provider routing, or concurrency caps. If capacity remains saturated, report that only. Stop-worthy completion condition for each tick: verified P6 status summary and dispatch result. This is a temporary four-tick watcher; do not create more jobs/cards.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "z-ai/glm-5.3-flash",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-08-30T08:39:02.883475+01:00",
+        "display": "once in 15m"
+      },
+      "schedule_display": "once in 15m",
+      "repeat": {
+        "times": 4
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-30T08:24:02.883580+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
       "workdir": null
     }
   ]

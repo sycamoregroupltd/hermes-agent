@@ -71,13 +71,13 @@ auxiliary:
   goal_judge:
     api_key: ''
     base_url: ''
-    model: gpt-5.5
+    model: deepseek/deepseek-v4-flash-0731
     provider: nous
   kanban_decomposer:
     api_key: ''
     base_url: ''
     extra_body: {}
-    model: tencent/hy3:free
+    model: deepseek/deepseek-v4-flash-0731
     provider: nous
     timeout: 180
   mcp:
