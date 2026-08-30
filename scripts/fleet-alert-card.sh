@@ -24,7 +24,8 @@
 # place. So every caller should now call `--resolve <its key>` on its CLEAN path.
 # `--resolve` accepts a family glob (`degraded-*`) for callers whose key varies with
 # the problem class, so a clean run closes whichever card is open. It only ever closes
-# a card this script recorded that is still `ready` and unassigned; anything else is
+# a card this script recorded that is still `ready` (unassigned, or still owned only by
+# the routing PM from t_89678308 — a claimed card leaves `ready`); anything else is
 # left alone and LOGGED to $GUARD_LOG (never silently dropped), and the state pointer
 # is kept so the next clean run retries.
 #
@@ -55,7 +56,8 @@
 #     FLEET_ALERT_FAMILY_MAX (default 3) live cards can accumulate per key FAMILY
 #     (the key with a trailing hex hash normalised away). The cap runs AFTER the
 #     create, so a real new alert is never swallowed, and it only completes cards
-#     this script itself recorded that are still unassigned and in `ready`.
+#     this script itself recorded that are still unassigned-and-`ready` or still owned
+#     only by the routing PM in `ready` (a card a worker claimed leaves `ready`).
 set -uo pipefail
 MODE="alert"
 if [ "${1:-}" = "--resolve" ]; then MODE="resolve"; shift; fi
@@ -162,6 +164,24 @@ def hermes(*a):
         return 1, ""
 
 
+def assignee_for(brd):
+    """Map a board to the PM who should triage its host-alert cards.
+
+    Host-alert cards default to the jarvis-os lane. Before t_89678308 they were
+    created WITHOUT --assignee, so they landed unassigned and invisible to
+    dispatch — the ghost-card class swept in the 2026-08-29 refactor. Every
+    alert must now land OWNED by the board PM so it is triaged and dispatched.
+    Unknown boards fall back to the jarvis-os PM (the default lane).
+    """
+    return {
+        "jarvis-os": "jarvis-os-pm",
+        "sycode-trading": "sycode-trading-pm",
+        "upero": "upero-pm",
+        "yorkstone-supplies": "yorkstone-supplies-pm",
+        "ecohome": "ecohome-pm",
+    }.get(brd, "jarvis-os-pm")
+
+
 def family_of(k):
     """Collapse a trailing hex hash so a rotating-key producer maps to ONE family.
     'degraded-91eb38f0c7b2' -> 'degraded-*';  'stale_obsidian-fleet-vault' -> itself."""
@@ -186,9 +206,14 @@ def card_status(card_id, brd=None):
 
 def is_reapable(card_id, brd=None):
     """Only ever auto-complete a card that is still an untouched alert card:
-    status ready and nobody assigned. Never stomp a card a worker has picked up."""
+    status ready and either unassigned OR still owned only by the board PM this
+    script routes to. A card a worker has claimed leaves `ready` (goes running),
+    so a ready card owned solely by the routing PM is still safe to auto-close.
+    Never stomp a card a worker has picked up."""
     s = card_status(card_id, brd)
-    return bool(s) and s[0] == "ready" and s[1] in ("-", "")
+    if not s or s[0] != "ready":
+        return False
+    return s[1] in ("-", "") or s[1] == assignee_for(brd or board)
 
 
 # ---- RESOLVE MODE: the condition is healthy, close its card with evidence ----
@@ -216,7 +241,7 @@ if mode == "resolve":
             cleared.append(k)
             glog("RESOLVE-ALREADY-DONE target=%s card=%s — pointer cleared" % (k, cid))
             continue
-        if st[0] != "ready" or st[1] not in ("-", ""):
+        if st[0] != "ready" or (st[1] not in ("-", "") and st[1] != assignee_for(brd)):
             glog("RESOLVE-SKIPPED target=%s card=%s status=%s assignee=%s — a worker owns it, "
                  "pointer KEPT" % (k, cid, st[0], st[1]))
             continue
@@ -257,6 +282,7 @@ with StateLock():
 # ---- CREATE FIRST (see hardening 1 in the header) -----------------------------
 rc, out = hermes(
     "kanban", "--board", board, "create", f"[host-alert] {subject}"[:120],
+    "--assignee", assignee_for(board),
     "--body",
     f"{body[:5000]}\n\n---\nRaised {stamp} by host-crontab monitor key='{key}'.\n"
     f"Delivered to the BOARD because the script's own target "
