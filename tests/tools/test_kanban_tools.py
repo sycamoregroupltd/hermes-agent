@@ -80,6 +80,33 @@ def test_show_defaults_to_env_task_id(worker_env):
     assert "runs" in d
 
 
+def test_mismatched_profile_refuses_ambient_task_mutations(monkeypatch, worker_env):
+    """An inherited task id cannot be used by a different selected profile."""
+    from tools import kanban_tools as kt
+    from hermes_cli import kanban_db as kb
+
+    monkeypatch.setenv("HERMES_PROFILE", "other-worker")
+    out = json.loads(kt._handle_complete({"summary": "must not land"}))
+    assert out.get("error")
+    assert "identity mismatch" in out["error"].lower()
+
+    comment_out = json.loads(kt._handle_comment({
+        "task_id": worker_env,
+        "body": "must not be written",
+    }))
+    assert comment_out.get("error")
+    assert "identity mismatch" in comment_out["error"].lower()
+    assert kt.heartbeat_current_worker_from_env() is False
+
+    conn = kb.connect()
+    try:
+        task = kb.get_task(conn, worker_env)
+        assert task.status == "running"
+        assert kb.list_comments(conn, worker_env) == []
+    finally:
+        conn.close()
+
+
 def test_list_filters_tasks(monkeypatch, worker_env):
     """kanban_list gives orchestrators filtered board discovery."""
     monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)

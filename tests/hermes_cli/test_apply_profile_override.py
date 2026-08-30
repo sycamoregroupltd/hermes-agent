@@ -36,6 +36,9 @@ def _run_apply_profile_override(
         (hermes_root / "profiles" / active_profile).mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    for key in list(os.environ):
+        if key.startswith("HERMES_KANBAN_"):
+            monkeypatch.delenv(key, raising=False)
     if hermes_home is not None:
         monkeypatch.setenv("HERMES_HOME", hermes_home)
     else:
@@ -163,4 +166,52 @@ class TestSupervisedChildIgnoresStickyProfile:
         result = os.environ.get("HERMES_HOME")
         assert result is not None
         assert result.endswith("coder")
+
+
+class TestKanbanIdentityBootstrap:
+    """Ambient Kanban variables are only trusted on dispatcher startup."""
+
+    def test_ad_hoc_named_profile_scrubs_inherited_worker_context(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        hermes_root = tmp_path / ".hermes"
+        for name in ("worker-a", "worker-b"):
+            (hermes_root / "profiles" / name).mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HERMES_HOME", str(hermes_root))
+        monkeypatch.setenv("HERMES_PROFILE", "worker-a")
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_worker_a")
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(tmp_path / "board.db"))
+        monkeypatch.setenv("HERMES_KANBAN_BOARD", "sandbox")
+        monkeypatch.setenv("HERMES_KANBAN_CLAIM_LOCK", "lock-a")
+        monkeypatch.delenv("HERMES_KANBAN_DISPATCHER_SPAWN", raising=False)
+        monkeypatch.setattr(sys, "argv", ["hermes", "-p", "worker-b", "-z", "smoke"])
+
+        from hermes_cli.main import _apply_profile_override
+        _apply_profile_override()
+
+        assert os.environ["HERMES_PROFILE"] == "worker-b"
+        assert not any(key.startswith("HERMES_KANBAN_") for key in os.environ)
+        assert "ignoring inherited Kanban task context" in capsys.readouterr().err
+
+    def test_dispatcher_profile_keeps_context_once_and_consumes_marker(
+        self, tmp_path, monkeypatch
+    ):
+        hermes_root = tmp_path / ".hermes"
+        (hermes_root / "profiles" / "worker-a").mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HERMES_HOME", str(hermes_root))
+        monkeypatch.setenv("HERMES_PROFILE", "parent")
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "t_worker_a")
+        monkeypatch.setenv("HERMES_KANBAN_DB", str(tmp_path / "board.db"))
+        monkeypatch.setenv("HERMES_KANBAN_DISPATCHER_SPAWN", "worker-a")
+        monkeypatch.setattr(sys, "argv", ["hermes", "-p", "worker-a", "-z", "work"])
+
+        from hermes_cli.main import _apply_profile_override
+        _apply_profile_override()
+
+        assert os.environ["HERMES_PROFILE"] == "worker-a"
+        assert os.environ["HERMES_KANBAN_TASK"] == "t_worker_a"
+        assert os.environ["HERMES_KANBAN_DB"] == str(tmp_path / "board.db")
+        assert "HERMES_KANBAN_DISPATCHER_SPAWN" not in os.environ
 

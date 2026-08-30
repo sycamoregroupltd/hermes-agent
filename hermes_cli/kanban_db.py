@@ -13162,6 +13162,10 @@ def _default_spawn(
     # what the tool reads — set it explicitly here so comments are
     # attributed correctly regardless of how the child loads config.
     env["HERMES_PROFILE"] = profile_arg
+    # This marker is consumed by the worker's early CLI bootstrap.  It is
+    # deliberately one-shot: nested `hermes -p ...` children inherit the
+    # Kanban variables but not dispatcher authority.
+    env["HERMES_KANBAN_DISPATCHER_SPAWN"] = profile_arg
 
     # A worker must NEVER boot the interactive TUI: an inherited HERMES_TUI=1
     # or a `display.interface: tui` in the profile's config would send the

@@ -135,6 +135,29 @@ def _spawn_and_capture(monkeypatch, tmp_path, task):
     return captured["cmd"]
 
 
+def test_spawn_sets_one_shot_profile_bound_kanban_marker(monkeypatch, tmp_path, conn):
+    tid = kb.create_task(conn, title="t", assignee="elias")
+    task = kb.get_task(conn, tid)
+    captured = {}
+
+    monkeypatch.setattr(kb, "_resolve_hermes_argv", lambda: ["hermes"])
+
+    class FakeProc:
+        pid = 4246
+
+    def fake_popen(cmd, *args, **kwargs):
+        captured["env"] = kwargs["env"]
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    workspace = tmp_path / "ws-marker"
+    workspace.mkdir()
+    kb._default_spawn(task, str(workspace))
+
+    assert captured["env"]["HERMES_PROFILE"] == "elias"
+    assert captured["env"]["HERMES_KANBAN_DISPATCHER_SPAWN"] == "elias"
+
+
 def test_spawn_passes_model_and_provider(monkeypatch, tmp_path, conn):
     tid = kb.create_task(
         conn, title="t", assignee="elias",

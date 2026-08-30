@@ -214,6 +214,49 @@ def _stamp_worker_session_metadata(
     return stamped
 
 
+def _worker_profile_identity_error() -> Optional[str]:
+    """Refuse ambient worker context when profile and task owner disagree.
+
+    ``HERMES_KANBAN_TASK`` is process-global and can be inherited by an ad-hoc
+    ``hermes -p`` child.  The task's assignee in the board is the authority;
+    ``HERMES_PROFILE`` identifies the selected runtime profile.  Check the
+    pairing before any task-context read or mutation and log the mismatch
+    loudly for operators.
+    """
+    task_id = (os.environ.get("HERMES_KANBAN_TASK") or "").strip()
+    profile = (os.environ.get("HERMES_PROFILE") or "").strip()
+    if not task_id or not profile:
+        return None
+    try:
+        kb, conn = _connect()
+        try:
+            task = kb.get_task(conn, task_id)
+        finally:
+            conn.close()
+    except Exception as exc:
+        # Preserve the existing not-found/DB-error handling in the caller; this
+        # guard is only for a confirmed profile/assignee mismatch.
+        logger.debug("kanban identity check skipped: %s", exc, exc_info=True)
+        return None
+    assignee = (str(task.assignee).strip() if task and task.assignee else "")
+    if not assignee or assignee == profile:
+        return None
+    logger.error(
+        "Kanban identity mismatch: profile %r is not the assignee of ambient "
+        "task %s (assigned to %r); refusing task-context operation",
+        profile,
+        task_id,
+        assignee,
+    )
+    return tool_error(
+        f"Kanban identity mismatch: task context refused: HERMES_PROFILE={profile!r} does not "
+        f"match task {task_id}'s assignee {assignee!r}. This process was not "
+        "authorized to act as that worker; use a dispatcher-spawned profile "
+        "with the matching assignee or scrub the inherited HERMES_KANBAN_* "
+        "environment."
+    )
+
+
 def _enforce_worker_task_ownership(tid: str) -> Optional[str]:
     """Reject worker-driven destructive calls on foreign task IDs.
 
@@ -233,6 +276,9 @@ def _enforce_worker_task_ownership(tid: str) -> Optional[str]:
     when it must be rejected. Callers should ``return`` the error
     verbatim.
     """
+    identity_err = _worker_profile_identity_error()
+    if identity_err:
+        return identity_err
     env_tid = os.environ.get("HERMES_KANBAN_TASK")
     if not env_tid:
         # Orchestrator or CLI context — no task-scope restriction.
@@ -356,6 +402,8 @@ def heartbeat_current_worker_from_env() -> bool:
     global _auto_heartbeat_last_attempt
     tid = os.environ.get("HERMES_KANBAN_TASK")
     if not tid:
+        return False
+    if _worker_profile_identity_error():
         return False
     import time as _time
     now = _time.monotonic()
@@ -556,6 +604,9 @@ def _handle_show(args: dict, **kw) -> str:
         return tool_error(
             "task_id is required (or set HERMES_KANBAN_TASK in the env)"
         )
+    identity_err = _worker_profile_identity_error()
+    if identity_err:
+        return identity_err
     board = args.get("board")
     try:
         kb, conn = _connect(board=board)
@@ -1131,6 +1182,9 @@ def _handle_comment(args: dict, **kw) -> str:
             "task_id is required (use the current task id if that's what "
             "you mean — pulls from env but kept explicit here)"
         )
+    identity_err = _worker_profile_identity_error()
+    if identity_err:
+        return identity_err
     body = args.get("body")
     if not body or not str(body).strip():
         return tool_error("body is required")
@@ -1353,6 +1407,9 @@ def _handle_attachments(args: dict, **kw) -> str:
         return tool_error(
             "task_id is required (or set HERMES_KANBAN_TASK in the env)"
         )
+    identity_err = _worker_profile_identity_error()
+    if identity_err:
+        return identity_err
     board = args.get("board")
     try:
         kb, conn = _connect(board=board)
@@ -1394,6 +1451,9 @@ def _handle_create(args: dict, **kw) -> str:
     delegated_err = _reject_delegated_child_mutation("kanban_create")
     if delegated_err:
         return delegated_err
+    identity_err = _worker_profile_identity_error()
+    if identity_err:
+        return identity_err
     title = args.get("title")
     if not title or not str(title).strip():
         return tool_error("title is required")
@@ -1691,6 +1751,9 @@ def _handle_link(args: dict, **kw) -> str:
     delegated_err = _reject_delegated_child_mutation("kanban_link")
     if delegated_err:
         return delegated_err
+    identity_err = _worker_profile_identity_error()
+    if identity_err:
+        return identity_err
     parent_id = args.get("parent_id")
     child_id = args.get("child_id")
     if not parent_id or not child_id:

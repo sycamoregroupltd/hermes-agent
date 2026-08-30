@@ -518,6 +518,35 @@ _ensure_project_root_on_path_fast()
 # The flag is stripped from sys.argv so argparse never sees it.
 # Falls back to ~/.hermes/active_profile for sticky default.
 # ---------------------------------------------------------------------------
+_KANBAN_DISPATCHER_SPAWN_ENV = "HERMES_KANBAN_DISPATCHER_SPAWN"
+
+
+def _guard_inherited_kanban_context(profile_name: str | None) -> None:
+    """Keep Kanban identity only for a dispatcher-authorized worker startup.
+
+    A worker launched by ``kanban_db._default_spawn`` receives a one-shot
+    profile-bound marker.  Consume that marker here, before the child imports
+    the tool registry.  A nested ``hermes -p`` process therefore cannot inherit
+    the marker and silently become another worker; any ambient
+    ``HERMES_KANBAN_*`` context is scrubbed instead.
+    """
+    marker = os.environ.pop(_KANBAN_DISPATCHER_SPAWN_ENV, None)
+    expected = (profile_name or "").strip()
+    if marker and expected and marker == expected:
+        return
+
+    leaked = [key for key in os.environ if key.startswith("HERMES_KANBAN_")]
+    if not leaked:
+        return
+    for key in leaked:
+        os.environ.pop(key, None)
+    print(
+        "Warning: ignoring inherited Kanban task context; this process was "
+        "not launched by the Kanban dispatcher for the selected profile.",
+        file=sys.stderr,
+    )
+
+
 def _apply_profile_override() -> None:
     """Pre-parse --profile/-p and set HERMES_HOME before imports."""
     argv = sys.argv[1:]
@@ -629,6 +658,12 @@ def _apply_profile_override() -> None:
     hermes_home_env = os.environ.get("HERMES_HOME", "")
     if profile_name is None and hermes_home_env:
         if Path(hermes_home_env).parent.name == "profiles":
+            # A profile-scoped HERMES_HOME is already authoritative.  Still
+            # establish the profile identity and consume/scrub any ambient
+            # Kanban context before returning.
+            profile_name = Path(hermes_home_env).name
+            os.environ["HERMES_PROFILE"] = profile_name
+            _guard_inherited_kanban_context(profile_name)
             return
 
     # 2. If no flag, check active_profile in the hermes root.
@@ -678,6 +713,11 @@ def _apply_profile_override() -> None:
             )
             return
         os.environ["HERMES_HOME"] = hermes_home
+        if profile_name is not None:
+            # The selected profile, rather than an inherited parent value, is
+            # the identity used for Kanban author/ownership checks.
+            os.environ["HERMES_PROFILE"] = profile_name
+        _guard_inherited_kanban_context(profile_name)
         # Strip the flag from argv so argparse doesn't choke
         if consume > 0 and profile_index is not None:
             start = profile_index + 1  # +1 because argv is sys.argv[1:]
