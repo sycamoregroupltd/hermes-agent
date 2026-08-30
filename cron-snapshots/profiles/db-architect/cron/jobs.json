@@ -1,9 +1,9 @@
 {
   "jobs": [
     {
-      "id": "6fa28fbe5d76",
-      "name": "signal_fingerprints_incremental_refresh",
-      "prompt": "Run the no_agent script signal_fingerprints_incremental_refresh.py to incrementally insert missing public.signal_fingerprints rows from public.signal_journeys. Paper/data-only additive refresh; no deletes, updates, live trading, or deploys. Script stdout is the user-facing report; empty stdout means no-op/silent.",
+      "id": "b6ca2a300a14",
+      "name": "hermes-state-prune-weekly",
+      "prompt": "",
       "skills": [],
       "skill": null,
       "model": null,
@@ -11,31 +11,31 @@
       "provider_snapshot": null,
       "model_snapshot": null,
       "base_url": null,
-      "script": "signal_fingerprints_incremental_refresh.py",
+      "script": "hermes-state-prune.sh",
       "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
       "context_from": null,
       "schedule": {
-        "kind": "interval",
-        "minutes": 15,
-        "display": "every 15m"
+        "kind": "cron",
+        "expr": "0 4 * * 0",
+        "display": "0 4 * * 0"
       },
-      "schedule_display": "every 15m",
+      "schedule_display": "0 4 * * 0",
       "repeat": {
         "times": null
       },
       "enabled": false,
       "state": "paused",
-      "paused_at": "2026-07-03T21:05:01.258850+01:00",
-      "paused_reason": "t_564bdeab: db-architect profile-local cron store is not live; duplicated/live elsewhere, so disabled to prevent registered-but-not-ticking false safety",
-      "created_at": "2026-06-25T22:56:27.795294+01:00",
+      "paused_at": "2026-08-30T11:10:01+00:00",
+      "paused_reason": "dead-store-invariant-guard: profiles/db-architect/cron/jobs.json ticker_heartbeat 135222s stale (>900s) [t_4bedf8d5]",
+      "created_at": "2026-08-30T12:05:06.950036+01:00",
+      "failure_streak": 0,
       "deliver": "local",
       "origin": null,
-      "enabled_toolsets": [
-        "terminal"
-      ],
-      "workdir": "/home/frank/.hermes/kanban/boards/sycode-trading/workspaces/t_93272f80",
-      "disabled_by": "t_564bdeab",
-      "disabled_reason": "t_564bdeab: db-architect profile-local cron store is not live; duplicated/live elsewhere, so disabled to prevent registered-but-not-ticking false safety"
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }
