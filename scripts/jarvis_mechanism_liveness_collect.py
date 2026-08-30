@@ -68,7 +68,12 @@ def load_jobs(profile: str) -> list[dict[str, Any]]:
 
 def all_profile_jobs() -> list[tuple[str, dict[str, Any]]]:
     out: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
     for path in sorted(PROFILES.glob("*/cron/jobs.json")):
+        real = str(path.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
         profile = path.parents[1].name
         for job in load_jobs(profile):
             out.append((profile, job))

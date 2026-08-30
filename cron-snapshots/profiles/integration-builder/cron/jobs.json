@@ -3,47 +3,46 @@
     {
       "id": "194e2a10fde4",
       "name": "needs-input-sla-probe-emit",
-      "prompt": "Run the WEEKLY Frank A3 digest emit sweep. Execute exactly: python3 /home/frank/.hermes/agent-hooks/needs-input-sla-probe.py --weekly --emit --heartbeat /tmp/needs-input-sla-probe.heartbeat\n\nReport what happened: exit code, stdout/stderr, whether the weekly digest card was created or reused, and the ISO week. This runs WEEKLY (Monday 08:00 UTC) across all boards (jarvis-os, sycode-trading, upero), minting ONE 'FRANK A3 WEEKLY DIGEST (YYYY-WW)' card per ISO week (idempotency key frank-a3-weekly-digest-<ISO-week>) grouped by decision-type with APPROVE/DEFER/CLOSE triage. If exit != 0, report the error clearly.",
+      "prompt": "Run the needs_input SLA probe emit sweep. Execute exactly: python3 /home/frank/.hermes/agent-hooks/needs-input-sla-probe.py --emit --heartbeat /tmp/needs-input-sla-probe.heartbeat\n\nReport what happened: exit code, stdout/stderr, whether a card was created, any errors. This runs every 6 hours across all boards (jarvis-os, sycode-trading, upero). If exit != 0, report the error clearly.",
       "skills": [],
       "skill": null,
-      "model": "deepseek/deepseek-v4-flash-0731",
-      "provider": "nous",
-      "provider_snapshot": null,
-      "model_snapshot": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
       "base_url": null,
       "script": null,
       "no_agent": false,
       "context_from": null,
       "schedule": {
-        "kind": "cron",
-        "expr": "0 9 * * 1",
-        "display": "0 9 * * 1"
+        "kind": "interval",
+        "minutes": 360,
+        "display": "every 360m"
       },
-      "schedule_display": "0 9 * * 1",
+      "schedule_display": "every 360m",
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-21T18:36:52+00:00",
-      "paused_reason": "dead-store-invariant-guard: profiles/integration-builder/cron/jobs.json ticker_heartbeat 6615s stale (>900s) [t_4bedf8d5]",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
       "created_at": "2026-08-05T21:09:24.729095+01:00",
-      "deliver": "local",
+      "deliver": "telegram",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "updated_at": "2026-08-18T15:38:09.665674"
+      "workdir": null
     },
     {
       "id": "dcbedb167ed1",
       "name": "needs-input-sla-probe-liveness",
-      "prompt": "Run the needs_input SLA probe liveness monitor. Execute exactly: python3 /home/frank/.hermes/agent-hooks/needs-input-sla-probe-liveness.py --heartbeat /tmp/needs-input-sla-probe.heartbeat\n\nThe probe emit is now WEEKLY (Monday 08:00 UTC) so the monitor's default max-age is 8 days (192h) \u2014 a healthy week between digestives reports OK. If exit code is 0: report OK and the last sweep age. If exit code is 1: report ALARM with the missing-or-stale heartbeat details (probe has not emitted in >8 days). This runs every 7 hours. If exit != 0, escalate clearly.",
+      "prompt": "Run the needs_input SLA probe liveness monitor. Execute exactly: python3 /home/frank/.hermes/agent-hooks/needs-input-sla-probe-liveness.py --heartbeat /tmp/needs-input-sla-probe.heartbeat\n\nIf exit code is 0: report OK and the last sweep age. If exit code is 1: report ALARM with the missing-or-stale heartbeat details and severity. This runs every 7 hours to detect when the 6-hour emit probe fails silently. If exit != 0, escalate clearly.",
       "skills": [],
       "skill": null,
-      "model": "deepseek/deepseek-v4-flash-0731",
-      "provider": "nous",
-      "provider_snapshot": null,
-      "model_snapshot": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
       "base_url": null,
       "script": null,
       "no_agent": false,
@@ -57,16 +56,15 @@
       "repeat": {
         "times": null
       },
-      "enabled": false,
-      "state": "paused",
-      "paused_at": "2026-08-21T18:36:52+00:00",
-      "paused_reason": "dead-store-invariant-guard: profiles/integration-builder/cron/jobs.json ticker_heartbeat 6615s stale (>900s) [t_4bedf8d5]",
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
       "created_at": "2026-08-05T21:09:24.745537+01:00",
-      "deliver": "local",
+      "deliver": "telegram",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null,
-      "updated_at": "2026-08-18T15:38:09.665702"
+      "workdir": null
     }
   ]
 }

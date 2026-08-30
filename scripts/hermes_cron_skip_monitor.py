@@ -159,9 +159,14 @@ def check_store(label: str, cron_dir: Path, alerts: list[str]) -> None:
 def main() -> int:
     alerts: list[str] = []
     stores = sorted(HERMES.glob("profiles/*/cron")) + [HERMES / "cron"]
+    seen: set[str] = set()
     for cron_dir in stores:
         if not cron_dir.is_dir():
             continue
+        real = str(cron_dir.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
         label = (
             cron_dir.parent.name if cron_dir.parent.name != ".hermes" else "default"
         )

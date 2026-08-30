@@ -288,7 +288,7 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null,
-      "failure_streak": 4
+      "failure_streak": 0
     },
     {
       "id": "c097aecdef5a",
@@ -551,6 +551,80 @@
       "created_at": "2026-08-29T09:05:30.906397+01:00",
       "failure_streak": 0,
       "deliver": "bot-chat:jarvis",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "bebe44a9e19c",
+      "name": "sycode-db-latency-slo-collector",
+      "prompt": "Run the sycode_db_latency_slo_collector.sh script (already the cron script; no agent work needed). No output expected.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_db_latency_slo_collector.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/5 * * * *",
+        "display": "*/5 * * * *"
+      },
+      "schedule_display": "*/5 * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T17:10:28.339156+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "d7331151ddf8",
+      "name": "sycode-db-slo-alert-bridge",
+      "prompt": "Run the sycode_db_slo_alert_bridge.sh script (already the cron script; no agent work needed).",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "sycode_db_slo_alert_bridge.sh",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "* * * * *",
+        "display": "* * * * *"
+      },
+      "schedule_display": "* * * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T17:15:08.265135+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null

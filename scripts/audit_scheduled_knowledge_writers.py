@@ -55,7 +55,12 @@ def atomic_write(path: Path, text: str) -> None:
 
 
 def active_jobs(profiles: Path):
+    seen: set[str] = set()
     for path in sorted(profiles.glob("*/cron/jobs.json")):
+        real = str(path.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

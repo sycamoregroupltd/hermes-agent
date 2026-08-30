@@ -66,9 +66,14 @@ def main() -> int:
     cron_dirs = [os.path.join(HERMES_HOME, "cron")] + sorted(
         glob.glob(os.path.join(HERMES_HOME, "profiles", "*", "cron"))
     )
+    seen: set[str] = set()
     bad: list[str] = []
     scanned = 0
     for cron_dir in cron_dirs:
+        real = os.path.realpath(cron_dir)
+        if real in seen:
+            continue
+        seen.add(real)
         db_path = os.path.join(cron_dir, "executions.db")
         if not os.path.isfile(db_path):
             continue

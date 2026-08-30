@@ -173,15 +173,20 @@ def fetch_age_hours(table, col, where=None):
     )
     cmd = [
         "docker", "exec",
-        "-e", "PGOPTIONS=-c default_transaction_read_only=on",
+        "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=90s",
         DB_CONTAINER,
         "psql", "-U", "postgres", "-d", "postgres",
         "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-c", sql,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if proc.returncode != 0:
-        raise RuntimeError(f"psql failed on {table} rc={proc.returncode}: {proc.stderr.strip()[:300]}")
-    return float(proc.stdout.strip())
+    # One retry: a transient statement_timeout under DB load should not fail the
+    # whole monitor pass (fail-visible per-surface, not fail-the-run).
+    last_err = None
+    for attempt in range(2):
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if proc.returncode == 0:
+            return float(proc.stdout.strip())
+        last_err = f"psql failed on {table} rc={proc.returncode}: {proc.stderr.strip()[:300]}"
+    raise RuntimeError(last_err)
 
 
 # ----------------------------------------------------------------------------

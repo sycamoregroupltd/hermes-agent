@@ -22,8 +22,14 @@ if [ "${ALLOW_CONFIG_WRITE:-}" = "1" ]; then
   echo '{}'; exit 0
 fi
 
-# Fast path: if the payload never references a .hermes config.yaml, allow instantly (cheap).
-if ! printf '%s' "$payload" | grep -qiE '\.hermes/[^"[:space:]]*config\.yaml'; then echo '{}'; exit 0; fi
+# Fast path: allow instantly unless the payload references a .hermes config.yaml OR a NATIVE
+# config-mutating command. `hermes config set` / `hermes fallback add` rewrite that very file but
+# name no path, so a path-only fast path returned an unconditional {} and the Python logic below
+# never ran for them (verified 2026-08-29 via `hermes hooks test`: the native write was ALLOWED
+# through the real chain while `sed -i` on the path was blocked). That is how the dispatcher caps
+# acquired three independent writers in one day. Read-only forms (config get/show, fallback list)
+# still short-circuit here and stay cheap.
+if ! printf '%s' "$payload" | grep -qiE '\.hermes/[^"[:space:]]*config\.yaml|hermes[^|;&]*(config[[:space:]]+(set|unset)|fallback[[:space:]]+(add|remove|rm|clear))'; then echo '{}'; exit 0; fi
 
 out=$(printf '%s' "$payload" | python3 "$PY" 2>/dev/null)
 [ -n "$out" ] && printf '%s\n' "$out" || echo '{}'

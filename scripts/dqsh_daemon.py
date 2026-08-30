@@ -506,9 +506,18 @@ def process_active_candle_interpolation(live_mode=False):
                 details = f"REST backfill triggered for {symbol} from {meta['start_time']} to {meta['end_time']}"
                 
                 if live_mode:
+                    # REVERTED to /api/openclaw/backfill (t_5f54d275, 2026-08-29): the
+                    # /api/agent-exec/backfill edit was a stray, out-of-scope, undocumented
+                    # change riding the statement_timeout guard branch. Verified 2026-08-29:
+                    # :3001 is sycodetrading-server; /api/agent-exec/* returns 404 (grep of
+                    # server/src has zero agent-exec routes); /api/openclaw/* is live (401)
+                    # but has NO backfill route (404). Candle-gap backfill is now internal to
+                    # the server scheduler (startup.scheduled.ts 'candle-gap-backfill'), so this
+                    # REST trigger is vestigial; keep the original endpoint to avoid introducing
+                    # an unverified route change.
                     cmd = ["curl", "-s", "-X", "POST", "-H", "Content-Type: application/json",
                            "-d", json.dumps({"symbol": symbol, "startTime": meta['start_time'], "endTime": meta['end_time']}),
-                           "http://localhost:3001/api/agent-exec/backfill"]
+                           "http://localhost:3001/api/openclaw/backfill"]
                     try:
                         subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                     except Exception as e:

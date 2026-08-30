@@ -134,13 +134,14 @@ def eval_dataset(ds):
     a = age_hours(raw)
     if a is None:
         return None, f"unparseable ts: {raw}"
+    sem = f" ({ds.get('probe_semantics')})" if ds.get("probe_semantics") else ""
     if a > slo and suppress_flat and is_flat_book():
         # Event-driven surface downstream of position closing: a flat book (0
         # open positions) is the legitimate paper-drought / paper-halt condition.
         # The tape legitimately freezes — this is NOT a data-freshness incident.
         # Mirror of sycode_surface_freshness_monitor FLAT_BOOK_SURFACES (t_16fdf654).
         return True, f"FLAT (0 open positions) — event-driven surface legitimately halted (tape age {a:.2f}h)"
-    return (a <= slo, f"age {a:.2f}h (SLO < {slo}h, max {raw[:19]})")
+    return (a <= slo, f"age {a:.2f}h{sem} (SLO < {slo}h, max {raw[:19]})")
 
 
 def main():

@@ -19,9 +19,14 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path("/home/frank/.hermes")
-STORES = [ROOT / "cron" / "jobs.json"] + sorted(
-    (ROOT / "profiles").glob("*/cron/jobs.json")
-)
+_seen_stores: set[str] = set()
+STORES = [ROOT / "cron" / "jobs.json"]
+for _p in sorted((ROOT / "profiles").glob("*/cron/jobs.json")):
+    _real = str(_p.resolve())
+    if _real in _seen_stores:
+        continue
+    _seen_stores.add(_real)
+    STORES.append(_p)
 
 
 def iter_jobs(path: Path):

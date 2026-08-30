@@ -94,7 +94,13 @@ def parse_dt(value: Optional[str]) -> Optional[datetime]:
 def store_paths() -> list[Path]:
     paths: list[Path] = []
     if PROFILES_DIR.exists():
-        paths.extend(sorted(PROFILES_DIR.glob("*/cron/jobs.json")))
+        seen: set[str] = set()
+        for p in sorted(PROFILES_DIR.glob("*/cron/jobs.json")):
+            real = str(p.resolve())
+            if real in seen:
+                continue
+            seen.add(real)
+            paths.append(p)
     if GLOBAL_CRON_STORE.exists():
         paths.append(GLOBAL_CRON_STORE)
     return paths

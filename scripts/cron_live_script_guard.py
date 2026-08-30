@@ -95,7 +95,14 @@ def is_tracked(rel_path: str) -> bool:
 
 def store_paths() -> list[tuple[Path, str]]:
     """Every cron store this guard is responsible for."""
-    paths = [(p, p.parts[-3]) for p in sorted((REPO / "profiles").glob("*/cron/jobs.json"))]
+    paths = []
+    seen: set[str] = set()
+    for p in sorted((REPO / "profiles").glob("*/cron/jobs.json")):
+        real = str(p.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
+        paths.append((p, p.parts[-3]))
     root = REPO / "cron" / "jobs.json"
     if root.exists():
         paths.append((root, "<root>"))

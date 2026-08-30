@@ -175,7 +175,12 @@ def inspect_kanban_dupe_hook_coverage(root: Path) -> list[dict]:
             "hook": KANBAN_DUPE_HOOK,
             "task": KANBAN_DUPE_ROLLOUT_TASK_ID,
         })
-    for config_path in sorted(profiles.glob("*/config.yaml")):
+    _seen_cfg = set()
+    for _cfg in sorted(profiles.glob("*/config.yaml")):
+        if os.path.realpath(_cfg) in _seen_cfg:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        _seen_cfg.add(os.path.realpath(_cfg))
+        config_path = _cfg
         profile = config_path.parent.name
         try:
             lines = config_path.read_text(errors="replace").splitlines()
@@ -240,7 +245,12 @@ def inspect_duplicate_mutation_scripts(root: Path) -> tuple[list[dict], list[dic
 
     # Collect all (script_name, job_id, profile, job_name, enabled, paused)
     script_entries: dict[str, list[dict]] = {}
-    for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+    _seen_jobs = set()
+    for _jp in sorted(profiles.glob("*/cron/jobs.json")):
+        if os.path.realpath(_jp) in _seen_jobs:
+            continue  # symlink alias — dedupe
+        _seen_jobs.add(os.path.realpath(_jp))
+        jobs_path = _jp
         profile = jobs_path.parents[1].name
         for job in load_jobs(jobs_path):
             if "_load_error" in job:
@@ -331,7 +341,13 @@ def inspect_retention_policy_duplicates(root: Path) -> list[dict]:
     search_roots = [root / "scripts"]
     profiles = root / "profiles"
     if profiles.exists():
-        search_roots += sorted(profiles.glob("*/scripts"))
+        seen = {os.path.realpath(root / "scripts")}
+        for scripts_dir in sorted(profiles.glob("*/scripts")):
+            rp = os.path.realpath(scripts_dir)
+            if rp in seen:
+                continue  # symlink alias — dedupe (sycode-trading -> sycode-trading-pm)
+            seen.add(rp)
+            search_roots.append(scripts_dir)
 
     for scripts_dir in search_roots:
         if not scripts_dir.exists():
@@ -404,7 +420,12 @@ def inspect(root: Path) -> tuple[list[dict], list[dict]]:
     if not profiles.exists() or not central_scripts.exists():
         return [{"type": "ROOT_MISSING", "root": str(root)}], []
     alerts.extend(inspect_kanban_dupe_hook_coverage(root))
-    for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+    _seen_jobs2 = set()
+    for _jp2 in sorted(profiles.glob("*/cron/jobs.json")):
+        if os.path.realpath(_jp2) in _seen_jobs2:
+            continue  # symlink alias — dedupe
+        _seen_jobs2.add(os.path.realpath(_jp2))
+        jobs_path = _jp2
         profile_home = jobs_path.parents[1]
         profile = profile_home.name
         for job in load_jobs(jobs_path):

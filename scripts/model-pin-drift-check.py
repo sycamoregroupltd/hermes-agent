@@ -67,7 +67,13 @@ HERMES_HOME = os.path.dirname(_HERE)          # .../.hermes
 
 def default_dbs():
     dbs = [os.path.join(HERMES_HOME, "state.db")]
-    dbs += sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/state.db")))
+    _seen = set()
+    for _db in sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/state.db"))):
+        _rp = os.path.realpath(_db)
+        if _rp in _seen:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        _seen.add(_rp)
+        dbs.append(_db)
     return dbs
 
 
@@ -102,7 +108,13 @@ def declared_models():
     """Return set of models declared as deliberate pins across root+profile config.yaml."""
     out = set()
     configs = [os.path.join(HERMES_HOME, "config.yaml")]
-    configs += sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/config.yaml")))
+    _seen = set()
+    for _cfg in sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/config.yaml"))):
+        _rp = os.path.realpath(_cfg)
+        if _rp in _seen:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        _seen.add(_rp)
+        configs.append(_cfg)
     for cfg in configs:
         if not os.path.isfile(cfg):
             continue

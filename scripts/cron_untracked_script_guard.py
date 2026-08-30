@@ -113,7 +113,14 @@ def store_paths() -> list[tuple[Path, str]]:
         (the committed script) is already covered via the canonical store. If a worktree is
         ever promoted to a live ticker home, it must be added here explicitly.
     """
-    paths = [(p, p.parts[-3]) for p in sorted((REPO / "profiles").glob("*/cron/jobs.json"))]
+    paths = []
+    seen: set[str] = set()
+    for p in sorted((REPO / "profiles").glob("*/cron/jobs.json")):
+        real = str(p.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
+        paths.append((p, p.parts[-3]))
     root = REPO / "cron" / "jobs.json"
     if root.exists():
         paths.append((root, "<root>"))

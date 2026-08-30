@@ -32,7 +32,14 @@ def candidate_roots() -> list[Path]:
     roots = [HERMES / 'scripts']
     profiles = HERMES / 'profiles'
     if profiles.exists():
+        seen_real = set()
         for profile in sorted(p for p in profiles.iterdir() if p.is_dir()):
+            # Dedupe symlinked profile stores (e.g. sycode-trading -> sycode-trading-pm)
+            # so one physical cron/scripts tree is walked exactly once.
+            real = profile.resolve()
+            if str(real) in seen_real:
+                continue
+            seen_real.add(str(real))
             for sub in ('cron', 'scripts'):
                 p = profile / sub
                 if p.exists():

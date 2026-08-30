@@ -66,6 +66,82 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "b0cde6494cea",
+      "name": "t_c267360e-board-health-14d-daily",
+      "prompt": "Daily post-WAL board health check for t_c267360e (14-day monitor). Script output is the check result.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "board_health_14d_monitor.py",
+      "no_agent": true,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 6 * * *",
+        "display": "0 6 * * *"
+      },
+      "schedule_display": "0 6 * * *",
+      "repeat": {
+        "times": null
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T22:54:19.861152+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "fb147781a79c",
+      "name": "t_c267360e-board-health-14d-final-report",
+      "prompt": "You are fleet-analyst completing kanban task t_c267360e (14-day post-WAL board health monitor). The monitoring window ended 2026-09-11 16:44 UTC. Execute EXACTLY this sequence:\n\n1. Run the final check and generate the report:\n   python3 /home/frank/.hermes/scripts/board_health_14d_monitor.py\n   (This appends the final day's integrity check to /home/frank/.hermes/var/log/board-health-14d/monitor.jsonl and, because the window has ended, writes the deterministic summary to /home/frank/.hermes/var/log/board-health-14d/FINAL-REPORT.md.)\n2. Read /home/frank/.hermes/var/log/board-health-14d/FINAL-REPORT.md and /home/frank/.hermes/var/log/board-health-14d/monitor.jsonl to confirm contents.\n3. If the script output contains ESCALATE or exit code is 3 (malformation present): do NOT complete the task. Instead call kanban_block(kind='capability' is wrong \u2014 use kanban_block with reason describing the malformed board(s) and the report path) so a human escalates. Also post a kanban_comment on t_c267360e linking the report.\n4. If the report shows 0 malformed findings (expected): persist a task-evidence note to the fleet vault at /home/frank/obsidian-fleet-vault/Operations/2026-09-11-t_c267360e-board-health-14d-final-report.md with canonical frontmatter:\n   title: 't_c267360e \u2014 14-day post-WAL board health report'\n   type: task-evidence\n   status: active\n   created: '2026-09-11'\n   updated: '2026-09-11'\n   confidence: high\n   tags: [kanban, sqlite, wal, integrity-check, monitoring, jarvis-os]\n   sources: ['kanban:jarvis-os/t_c267360e', 'kanban:jarvis-os/t_41f5b873', 'kanban:jarvis-os/t_934db4a6', '/home/frank/.hermes/var/log/board-health-14d/monitor.jsonl']\n   kanban_board: jarvis-os\n   kanban_task: t_c267360e\n   Then the body: summary of the window (dates, per-day ok counts, incidents), the live board count, and the final verdict that no board DB returned malformed for 14 days after the WAL switch.\n5. Then call kanban_complete on task t_c267360e (use the kanban_complete tool with task_id='t_c267360e', board jarvis-os) with summary describing the 14-day result, metadata including report path, and artifacts=[the FINAL-REPORT.md absolute path, the vault note absolute path].\n6. Verify the completion actually landed by calling kanban_show on t_c267360e and checking status is done; if the completion failed, say exactly what happened and leave the card blocked/needs review with a comment.",
+      "skills": [
+        "obsidian-knowledge-management"
+      ],
+      "skill": "obsidian-knowledge-management",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "monitor_script": null,
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "once",
+        "run_at": "2026-09-11T18:00:00+01:00",
+        "display": "once at 2026-09-11 18:00"
+      },
+      "schedule_display": "once at 2026-09-11 18:00",
+      "repeat": {
+        "times": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-08-29T22:54:33.709302+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }

@@ -74,7 +74,12 @@ def _candidate_homes(prefer_home: str) -> list:
     """Ordered candidate home list: preferred first, then recent-active profiles."""
     homes = [prefer_home]
     now = time.time()
+    seen: set[str] = set()
     for db in sorted(glob.glob(PROFILES_GLOB)):
+        db = os.path.realpath(db)
+        if db in seen:
+            continue
+        seen.add(db)
         home = os.path.dirname(db)
         if home == prefer_home:
             continue

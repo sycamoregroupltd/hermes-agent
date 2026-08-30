@@ -481,7 +481,12 @@ def check_cron_stale_direct_rows() -> dict[str, Any]:
             "scanned": 0, "count": 0, "by_profile": {}, "warn": False,
             "detail": f"profiles dir {PROFILES_DIR} absent — cannot scan",
         }
+    seen_db: set[str] = set()
     for db in sorted(PROFILES_DIR.glob("*/cron/executions.db")):
+        real_db = str(db.resolve())
+        if real_db in seen_db:
+            continue
+        seen_db.add(real_db)
         profile = db.parent.parent.name
         try:
             con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)

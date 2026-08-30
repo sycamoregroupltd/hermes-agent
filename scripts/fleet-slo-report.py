@@ -451,7 +451,13 @@ def schedule_period_hours(job: dict[str, Any]) -> float | None:
 
 def cron_stores() -> list[Path]:
     stores = [CRON_JOBS]
-    stores.extend(sorted((HERMES / "profiles").glob("*/cron/jobs.json")))
+    seen: set[str] = set()
+    for p in sorted((HERMES / "profiles").glob("*/cron/jobs.json")):
+        real = str(p.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
+        stores.append(p)
     return [p for p in stores if p.exists()]
 
 

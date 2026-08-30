@@ -5,7 +5,7 @@
 # phi3, :mini, etc.) that may indicate a premium model pin was silently downgraded.
 # Also flags sessions where a cloud provider billed a weak model at premium rates.
 # Read-only. Installed 2026-07-08 by the opus48 seat during the provider-collapse incident.
-import glob, sqlite3, time, subprocess, json
+import glob, os, sqlite3, time, subprocess, json
 
 CLOUD = {'gemini', 'nvidia', 'nous', 'openai-codex', 'ollama-cloud', 'xai', 'custom'}
 LOCAL = {'ollama-local', '', None}  # note: ollama-local is currently MISCONFIGURED to ollama.com — treated as cloud below if base points remote
@@ -15,7 +15,12 @@ ALERT_1H_CLOUD_TOKENS = 5_000_000   # alert threshold: >5M cloud tokens in the l
 def scan_sessions(since):
     """Aggregate token burn by provider and profile for sessions since `since`."""
     by_prov, by_prof, sess = {}, {}, 0
+    seen: set[str] = set()
     for db in glob.glob('/home/frank/.hermes/profiles/*/state.db'):
+        db = os.path.realpath(db)
+        if db in seen:
+            continue
+        seen.add(db)
         prof = db.split('/')[-2]
         try:
             c = sqlite3.connect(f'file:{db}?mode=ro', uri=True); cur = c.cursor()
@@ -44,7 +49,12 @@ def detect_masquerades(since):
     (paying premium for weak inference).
     """
     masks = []
+    seen: set[str] = set()
     for db in glob.glob('/home/frank/.hermes/profiles/*/state.db'):
+        db = os.path.realpath(db)
+        if db in seen:
+            continue
+        seen.add(db)
         prof = db.split('/')[-2]
         try:
             c = sqlite3.connect(f'file:{db}?mode=ro', uri=True); cur = c.cursor()

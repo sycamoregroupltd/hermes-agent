@@ -113,8 +113,11 @@ def wire(path):
         return f"FAIL {path}: {e} (restored)"
     return msg
 
-paths = ["/home/frank/.hermes/config.yaml"] + sorted(
-    glob.glob("/home/frank/.hermes/profiles/*/config.yaml"))
+_seen_real = set()
+paths = ["/home/frank/.hermes/config.yaml"] + [
+    rp for _p in sorted(glob.glob("/home/frank/.hermes/profiles/*/config.yaml"))
+    for rp in [os.path.realpath(_p)] if not (rp in _seen_real or _seen_real.add(rp))
+]
 for p in paths:
     try:
         print(wire(p))

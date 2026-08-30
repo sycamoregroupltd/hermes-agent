@@ -164,7 +164,14 @@ def snapshot_cron_stores(wt: Path) -> set[str]:
     for recovery. normalize_cron_json strips volatile runtime fields, so the
     snapshot content only changes when definitions change (no commit churn)."""
     out: set[str] = set()
-    stores = sorted((REPO / "profiles").glob("*/cron/jobs.json"))
+    _stores_rp = set()
+    stores: list[Path] = []
+    for _s in sorted((REPO / "profiles").glob("*/cron/jobs.json")):
+        _rp = os.path.realpath(_s)
+        if _rp in _stores_rp:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        _stores_rp.add(_rp)
+        stores.append(_s)
     root = REPO / "cron" / "jobs.json"
     if root.exists():
         stores.append(root)

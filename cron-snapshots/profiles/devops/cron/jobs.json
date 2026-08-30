@@ -36,6 +36,43 @@
       "origin": null,
       "enabled_toolsets": null,
       "workdir": null
+    },
+    {
+      "id": "94935c720acd",
+      "name": "dgx-host-health-watch",
+      "prompt": "You are devops, owner of DGX substrate health. The host-health monitor changed state; its output is injected above. For each BREACH line: diagnose root cause with read-only probes, fix what is safely fixable without A3 gates (e.g. restart a degraded container), and file ONE kanban card on the jarvis-os board per distinct persistent issue (check for an existing open [host-health] card first - no duplicates). Known baseline 2026-08-29: Loki :3101 returns 503, 461 apt security updates pending - only act if these worsen or new issues appear. Never run apt upgrade, never reboot, never touch GPU drivers - file those as Frank-gated cards. End with a one-line summary.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "nous",
+      "model_snapshot": "deepseek/deepseek-v4-flash-0731",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "monitor_script": "dgx-host-health.sh",
+      "monitor_url": null,
+      "monitor_state": null,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 30,
+        "display": "every 30m"
+      },
+      "schedule_display": "every 30m",
+      "repeat": {
+        "times": null
+      },
+      "enabled": false,
+      "state": "paused",
+      "paused_at": "2026-08-29T19:30:54+00:00",
+      "paused_reason": "dead-store-invariant-guard: profiles/devops/cron/jobs.json ticker_heartbeat 78875s stale (>900s) [t_4bedf8d5]",
+      "created_at": "2026-08-29T20:30:28.901905+01:00",
+      "failure_streak": 0,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ]
 }

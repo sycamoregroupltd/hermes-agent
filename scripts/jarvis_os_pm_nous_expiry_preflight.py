@@ -68,6 +68,28 @@ def main() -> int:
     warnings = []          # list of human-readable WARN reasons
     detail = {}            # sanitized metadata for verbose/evidence output
 
+    # ---- static NOUS_API_KEY short-circuit (2026-08-29, JARVIS) ----
+    # Since the 08-28 OAuth revocation incident the fleet runs on a static
+    # NOUS_API_KEY in each profile .env; the OAuth token store is deliberately
+    # dormant. If the profile has a static key, the OAuth expires_at is NOT the
+    # live credential and its expiry is a false alarm (proven: profile completed
+    # kanban runs + live LLM call while this preflight screamed RED).
+    env_file = AUTH_JSON.parent / ".env"
+    static_key_present = bool(os.environ.get("NOUS_API_KEY"))
+    if not static_key_present:
+        try:
+            for line in env_file.read_text().splitlines():
+                if line.strip().startswith("NOUS_API_KEY=") and len(line.split("=", 1)[1].strip()) > 8:
+                    static_key_present = True
+                    break
+        except Exception:
+            pass
+    detail["static_nous_api_key"] = static_key_present
+    if static_key_present:
+        print("[GREEN] jarvis-os-pm nous preflight: static NOUS_API_KEY present "
+              "(OAuth store dormant by design; expiry not checked)")
+        return 0
+
     # ---- per-profile credential_pool.nous (authoritative for dispatch) ----
     try:
         auth = json.loads(AUTH_JSON.read_text())

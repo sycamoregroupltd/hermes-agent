@@ -106,10 +106,34 @@ def psql(query, read_only=True):
 def get_stuck_symbols(db_tf="4h", stuck_hours=None):
     if stuck_hours is None:
         stuck_hours = TIMEFRAME_SPEC.get(db_tf, ("", STUCK_OLDER_THAN_HOURS))[1]
+    # t_e729c6c2 (C2): the previous `GROUP BY symbol HAVING max(timestamp) < cutoff`
+    # forces a full Parallel Seq Scan of the whole `candles` table (all timeframes,
+    # ~39.9M rows) even though only one timeframe is requested — measured live
+    # 2026-08-29: 19.96s (459k buffer reads) for db_tf='4h'. This runs on a */30 and
+    # */15 cron so it was one of the biggest cumulative pg_stat_statements offenders
+    # (16.5s mean x 1684 calls + 15.4s mean x 367 calls). Rewritten to a bounded
+    # per-symbol backward index seek: a recursive-CTE symbol enumeration (index-only
+    # scan on the PK, no seq scan of the fact rows) joined to one LATERAL/subselect
+    # per symbol on idx_candles_symbol_timeframe_timestamp (symbol, timeframe,
+    # timestamp DESC) — an existing index, no new DDL needed. Measured live: 1.42s
+    # for the same db_tf='4h' cutoff, byte-identical result set (diffed against the
+    # old query's output on the same snapshot).
     q = (
-        f"SELECT symbol FROM public.candles WHERE timeframe='{db_tf}' GROUP BY symbol "
-        f"HAVING max(\"timestamp\") < now() - interval '{stuck_hours} hours' "
-        "ORDER BY symbol;"
+        "WITH RECURSIVE syms AS ("
+        "  (SELECT symbol FROM candles ORDER BY symbol LIMIT 1)"
+        "  UNION ALL"
+        "  SELECT (SELECT symbol FROM candles WHERE symbol > s.symbol ORDER BY symbol LIMIT 1)"
+        "  FROM syms s WHERE s.symbol IS NOT NULL"
+        "), mx AS ("
+        "  SELECT s.symbol,"
+        f"    (SELECT c.\"timestamp\" FROM candles c"
+        f"     WHERE c.symbol = s.symbol AND c.timeframe='{db_tf}'"
+        "      ORDER BY c.\"timestamp\" DESC LIMIT 1) AS newest"
+        "  FROM syms s WHERE s.symbol IS NOT NULL"
+        ")"
+        "SELECT symbol FROM mx"
+        f" WHERE newest IS NOT NULL AND newest < now() - interval '{stuck_hours} hours'"
+        " ORDER BY symbol;"
     )
     out = psql(q, read_only=True)
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
