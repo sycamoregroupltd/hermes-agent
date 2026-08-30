@@ -11464,6 +11464,39 @@ def _clear_failure_counter(conn: sqlite3.Connection, task_id: str) -> None:
 _clear_spawn_failures = _clear_failure_counter
 
 
+def _review_handoff_moved_since_last_verdict(
+    conn: sqlite3.Connection, task_id: str,
+) -> bool:
+    """True if a fresh ``review_requested`` handoff arrived after the last
+    ``changes_requested`` verdict — i.e. the implementer-side artifact moved.
+
+    The reviewer-head guard (t_690530dd). A REVIEW card re-armed by a recovery
+    path is only worth re-reviewing when the reviewed artifact (PR head SHA)
+    has moved since the reviewer last judged it. A ``review_requested`` event
+    is the canonical "new work to review" signal (the implementer submitted a
+    fresh handoff); a ``changes_requested`` event is the reviewer's verdict
+    that the current head needs rework. When the most recent handoff is OLDER
+    than the most recent verdict, no new work exists — re-arming the reviewer
+    would just re-issue the same verdict against the same head. Returns True
+    when there is no verdict yet (first review is always legitimate).
+    """
+    verdict = conn.execute(
+        "SELECT MAX(id) AS id FROM task_events "
+        "WHERE task_id = ? AND kind = 'changes_requested'",
+        (task_id,),
+    ).fetchone()
+    if verdict is None or verdict["id"] is None:
+        return True
+    handoff = conn.execute(
+        "SELECT MAX(id) AS id FROM task_events "
+        "WHERE task_id = ? AND kind = 'review_requested'",
+        (task_id,),
+    ).fetchone()
+    if handoff is None or handoff["id"] is None:
+        return False
+    return int(handoff["id"]) > int(verdict["id"])
+
+
 def check_respawn_guard(
     conn: sqlite3.Connection, task_id: str, *, lane: str = "ready",
 ) -> Optional[str]:
@@ -11519,6 +11552,15 @@ def check_respawn_guard(
         opened a PR; re-spawning risks a duplicate PR on the same task.
         (t_9799c507: a MERGED or CLOSED PR no longer blocks re-spawn — the
         PR state is resolved read-only via ``gh pr view``.)
+
+    ``"reviewer_head_unmoved"``
+        Review lane only. A REVIEW card was re-armed (by crash-restore,
+        outage-expiry unblock, or reopen) back to ``review`` WITHOUT a fresh
+        ``review_requested`` handoff since the last ``changes_requested``
+        verdict. The reviewed artifact (PR head) has NOT moved since the
+        reviewer judged it, so re-spawning the reviewer would just re-issue
+        the same verdict against the same head. Defer until the implementer
+        submits new work (a new ``review_requested`` event).
 
     Stale / dead claim locks are NOT a guard reason — they are handled
     by ``release_stale_claims`` and ``detect_crashed_workers`` which
@@ -11578,7 +11620,23 @@ def check_respawn_guard(
     # Review-lane spawns stop here: a recent completed run and a fresh PR
     # URL comment are the canonical *inputs* to a review handoff (worker
     # opened a PR, then requested review), not signals of duplicate work.
+    # Rate-limit cooldown and the auth-blocker check still apply above.
     if lane == "review":
+        # Reviewer-head guard (t_690530dd): a REVIEW card must only be
+        # re-armed (re-spawned for re-review) when the reviewed artifact has
+        # MOVED since the last verdict. A reviewer run ends either in
+        # ``changes_requested`` (the reviewer judged the current head and
+        # asked the implementer to rework) or ``completed`` (approved). When a
+        # recovery path (crash-restore, outage-expiry unblock, reopen) re-arms
+        # the card back to ``review`` WITHOUT the implementer submitting a
+        # fresh ``review_requested`` handoff, the artifact is unchanged — the
+        # reviewer would only re-issue the same verdict against the same head.
+        # Storm-recovery auto-unblocking re-armed sycode-trading/t_27674ea2
+        # ~22x against an UNCHANGED PR head (47 crashed runs) burning wasted
+        # re-reviews. Only a NEW ``review_requested`` event (new work, moved
+        # head) after the last verdict clears this guard.
+        if not _review_handoff_moved_since_last_verdict(conn, task_id):
+            return "reviewer_head_unmoved"
         return None
 
     # 3. Completed run within guard window — proof of recent success.
