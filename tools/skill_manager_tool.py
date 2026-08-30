@@ -117,7 +117,13 @@ def _reset_background_review_read_marks() -> None:
 # Import security scanner — external hub installs always get scanned;
 # agent-created skills only get scanned when skills.guard_agent_created is on.
 try:
-    from tools.skills_guard import scan_skill, should_allow_install, format_scan_report
+    from tools.skills_guard import (
+        scan_skill,
+        format_scan_report,
+        apply_skill_baseline,
+        record_skill_baseline,
+        should_allow_install_with_baseline,
+    )
     _GUARD_AVAILABLE = True
 except ImportError:
     _GUARD_AVAILABLE = False
@@ -146,6 +152,14 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
     """Scan a skill directory after write. Returns error string if blocked, else None.
 
     No-op when skills.guard_agent_created is disabled (the default).
+
+    Baseline/new-findings-only policy: findings already accepted in this
+    skill's baseline (recorded at the last allowed scan, keyed by content
+    hash) do not re-block a patch; only genuinely NEW findings can produce a
+    blocking verdict. The first scan of a skill has no baseline, so the full
+    verdict applies unchanged. When a scan is allowed, the current findings
+    are recorded as the new baseline so a legit content change re-baselines
+    correctly.
     """
     if not _GUARD_AVAILABLE:
         return None
@@ -153,17 +167,22 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
         return None
     try:
         result = scan_skill(skill_dir, source="agent-created")
-        allowed, reason = should_allow_install(result)
+        result, baseline_info = apply_skill_baseline(skill_dir, result)
+        allowed, reason = should_allow_install_with_baseline(result, baseline_info)
         if allowed is False:
             report = format_scan_report(result)
             return f"Security scan blocked this skill ({reason}):\n{report}"
         if allowed is None:
-            # "ask" verdict — for agent-created skills this means dangerous
+            # "ask" verdict — for agent-created skills this means new dangerous
             # findings were detected.  Surface as an error so the agent can
             # retry with the flagged content removed.
             report = format_scan_report(result)
-            logger.warning("Agent-created skill blocked (dangerous findings): %s", reason)
+            logger.warning("Agent-created skill blocked (new dangerous findings): %s", reason)
             return f"Security scan blocked this skill ({reason}):\n{report}"
+        # Allowed — record the accepted findings as the baseline so pre-existing
+        # findings (e.g. documentation false positives) do not re-block the next
+        # patch. Keyed by content hash: a legit content change re-baselines.
+        record_skill_baseline(skill_dir, result.findings)
     except Exception as e:
         logger.warning("Security scan failed for %s: %s", skill_dir, e, exc_info=True)
     return None

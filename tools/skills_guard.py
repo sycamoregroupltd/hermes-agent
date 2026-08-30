@@ -48,6 +48,12 @@ from typing import List, Tuple
 
 SCANNER_VERSION = "skills-guard-v2"
 
+# Baseline format version. Bump only when the on-disk baseline shape changes
+# (not when threat patterns change — a stale fingerprint set is harmless, it
+# just means more findings are treated as "new" until the next accepted scan).
+BASELINE_VERSION = 1
+
+
 
 
 
@@ -1027,7 +1033,11 @@ def format_scan_report(result: ScanResult) -> str:
 
         lines.append("")
 
-    allowed, reason = should_allow_install(result)
+    baseline_info = result.scan_provenance.get("baseline") if result.scan_provenance else None
+    if baseline_info and baseline_info.get("baseline_exists"):
+        allowed, reason = should_allow_install_with_baseline(result, baseline_info)
+    else:
+        allowed, reason = should_allow_install(result)
     if allowed is True:
         status = "ALLOWED"
     elif allowed is None:
@@ -1035,6 +1045,16 @@ def format_scan_report(result: ScanResult) -> str:
     else:
         status = "BLOCKED"
     lines.append(f"Decision: {status} — {reason}")
+
+    if baseline_info:
+        lines.append(
+            "Baseline: {} ({} pre-existing accepted, {} new; content {})".format(
+                baseline_info.get("blocking_verdict", "?").upper(),
+                baseline_info.get("pre_existing_count", 0),
+                baseline_info.get("new_count", 0),
+                "changed" if baseline_info.get("content_changed") else "unchanged",
+            )
+        )
 
     return "\n".join(lines)
 
@@ -1348,3 +1368,169 @@ def _build_summary(name: str, source: str, trust: str, verdict: str, findings: L
 
     categories = {f.category for f in findings}
     return f"{name}: {verdict} — {len(findings)} finding(s) in {', '.join(sorted(categories))}"
+
+
+# ---------------------------------------------------------------------------
+# Per-skill accepted-findings baseline (new-findings-only policy)
+# ---------------------------------------------------------------------------
+#
+# A skill can ship pre-existing documentation patterns (illustrative code
+# blocks, prose examples) that the static scanner flags as false positives.
+# Under the old policy every patch re-evaluated ALL findings, so one pre-existing
+# CRITICAL false positive made the skill permanently unpatchable (see
+# t_0a02fdea: the kanban-worker skill was blocked by exactly that).
+#
+# The baseline policy keeps the scanner itself unchanged and only changes which
+# findings feed the allow/block decision on the AGENT-CREATED gate:
+#
+#   - The first allowed scan of a skill records a baseline: the skill's content
+#     hash plus the fingerprints (pattern_id|file|matched text) of the findings
+#     that scan produced.
+#   - A later scan with the SAME content hash is content-unchanged: every
+#     finding is pre-existing and the patch proceeds (the full verdict still
+#     surfaces in the report).
+#   - A later scan with CHANGED content compares findings against the baseline
+#     digest; only NEW findings (not in the digest) can produce a blocking
+#     verdict. A legit content change that is allowed re-baselines to the new
+#     hash + findings.
+#   - With NO baseline (first scan under this policy) the full verdict applies
+#     unchanged — nothing is auto-accepted without an allowed scan first.
+#
+# Community/trusted installs are untouched: the baseline is a decision-layer
+# filter used only by the agent-created gate (see skill_manager_tool.py
+# `_security_scan_skill`). The DANGEROUS verdict still blocks genuinely new
+# content; the scanner and INSTALL_POLICY are unchanged.
+BASELINE_VERSION = 1
+
+
+def _baseline_file_for(skill_path: Path, cache_dir: Path | None = None) -> Path:
+    """Stable per-skill baseline path, OUTSIDE the skill dir.
+
+    The baseline must not live inside the skill directory: `full_content_hash`
+    covers every file in the dir, so a baseline file inside it would change the
+    very hash it is keyed by on every write.
+    """
+    root = cache_dir or skill_path.parent / ".scan-cache"
+    key = hashlib.sha256(str(skill_path.resolve()).encode("utf-8")).hexdigest()[:16]
+    return root / f"baseline-{key}.json"
+
+
+def _finding_fingerprint(finding: Finding) -> str:
+    """Content-stable identity for a finding, ignoring line numbers.
+
+    Line numbers shift when a patch inserts lines above; the same documented
+    pattern must stay "pre-existing" across that shift. Note the matched text
+    is the scanner's 120-char snippet, so the identity boundary is the first
+    117 characters of the line — a genuinely new line that shares that prefix
+    with an accepted finding is treated as pre-existing (documented in the
+    guard-weakening evidence note).
+    """
+    return f"{finding.pattern_id}|{finding.file}|{finding.match}"
+
+
+def load_skill_baseline(skill_path: Path, cache_dir: Path | None = None) -> dict | None:
+    """Load the accepted-findings baseline for *skill_path*, or None."""
+    path = _baseline_file_for(skill_path, cache_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (isinstance(data, dict)
+            and data.get("version") == BASELINE_VERSION
+            and data.get("scanner_version") == SCANNER_VERSION):
+        return data
+    return None
+
+
+def record_skill_baseline(skill_path: Path, findings: List[Finding],
+                          cache_dir: Path | None = None) -> dict | None:
+    """Record the current content + findings as the accepted baseline.
+
+    Best-effort: a write failure returns None and must never block the skill
+    write itself — the next scan simply treats everything as new.
+    """
+    record = {
+        "version": BASELINE_VERSION,
+        "scanner_version": SCANNER_VERSION,
+        "content_hash": full_content_hash(skill_path),
+        "fingerprints": sorted({_finding_fingerprint(f) for f in findings}),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        path = _baseline_file_for(skill_path, cache_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return None
+    return record
+
+
+def apply_skill_baseline(skill_path: Path, result: ScanResult,
+                         cache_dir: Path | None = None) -> Tuple[ScanResult, dict]:
+    """Apply the accepted-findings baseline to an already-scanned result.
+
+    Returns (result, baseline_info):
+      - result is unchanged except ``scan_provenance["baseline"]`` is set; its
+        full verdict and findings still surface for reporting.
+      - baseline_info carries the decision fields:
+          baseline_exists, content_changed, baseline_content_hash,
+          blocking_verdict (verdict over NEW findings only — or the full
+          verdict when no baseline exists), full_verdict, new_count,
+          pre_existing_count.
+
+    Callers pass ``blocking_verdict`` into should_allow_install (via
+    `should_allow_install_with_baseline`) for the allow/block decision.
+    """
+    baseline = load_skill_baseline(skill_path, cache_dir)
+    current_hash = full_content_hash(skill_path)
+
+    if baseline:
+        accepted = set(baseline.get("fingerprints", []))
+        new_findings = [f for f in result.findings if _finding_fingerprint(f) not in accepted]
+        pre_existing = [f for f in result.findings if _finding_fingerprint(f) in accepted]
+        content_unchanged = baseline.get("content_hash") == current_hash
+        # Same content hash => identical scan output => every finding is the
+        # accepted set; nothing new can exist.
+        blocking_verdict = "safe" if content_unchanged else _determine_verdict(new_findings)
+    else:
+        new_findings = list(result.findings)
+        pre_existing = []
+        content_unchanged = False
+        blocking_verdict = result.verdict
+
+    baseline_info = {
+        "baseline_exists": baseline is not None,
+        "content_changed": not content_unchanged,
+        "baseline_content_hash": (baseline or {}).get("content_hash"),
+        "blocking_verdict": blocking_verdict,
+        "full_verdict": result.verdict,
+        "new_count": len(new_findings),
+        "pre_existing_count": len(pre_existing),
+        "new_findings": [_finding_dict(f) for f in new_findings],
+    }
+    result.scan_provenance["baseline"] = baseline_info
+    return result, baseline_info
+
+
+def should_allow_install_with_baseline(result: ScanResult, baseline_info: dict,
+                                       force: bool = False) -> Tuple[bool, str]:
+    """Policy decision using the baseline-blocking verdict.
+
+    With no baseline this is exactly ``should_allow_install(result)`` — the
+    agent-created gate is unchanged on first scan. With a baseline, the verdict
+    fed to the policy is the NEW-findings-only blocking verdict, so pre-existing
+    findings cannot re-block while genuinely new dangerous content still can.
+    """
+    if not baseline_info.get("baseline_exists"):
+        return should_allow_install(result, force=force)
+    decision = ScanResult(
+        skill_name=result.skill_name,
+        source=result.source,
+        trust_level=result.trust_level,
+        verdict=baseline_info["blocking_verdict"],
+        findings=result.findings,
+        scanned_at=result.scanned_at,
+        summary=result.summary,
+    )
+    decision.scan_provenance = dict(result.scan_provenance)
+    return should_allow_install(decision, force=force)
