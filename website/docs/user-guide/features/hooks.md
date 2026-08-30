@@ -1618,6 +1618,39 @@ hooks_auto_accept: false         # See "Consent model" below
 
 Event names must be one of the [plugin hook events](#plugin-hooks); typos produce a "Did you mean X?" warning and are skipped. Unknown keys inside a single entry are ignored; missing `command` is a skip-with-warning. `timeout > 300` is clamped with a warning. `fail_closed: true` on an event other than `pre_tool_call` warns and is ignored (only blocking-capable events can fail closed).
 
+#### Global hook tier (`global-hooks.yaml`)
+
+A fleet-wide hook chain can be defined **once** at the Hermes root in
+`<hermes-home>/global-hooks.yaml`, using the **exact same schema** as the
+`hooks:` block above. It fires for **every** profile — including profiles
+that define their own `hooks:` list and profiles with **no** `hooks:` key at
+all — and it runs **ahead of** the profile's own hooks. This is the only way
+to guarantee a newly created profile ships with the operator's guardrails
+already enforced, because named profiles do **not** inherit anything from
+`~/.hermes/config.yaml` (they merge against code defaults only).
+
+```yaml
+# <hermes-home>/global-hooks.yaml  — shared by every profile on the host
+pre_tool_call:
+  - matcher: "terminal"
+    command: /home/frank/.hermes/agent-hooks/gate-critical-tools.sh
+    timeout: 60
+```
+
+Behaviour:
+
+- **Composition, not replacement.** A profile's own `hooks:` block still
+  fires; it is wired *after* (on top of) the global chain, so both run.
+- **Consent assumed.** Global hooks are operator-declared at the fleet root,
+  so they register without a TTY prompt or a per-profile allowlist entry —
+  that is what makes them fire even on a fresh profile with no
+  `hooks_auto_accept` and no allowlist. They still obey `HERMES_SAFE_MODE`
+  (a troubleshooting run fires zero user-configured code).
+- **Fail open.** A missing, unreadable, or malformed `global-hooks.yaml`
+  contributes zero global hooks and never crashes a worker.
+- **Visibility.** `hermes hooks list` and `hermes hooks doctor` show the
+  global hooks first (matching runtime order), then the profile's own hooks.
+
 ### JSON wire protocol
 
 Each time the event fires, Hermes spawns a subprocess for every matching hook (matcher permitting), pipes a JSON payload to **stdin**, and reads **stdout** back as JSON.

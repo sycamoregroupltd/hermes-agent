@@ -158,14 +158,20 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
 
-from hermes_constants import get_hermes_home
-from utils import atomic_replace
+from hermes_constants import get_default_hermes_root, get_hermes_home
+from utils import atomic_replace, fast_safe_load
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 60
 MAX_TIMEOUT_SECONDS = 300
 ALLOWLIST_FILENAME = "shell-hooks-allowlist.json"
+# Fleet-wide global hooks file at the Hermes root.  Read independently of
+# the active profile's own config so every profile (including profiles with
+# their own ``hooks:`` list and profiles with NO ``hooks:`` key at all)
+# fires the same operator-declared chain AHEAD of its own hooks.  See
+# ``load_global_hooks_block`` / ``iter_configured_hooks``.
+GLOBAL_HOOKS_FILENAME = "global-hooks.yaml"
 _DEFAULT_BLOCK_MESSAGE = "Blocked by shell hook."
 
 # Exit code that signals "block this action" from a hook script, independent
@@ -244,6 +250,45 @@ class ShellHookSpec:
 # Public API
 # ---------------------------------------------------------------------------
 
+def global_hooks_path() -> Path:
+    """Return the fleet-wide global hooks file path.
+
+    Lives at the Hermes root (``get_default_hermes_root()``) — NOT under a
+    profile home — so a named profile (whose ``HERMES_HOME`` is
+    ``<root>/profiles/<name>``) resolves the same file the default profile
+    does.  This is the global tier that fires ahead of every profile's own
+    ``hooks:`` block, because there is nothing to inherit from: named
+    profiles merge against code defaults only, never against
+    ``~/.hermes/config.yaml``.
+    """
+    return get_default_hermes_root() / GLOBAL_HOOKS_FILENAME
+
+
+def load_global_hooks_block() -> Dict[str, Any]:
+    """Return the parsed ``global-hooks.yaml`` block, or ``{}`` if absent.
+
+    The global block uses the same schema as the ``hooks:`` key in a
+    profile config (event name -> list of hook definitions).  Malformed /
+    unreadable files fail open to ``{}`` — a broken global file must never
+    crash a worker or silently skip registration; it just contributes no
+    global hooks.
+    """
+    path = global_hooks_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = fast_safe_load(f)
+    except (FileNotFoundError, IsADirectoryError, PermissionError, OSError):
+        return {}
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("failed to parse %s: %s", path, exc)
+        return {}
+    if not isinstance(raw, dict):
+        if raw is not None:
+            logger.warning("%s is not a mapping; ignoring global hooks", path)
+        return {}
+    return raw
+
+
 def register_from_config(
     cfg: Optional[Dict[str, Any]],
     *,
@@ -254,6 +299,14 @@ def register_from_config(
     ``cfg`` is the full parsed config dict (``hermes_cli.config.load_config``
     output).  The ``hooks:`` key is read out of it.  Missing, empty, or
     non-dict ``hooks`` is treated as zero configured hooks.
+
+    The GLOBAL TIER runs first: every hook in ``<hermes-root>/global-hooks.yaml``
+    is registered ahead of the profile's own ``hooks:`` block.  Global hooks
+    are operator-declared at the fleet root, so they are registered with
+    consent assumed (no TTY prompt, no per-profile allowlist dependency) —
+    that is what guarantees a fresh profile with no ``hooks_auto_accept`` and
+    no allowlist still fires the fleet guard chain.  ``HERMES_SAFE_MODE``
+    still skips registration entirely, as it does today.
 
     ``accept_hooks=True`` skips the TTY consent prompt — the caller is
     promising that the user has opted in via a flag, env var, or config
@@ -279,21 +332,47 @@ def register_from_config(
 
     effective_accept = _resolve_effective_accept(cfg, accept_hooks)
 
-    specs = _parse_hooks_block(cfg.get("hooks"))
-    if not specs:
-        return []
-
-    registered: List[ShellHookSpec] = []
-
     # Import lazily — avoids circular imports at module-load time.
     from hermes_cli.plugins import get_plugin_manager
 
     manager = get_plugin_manager()
 
-    # Idempotence + allowlist read happen under the lock; the TTY
-    # prompt runs outside so other threads aren't parked on a blocking
-    # input().  Mutation re-takes the lock with a defensive idempotence
-    # re-check in case two callers ever race through the prompt.
+    registered: List[ShellHookSpec] = []
+
+    # Global tier first — operator-declared at the fleet root, fires for
+    # every profile regardless of the profile's own config.
+    global_specs = _parse_hooks_block(load_global_hooks_block())
+    registered += _register_spec_list(
+        manager, global_specs, accept_hooks=True,
+    )
+
+    # Profile tier — the profile's own hooks: block, composed AFTER (and
+    # therefore on top of) the global chain.
+    profile_specs = _parse_hooks_block(cfg.get("hooks"))
+    registered += _register_spec_list(
+        manager, profile_specs, accept_hooks=effective_accept,
+    )
+
+    return registered
+
+
+def _register_spec_list(
+    manager: Any,
+    specs: List[ShellHookSpec],
+    *,
+    accept_hooks: bool,
+) -> List[ShellHookSpec]:
+    """Register ``specs`` on ``manager`` under the lock.
+
+    Idempotence + allowlist read happen under the lock; the TTY prompt runs
+    outside so other threads aren't parked on a blocking ``input()``.
+    Mutation re-takes the lock with a defensive idempotence re-check in case
+    two callers ever race through the prompt.
+
+    Returns the specs that were actually wired up this call (already
+    registered / skipped entries are omitted).
+    """
+    registered: List[ShellHookSpec] = []
     for spec in specs:
         key = (spec.event, spec.matcher, spec.command)
         with _registered_lock:
@@ -303,7 +382,7 @@ def register_from_config(
 
         if not already_allowlisted:
             if not _prompt_and_record(
-                spec.event, spec.command, accept_hooks=effective_accept,
+                spec.event, spec.command, accept_hooks=accept_hooks,
             ):
                 logger.warning(
                     "shell hook for %s (%s) not allowlisted — skipped. "
@@ -332,10 +411,18 @@ def register_from_config(
 
 def iter_configured_hooks(cfg: Optional[Dict[str, Any]]) -> List[ShellHookSpec]:
     """Return the parsed ``ShellHookSpec`` entries from config without
-    registering anything.  Used by ``hermes hooks list`` and ``doctor``."""
+    registering anything.  Used by ``hermes hooks list`` and ``doctor``.
+
+    Includes the global tier (``<hermes-root>/global-hooks.yaml``) FIRST,
+    then the profile's own ``hooks:`` block — matching the runtime order
+    ``register_from_config`` wires, so ``hermes hooks list`` reflects what
+    will actually fire.
+    """
     if not isinstance(cfg, dict):
         return []
-    return _parse_hooks_block(cfg.get("hooks"))
+    global_specs = _parse_hooks_block(load_global_hooks_block())
+    profile_specs = _parse_hooks_block(cfg.get("hooks"))
+    return global_specs + profile_specs
 
 
 def re_register_config_hooks() -> None:
