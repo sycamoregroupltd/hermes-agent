@@ -15,8 +15,25 @@ mkdir -p "$DEST"
 # payload was small but is not now: adding the two vault tars took a night from ~0.8G to ~4.6G, and
 # the Mac had 74G free, i.e. ~16 nights to a full disk and a silently failing backup.
 # Remote keeps 7 (≈32G) rather than 14 (≈64G) purely for headroom on that volume.
-find "$HOME/fleet-backups" -maxdepth 1 -type d -name "20*" -mtime +14 -exec rm -rf {} + 2>/dev/null || true
-ssh mac 'find ~/dgx-fleet-backups -maxdepth 1 -type d -name "20*" -mtime +7 -exec rm -rf {} + 2>/dev/null' \
+# HARDENED 2026-08-30 (t_303ae91f): prune by DIRECTORY-NAME timestamp, NOT -mtime. The -mtime-based
+# prune never matched the oldest dirs because a later rsync/op bulk-touches a backup dir's mtime, so
+# an 8-day-old dir read <7 days old and survived forever — the Mac filled to 98% with retention
+# "working" (dry-run returned nothing for 20260822-043050, dir mtime 2026-08-26). Directory names are
+# sortable YYYYMMDD-HHMMSS and are never touched by content writes. Count-based: keep newest N.
+# Runs FIRST (before the tars and the push) so it frees the space this run is about to consume.
+prune_keep() {  # $1=root  $2=keep count  $3=label
+    local victims
+    victims=$(cd "$1" 2>/dev/null && ls -1d 20*/ 2>/dev/null | sed 's#/$##' | sort -r | tail -n +$(( $2 + 1 )))
+    [ -z "$victims" ] && return 0
+    printf '%s\n' "$victims" | while read -r d; do
+        [ -n "$d" ] && rm -rf "${1:?}/${d:?}" && echo "  pruned $3 $d"
+    done
+}
+prune_keep "$HOME/fleet-backups" 14 local
+ssh mac 'cd ~/dgx-fleet-backups 2>/dev/null || exit 0
+    ls -1d 20*/ 2>/dev/null | sed "s#/\$##" | sort -r | tail -n +8 | while read -r d; do
+        [ -n "$d" ] && rm -rf "./${d:?}" && echo "  pruned remote $d"
+    done' 2>/dev/null \
     || echo "WARNING: remote retention prune failed — check ssh mac df -h \~"
 
 for b in upero sycode-ai sycode-trading jarvis-os; do
