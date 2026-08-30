@@ -104,12 +104,51 @@ GUARD_MARKER = "dead-store-invariant-guard:"
 # with cron/jobs.py so eligibility matches the scheduler's exactly.
 ONESHOT_GRACE_SECONDS = 120
 
-# Liveness TTL for a one-shot's in-flight claims, mirrored from the scheduler's
-# fire_claim TTL (300s) and its default run_claim stale-recovery TTL (1800s).
-# A job with a LIVE claim was actually dispatched (or is still in flight) — it
-# was never silently missed, so re-arming it is safe even if run_at is stale.
-ONESHOOT_RUN_CLAIM_TTL_SECONDS = 1800
+# Liveness TTL for a one-shot's in-flight claims. The fire_claim TTL (300s) is a
+# FIXED constant mirrored from the scheduler (cron/jobs.py _claim_is_live(…,300))
+# and is env-independent on both sides. The run_claim stale-recovery TTL is
+# DERIVED from HERMES_CRON_TIMEOUT (the cron inactivity timeout), mirroring the
+# scheduler's _oneshot_run_claim_ttl_seconds() EXACTLY so the guard's
+# stale-claim branch can never clear/re-arm over a claim the scheduler still
+# considers in-flight — regardless of how HERMES_CRON_TIMEOUT is configured.
+ONESHOT_RUN_CLAIM_TTL_SECONDS = 1800  # FLOOR: also the fallback when timeout is unlimited
 ONESHOT_FIRE_CLAIM_TTL_SECONDS = 300
+
+# Derived-TTL inputs, mirrored from the scheduler (cron/jobs.py). A healthy run
+# clears its claim via mark_job_run() long before the TTL; the TTL only recovers
+# a claim left by a tick that DIED mid-run. HERMES_CRON_TIMEOUT is an *inactivity*
+# limit, not a wall-clock cap, so the headroom multiplier gives comfortable
+# margin before we treat a claim as stale.
+_ONESHOT_RUN_CLAIM_TTL_HEADROOM = 3
+_DEFAULT_CRON_INACTIVITY_TIMEOUT = 600.0
+
+
+def _oneshot_run_claim_ttl_seconds() -> float:
+    """Resolve the one-shot running-claim stale-recovery TTL.
+
+    Mirrors ``hermes-agent/cron/jobs.py:_oneshot_run_claim_ttl_seconds()``
+    byte-for-byte so the two can never diverge across configs:
+
+    - unset / invalid → default 600s inactivity limit → TTL = 1800s
+    - ``0`` (unlimited runs) → no finite bound to derive from → fall back to
+      ``ONESHOT_RUN_CLAIM_TTL_SECONDS``
+    - positive N → ``max(N * headroom, ONESHOT_RUN_CLAIM_TTL_SECONDS)`` so a
+      tiny configured timeout can never expire a claim mid-run.
+    """
+    raw = os.getenv("HERMES_CRON_TIMEOUT", "").strip()
+    timeout = _DEFAULT_CRON_INACTIVITY_TIMEOUT
+    if raw:
+        try:
+            timeout = float(raw)
+        except (ValueError, TypeError):
+            timeout = _DEFAULT_CRON_INACTIVITY_TIMEOUT
+    if timeout <= 0:
+        # Unlimited runs — cannot bound; use the fixed fallback floor.
+        return float(ONESHOT_RUN_CLAIM_TTL_SECONDS)
+    return max(
+        timeout * _ONESHOT_RUN_CLAIM_TTL_HEADROOM,
+        float(ONESHOT_RUN_CLAIM_TTL_SECONDS),
+    )
 
 
 def _utcnow() -> datetime:
@@ -176,7 +215,7 @@ def _oneshot_rearm_next_run(job: dict, now: datetime) -> tuple[str, str | None, 
     """
     run_claim = job.get("run_claim")
     fire_claim = job.get("fire_claim")
-    if _claim_is_live(run_claim, now, ONESHOOT_RUN_CLAIM_TTL_SECONDS) or _claim_is_live(
+    if _claim_is_live(run_claim, now, _oneshot_run_claim_ttl_seconds()) or _claim_is_live(
         fire_claim, now, ONESHOT_FIRE_CLAIM_TTL_SECONDS
     ):
         return ("refuse-live", None, False, False)
