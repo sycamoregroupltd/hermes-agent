@@ -177,7 +177,9 @@ def assignee_for(brd):
         "jarvis-os": "jarvis-os-pm",
         "sycode-trading": "sycode-trading-pm",
         "upero": "upero-pm",
+        "sycode-ai": "upero-pm",
         "yorkstone-supplies": "yorkstone-supplies-pm",
+        "ai-restaurant": "jarvis-os-pm",
         "ecohome": "ecohome-pm",
     }.get(brd, "jarvis-os-pm")
 
