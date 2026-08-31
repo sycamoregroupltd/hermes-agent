@@ -9469,6 +9469,15 @@ class DispatchResult:
     missing_exit_signal: list[str] = field(default_factory=list)
     """Task ids moved to ``completed_pending_review`` because repeated
     rc=0 worker exits never called ``kanban_complete``/``kanban_block``."""
+    terminal_predicate_checks: list[dict[str, Any]] = field(default_factory=list)
+    """Structured pre-verdict checks emitted for tracked worker handles.
+
+    Each entry records whether the claimed task had a durable terminal
+    transition before the dispatcher classified the child exit. This is
+    intentionally separate from :attr:`missing_exit_signal`: a positive
+    predicate is normal completion/blocking, while a negative predicate is
+    the evidence used by the existing clean-exit protocol-violation path.
+    """
     timed_out: list[str] = field(default_factory=list)
     """Task ids whose workers exceeded ``max_runtime_seconds``."""
     stale: list[str] = field(default_factory=list)
@@ -9594,6 +9603,76 @@ def _register_worker_handle(pid: int, proc: Any) -> None:
         pass
 
 
+def _terminal_predicate_before_reap(
+    conn: Optional[sqlite3.Connection], pid: int,
+) -> Optional[dict[str, Any]]:
+    """Persist the terminal-lifecycle predicate before exit classification.
+
+    The dispatcher owns the retained ``Popen`` handle. Once ``poll()`` says
+    the child is finished, this check runs *before* ``_record_worker_exit``
+    and asks the durable board whether that claimed run reached a terminal
+    state. A terminal state is one of the worker's explicit completion/block
+    outcomes with ``current_run_id`` cleared. ``ready``/``todo`` and an
+    active run are deliberately false: they mean the child exited without
+    the worker's terminal transition and must flow through the existing
+    protocol-violation/retry policy.
+
+    The event is best-effort observability, never a second state machine. It
+    is written in its own short transaction so a diagnostic failure cannot
+    prevent the exit verdict from being recorded.
+    """
+    if conn is None or not pid or pid <= 0:
+        return None
+    try:
+        row = conn.execute(
+            """
+            SELECT t.id, t.status, t.current_run_id, t.claim_lock
+              FROM tasks t
+             WHERE t.worker_pid = ?
+             LIMIT 1
+            """,
+            (int(pid),),
+        ).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        # The task may already have been reclaimed and its worker_pid cleared.
+        return None
+
+    terminal_statuses = {
+        "done", "blocked", "review", "completed_pending_review", "archived",
+    }
+    status = row["status"]
+    current_run_id = row["current_run_id"]
+    terminal_signal = status in terminal_statuses and current_run_id is None
+    check = {
+        "task_id": row["id"],
+        "pid": int(pid),
+        "status": status,
+        "current_run_id": int(current_run_id) if current_run_id is not None else None,
+        "claim_lock_present": bool(row["claim_lock"]),
+        "terminal_signal": terminal_signal,
+        "predicate": "terminal status and current_run_id is NULL",
+        "phase": "before_exit_verdict",
+    }
+    try:
+        with write_txn(conn):
+            _append_event(
+                conn,
+                row["id"],
+                "terminal_predicate_checked",
+                check,
+                run_id=(int(current_run_id) if current_run_id is not None else None),
+            )
+    except Exception:
+        _log.debug(
+            "failed to persist terminal predicate for worker pid %s",
+            pid,
+            exc_info=True,
+        )
+    return check
+
+
 def _harvest_worker_handles(
     conn: Optional[sqlite3.Connection] = None,
 ) -> "list[int]":
@@ -9609,6 +9688,7 @@ def _harvest_worker_handles(
     Returns the list of pids harvested. Never raises.
     """
     harvested: "list[int]" = []
+    predicate_checks: list[dict[str, Any]] = []
     for pid, proc in list(_worker_handles.items()):
         try:
             rc = proc.poll()
@@ -9617,6 +9697,12 @@ def _harvest_worker_handles(
             continue
         if rc is None:
             continue  # still running — leave it registered
+        # Check the durable worker lifecycle before recording/classifying the
+        # OS exit. The handle remains registered until this check completes so
+        # an exception in observability cannot make the worker look untracked.
+        check = _terminal_predicate_before_reap(conn, pid)
+        if check is not None:
+            predicate_checks.append(check)
         _worker_handles.pop(pid, None)
         # Rebuild a raw wait-status so classification stays in ONE place.
         # Popen.returncode is -N when the child died from signal N.
@@ -9629,6 +9715,7 @@ def _harvest_worker_handles(
                 exc_info=True,
             )
         harvested.append(pid)
+    _harvest_worker_handles._last_terminal_predicate_checks = predicate_checks
     return harvested
 
 
@@ -9888,6 +9975,9 @@ def reap_worker_zombies(
     # (t_6a5a8d9e). Handles are the authoritative source; waitpid stays as a
     # fallback for children spawned outside _default_spawn.
     reaped.extend(_harvest_worker_handles(conn))
+    reap_worker_zombies._last_terminal_predicate_checks = list(
+        getattr(_harvest_worker_handles, "_last_terminal_predicate_checks", [])
+    )
     if os.name != "nt":
         try:
             while True:
@@ -12124,6 +12214,9 @@ def _dispatch_once_locked(
     reap_worker_zombies(conn)
 
     result = DispatchResult()
+    result.terminal_predicate_checks.extend(
+        getattr(reap_worker_zombies, "_last_terminal_predicate_checks", [])
+    )
     result.reclaimed = release_stale_claims(conn)
     if reconcile_orphans:
         # Orphaned-card reconciliation: requeue 'running' cards whose claim
