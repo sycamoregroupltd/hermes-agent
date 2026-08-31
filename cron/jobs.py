@@ -1797,20 +1797,36 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                 save_jobs(jobs)
                 return
 
-        # C2 (t_95fbd07c): surfaced drop counter so the liveness collector can
-        # report this class of failure as last_error / probe-visible metrics
-        # instead of a silent metadata-lag false positive.
+        # C2 (t_95fbd07c): persist a drop counter so an out-of-process liveness
+        # probe can report this class of failure instead of a silent
+        # metadata-lag false positive.  The jobs lock already serializes this
+        # read/modify/write with all other store mutations.
         global _last_mark_not_found_count, _last_mark_not_found_at, _last_mark_not_found_job
         now = _hermes_now().isoformat()
         _last_mark_not_found_count += 1
         _last_mark_not_found_at = now
         _last_mark_not_found_job = job_id
+        stats_path = _current_cron_store().cron_dir / "mark_job_run_drops.json"
+        persisted_count = _last_mark_not_found_count
+        try:
+            persisted = json.loads(stats_path.read_text(encoding="utf-8"))
+            persisted_count = max(int(persisted.get("count", 0)), persisted_count)
+        except (FileNotFoundError, OSError, ValueError, TypeError, AttributeError):
+            pass
+        try:
+            atomic_write_text(
+                stats_path,
+                json.dumps({"count": persisted_count, "last_at": now, "last_job_id": job_id}, sort_keys=True),
+            )
+        except OSError as stats_err:
+            logger.error("mark_job_run: failed to persist drop counter: %s", stats_err)
         logger.warning(
             "mark_job_run: job_id %s not found, skipping save "
-            "(total dropped writes: %d; last at %s)",
+            "(total dropped writes: %d; last at %s; counter=%s)",
             job_id,
-            _last_mark_not_found_count,
+            persisted_count,
             now,
+            stats_path,
         )
 
 

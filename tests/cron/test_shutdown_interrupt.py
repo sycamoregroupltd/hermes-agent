@@ -156,8 +156,8 @@ class TestConsumeInterruptedFlag:
 
 
 class TestRunOneJobHonoursInterruptedFlag:
-    """run_one_job() must not let a job's own completion overwrite a
-    status the shutdown path already wrote for the same run."""
+    """run_one_job() must record every terminal outcome, including runs
+    whose shutdown flag was set before the worker returned."""
 
     def _make_job(self, job_id="job-1"):
         return {"id": job_id, "name": "test job", "prompt": "do work"}
@@ -183,9 +183,14 @@ class TestRunOneJobHonoursInterruptedFlag:
             result = sched.run_one_job(job)
 
         assert result is True
-        # The would-be "success" write must NOT happen -- the shutdown
-        # path already wrote the authoritative interrupted status.
-        mock_mark.assert_not_called()
+        # The completion must still be persisted; the shutdown flag only
+        # prevents stale interruption state from affecting the next run.
+        mock_mark.assert_called_once_with(
+            "job-1",
+            False,
+            "Interrupted by gateway shutdown before the run finished (tool subprocess was killed mid-flight).",
+            delivery_error=None,
+        )
         # Flag is consumed so a later, unrelated fire of the same job ID
         # isn't permanently silenced.
         assert job["id"] not in sched._interrupted_job_ids
@@ -246,4 +251,5 @@ class TestRunOneJobHonoursInterruptedFlag:
             result = sched.run_one_job(job)
 
         assert result is False
-        mock_mark.assert_not_called()
+        mock_mark.assert_called_once_with("job-1", False, "boom")
+        assert job["id"] not in sched._interrupted_job_ids
