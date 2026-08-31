@@ -53,8 +53,24 @@ WEB_PATTERNS: PatternList = [
     # Route only counts when it is clearly an app/web/API route surface, not a
     # generic verb like "route an enabled cron".
     r"(^|[^a-z0-9])((app|web|api|frontend) route|route handler|running route|route page|route component)([^a-z0-9]|$)",
-    r"(^|[^a-z0-9])app([^a-z0-9].{0,80})route([^a-z0-9]|$)",
-    r"(^|[^a-z0-9])route([^a-z0-9].{0,80})app([^a-z0-9]|$)",
+    # 2026-08-31: the two proximity rules below span up to 80 chars, so an
+    # unrelated "app" and "route" in the SAME SENTENCE collide. Real case:
+    # ai-restaurant/t_bde415c4 (a canary/portability TEST card) was classified
+    # `web` off "...the documented future no-install DMG route reference, and
+    # confirmation that the app was not mutated..." — a distribution route and
+    # a negated app mention, 0% web content. It then failed the running-app
+    # gate it should never have been subject to. Exclude the non-web senses of
+    # "route" (distribution/delivery/escalation/network) from the proximity
+    # rules; the explicit surface forms above still match real app routes.
+    r"(^|[^a-z0-9])app([^a-z0-9](?:(?!\b(?:dmg|installer|install|no-install|download|delivery|distribution|escalat|network|traffic|migration|shipping)\b).){0,80})route([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])route((?:(?!\b(?:dmg|installer|install|no-install|download|delivery|distribution|escalat|network|traffic|migration|shipping)\b)[^a-z0-9].){0,80})app([^a-z0-9]|$)",
+    # 2026-09-01: same proximity-rule class as the 2026-08-31 fix, new instance.
+    # Real case: ai-restaurant/t_6769a438 (SOUS Blender/glTF canary/portability
+    # TEST card) says "...do not mutate the app. Document a preferred future
+    # no-install route..." — a negated app-mutation clause and a DMG
+    # distribution-route noun phrase, 0% web content. "no-install" was not
+    # excluded because the prior exclusion list only matched the word
+    # "installer", not "install"/"no-install". Added both forms above.
 ]
 
 READONLY_PATTERNS: PatternList = [
@@ -96,6 +112,26 @@ CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
     r"apps/web",
     r"(^|[^a-z0-9])(react|next\.js|nextjs|vite)([^.\n]{0,120})(page|route|component|ui|frontend|app)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])dashboard([^.\n]{0,80})(route|page|component|frontend|react|ui|app)([^a-z0-9]|$)",
+]
+
+# Profile names are often hyphen/underscore compounds (for example
+# ``upero-ui-builder`` and ``frontend-builder``).  WEB_PATTERNS intentionally
+# recognizes standalone UI vocabulary, so its boundary sees the embedded
+# ``ui``/``frontend`` token in these names.  The guard below only scrubs a
+# web-token compound when the task also has profile/roster administration
+# context; ordinary prose such as ``build a frontend page`` is untouched.
+PROFILE_IDENTIFIER_WEB_TOKEN_RE = re.compile(
+    r"(?<![a-z0-9])(?:[a-z0-9]+[-_])*"
+    r"(?:marketplace|storefront|frontend|dashboard|renders?|client|component|middleware|layout|ui)"
+    r"(?:[-_][a-z0-9]+)+(?![a-z0-9])"
+)
+PROFILE_ADMIN_CONTEXT_PATTERNS: PatternList = [
+    r"\bprofiles?\b",
+    r"\broster\b",
+    r"\bretir(?:e|ed|ement|ing)\b",
+    r"\barchiv(?:e|ed|ing)\b",
+    r"\bclone(?:d|s)?\b",
+    r"\bdirector(?:y|ies)\b",
 ]
 
 APP_CHANGED_FILE_PATTERNS: PatternList = [
@@ -161,6 +197,8 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"docs/index",
     r"markdown (index|pointer)",
     r"knowledge vault",
+    r"\b(?:retir(?:e|ed|ement|ing)|archiv(?:e|ed|ing)|clone(?:d|s)?)\b[^.\n]{0,180}\b(?:profiles?|roster|director(?:y|ies))\b",
+    r"\b(?:profiles?|roster|director(?:y|ies))\b[^.\n]{0,180}\b(?:retir(?:e|ed|ement|ing)|archiv(?:e|ed|ing)|clone(?:d|s)?)\b",
     r"cron portability",
     # CLI/script or Python/shell words are not enough by themselves; true web
     # cards often mention helper scripts. Exempt only with non-web/non-UI or
@@ -468,6 +506,13 @@ def _split_hook_text(raw: str) -> tuple[str, str]:
     return task_part, lowered
 
 
+def _profile_identifier_signal_text(task_part: str) -> str:
+    """Remove only named profile compounds before implementation matching."""
+    if not _any(PROFILE_ADMIN_CONTEXT_PATTERNS, task_part):
+        return task_part
+    return PROFILE_IDENTIFIER_WEB_TOKEN_RE.sub(" ", task_part)
+
+
 def _has_app_impl(task_part: str) -> bool:
     # Concrete implementation signals must win over contradictory "no app" or
     # "no product" disclaimers. Review proved that an app task can include a
@@ -480,8 +525,11 @@ def _has_app_impl(task_part: str) -> bool:
     # Review cards about completion-gate repair are NOT app implementation.
     # Match both adjacent "completion-gate repair" and non-adjacent patterns
     # where "completion-gate" and "repair" are within 80 chars of each other.
-    raw_app_impl = _any(APP_IMPL_PATTERNS, task_part) and not _any(NEGATED_APP_IMPL_PATTERNS, task_part)
-    has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, task_part) and not _any(
+    signal_task_part = _profile_identifier_signal_text(task_part)
+    raw_app_impl = _any(APP_IMPL_PATTERNS, signal_task_part) and not _any(
+        NEGATED_APP_IMPL_PATTERNS, task_part
+    )
+    has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, signal_task_part) and not _any(
         NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS,
         task_part,
     )
@@ -764,8 +812,26 @@ def _verified_review_with_evidence_override(task_part: str, raw: str) -> bool:
     return True
 
 
+def _profile_identifier_only_web_signal(task_part: str) -> bool:
+    """Ignore WEB_PATTERNS hits embedded in profile names, narrowly.
+
+    A compound profile identifier such as ``upero-ui-builder`` is not an app
+    surface.  Only profile/roster administration context can activate this
+    scrub, and any remaining web vocabulary or app implementation signal keeps
+    the hard web classification.
+    """
+    if not _any(PROFILE_ADMIN_CONTEXT_PATTERNS, task_part):
+        return False
+    scrubbed = _profile_identifier_signal_text(task_part)
+    if scrubbed == task_part:
+        return False
+    return not _matches_category(FRONTEND_WEB_TASK_CATEGORY, scrubbed) and not _has_app_impl(scrubbed)
+
+
 def _web_surface(task_part: str, raw: str) -> bool:
-    return _matches_category(FRONTEND_WEB_TASK_CATEGORY, task_part)
+    return _matches_category(FRONTEND_WEB_TASK_CATEGORY, task_part) and not _profile_identifier_only_web_signal(
+        task_part
+    )
 
 
 CONTRACT_TABLE: Sequence[ContractRule] = [

@@ -1310,5 +1310,67 @@
    ]
   },
   "description": "BLOCK: paired negative for t_63ac495e; the SAME 'No implementation/promotion/paper-sleeve route ... paper-only' wording attached to concrete apps/web React route/page work with app-surface changed_files must still require running-app VERIFY_PASS (classify web)."
+ },
+ {
+  "name": "t_6769a438-no-install-dmg-route-nonapp-allows",
+  "task_id": "t_6769a438_fixture",
+  "expected": "allow",
+  "expected_class": "readonly_nonapp",
+  "title": "SOUS ASSET-CAP-01R2: portable no-follow Blender/glTF skill and Mac route",
+  "body": "Second bounded skill remediation of a Blender-to-glTF canary skill. Blocker 2: the installed Mac Blender identity matches but strict spctl/codesign fails due an added bundle __pycache__/webbrowser.cpython-311.pyc. Preserve this as CAPABILITY_BLOCKED and do not mutate the app. Document a preferred future no-install route using an official Blender 5.0.1 macOS ARM64 DMG only after explicit authority: verify exact installer sha256, mount read-only/task-local, verify bundle signature, execute only the synthetic template with PYTHONDONTWRITEBYTECODE=1, unmount and clean; do not download, mount or run it in this task.",
+  "summary": "pytest 70 passed/2 skipped; canary validator_canary=PASS toolchain=CAPABILITY_BLOCKED retained; relocation invariance proven on two fresh synthetic roots; no promotion, no app/DMG/system mutation, no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "sous-blender-gltf-assets-r2/scripts/hash_inventory.py",
+    "sous-blender-gltf-assets-r2/scripts/gen_adversarial.py"
+   ]
+  },
+  "description": "ALLOW: real ai-restaurant/t_6769a438 regression, new instance of the 2026-08-31 proximity-rule class. Body says '...do not mutate the app. Document a preferred future no-install route...' \u2014 a negated app-mutation clause plus a DMG distribution-route noun phrase, 0% web content. The prior APP_CHANGED_FILE_PATTERNS negation excluded only 'installer', not 'install'/'no-install', so this Blender/glTF canary/portability TEST card was misclassified web and failed the running-app gate it should never have been subject to. Fixed by adding install/no-install to the negative-lookahead exclusion set."
+ },
+ {
+  "name": "t_6769a438-paired-frontend-install-route-negative-blocks",
+  "task_id": "t_6769a438_frontend_negative",
+  "expected": "block",
+  "expected_class": "web",
+  "title": "Implement frontend install route dashboard",
+  "body": "Implement apps/web React route component and page layout for the install route dashboard, rendering install progress for the app onboarding flow. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+  "summary": "install route dashboard implemented; no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "apps/web/src/app/install/page.tsx"
+   ]
+  },
+  "description": "BLOCK: paired negative for t_6769a438; the word 'install'/'route' attached to concrete apps/web React route/page work with app-surface changed_files must still require running-app VERIFY_PASS (classify web), proving the widened install/no-install exclusion did not weaken real frontend detection."
+ },
+ {
+  "name": "t_fbcf9724-profile-roster-administration-allows",
+  "task_id": "t_fbcf9724_profile_roster_allow",
+  "expected": "allow",
+  "expected_class": "readonly_nonapp",
+  "title": "P8-R1 Retire leftover clone profiles to canonical 34-role roster",
+  "body": "Archive upero-ui-builder and frontend-builder from the retired profile roster; profile-roster administration only, with no application source changed.",
+  "summary": "profile roster archived; no application source changed; no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "/home/frank/.hermes/profiles/.archive/p8r1-retire-20260830-p8r1/upero-ui-builder/config.yaml",
+    "/home/frank/.hermes/profiles/.archive/p8r1-retire-20260830-p8r1/frontend-builder/config.yaml"
+   ]
+  },
+  "description": "ALLOW: profile-roster administration naming compound Hermes profile identifiers must not trigger bare WEB_PATTERNS tokens or the frontend running-app gate."
+ },
+ {
+  "name": "t_fbcf9724-profile-name-paired-frontend-negative-blocks",
+  "task_id": "t_fbcf9724_profile_frontend_negative",
+  "expected": "block",
+  "expected_class": "web",
+  "title": "Build frontend page for upero-ui-builder profile",
+  "body": "Implement apps/web React route component and page layout for the frontend experience; the profile name is mentioned for ownership context. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+  "summary": "frontend route component changed; no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "apps/web/src/app/profile-owner/page.tsx"
+   ]
+  },
+  "description": "BLOCK: paired negative for profile-identifier scrubbing; a genuine apps/web frontend implementation that mentions upero-ui-builder must remain web and require running-app VERIFY_PASS."
  }
 ]
