@@ -698,8 +698,17 @@ def _warn_board_conflict_once(
     )
 
 
-def kanban_db_path(board: Optional[str] = None) -> Path:
+def kanban_db_path(
+    board: Optional[str] = None,
+    *,
+    _allow_ambiguous_relocated_pin: bool = False,
+) -> Path:
     """Return the path to the ``kanban.db`` for ``board``.
+
+    ``_allow_ambiguous_relocated_pin`` is reserved for board metadata
+    enumeration/creation, whose documented shared-DB pin must remain usable
+    without a dispatcher identity. Ordinary named-board resolution keeps the
+    fail-loudly default for an unattributable relocated pin.
 
     Resolution (highest precedence first):
 
@@ -803,7 +812,7 @@ def kanban_db_path(board: Optional[str] = None) -> Path:
         # wrong answer. For a *named* board the pin cannot be attributed to
         # any board — fail loudly rather than silently choosing a potentially
         # wrong DB.
-        if explicit_slug == DEFAULT_BOARD:
+        if explicit_slug == DEFAULT_BOARD or _allow_ambiguous_relocated_pin:
             return pinned
         raise ValueError(
             "HERMES_KANBAN_DB=%r does not correspond to board %r and "
@@ -944,7 +953,9 @@ def read_board_metadata(board: Optional[str] = None) -> dict:
                 meta.update(raw)
     except (OSError, json.JSONDecodeError):
         pass
-    meta["db_path"] = str(kanban_db_path(slug))
+    meta["db_path"] = str(
+        kanban_db_path(slug, _allow_ambiguous_relocated_pin=True)
+    )
     return meta
 
 
@@ -989,7 +1000,9 @@ def write_board_metadata(
         json.dumps(meta, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    meta["db_path"] = str(kanban_db_path(slug))
+    meta["db_path"] = str(
+        kanban_db_path(slug, _allow_ambiguous_relocated_pin=True)
+    )
     return meta
 
 
@@ -1019,8 +1032,10 @@ def create_board(
         color=color,
         default_workdir=default_workdir,
     )
-    # Touch the DB so list_boards() sees it immediately.
-    init_db(board=normed)
+    # Touch the DB so list_boards() sees it immediately.  Reuse the
+    # metadata path because shared relocated pins intentionally have no
+    # board identity in this process.
+    init_db(db_path=Path(meta["db_path"]))
     return meta
 
 
