@@ -7515,11 +7515,21 @@ def _run_one_job_body(
         if blocked_config:
             mark_kwargs["status"] = "blocked_config"
         marked = mark_job_run(job["id"], success, error, **mark_kwargs)
-        if fire_owner is not None and not marked:
+        if not marked:
+            # A completed execution is only successful when the authoritative
+            # jobs.json terminal write landed.  Previously this guard only
+            # existed for owner-fenced fires, so a missing job or a lock/write
+            # failure could leave executions.db successful while last_run_at
+            # stayed stale (the C2 metadata/artifact divergence).
+            persistence_error = (
+                "Cron terminal state could not be persisted to jobs.json; "
+                "execution marked failed so the mismatch is probe-visible."
+            )
+            logger.error("Job '%s': %s", job["id"], persistence_error)
             finish_execution(
                 execution_id,
                 success=False,
-                error="Fire claim ownership lost before terminal completion.",
+                error=persistence_error,
             )
             return True
         normalized_deliver = _normalize_deliver_value(job.get("deliver", "local"))

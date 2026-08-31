@@ -3142,7 +3142,13 @@ def _mark_job_run_locked(
                 save_jobs(jobs)
                 return True
 
-        logger.warning("mark_job_run: job_id %s not found, skipping save", job_id)
+        # This is a terminal-bookkeeping failure, not a harmless no-op:
+        # callers must downgrade the execution ledger entry so a missing job
+        # cannot masquerade as a successful run.
+        logger.error(
+            "mark_job_run: job_id %s not found; terminal state was not persisted",
+            job_id,
+        )
         return False
 
 

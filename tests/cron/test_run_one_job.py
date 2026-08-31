@@ -78,6 +78,36 @@ def test_run_one_job_success_sequence(monkeypatch):
     assert calls[-1] == ("mark", "j2", True)
 
 
+def test_run_one_job_downgrades_execution_when_terminal_write_is_not_persisted(monkeypatch):
+    """A lost jobs.json write must not leave a successful ledger execution."""
+    finished = []
+    calls = _patch_pipeline(monkeypatch)
+    monkeypatch.setattr(s, "mark_job_run", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        s,
+        "finish_execution",
+        lambda *args, **kwargs: finished.append((args, kwargs)),
+    )
+    monkeypatch.setattr(s, "create_execution", lambda *_a, **_kw: {"id": "exec-j2b"})
+    monkeypatch.setattr(s, "claim_dispatch", lambda _job_id: True)
+    monkeypatch.setattr(s, "mark_execution_running", lambda _execution_id: None)
+
+    assert s.run_one_job({"id": "j2b", "name": "probe"}) is True
+    assert calls[-1] == ("mark", "j2b", True) or calls[-1][0] == "deliver"
+    assert finished == [
+        (
+            ("exec-j2b",),
+            {
+                "success": False,
+                "error": (
+                    "Cron terminal state could not be persisted to jobs.json; "
+                    "execution marked failed so the mismatch is probe-visible."
+                ),
+            },
+        )
+    ]
+
+
 def test_run_one_job_exception_delivers_failure_alert(monkeypatch):
     """An exception escaping the run body must not become a silent error row."""
     delivered = []
