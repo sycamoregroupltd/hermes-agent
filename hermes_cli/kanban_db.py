@@ -92,6 +92,7 @@ import sys
 import threading
 import logging
 import time
+import fcntl
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11809,63 +11810,84 @@ def gc_events_audit_file_path() -> Path:
     return _gc_audit_file_path()
 
 
-def load_gc_audit_lines() -> list[dict]:
-    """Return parsed JSON lines from the gc audit file, newest-first.
+class GcAuditCorruptionError(RuntimeError):
+    """The first-party GC audit stream cannot be trusted."""
 
-    Each line is an object with keys: run_at, retention_seconds, cutoff,
-    min_event_id, max_event_id, count, task_ids.
+
+def load_gc_audit_lines() -> list[dict]:
+    """Return completed GC records, newest-first, failing closed on corruption.
+
+    Intent records and incomplete records are deliberately not returned. A
+    malformed/truncated line raises instead of silently hiding evidence.
     """
     path = gc_events_audit_file_path()
     if not path.exists():
         return []
-    lines: list[dict] = []
+    records: list[dict] = []
     try:
-        for ln in path.read_text(encoding="utf-8").splitlines():
-            ln = ln.strip()
-            if ln:
-                lines.append(json.loads(ln))
-    except (OSError, json.JSONDecodeError):
-        return []
-    return lines[::-1]
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise GcAuditCorruptionError(f"cannot read GC audit file {path}: {exc}") from exc
+    for line_no, ln in enumerate(raw_lines, 1):
+        if not ln.strip():
+            continue
+        try:
+            record = json.loads(ln)
+        except json.JSONDecodeError as exc:
+            raise GcAuditCorruptionError(
+                f"invalid JSON in GC audit file {path} line {line_no}: {exc}"
+            ) from exc
+        if not isinstance(record, dict):
+            raise GcAuditCorruptionError(
+                f"GC audit file {path} line {line_no} is not an object"
+            )
+        if record.get("status") == "completed":
+            records.append(record)
+    return records[::-1]
 
 
 def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
                    retention_seconds: int, cutoff: int) -> None:
-    """Append a single JSON-line summarising one ``gc_events`` invocation.
+    """Append durable evidence for rows deleted by a committed GC transaction.
 
-    Writes to ``~/.hermes/audit/gc_events.jsonl`` (overridable via
-    :envvar:`HERMES_KANBAN_GC_AUDIT_DIR`). Silently ignores write failures
-    so audit logging never blocks the GC itself.
+    The caller invokes this only after the delete commits. ``fcntl.flock``
+    serializes concurrent writers; flush + fsync makes the completed record
+    durable before returning. Audit I/O remains best-effort so GC itself is
+    not blocked, but a missing record can never be treated as a completion.
     """
     if not events_meta:
         return
-    min_id = min(eid for eid, _ in events_meta)
-    max_id = max(eid for eid, _ in events_meta)
+    event_ids = [eid for eid, _ in events_meta]
     task_ids = sorted({tid for _, tid in events_meta})
-    line = json.dumps({
+    record = {
+        "status": "completed",
         "run_at": run_at,
-        "retention_seconds": retention_seconds,
-        "cutoff": cutoff,
-        "min_event_id": min_id,
-        "max_event_id": max_id,
-        "count": len(events_meta),
+        "retention_seconds": int(retention_seconds),
+        "cutoff": int(cutoff),
+        "min_event_id": min(event_ids),
+        "max_event_id": max(event_ids),
+        "event_ids": event_ids,
+        "count": len(event_ids),
         "task_ids": task_ids,
-    })
+    }
+    line = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    fd = -1
     try:
         audit_path = _gc_audit_file_path()
         audit_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(audit_path),
-                     os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        try:
-            with os.fdopen(fd, "a") as f:
-                f.write(line + "\n")
-            fd = -1  # ownership transferred to fdopen and closed
-        finally:
-            if fd >= 0:
-                os.close(fd)
+        fd = os.open(str(audit_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        with os.fdopen(fd, "ab", closefd=True) as stream:
+            fd = -1
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            stream.write(line)
+            stream.flush()
+            os.fsync(stream.fileno())
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
     except OSError:
-        # Audit evidence is best-effort and must never prevent retention GC.
-        pass
+        # A missing completion record is conservative: reconciliation fails
+        # closed, while retention GC remains available.
+        if fd >= 0:
+            os.close(fd)
 
 
 def gc_events_preview(
@@ -11908,36 +11930,38 @@ def gc_events(
     rows deleted. Running / ready / blocked tasks keep their full event
     history.
 
-    AUDIT (t_6baff6ad): before deleting, queries matching rows and writes
-    their summary as a JSON line into ``~/.hermes/audit/gc_events.jsonl``
-    so downstream reconcilers can cite first-party evidence instead of
-    inferring from a pre-GC backup snapshot.
+    The audit record is emitted only after the deletion transaction commits.
+    SQLite's write transaction serializes concurrent sweeps, so the captured
+    IDs and the DELETE predicate describe one stable snapshot. A later audit
+    write failure leaves GC successful but produces no authoritative record.
     """
     cutoff = int(time.time()) - int(older_than_seconds)
     now = int(time.time())
 
-    # 1. Capture metadata of rows that will be deleted (before DELETE).
-    meta_rows = conn.execute(
-        "SELECT id, task_id FROM task_events "
-        "WHERE created_at < ? AND task_id IN "
-        "(SELECT id FROM tasks WHERE status IN ('done', 'archived')) "
-        "ORDER BY id",
-        (cutoff,),
-    ).fetchall()
-    events_meta = [(int(r["id"]), str(r["task_id"])) for r in meta_rows]
-
-    # 2. Write audit record *before* the DELETE so we always have evidence
-    #    even if the deletion later fails.
-    _emit_gc_audit(events_meta, now, older_than_seconds, cutoff)
-
-    # 3. Execute the deletion.
     with write_txn(conn):
-        cur = conn.execute(
-            "DELETE FROM task_events WHERE created_at < ? AND task_id IN "
-            "(SELECT id FROM tasks WHERE status IN ('done', 'archived'))",
+        meta_rows = conn.execute(
+            "SELECT id, task_id FROM task_events "
+            "WHERE created_at < ? AND task_id IN "
+            "(SELECT id FROM tasks WHERE status IN ('done', 'archived')) "
+            "ORDER BY id",
             (cutoff,),
-        )
-    return int(cur.rowcount or 0)
+        ).fetchall()
+        events_meta = [(int(r["id"]), str(r["task_id"])) for r in meta_rows]
+        if events_meta:
+            placeholders = ",".join("?" for _ in events_meta)
+            cur = conn.execute(
+                f"DELETE FROM task_events WHERE id IN ({placeholders})",
+                [event_id for event_id, _ in events_meta],
+            )
+        else:
+            cur = None
+
+    removed = int(cur.rowcount or 0) if cur is not None else 0
+    # Only committed rows are eligible for first-party completion evidence.
+    # The count guard protects against a future predicate mismatch.
+    if removed == len(events_meta) and removed:
+        _emit_gc_audit(events_meta, now, older_than_seconds, cutoff)
+    return removed
 
 
 def gc_worker_logs(

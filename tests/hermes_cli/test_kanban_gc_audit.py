@@ -13,6 +13,7 @@ Verifies:
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -300,3 +301,43 @@ def test_audit_record_fields_are_complete(kanban_home, monkeypatch):
         # NOTE: preview runs on *remaining* events (already deleted above),
         # so just check the structure is sound
         assert entry["min_event_id"] <= entry["max_event_id"]
+
+
+def test_failed_delete_emits_no_completed_audit(kanban_home):
+    """A rolled-back delete must not produce authoritative completion evidence."""
+    with kb.connect_closing() as conn:
+        _make_done_task_with_events(conn, count=2, age_days=60)
+        conn.execute("""
+            CREATE TRIGGER reject_gc_delete BEFORE DELETE ON task_events
+            BEGIN SELECT RAISE(ABORT, 'test delete failure'); END
+        """)
+        with pytest.raises(Exception, match="test delete failure"):
+            kb.gc_events(conn, older_than_seconds=30 * 86400)
+        assert kb.load_gc_audit_lines() == []
+        assert conn.execute("SELECT count(*) FROM task_events").fetchone()[0] == 3
+
+
+def test_malformed_audit_fails_closed(kanban_home):
+    """Truncated JSONL is an explicit corruption signal, never empty history."""
+    path = kb.gc_events_audit_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"status":"completed",\n', encoding="utf-8")
+    with pytest.raises(kb.GcAuditCorruptionError, match="invalid JSON"):
+        kb.load_gc_audit_lines()
+
+
+def test_concurrent_audit_writers_preserve_jsonl(kanban_home):
+    """Separate processes cannot interleave or truncate completed records."""
+    def write_record(index):
+        kb._emit_gc_audit([(index + 1, str(index))], 1000 + index, 3600, 500)
+
+    workers = [multiprocessing.Process(target=write_record, args=(i,)) for i in range(8)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+        assert worker.exitcode == 0
+    records = kb.load_gc_audit_lines()
+    assert len(records) == 8
+    assert {record["status"] for record in records} == {"completed"}
+    assert {record["min_event_id"] for record in records} == set(range(1, 9))
