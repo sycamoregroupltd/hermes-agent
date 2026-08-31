@@ -72,8 +72,38 @@ def _copy_bounded(source: Path, destination: Path) -> None:
             destination_stream.write(chunk)
 
 
+def _write_all(file_descriptor: int, payload: bytes) -> None:
+    """Write all bytes, allowing tests to inject a partial-write failure."""
+    view = memoryview(payload)
+    while view:
+        written = os.write(file_descriptor, view)
+        if written <= 0:
+            raise OSError("receipt writer made no progress")
+        view = view[written:]
+
+
 def _write_receipt(path: Path, receipt: dict) -> None:
-    path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+    """Persist a receipt without exposing a partial target file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(receipt, sort_keys=True).encode("utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{path.name}.",
+            suffix=".partial",
+            dir=path.parent,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            _write_all(temporary.fileno(), payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 class CompletionKernel:

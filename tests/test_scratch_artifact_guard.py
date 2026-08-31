@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 # Keep the documented direct-script command runnable from the repository root.
@@ -13,6 +15,7 @@ import sys
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from prototypes import scratch_artifact_guard as guard  # noqa: E402
 from prototypes.scratch_artifact_guard import (  # noqa: E402
     MAX_ARTIFACT_BYTES,
     ArtifactGuardError,
@@ -187,20 +190,24 @@ class ScratchArtifactGuardTests(unittest.TestCase):
         self.assertEqual(json.loads(receipt_file.read_text(encoding="utf-8"))["cleanup_status"], "deferred")
         self.assertEqual(len(task.attachments), 1)
 
-    def test_receipt_write_failure_is_deferred_after_commit(self) -> None:
+    def test_receipt_partial_write_is_atomic_after_commit(self) -> None:
         source = self.ws / "report.md"
-        source.write_bytes(b"receipt update can be retried")
+        source.write_bytes(b"receipt update must not truncate")
         task = self.task()
         writes = 0
+        real_write_all = guard._write_all
 
-        def fail_final_receipt(path: Path, receipt: dict) -> None:
+        def partial_on_refresh(file_descriptor: int, payload: bytes) -> None:
             nonlocal writes
             writes += 1
             if writes == 2:
-                raise OSError("injected receipt write failure")
-            path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+                os.write(file_descriptor, payload[: max(1, len(payload) // 3)])
+                raise OSError("injected partial receipt write")
+            real_write_all(file_descriptor, payload)
 
-        self.assertTrue(self.kernel.complete(task, self.manifest(source), receipt_writer=fail_final_receipt))
+        with patch.object(guard, "_write_all", partial_on_refresh):
+            self.assertTrue(self.kernel.complete(task, self.manifest(source)))
+
         self.assertEqual(writes, 2)
         self.assertEqual(task.status, "done")
         self.assertFalse(self.ws.exists())
@@ -209,7 +216,9 @@ class ScratchArtifactGuardTests(unittest.TestCase):
         self.assertEqual(task.recovery_metadata["cleanup_observed"], "completed")  # type: ignore[index]
         self.assertEqual(task.recovery_metadata["recovery_metadata_write"], "deferred")  # type: ignore[index]
         receipt_file = self.store / task.task_id / "recovery.json"
-        self.assertEqual(json.loads(receipt_file.read_text(encoding="utf-8"))["cleanup_status"], "pending")
+        persisted = json.loads(receipt_file.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["cleanup_status"], "pending")
+        self.assertFalse(list(receipt_file.parent.glob("*.partial")))
 
     def test_recovery_metadata_is_verified_and_persisted(self) -> None:
         source = self.ws / "report.md"

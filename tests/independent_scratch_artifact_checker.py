@@ -7,14 +7,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from prototypes import scratch_artifact_guard as guard  # noqa: E402
 from prototypes.scratch_artifact_guard import (  # noqa: E402
     MAX_ARTIFACT_BYTES,
     ArtifactGuardError,
@@ -166,26 +169,31 @@ def main() -> None:
         assert_true(receipt.exists(), "recovery receipt missing")
         assert_true("deferred" in receipt.read_text(encoding="utf-8"), "deferred receipt not persisted")
 
-        # 12 receipt refresh failure after a successful commit
+        # 12 partial receipt refresh after a successful commit must not
+        # truncate the already-persisted pending receipt.
         ws = root / "receipt-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"receipt retry")
         task = Task("receipt", ws, root / "receipt-store")
         writes = 0
+        real_write_all = guard._write_all
 
-        def fail_final_receipt(path: Path, receipt_data: dict) -> None:
+        def partial_on_refresh(file_descriptor: int, payload: bytes) -> None:
             nonlocal writes
             writes += 1
             if writes == 2:
-                raise OSError("checker injected receipt write failure")
-            path.write_text(json.dumps(receipt_data, sort_keys=True), encoding="utf-8")
+                os.write(file_descriptor, payload[: max(1, len(payload) // 3)])
+                raise OSError("checker injected partial receipt write")
+            real_write_all(file_descriptor, payload)
 
-        assert_true(kernel.complete(task, manifest(src), receipt_writer=fail_final_receipt), "receipt failure raised")
-        assert_true(writes == 2, "receipt failure was not injected")
-        assert_true(task.status == "done" and not ws.exists(), "receipt failure changed committed state")
-        assert_true(task.recovery_metadata["cleanup_status"] == "deferred", "receipt failure not deferred")  # type: ignore[index]
+        with patch.object(guard, "_write_all", partial_on_refresh):
+            assert_true(kernel.complete(task, manifest(src)), "partial receipt failure raised")
+        assert_true(writes == 2, "partial receipt failure was not injected")
+        assert_true(task.status == "done" and not ws.exists(), "partial receipt failure changed committed state")
+        assert_true(task.recovery_metadata["cleanup_status"] == "deferred", "partial receipt failure not deferred")  # type: ignore[index]
         assert_true(task.recovery_metadata["cleanup_observed"] == "completed", "cleanup observation missing")  # type: ignore[index]
         assert_true(task.recovery_metadata["recovery_metadata_write"] == "deferred", "receipt recovery flag missing")  # type: ignore[index]
         receipt = root / "receipt-store" / "receipt" / "recovery.json"
-        assert_true(json.loads(receipt.read_text(encoding="utf-8"))["cleanup_status"] == "pending", "failed receipt advanced")
+        assert_true(json.loads(receipt.read_text(encoding="utf-8"))["cleanup_status"] == "pending", "partial write truncated receipt")
+        assert_true(not list(receipt.parent.glob("*.partial")), "partial receipt temp file leaked")
 
     print("independent checker: 12/12 PASS")
 
