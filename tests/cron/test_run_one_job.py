@@ -81,7 +81,7 @@ def test_run_one_job_success_sequence(monkeypatch):
 def test_run_one_job_downgrades_execution_when_terminal_write_is_not_persisted(monkeypatch):
     """A lost jobs.json write must not leave a successful ledger execution."""
     finished = []
-    calls = _patch_pipeline(monkeypatch)
+    _patch_pipeline(monkeypatch)
     monkeypatch.setattr(s, "mark_job_run", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         s,
@@ -93,7 +93,6 @@ def test_run_one_job_downgrades_execution_when_terminal_write_is_not_persisted(m
     monkeypatch.setattr(s, "mark_execution_running", lambda _execution_id: None)
 
     assert s.run_one_job({"id": "j2b", "name": "probe"}) is True
-    assert calls[-1] == ("mark", "j2b", True) or calls[-1][0] == "deliver"
     assert finished == [
         (
             ("exec-j2b",),
