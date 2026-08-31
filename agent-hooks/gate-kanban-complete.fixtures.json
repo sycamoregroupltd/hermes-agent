@@ -1317,7 +1317,7 @@
   "expected": "allow",
   "expected_class": "not_web",
   "title": "A3: substrate EAGAIN hardening",
-  "body": "Identify the narrowest substrate fix, build it READY, and route activation through approval. This is a backend cron fix with no browser or app surface.",
+  "body": "Identify the narrowest substrate fix, build it READY, and route activation through approval. This is backend cron work.",
   "summary": "backend cron fix built READY; route activation through approval; no running app VERIFY_PASS supplied",
   "metadata": {
    "changed_files": [
