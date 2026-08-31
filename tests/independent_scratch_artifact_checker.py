@@ -6,6 +6,7 @@ It intentionally does not call the maker test methods or unittest discovery;
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import sys
 import tempfile
@@ -72,34 +73,51 @@ def main() -> None:
         assert_true(len(task.attachments) == 1, "valid attachment row missing")
         assert_true(digest(Path(task.attachments[0].stored_path)) == task.attachments[0].sha256, "valid digest missing")
 
-        # 2 missing declaration
+        # 2 explicit no-deliverable policy
+        ws = root / "none-ws"; ws.mkdir(); (ws / "scratch.txt").write_bytes(b"none")
+        task = Task("none", ws, root / "none-store")
+        none_manifest = {"schema_version": 1, "policy": "none", "entries": []}
+        assert_true(kernel.complete(task, none_manifest), "explicit none completion failed")
+        assert_true(task.status == "done" and not ws.exists(), "explicit none cleanup/state wrong")
+        assert_true(not task.attachments, "explicit none created attachments")
+        assert_true(task.recovery_metadata["policy"] == "none", "explicit none policy missing")  # type: ignore[index]
+
+        # 3 missing declaration
         ws = root / "missing-ws"; ws.mkdir(); (ws / "x.txt").write_bytes(b"x")
         task = Task("missing", ws, root / "missing-store")
         expect_guard_error(lambda: kernel.complete(task, None), "declaration")
         assert_true(task.status != "done" and ws.exists(), "missing declaration removed workspace")
 
-        # 3 hash mismatch
+        # 4 hash mismatch
         ws = root / "hash-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"x")
         task = Task("hash", ws, root / "hash-store")
         bad = manifest(src); bad["entries"][0]["sha256"] = "f" * 64
         expect_guard_error(lambda: kernel.complete(task, bad), "digest mismatch")
         assert_true(task.status != "done" and ws.exists(), "hash mismatch removed workspace")
 
-        # 4 invalid digest format
+        # 5 expected/declared hash mismatch
+        ws = root / "expected-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"x")
+        task = Task("expected", ws, root / "expected-store")
+        bad = manifest(src); bad["entries"][0]["expected_sha256"] = "0" * 64
+        expect_guard_error(lambda: kernel.complete(task, bad), "expected digest mismatch")
+        assert_true(task.status != "done" and ws.exists(), "expected hash mismatch removed workspace")
+        assert_true(not (root / "expected-store").exists(), "expected hash mismatch leaked attachment")
+
+        # 6 invalid digest format
         ws = root / "format-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"x")
         task = Task("format", ws, root / "format-store")
         bad = manifest(src); bad["entries"][0]["sha256"] = "not-a-digest"
         expect_guard_error(lambda: kernel.complete(task, bad), "64 lowercase")
         assert_true(task.status != "done" and ws.exists(), "invalid digest removed workspace")
 
-        # 5 oversize declaration
+        # 7 oversize declaration
         ws = root / "size-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"x")
         task = Task("size", ws, root / "size-store")
         bad = manifest(src); bad["entries"][0]["size"] = MAX_ARTIFACT_BYTES + 1
         expect_guard_error(lambda: kernel.complete(task, bad), "exceeds maximum")
         assert_true(task.status != "done" and ws.exists(), "oversize declaration removed workspace")
 
-        # 6 partial copy
+        # 8 partial copy
         ws = root / "partial-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"partial")
         task = Task("partial", ws, root / "partial-store")
 
@@ -115,7 +133,7 @@ def main() -> None:
             raise AssertionError("partial copy was accepted")
         assert_true(task.status != "done" and ws.exists() and not (root / "partial-store").exists(), "partial copy leaked state")
 
-        # 7 source mutation after the copy
+        # 9 source mutation after the copy
         ws = root / "mutation-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"before")
         task = Task("mutation", ws, root / "mutation-store")
 
@@ -126,7 +144,7 @@ def main() -> None:
         expect_guard_error(lambda: kernel.complete(task, manifest(src), copier=mutate_copy), "source mutated")
         assert_true(task.status != "done" and ws.exists(), "source mutation was accepted")
 
-        # 8 repeated completion
+        # 10 repeated completion
         ws = root / "repeat-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"repeat")
         task = Task("repeat", ws, root / "repeat-store")
         assert_true(kernel.complete(task, manifest(src)), "first completion failed")
@@ -134,7 +152,7 @@ def main() -> None:
         assert_true(not kernel.complete(task, {"schema_version": 1, "policy": "none", "entries": []}), "repeat mutated done task")
         assert_true(len(task.attachments) == count, "repeat duplicated attachments")
 
-        # 9 cleanup failure and recovery metadata
+        # 11 cleanup failure and recovery metadata
         ws = root / "cleanup-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"deferred")
         task = Task("cleanup", ws, root / "cleanup-store")
 
@@ -148,7 +166,28 @@ def main() -> None:
         assert_true(receipt.exists(), "recovery receipt missing")
         assert_true("deferred" in receipt.read_text(encoding="utf-8"), "deferred receipt not persisted")
 
-    print("independent checker: 9/9 PASS")
+        # 12 receipt refresh failure after a successful commit
+        ws = root / "receipt-ws"; ws.mkdir(); src = ws / "x.txt"; src.write_bytes(b"receipt retry")
+        task = Task("receipt", ws, root / "receipt-store")
+        writes = 0
+
+        def fail_final_receipt(path: Path, receipt_data: dict) -> None:
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise OSError("checker injected receipt write failure")
+            path.write_text(json.dumps(receipt_data, sort_keys=True), encoding="utf-8")
+
+        assert_true(kernel.complete(task, manifest(src), receipt_writer=fail_final_receipt), "receipt failure raised")
+        assert_true(writes == 2, "receipt failure was not injected")
+        assert_true(task.status == "done" and not ws.exists(), "receipt failure changed committed state")
+        assert_true(task.recovery_metadata["cleanup_status"] == "deferred", "receipt failure not deferred")  # type: ignore[index]
+        assert_true(task.recovery_metadata["cleanup_observed"] == "completed", "cleanup observation missing")  # type: ignore[index]
+        assert_true(task.recovery_metadata["recovery_metadata_write"] == "deferred", "receipt recovery flag missing")  # type: ignore[index]
+        receipt = root / "receipt-store" / "receipt" / "recovery.json"
+        assert_true(json.loads(receipt.read_text(encoding="utf-8"))["cleanup_status"] == "pending", "failed receipt advanced")
+
+    print("independent checker: 12/12 PASS")
 
 
 if __name__ == "__main__":

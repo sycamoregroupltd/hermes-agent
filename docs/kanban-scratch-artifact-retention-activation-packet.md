@@ -24,10 +24,13 @@ Disposition: design and disposable prototype only; not installed, scheduled, act
 | Requirement | Evidence / exact command | Result |
 |---|---|---|
 | valid attachment, digest and cleanup | `python3 tests/test_scratch_artifact_guard.py`; `python3 tests/independent_scratch_artifact_checker.py` | maker and checker pass after rework |
+| explicit no-deliverable policy | same two direct commands | first completion with `policy=none, entries=[]` cleans up with zero attachment rows |
 | missing declaration, invalid digest, oversize | same two direct commands | fail-closed cases covered |
 | hash mismatch, partial copy, source mutation | same two direct commands | no `done`, workspace retained, no leaked final state |
+| expected digest mismatch | same two direct commands | wrong `expected_sha256` fails closed and retains workspace |
 | repeated completion | same two direct commands | CAS/idempotence behavior covered |
 | cleanup failure and recovery metadata | same two direct commands | `done` retained with `cleanup_status=deferred` |
+| post-commit receipt-write failure | same two direct commands | no post-commit exception; committed attachments remain, receipt reconciliation is deferred |
 | source syntax | `python3 -m py_compile prototypes/scratch_artifact_guard.py tests/test_scratch_artifact_guard.py tests/independent_scratch_artifact_checker.py` | required before handoff |
 | repository hygiene | `git diff --check` and `sha256sum -c SHA256SUMS` | required before handoff |
 | gateway/scheduler/service liveness | no command; N/A rationale above | not applicable to disposable source-only model |

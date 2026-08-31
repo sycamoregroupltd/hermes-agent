@@ -72,6 +72,10 @@ def _copy_bounded(source: Path, destination: Path) -> None:
             destination_stream.write(chunk)
 
 
+def _write_receipt(path: Path, receipt: dict) -> None:
+    path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+
+
 class CompletionKernel:
     """Small model of two-phase stage -> CAS commit -> scratch cleanup."""
 
@@ -86,6 +90,7 @@ class CompletionKernel:
         expected_run_id: int = 1,
         copier: Optional[Callable[[Path, Path], None]] = None,
         cleaner: Optional[Callable[[Path], None]] = None,
+        receipt_writer: Optional[Callable[[Path, dict], None]] = None,
     ) -> bool:
         if task.status == "done":
             return False
@@ -192,7 +197,8 @@ class CompletionKernel:
                 "cleanup_status": "pending",
             }
             receipt_path = final_dir / "recovery.json"
-            receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+            write_receipt = receipt_writer or _write_receipt
+            write_receipt(receipt_path, receipt)
 
             # Simulated write transaction / CAS commit happens only now.
             task.attachments.extend(
@@ -233,13 +239,24 @@ class CompletionKernel:
             receipt["cleanup_error_type"] = type(exc).__name__
             task.recovery_metadata = receipt
             try:
-                receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+                write_receipt(receipt_path, receipt)
             except OSError:
-                # In-memory metadata still records that a recovery sweep is due.
+                # The previously persisted pending receipt is recoverable; do
+                # not report a post-commit exception or claim completed proof.
                 receipt["recovery_metadata_write"] = "deferred"
+                task.recovery_metadata = receipt
             return True
 
+        receipt["cleanup_observed"] = "completed"
         receipt["cleanup_status"] = "completed"
         task.recovery_metadata = receipt
-        receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+        try:
+            write_receipt(receipt_path, receipt)
+        except OSError:
+            # Completion is committed, but the durable receipt still carries
+            # the pre-commit pending state. Keep recovery fail-closed: mark the
+            # state deferred and let the normal sweep reconcile it.
+            receipt["cleanup_status"] = "deferred"
+            receipt["recovery_metadata_write"] = "deferred"
+            task.recovery_metadata = receipt
         return True
