@@ -9579,6 +9579,17 @@ _recent_worker_exits: "dict[int, tuple[int, float]]" = {}
 _WORKER_HANDLES_MAX = 4096
 _worker_handles: "dict[int, Any]" = {}
 
+# Authoritative association for a retained worker handle.  Terminal writers
+# deliberately clear ``tasks.worker_pid`` and ``task_runs.worker_pid`` as part
+# of their atomic completion/block transition, so looking up only those live
+# columns at reap time loses the very positive evidence the guard is meant to
+# observe.  The association is populated when the dispatcher stamps the PID
+# and is consumed when that handle is harvested.  It is bounded independently
+# of the handle registry so test/manual PID stamping cannot grow it without
+# limit; it is not a durable task state machine.
+_worker_pid_associations: "dict[int, tuple[str, int]]" = {}
+_WORKER_PID_ASSOCIATIONS_MAX = 4096
+
 
 def _register_worker_handle(pid: int, proc: Any) -> None:
     """Retain a spawned worker's ``Popen`` handle for authoritative reaping.
@@ -9599,6 +9610,7 @@ def _register_worker_handle(pid: int, proc: Any) -> None:
         if len(_worker_handles) > _WORKER_HANDLES_MAX:
             for _pid in list(_worker_handles)[: len(_worker_handles) // 2]:
                 _worker_handles.pop(_pid, None)
+                _worker_pid_associations.pop(_pid, None)
     except Exception:
         pass
 
@@ -9606,37 +9618,60 @@ def _register_worker_handle(pid: int, proc: Any) -> None:
 def _terminal_predicate_before_reap(
     conn: Optional[sqlite3.Connection], pid: int,
 ) -> Optional[dict[str, Any]]:
-    """Persist the terminal-lifecycle predicate before exit classification.
+    """Check and persist the terminal lifecycle predicate before reap.
 
     The dispatcher owns the retained ``Popen`` handle. Once ``poll()`` says
-    the child is finished, this check runs *before* ``_record_worker_exit``
-    and asks the durable board whether that claimed run reached a terminal
-    state. A terminal state is one of the worker's explicit completion/block
-    outcomes with ``current_run_id`` cleared. ``ready``/``todo`` and an
-    active run are deliberately false: they mean the child exited without
-    the worker's terminal transition and must flow through the existing
-    protocol-violation/retry policy.
+    the child is finished, this check runs *before* ``_record_worker_exit``.
+    A retained PID association is authoritative because ``complete_task`` and
+    ``block_task`` clear both live PID columns as part of their atomic terminal
+    transition. The associated run must also be closed for a positive result;
+    this prevents a manually-cleared task pointer from masquerading as a
+    worker terminal signal.
 
-    The event is best-effort observability, never a second state machine. It
-    is written in its own short transaction so a diagnostic failure cannot
-    prevent the exit verdict from being recorded.
+    The enforcement invariant is explicit: ``terminal_signal=True`` accepts
+    the worker's terminal lifecycle, while ``False`` records a
+    ``terminal_lifecycle_violation`` and leaves the exit on the existing
+    clean-exit protocol-violation detector path. No clean exit is ever treated
+    as successful merely because the child returned zero.
     """
     if conn is None or not pid or pid <= 0:
         return None
+    association = _worker_pid_associations.get(int(pid))
     try:
-        row = conn.execute(
-            """
-            SELECT t.id, t.status, t.current_run_id, t.claim_lock
-              FROM tasks t
-             WHERE t.worker_pid = ?
-             LIMIT 1
-            """,
-            (int(pid),),
-        ).fetchone()
+        if association is not None:
+            task_id, associated_run_id = association
+            row = conn.execute(
+                """
+                SELECT t.id, t.status, t.current_run_id, t.claim_lock,
+                       r.status AS associated_run_status,
+                       r.ended_at AS associated_run_ended_at
+                  FROM tasks t
+                  LEFT JOIN task_runs r ON r.id = ?
+                 WHERE t.id = ?
+                 LIMIT 1
+                """,
+                (int(associated_run_id), task_id),
+            ).fetchone()
+            association_source = "retained_pid_association"
+        else:
+            associated_run_id = None
+            row = conn.execute(
+                """
+                SELECT t.id, t.status, t.current_run_id, t.claim_lock,
+                       NULL AS associated_run_status,
+                       NULL AS associated_run_ended_at
+                  FROM tasks t
+                 WHERE t.worker_pid = ?
+                 LIMIT 1
+                """,
+                (int(pid),),
+            ).fetchone()
+            association_source = "live_task_pid"
     except Exception:
         return None
     if row is None:
-        # The task may already have been reclaimed and its worker_pid cleared.
+        # The task may already have been deleted. Keep the exit verdict path
+        # alive, but there is no durable task to which a predicate can attach.
         return None
 
     terminal_statuses = {
@@ -9644,14 +9679,31 @@ def _terminal_predicate_before_reap(
     }
     status = row["status"]
     current_run_id = row["current_run_id"]
-    terminal_signal = status in terminal_statuses and current_run_id is None
+    associated_run_closed = (
+        association is None
+        or row["associated_run_ended_at"] is not None
+    )
+    terminal_signal = (
+        status in terminal_statuses
+        and current_run_id is None
+        and associated_run_closed
+    )
+    enforcement_action = (
+        "accept_terminal" if terminal_signal
+        else "reject_exit_and_run_protocol_violation"
+    )
     check = {
         "task_id": row["id"],
         "pid": int(pid),
         "status": status,
         "current_run_id": int(current_run_id) if current_run_id is not None else None,
+        "associated_run_id": int(associated_run_id) if associated_run_id is not None else None,
+        "associated_run_status": row["associated_run_status"],
+        "associated_run_ended_at": row["associated_run_ended_at"],
+        "association_source": association_source,
         "claim_lock_present": bool(row["claim_lock"]),
         "terminal_signal": terminal_signal,
+        "enforcement_action": enforcement_action,
         "predicate": "terminal status and current_run_id is NULL",
         "phase": "before_exit_verdict",
     }
@@ -9662,8 +9714,36 @@ def _terminal_predicate_before_reap(
                 row["id"],
                 "terminal_predicate_checked",
                 check,
-                run_id=(int(current_run_id) if current_run_id is not None else None),
+                run_id=(
+                    int(associated_run_id)
+                    if associated_run_id is not None
+                    else (int(current_run_id) if current_run_id is not None else None)
+                ),
             )
+            if not terminal_signal:
+                # This is the durable enforcement receipt. The subsequent
+                # clean-exit verdict is intentionally still classified by
+                # ``detect_crashed_workers`` so its existing bounded retry /
+                # missing-signal accounting remains the single state machine.
+                _append_event(
+                    conn,
+                    row["id"],
+                    "terminal_lifecycle_violation",
+                    {
+                        "pid": int(pid),
+                        "associated_run_id": (
+                            int(associated_run_id)
+                            if associated_run_id is not None else None
+                        ),
+                        "enforcement_action": enforcement_action,
+                        "reason": "worker exited before a durable terminal transition",
+                    },
+                    run_id=(
+                        int(associated_run_id)
+                        if associated_run_id is not None
+                        else (int(current_run_id) if current_run_id is not None else None)
+                    ),
+                )
     except Exception:
         _log.debug(
             "failed to persist terminal predicate for worker pid %s",
@@ -9694,6 +9774,7 @@ def _harvest_worker_handles(
             rc = proc.poll()
         except Exception:
             _worker_handles.pop(pid, None)
+            _worker_pid_associations.pop(pid, None)
             continue
         if rc is None:
             continue  # still running — leave it registered
@@ -9704,6 +9785,7 @@ def _harvest_worker_handles(
         if check is not None:
             predicate_checks.append(check)
         _worker_handles.pop(pid, None)
+        _worker_pid_associations.pop(pid, None)
         # Rebuild a raw wait-status so classification stays in ONE place.
         # Popen.returncode is -N when the child died from signal N.
         raw_status = (-rc) if rc < 0 else (rc << 8)
@@ -11529,6 +11611,10 @@ def _set_worker_pid(conn: sqlite3.Connection, task_id: str, pid: int) -> None:
                 "UPDATE task_runs SET worker_pid = ? WHERE id = ?",
                 (int(pid), run_id),
             )
+            _worker_pid_associations[int(pid)] = (task_id, int(run_id))
+            if len(_worker_pid_associations) > _WORKER_PID_ASSOCIATIONS_MAX:
+                for _pid in list(_worker_pid_associations)[: len(_worker_pid_associations) // 2]:
+                    _worker_pid_associations.pop(_pid, None)
         _append_event(conn, task_id, "spawned", {"pid": int(pid)}, run_id=run_id)
 
 
