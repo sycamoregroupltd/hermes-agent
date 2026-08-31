@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, mock_open
 
 SCRIPTS = Path("/home/frank/.hermes/scripts")
 sys.path.insert(0, str(SCRIPTS))
@@ -39,6 +39,20 @@ def main():
         assert "broken store" in str(exc)
     else:
         raise AssertionError("dqsh.load_state fell back after notepad failure")
+
+    # A malformed notepad value must not fall back to a divergent mirror.
+    dqsh._DQSH_NOTEPAD = SimpleNamespace(get=lambda key: "{malformed-notepad")
+    with patch(
+        "builtins.open",
+        mock_open(read_data='{"remediation_history": [{"type": "stale-mirror"}]}'),
+    ) as mirror_open:
+        try:
+            dqsh.load_state()
+        except RuntimeError as exc:
+            assert "invalid JSON in cron notepad dqsh:state" in str(exc)
+            mirror_open.assert_not_called()
+        else:
+            raise AssertionError("dqsh.load_state accepted malformed notepad via mirror")
 
     digest = load("adopt5_digest", SCRIPTS / "fleet-daily-digest-to-board.py")
     digest._NOTEPAD = SimpleNamespace(get=lambda key: (_ for _ in ()).throw(RuntimeError("broken store")))

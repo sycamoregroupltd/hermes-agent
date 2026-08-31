@@ -138,8 +138,13 @@ def load_state():
         if raw is not None:
             try:
                 return json.loads(raw)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                # The notepad is the production source of truth. A malformed
+                # value must fail closed rather than silently using a stale
+                # rollback mirror on disk.
+                raise RuntimeError(
+                    "invalid JSON in cron notepad dqsh:state"
+                ) from exc
     if not os.path.exists(STATE_FILE):
         return {"remediation_history": []}
     try:
