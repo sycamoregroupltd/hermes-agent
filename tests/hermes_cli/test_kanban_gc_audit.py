@@ -150,6 +150,17 @@ def test_no_deletion_no_audit(kanban_home, monkeypatch):
         assert audit_after == audit_before
 
 
+def test_audit_write_failure_does_not_block_gc(kanban_home, monkeypatch):
+    """A filesystem failure while emitting audit evidence must not stop GC."""
+    _clear_audit()
+    monkeypatch.setattr(kb, "_gc_audit_file_path", lambda: Path("/proc/gc_events.jsonl"))
+    with kb.connect_closing() as conn:
+        _make_done_task_with_events(conn, count=2, age_days=60)
+        assert kb.gc_events(conn, older_than_seconds=30 * 86400) == 2
+        # create_task's recent event remains; only the two old rows are pruned.
+        assert conn.execute("SELECT count(*) FROM task_events").fetchone()[0] == 1
+
+
 def test_non_terminal_tasks_not_deleted(kanban_home, monkeypatch):
     """Events belonging to running/blocked tasks survive GC even if they're old.
 
@@ -232,9 +243,14 @@ with kb.connect_closing() as conn:
     assert removed == 1, f'expected 1, got {{removed}}'
 """
     )
+    subprocess_env = os.environ.copy()
+    repo_root = Path(__file__).resolve().parents[2]
+    subprocess_env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(repo_root), subprocess_env.get("PYTHONPATH", "")) if part
+    )
     result = subprocess.run(
         [sys.executable, "-u", str(script)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=30, env=subprocess_env,
     )
     assert result.returncode == 0, f"subprocess failed: {result.stderr}"
     expected_file = custom_dir / "gc_events.jsonl"
