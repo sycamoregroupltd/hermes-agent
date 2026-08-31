@@ -10233,7 +10233,6 @@ def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
     """
     if not events_meta:
         return
-    _resolve_gc_audit_dir().mkdir(parents=True, exist_ok=True)
     min_id = min(eid for eid, _ in events_meta)
     max_id = max(eid for eid, _ in events_meta)
     task_ids = sorted({tid for _, tid in events_meta})
@@ -10246,12 +10245,20 @@ def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
         "count": len(events_meta),
         "task_ids": task_ids,
     })
-    fd = os.open(str(_gc_audit_file_path()),
-                 os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     try:
-        with os.fdopen(fd, "a") as f:
-            f.write(line + "\n")
+        audit_path = _gc_audit_file_path()
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(audit_path),
+                     os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            with os.fdopen(fd, "a") as f:
+                f.write(line + "\n")
+            fd = -1  # ownership transferred to fdopen and closed
+        finally:
+            if fd >= 0:
+                os.close(fd)
     except OSError:
+        # Audit evidence is best-effort and must never prevent retention GC.
         pass
 
 
