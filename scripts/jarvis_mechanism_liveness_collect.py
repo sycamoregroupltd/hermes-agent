@@ -66,6 +66,39 @@ def load_jobs(profile: str) -> list[dict[str, Any]]:
     return [j for j in jobs if isinstance(j, dict)]
 
 
+def load_mark_job_run_drops(profile: str) -> dict[str, Any]:
+    """Read the scheduler's durable terminal-write diagnostic for ``profile``.
+
+    The sidecar is absent on healthy stores and is therefore not an error.  A
+    malformed or unreadable sidecar is reported explicitly instead of being
+    treated as zero, so the liveness report cannot hide diagnostic corruption.
+    """
+    path = PROFILES / profile / "cron" / "mark_job_run_drops.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"count": 0, "state": "absent", "path": str(path)}
+    except (OSError, UnicodeError) as exc:
+        return {"count": None, "state": "read_error", "error": str(exc), "path": str(path)}
+    except json.JSONDecodeError as exc:
+        return {"count": None, "state": "malformed", "error": str(exc), "path": str(path)}
+    if not isinstance(data, dict):
+        return {"count": None, "state": "malformed", "error": "expected JSON object", "path": str(path)}
+    try:
+        count = int(data.get("count", 0))
+    except (TypeError, ValueError):
+        return {"count": None, "state": "malformed", "error": "count is not an integer", "path": str(path)}
+    if count < 0:
+        return {"count": None, "state": "malformed", "error": "count is negative", "path": str(path)}
+    return {
+        "count": count,
+        "state": "recorded" if count else "clean",
+        "last_at": data.get("last_at"),
+        "last_job_id": data.get("last_job_id"),
+        "path": str(path),
+    }
+
+
 def all_profile_jobs() -> list[tuple[str, dict[str, Any]]]:
     out: list[tuple[str, dict[str, Any]]] = []
     for path in sorted(PROFILES.glob("*/cron/jobs.json")):
@@ -322,6 +355,19 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
         }
     profile, job = match
     status, reason, age = classify_job(profile, job, now, exp.max_age_minutes)
+    drops = load_mark_job_run_drops(profile)
+    diagnostic_error = job.get("last_error")
+    if drops["state"] in {"malformed", "read_error"}:
+        diagnostic_error = f"mark_job_run drop counter {drops['state']}: {drops.get('error', 'unknown error')}"
+        status = "DEAD"
+        reason = diagnostic_error
+    elif drops.get("count", 0) > 0:
+        diagnostic_error = (
+            f"mark_job_run terminal metadata drops={drops['count']} "
+            f"(last_at={drops.get('last_at')}, last_job_id={drops.get('last_job_id')})"
+        )
+        status = "DEAD"
+        reason = diagnostic_error
     extra: dict[str, Any] = {}
     if exp.key == "verdict-router":
         extra["apply_state"] = "apply" if (STATE_DIR / "verdict-router.apply-enabled").exists() else "shadow"
@@ -344,8 +390,9 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
         "last_run_at": job.get("last_run_at"),
         "last_age_minutes": None if age is None else round(age, 1),
         "last_status": job.get("last_status"),
-        "last_error": job.get("last_error"),
+        "last_error": diagnostic_error,
         "last_delivery_error": job.get("last_delivery_error"),
+        "mark_job_run_drops": drops,
         "script": job.get("script"),
         "output_artifact": output,
         "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
