@@ -1693,6 +1693,35 @@ class TestDataQualityFramework(unittest.TestCase):
         assignee_idx = args.index("--assignee")
         self.assertEqual(args[assignee_idx + 1], "trading-data-oracle")  # Routed to oracle
 
+    @patch("__main__.send_discord_alert_cooled", return_value=True)
+    @patch("__main__.query_last_task")
+    @patch("subprocess.run")
+    def test_route_breaches_unknown_type_defaults_to_sycode_pm(self, mock_run, mock_query, mock_discord):
+        """Unrecognized diagnostic types must create cards in the Sycode PM lane."""
+        mock_query.return_value = None
+        mock_proc = MagicMock()
+        mock_proc.stdout = '{"id": "t_unknown_type_1"}'
+        mock_run.return_value = mock_proc
+
+        breaches = [{
+            "type": "UNRECOGNIZED_DIAGNOSTIC",
+            "metric": "unknown_metric",
+            "value": 1,
+            "threshold": 0,
+            "message": "Unknown diagnostic type.",
+        }]
+
+        routed, deduped, _h = route_breaches_to_kanban(
+            breaches, ["/tmp/report.json"], state={}
+        )
+
+        self.assertEqual(routed, 1)
+        self.assertEqual(deduped, 0)
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assignee_idx = args.index("--assignee")
+        self.assertEqual(args[assignee_idx + 1], "sycode-trading-pm")
+
     @patch("subprocess.run")
     def test_self_heal_success(self, mock_run):
         # Configure subprocess mocks
