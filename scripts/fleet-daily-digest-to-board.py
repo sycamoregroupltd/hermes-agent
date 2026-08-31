@@ -35,13 +35,17 @@ _NOTEPAD = NotepadStore(
 
 def _load_state() -> dict:
     """Load job state from the notepad (primary), falling back to the JSON
-    mirror so the first notepad-enabled run doesn't lose prior state."""
+    mirror only when the notepad key is genuinely unset during migration.
+
+    NotepadStore.get raises on CLI/store failures, so a broken source of truth
+    is fail-visible and never reaches the mirror fallback.
+    """
     raw = _NOTEPAD.get("digest:card")
     if raw is not None:
         try:
             return json.loads(raw)
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("invalid JSON in cron notepad digest:card") from exc
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
     return state
 

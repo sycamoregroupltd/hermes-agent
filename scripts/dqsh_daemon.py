@@ -119,12 +119,16 @@ try:
     _DQSH_NOTEPAD = NotepadStore(
         "c7226b0fbbe5", "/home/frank/.hermes/profiles/jarvis-os-pm"
     )
-except Exception:
+except Exception as exc:
     _DQSH_NOTEPAD = None
+    _DQSH_NOTEPAD_ERROR = exc
 
 
 def _use_notepad():
-    return _DQSH_NOTEPAD is not None and STATE_FILE == "/home/frank/.hermes/dqsh_state.json"
+    production = STATE_FILE == "/home/frank/.hermes/dqsh_state.json"
+    if production and _DQSH_NOTEPAD is None:
+        raise RuntimeError(f"cron notepad unavailable for dqsh state: {_DQSH_NOTEPAD_ERROR}")
+    return production
 
 
 def load_state():

@@ -55,9 +55,18 @@ class NotepadStore:
         """Return the value for key, or None if unset/empty."""
         p = _run(self.job_id, self.hermes_home, ["get", key])
         out = (p.stdout or "").strip()
+        if p.returncode != 0:
+            raise RuntimeError(
+                f"notepad get failed for {self.job_id}:{key}: "
+                f"{p.stderr.strip() or out or 'CLI returned nonzero'}"
+            )
         if out.startswith("No notepad key") or out.startswith("Notepad for job"):
             return None
-        return out or None
+        if not out:
+            raise RuntimeError(
+                f"unexpected empty notepad get output for {self.job_id}:{key}"
+            )
+        return out
 
     def set(self, key: str, value: str) -> str:
         """Upsert a value. Raises on notepad full / CLI failure."""
