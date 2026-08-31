@@ -8470,17 +8470,18 @@ def run_conversation(
                     continue
 
                 # Nudge budget exhausted: the model has had its chances and
-                # still ended the turn with only narration (no terminal board
-                # tool). Rather than let the process exit rc=0 and leave the
-                # card silently `running` (the protocol_violation class tracked
+                # still ended the turn without a successful native lifecycle
+                # transition. Rather than let the process exit rc=0 and leave
+                # the card silently `running` (the protocol_violation class tracked
                 # in t_44cfa735), fire a concrete kanban_block so the card
                 # lands in a visible, routable `blocked` state with a real
                 # reason. The block is gated on HERMES_KANBAN_TASK and only
-                # when no terminal call was ever made this session.
+                # when no successful terminal result was recorded this session.
                 try:
                     from agent.kanban_stop import build_kanban_stop_fallback_block
 
                     _fallback = build_kanban_stop_fallback_block(
+                        messages=messages,
                         final_response=final_response,
                         model=getattr(agent, "model", None),
                         attempts=getattr(agent, "_kanban_stop_nudges", 0),
@@ -8508,7 +8509,7 @@ def run_conversation(
                             _block_result,
                         )
                         agent._emit_status(
-                            "🛑 Kanban worker exited without a terminal call — "
+                            "🛑 Kanban worker exited without a successful native terminal — "
                             "auto-blocking with a recorded reason (protocol-violation guard)."
                         )
                     except Exception:

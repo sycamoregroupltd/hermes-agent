@@ -399,30 +399,29 @@ Every profile that works kanban tasks automatically gets the worker lifecycle �
 1. On spawn, call `kanban_show()` to read title + body + parent handoffs + prior attempts + full comment thread.
 2. `cd $HERMES_KANBAN_WORKSPACE` (via the terminal tool) and do the work there.
 3. Call `kanban_heartbeat(note="...")` every few minutes during long operations. **If your work may run longer than 1 hour, call `kanban_heartbeat` at least once an hour** — the dispatcher reclaims tasks that have been running past `kanban.dispatch_stale_timeout_seconds` (default 4 h) with no heartbeat in the last hour, on the assumption the worker crashed without cleanup. A reclaim is benign (the task goes back to `ready` for re-dispatch without a failure-counter tick) but you lose your current run's progress.
-4. Complete with `kanban_complete(summary="...", metadata={...})`, or `kanban_block(reason="...")` if stuck.
+4. End with exactly one successful native lifecycle transition: `kanban_complete` when final, `kanban_request_review` for same-card review, `kanban_request_changes` when a reviewer returns rework, or `kanban_block` for a genuine external blocker. Empty/no-op findings still require the applicable terminal.
 
-That final `kanban_complete` / `kanban_block` call is part of the worker
-protocol. If the worker process exits with status 0 while the task is still
-`running`, the dispatcher treats that as a protocol violation and emits a
-`protocol_violation` event.
+A plain-text response and a rejected terminal tool call are not lifecycle transitions. If the worker process exits with status 0 while the task is still `running`, the dispatcher records the run outcome as `crashed`, emits a `protocol_violation` event, and never silently treats it as completion.
 
 **Agent-side prevention:** Before the worker exits, Hermes injects up to two
-synthetic nudges when it detects the model is about to stop without a terminal
-board tool call. This catches the common case where the model narrates the next
-step ("Let me write the report") and stops with `finish_reason=stop`. The nudge
-reminds the model to call `kanban_complete` or `kanban_block` immediately. This
-guard is active only for dispatcher-spawned workers (`HERMES_KANBAN_TASK` is
-set) and can be disabled with `HERMES_KANBAN_STOP_NUDGE=0`.
+synthetic nudges when it detects the model is about to stop without a successful
+native terminal result. This catches both narration-only exits and rejected
+terminal attempts. The nudge tells the worker to correct the payload and call
+exactly one applicable terminal. A successful review handoff is terminal too, so
+the guard does not nudge or double-block it. This guard is active only for
+dispatcher-spawned workers (`HERMES_KANBAN_TASK` is set) and can be disabled with
+`HERMES_KANBAN_STOP_NUDGE=0` for controlled debugging; the dispatcher-side
+failure classification still applies.
 
 **Dispatcher-side recovery:** If the nudges are exhausted or the worker crashes
 before reaching the nudge, the dispatcher gives the violation a **bounded retry**
 (up to `_PROTOCOL_VIOLATION_FAILURE_LIMIT` consecutive violations, default 3)
-before auto-blocking the task instead of respawning it into the same loop. The
-budget counts only *consecutive* clean-exit protocol violations — interleaved
-rate-limited requeues are neutral, and any other failure kind resets the
-streak — and a per-task `max_retries` overrides the bound. This usually means
-the model wrote a plain-text answer and exited without using the Kanban tool
-surface.
+before routing the task to the distinct `completed_pending_review` missing-exit
+state instead of respawning it into the same loop. The budget counts only
+*consecutive* clean-exit protocol violations — interleaved rate-limited requeues
+are neutral, and any other failure kind resets the streak — and a per-task
+`max_retries` overrides the bound. The failed run remains durably recorded as
+`crashed` regardless of later retry or review routing.
 
 The lifecycle plus the load-bearing reference details (workspace kinds, deliverable `artifacts`, claiming created cards) ship in that system-prompt block, so every worker has them regardless of which profile it runs under — no per-profile skill setup required.
 

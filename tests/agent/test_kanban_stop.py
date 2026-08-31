@@ -30,13 +30,13 @@ def test_env_can_disable(clear_kanban_env):
     assert build_kanban_stop_nudge(messages=[]) is None
 
 
-def test_nudge_when_no_terminal_tool(clear_kanban_env):
+def test_completion_contract_empty_result_still_requires_terminal(clear_kanban_env):
     clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_46be8aa5")
     messages = [
         {"role": "user", "content": "work kanban task"},
         {
             "role": "assistant",
-            "content": "Let me write the comprehensive recipe.",
+            "content": "No changes were required.",
             "tool_calls": [
                 {
                     "id": "1",
@@ -55,24 +55,56 @@ def test_nudge_when_no_terminal_tool(clear_kanban_env):
     assert "protocol violation" in nudge.lower() or "protocol" in nudge.lower()
 
 
-def test_no_nudge_after_kanban_complete(clear_kanban_env):
-    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
-    messages = [
+def _successful_terminal(name: str, call_id: str = "1") -> list[dict]:
+    return [
         {
             "role": "assistant",
             "content": "",
             "tool_calls": [
                 {
-                    "id": "1",
+                    "id": call_id,
                     "type": "function",
-                    "function": {"name": "kanban_complete", "arguments": "{}"},
+                    "function": {"name": name, "arguments": "{}"},
                 }
             ],
         },
-        {"role": "tool", "name": "kanban_complete", "tool_call_id": "1", "content": "done"},
+        {
+            "role": "tool",
+            "name": name,
+            "tool_call_id": call_id,
+            "content": '{"ok": true, "task_id": "t_abc"}',
+        },
     ]
+
+
+def test_completion_contract_normal_completion(clear_kanban_env):
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    messages = _successful_terminal("kanban_complete")
     assert session_called_kanban_terminal(messages) is True
     assert build_kanban_stop_nudge(messages=messages) is None
+
+
+@pytest.mark.parametrize("terminal", ["kanban_request_review", "kanban_request_changes"])
+def test_completion_contract_review_handoff(clear_kanban_env, terminal):
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    messages = _successful_terminal(terminal)
+    assert session_called_kanban_terminal(messages) is True
+    assert build_kanban_stop_nudge(messages=messages) is None
+
+
+def test_completion_contract_genuine_block(clear_kanban_env):
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    messages = _successful_terminal("kanban_block")
+    assert session_called_kanban_terminal(messages) is True
+    assert build_kanban_stop_nudge(messages=messages) is None
+
+
+def test_rejected_terminal_does_not_satisfy_completion_contract(clear_kanban_env):
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    messages = _successful_terminal("kanban_complete")
+    messages[-1]["content"] = '{"error": "missing summary"}'
+    assert session_called_kanban_terminal(messages) is False
+    assert build_kanban_stop_nudge(messages=messages) is not None
 
 
 
@@ -82,8 +114,8 @@ def test_no_nudge_after_kanban_complete(clear_kanban_env):
 # ── Integration: agent nudge + dispatcher bounded retry ──────────────
 # These tests verify the two layers compose correctly: the agent-side
 # nudge fires first (up to 2 attempts), and if the worker still exits
-# without a terminal call, the dispatcher's bounded retry (streak of 3)
-# handles it.  See also tests/hermes_cli/test_kanban_core_functionality.py
+# without a successful native terminal result, the dispatcher's bounded retry
+# handles it. See also tests/hermes_cli/test_kanban_core_functionality.py
 # for the dispatcher-side streak tests.
 
 
@@ -110,8 +142,8 @@ def test_nudge_and_dispatcher_budgets_are_independent(clear_kanban_env):
 
 
 # ── Hard terminal-call fallback (t_44cfa735) ───────────────────────────
-# When the nudge budget is exhausted and the worker STILL exits with only a
-# narration (no kanban_complete/kanban_block), the harness must fire a concrete
+# When the nudge budget is exhausted and the worker STILL exits without a
+# successful native lifecycle transition, the harness must fire a concrete
 # kanban_block so the card lands in a visible `blocked` state with a real reason
 # — never silently `running` (protocol_violation) and never a phantom complete.
 
@@ -144,24 +176,8 @@ def test_fallback_block_disabled_without_kanban_task(clear_kanban_env):
 
 def test_fallback_block_suppressed_if_terminal_called(clear_kanban_env):
     clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_pv123")
-    # A session that already called a terminal tool must never be double-blocked.
-    messages = [
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {"id": "1", "type": "function",
-                 "function": {"name": "kanban_complete", "arguments": "{}"}},
-            ],
-        },
-        {"role": "tool", "name": "kanban_complete",
-         "tool_call_id": "1", "content": "done"},
-    ]
-    # session_called_kanban_terminal scans live messages; pass them explicitly.
+    messages = _successful_terminal("kanban_request_review")
     assert build_kanban_stop_fallback_block(
-        attempts=2, max_attempts=2,
-    ) is not None  # returns payload, but the harness guards on session_called_kanban_terminal
-    # The defensive double-guard inside build_kanban_stop_fallback_block only
-    # checks session_called_kanban_terminal(None); the harness passes live
-    # messages. Verify session_called_kanban_terminal sees the terminal call.
+        messages=messages, attempts=2, max_attempts=2,
+    ) is None
     assert session_called_kanban_terminal(messages) is True
