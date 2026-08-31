@@ -354,6 +354,15 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # by the paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS
     # "apps/web"/"app route").
     r"\broute\s+(implementation|review|independent\s+review|disposition|the\s+fix|a\s+reviewed\s+(?:implementation|card))\b(?!\s+(?:component|page|layout|middleware|handler|ui|frontend|app|dashboard|route)\b)",
+    # Dispatch-verb idiom (t_e46971ad): "route activation through approval",
+    # "route the handoff via review", and similar language directs a fix or
+    # approval packet; it does not describe an application route. Keep the
+    # object vocabulary deliberately narrow so genuine "route component for
+    # dashboard" / app-route implementation remains web.
+    r"\broute\s+(?:(?:the|a|an|this|that)\s+)?(?:activation|approval|handoff|gate|review|fix|card|task)\b[^.\n]{0,80}\b(?:through|via|for)\s+(?:approval|activation|handoff|gate|review|sign[- ]?off)\b",
+    # Follow-up/remediation routing is another dispatch-verb form found in
+    # review instructions (t_d64a01d1), not a browser route implementation.
+    r"\broute\s+(?:(?:the|a|an|this|that)\s+)?(?:follow[- ]up|remediation|corrective|repair)\s+(?:fix|card|task)\b",
     # Companion: "comment disposition back on <owner>" / "post ... disposition"
     # evidence-back-reference phrasing in DIAGNOSE/forensics cards routes the
     # verdict/disposition rather than implementing a browser route.

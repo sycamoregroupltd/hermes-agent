@@ -1310,5 +1310,67 @@
    ]
   },
   "description": "BLOCK: paired negative for t_63ac495e; the SAME 'No implementation/promotion/paper-sleeve route ... paper-only' wording attached to concrete apps/web React route/page work with app-surface changed_files must still require running-app VERIFY_PASS (classify web)."
+ },
+ {
+  "name": "t_e46971ad-route-activation-through-approval-allows",
+  "task_id": "t_e46971ad_dispatch_allow",
+  "expected": "allow",
+  "expected_class": "not_web",
+  "title": "A3: substrate EAGAIN hardening",
+  "body": "Identify the narrowest substrate fix, build it READY, and route activation through approval. This is a backend cron fix with no browser or app surface.",
+  "summary": "backend cron fix built READY; route activation through approval; no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "scripts/cron_retry.py",
+    "scripts/test_cron_retry.py"
+   ]
+  },
+  "description": "ALLOW: standalone route as a dispatch verb in 'route activation through approval' must not classify a backend fix as web."
+ },
+ {
+  "name": "t_e46971ad-route-activation-through-approval-paired-frontend-negative",
+  "task_id": "t_e46971ad_dispatch_frontend_negative",
+  "expected": "block",
+  "expected_class": "web",
+  "title": "Build the dashboard route component",
+  "body": "Implement apps/web React dashboard route component and page layout. The component routes activation through approval and renders the approval state. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+  "summary": "concrete apps/web route component; no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "apps/web/src/app/approval/page.tsx"
+   ]
+  },
+  "description": "BLOCK: paired frontend negative proves approval-routing wording does not bypass the real apps/web route/page gate."
+ },
+ {
+  "name": "t_d64a01d1-route-follow-up-fix-card-allows",
+  "task_id": "t_d64a01d1_dispatch_followup_allow",
+  "expected": "allow",
+  "expected_class": "not_web",
+  "title": "REVIEW: configuration verification and Obsidian text audit",
+  "body": "Record the exact failing item with evidence so a human/PM can route a follow-up fix card. This is a review-only configuration task with no app surface.",
+  "summary": "review-only configuration evidence; route a follow-up fix card; no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "config/checks.yaml",
+    "docs/audit.md"
+   ]
+  },
+  "description": "ALLOW: 'route a follow-up fix card' is dispatch language, not a browser route implementation."
+ },
+ {
+  "name": "t_d64a01d1-route-follow-up-fix-card-paired-frontend-negative",
+  "task_id": "t_d64a01d1_dispatch_followup_frontend_negative",
+  "expected": "block",
+  "expected_class": "web",
+  "title": "Implement the route follow-up fix dashboard",
+  "body": "Implement apps/web React dashboard route component and page layout for the route follow-up fix dashboard. This is concrete frontend UI work and no running app VERIFY_PASS is supplied.",
+  "summary": "concrete apps/web route dashboard; no running app VERIFY_PASS supplied",
+  "metadata": {
+   "changed_files": [
+    "apps/web/src/app/follow-up-fix/page.tsx"
+   ]
+  },
+  "description": "BLOCK: paired frontend negative proves follow-up-fix dispatch wording does not weaken concrete apps/web route work."
  }
 ]
