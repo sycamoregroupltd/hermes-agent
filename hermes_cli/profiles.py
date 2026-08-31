@@ -381,32 +381,64 @@ def profile_exists(name: str) -> bool:
 
 
 def profile_has_terminal(name: str, *, _cache: dict = {}) -> bool:
-    """Return True when *name* is a real Hermes profile whose config.yaml
-    advertises the ``terminal`` toolset (t_a2ef2ea2 / t_c8f612f5).
+    """Return True when *name* is a real Hermes profile that would actually
+    load the ``terminal`` toolset into a spawned CLI worker session
+    (t_a2ef2ea2 / t_c8f612f5 / t_d3e9ae5e).
 
     Review / REWORK / RISK-VERDICT cards need a terminal-capable worker
     (they run pytest, psql, gh, git, etc.). The dispatcher's selection loop
     only checked ``profile_exists`` (directory presence) which is blind to
     capability, so review cards landed on terminal-less reviewers and
     re-blocked. This helper lets the dispatcher refuse to spawn review work
-    on a profile that cannot execute it. Cheap + read-only; falls back to
-    False on any parse error / missing file so a malformed profile never
-    silently looks terminal-capable.
+    on a profile that cannot execute it.
+
+    Declared-capability vs runtime-capability (t_d3e9ae5e AC-3 soak gap):
+    a naive scan of the raw ``toolsets``/``platform_toolsets`` config.yaml
+    lists is blind to ``agent.disabled_toolsets`` and other resolution
+    rules — a profile can list ``terminal`` and still have it stripped out
+    of the effective set. This resolves the SAME effective CLI toolset set
+    that ``hermes_cli.kanban_db._resolve_worker_cli_toolsets`` computes and
+    passes as the spawned worker's explicit ``--toolsets`` flag, so the
+    capability gate and the actual spawn argument can never drift apart —
+    "would we tell the worker it has terminal" and "does this gate think it
+    has terminal" are now literally the same computation. Falls back to the
+    prior raw-list scan if toolset resolution isn't importable (e.g. a
+    partial/test environment), and to False on any other error so a
+    malformed profile never silently looks terminal-capable.
     """
     canon = normalize_profile_name(name)
     if canon not in _cache:
         capable = False
         try:
-            import yaml  # hermes_cli already depends on yaml
             cfg_path = get_profile_dir(canon) / "config.yaml"
             if cfg_path.is_file():
-                with open(cfg_path, "r", encoding="utf-8") as fh:
-                    data = yaml.safe_load(fh) or {}
-                toolsets = (data.get("toolsets") or []) + [
-                    t for grp in (data.get("platform_toolsets") or {}).values()
-                    for t in (grp or [])
-                ]
-                capable = "terminal" in toolsets
+                try:
+                    from hermes_constants import (
+                        reset_hermes_home_override,
+                        set_hermes_home_override,
+                    )
+                    from hermes_cli.config import load_config
+                    from hermes_cli.tools_config import _get_platform_tools
+
+                    token = set_hermes_home_override(str(get_profile_dir(canon)))
+                    try:
+                        cfg = load_config()
+                        capable = "terminal" in _get_platform_tools(cfg, "cli")
+                    finally:
+                        reset_hermes_home_override(token)
+                except Exception:
+                    # Resolution machinery unavailable (e.g. partial test
+                    # env) — fall back to the pre-t_d3e9ae5e raw-list scan
+                    # rather than silently treating every profile as
+                    # incapable.
+                    import yaml  # hermes_cli already depends on yaml
+                    with open(cfg_path, "r", encoding="utf-8") as fh:
+                        data = yaml.safe_load(fh) or {}
+                    toolsets = (data.get("toolsets") or []) + [
+                        t for grp in (data.get("platform_toolsets") or {}).values()
+                        for t in (grp or [])
+                    ]
+                    capable = "terminal" in toolsets
         except Exception:
             capable = False
         _cache[canon] = capable

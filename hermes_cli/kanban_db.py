@@ -4137,16 +4137,28 @@ def _task_search_text(task: Task, comments: Iterable[Comment] = ()) -> str:
     return "\n".join(parts).casefold()
 
 
-def _task_is_review_lane(task: Task) -> bool:
-    assignee = (task.assignee or "").casefold()
-    title_body = f"{task.title or ''}\n{task.body or ''}".casefold()
+def _is_review_lane(
+    assignee: Optional[str], title: Optional[str], body: Optional[str],
+) -> bool:
+    """Heuristic: does this (assignee, title, body) triple look like a
+    reviewer-routed card? Extracted from :func:`_task_is_review_lane` (t_d3e9ae5e)
+    so the ready-lane dispatch gate can reuse the exact same heuristic without
+    constructing a full :class:`Task` (whose many required positional fields
+    a raw dispatch-loop row doesn't have populated).
+    """
+    assignee_cf = (assignee or "").casefold()
+    title_body = f"{title or ''}\n{body or ''}".casefold()
     return (
-        any(marker in assignee for marker in REVIEW_LANE_ASSIGNEE_MARKERS)
+        any(marker in assignee_cf for marker in REVIEW_LANE_ASSIGNEE_MARKERS)
         and any(marker in title_body for marker in REVIEW_LANE_TEXT_MARKERS)
     ) or (
-        (task.title or "").strip().casefold().startswith("review")
+        (title or "").strip().casefold().startswith("review")
         and any(marker in title_body for marker in REVIEW_LANE_TEXT_MARKERS)
     )
+
+
+def _task_is_review_lane(task: Task) -> bool:
+    return _is_review_lane(task.assignee, task.title, task.body)
 
 
 def _task_is_review_required_source(
@@ -10135,7 +10147,7 @@ def _dispatch_once_locked(
         )
 
     ready_rows = conn.execute(
-        "SELECT id, assignee FROM tasks "
+        "SELECT id, assignee, title, body FROM tasks "
         "WHERE status = 'ready' AND claim_lock IS NULL "
         "ORDER BY priority DESC, created_at ASC"
     ).fetchall()
@@ -10343,6 +10355,35 @@ def _dispatch_once_locked(
             # of human-pulled work.
             result.skipped_nonspawnable.append(row["id"])
             continue
+        # Ready-lane terminal-capability gate (t_d3e9ae5e / AC-3 soak gap,
+        # t_f84a8263). The review-column gate below only guards
+        # ``status='review'`` rows, but review-routed cards (REVIEW: ...,
+        # Review PR ..., GUARDIAN REVIEW ..., or assigned to a
+        # reviewer/guardian-named profile) are frequently CREATED in
+        # ``ready``/``todo`` and flow through THIS loop, never touching the
+        # review-column gate at all. The 24h soak (t_f84a8263) measured 34
+        # capability-kind reblocks with zero ``reviewer_capability`` events
+        # fired on any board because of exactly this lane gap. Reuse the
+        # same ``_task_is_review_lane`` heuristic the dependency-warning
+        # diagnostics already trust, and the same ``profile_has_terminal``
+        # capability check the review-column gate uses, so a review-looking
+        # ready card assigned to a terminal-less profile is refused here
+        # too instead of spawning a doomed worker that just re-blocks.
+        if _is_review_lane(row_assignee, row["title"], row["body"]):
+            try:
+                from hermes_cli.profiles import profile_has_terminal as _ready_lane_has_terminal
+            except Exception:
+                _ready_lane_has_terminal = None  # type: ignore[assignment]
+            if _ready_lane_has_terminal is not None and not _ready_lane_has_terminal(row_assignee):
+                if not dry_run:
+                    with write_txn(conn):
+                        _append_event(
+                            conn, row["id"], "reviewer_capability",
+                            {"assignee": row_assignee,
+                             "reason": "ready-lane review card assigned to non-terminal profile"},
+                        )
+                result.skipped_reviewer_incapable.append(row["id"])
+                continue
         # Per-profile concurrency cap (#21582): even if there's global
         # headroom, refuse to spawn for an assignee that's already at
         # its in-flight cap. Prevents one profile's local model / API

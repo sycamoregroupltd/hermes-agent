@@ -4577,6 +4577,121 @@ def test_dispatch_review_skips_nonspawnable(kanban_home, monkeypatch):
     assert not res.spawned
 
 
+# Ready-lane terminal-capability gate (t_d3e9ae5e / AC-3 soak gap, t_f84a8263)
+# ---------------------------------------------------------------------------
+# The 24h soak measured 34 capability-kind reblocks with ZERO
+# reviewer_capability gate events on any board: review-routed cards are
+# created status='ready'/'todo' and never touch the status='review' gate
+# above at all. These tests pin the ready-lane gate added to close that
+# lane gap — they must fail on a checkout that only has the review-column
+# gate (pre-t_d3e9ae5e).
+
+
+def test_dispatch_ready_lane_review_card_skips_terminal_less_reviewer(
+    kanban_home, monkeypatch,
+):
+    """A review-routed card created status=ready is refused, not spawned,
+    when its assignee is a real profile that lacks the terminal toolset."""
+    from hermes_cli import profiles
+    monkeypatch.setattr(profiles, "profile_exists", lambda name: True)
+    monkeypatch.setattr(profiles, "profile_has_terminal", lambda name: False)
+    with kb.connect() as conn:
+        t = kb.create_task(
+            conn, title="REVIEW: PR #123", assignee="trading-risk-reviewer",
+        )
+        # Card is created status='ready' (or 'todo'->'ready'), same as the
+        # soak's real-world failures — NOT status='review'.
+        assert kb.get_task(conn, t).status in ("ready", "todo")
+        _set_task_status(conn, t, "ready")
+        res = kb.dispatch_once(conn, dry_run=True)
+    assert t in res.skipped_reviewer_incapable
+    assert not res.spawned
+
+
+def test_dispatch_ready_lane_review_card_emits_reviewer_capability_event(
+    kanban_home, monkeypatch,
+):
+    """Refusing a ready-lane review card emits the same reviewer_capability
+    audit event the review-column gate emits, so fleet telemetry sees it."""
+    from hermes_cli import profiles
+    monkeypatch.setattr(profiles, "profile_exists", lambda name: True)
+    monkeypatch.setattr(profiles, "profile_has_terminal", lambda name: False)
+    with kb.connect() as conn:
+        t = kb.create_task(
+            conn, title="REVIEW: PR #123", assignee="trading-risk-reviewer",
+        )
+        _set_task_status(conn, t, "ready")
+        kb.dispatch_once(conn, dry_run=False)
+        events = kb.list_events(conn, t)
+    kinds = [e.kind for e in events]
+    assert "reviewer_capability" in kinds
+
+
+def test_dispatch_ready_lane_review_card_spawns_when_reviewer_has_terminal(
+    kanban_home, monkeypatch,
+):
+    """The new gate must not block a genuinely terminal-capable reviewer —
+    only the terminal-less case is refused."""
+    from hermes_cli import profiles
+    monkeypatch.setattr(profiles, "profile_exists", lambda name: True)
+    monkeypatch.setattr(profiles, "profile_has_terminal", lambda name: True)
+    with kb.connect() as conn:
+        t = kb.create_task(
+            conn, title="REVIEW: PR #123", assignee="trading-risk-reviewer",
+        )
+        _set_task_status(conn, t, "ready")
+        res = kb.dispatch_once(conn, dry_run=True)
+    assert t in [s[0] for s in res.spawned]
+    assert t not in res.skipped_reviewer_incapable
+
+
+def test_dispatch_ready_lane_non_review_card_ignores_terminal_gate(
+    kanban_home, monkeypatch,
+):
+    """The new gate is scoped to review-routed cards only — an ordinary
+    ready task for a terminal-less profile is unaffected by it (existing
+    per-profile / nonspawnable gates still apply as before)."""
+    from hermes_cli import profiles
+    monkeypatch.setattr(profiles, "profile_exists", lambda name: True)
+    monkeypatch.setattr(profiles, "profile_has_terminal", lambda name: False)
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="build the widget", assignee="alice")
+        res = kb.dispatch_once(conn, dry_run=True)
+    assert t in [s[0] for s in res.spawned]
+    assert t not in res.skipped_reviewer_incapable
+
+
+def test_profile_has_terminal_declared_but_stripped_by_disabled_toolsets(
+    kanban_home, monkeypatch, tmp_path,
+):
+    """profile_has_terminal must resolve the EFFECTIVE toolset set, not just
+    scan the raw declared lists (t_d3e9ae5e detection gap): a profile whose
+    config.yaml lists 'terminal' in platform_toolsets.cli but also sets
+    agent.disabled_toolsets: [terminal] does NOT actually get a terminal in
+    a spawned worker session, and the gate must say so."""
+    import yaml
+    from hermes_cli import profiles
+
+    profiles_root = tmp_path / "profiles"
+    profiles_root.mkdir()
+    prof_dir = profiles_root / "declared-only-reviewer"
+    prof_dir.mkdir()
+    (prof_dir / "config.yaml").write_text(
+        yaml.safe_dump({
+            "agent": {"disabled_toolsets": ["terminal"]},
+            "platform_toolsets": {"cli": ["terminal", "file"]},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(profiles, "_get_profiles_root", lambda: profiles_root)
+    # Clear the module-level memoization cache so this profile is resolved
+    # fresh rather than reusing a result cached by an earlier test/profile.
+    # ``_cache`` is a keyword-only default (``*, _cache: dict = {}``), which
+    # lives in ``__kwdefaults__``, not ``__defaults__``.
+    profiles.profile_has_terminal.__kwdefaults__["_cache"].clear()
+    assert profiles.profile_has_terminal("declared-only-reviewer") is False
+
+
 def test_review_status_in_valid_statuses():
     """'review' is a valid task status."""
     assert "review" in kb.VALID_STATUSES
