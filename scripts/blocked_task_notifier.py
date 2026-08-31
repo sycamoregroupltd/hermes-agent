@@ -95,28 +95,32 @@ def table_exists(con, table: str) -> bool:
     return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
 
 
-def subscribed_task_ids(con, task_ids: list[str]) -> set[str]:
-    """Return task_ids that have an active native notify-subscription on this board.
+def natively_notified_task_ids(con, task_ids: list[str]) -> set[str]:
+    """Return blocked task ids whose native *notification* was delivered.
 
-    Native kanban notify-subscribe (adoption item 7, jarvis-os t_8d2b855a) delivers
-    per-task terminal events (blocked/completed/...) to the subscribed chat via the
-    gateway notifier (gateway/kanban_watchers.py::_kanban_notifier_watcher). A task
-    with an active subscription is therefore already natively notified on block; the
-    polling notifier must NOT also escalate it, or the same event is double-flagged
-    (native + notifier). This is the 'per-task notification leg' that native
-    notify-subscribe replaces. Tasks WITHOUT a subscription keep the full
-    critical-classification + time-based-escalation safety net below.
-
-    Fail-open: if the subscription table cannot be read, return empty so a critical
-    alert is never suppressed because of a lookup error.
+    The gateway watcher advances ``kanban_notify_subs.last_event_id`` only after
+    adapter.send() succeeds. Requiring that cursor to cover the latest blocked
+    event gives this polling safety net an independently checkable handoff
+    boundary. Wake-only rows are excluded because they do not deliver a visible
+    notification. Any missing table, column, event, or query failure fails open.
     """
-    if not task_ids or not table_exists(con, 'kanban_notify_subs'):
+    if not task_ids or not table_exists(con, 'kanban_notify_subs') or not table_exists(con, 'task_events'):
         return set()
     placeholders = ','.join('?' * len(task_ids))
     try:
         rows = con.execute(
-            f'SELECT DISTINCT task_id FROM kanban_notify_subs WHERE task_id IN ({placeholders})',
-            list(task_ids),
+            f'''SELECT s.task_id
+                FROM kanban_notify_subs AS s
+                JOIN (
+                    SELECT task_id, MAX(id) AS event_id
+                    FROM task_events
+                    WHERE kind = 'blocked' AND task_id IN ({placeholders})
+                    GROUP BY task_id
+                ) AS e ON e.task_id = s.task_id
+                WHERE s.task_id IN ({placeholders})
+                  AND COALESCE(s.delivery_mode, 'notify') IN ('notify', 'notify+wake')
+                  AND s.last_event_id >= e.event_id''',
+            list(task_ids) + list(task_ids),
         ).fetchall()
         return {r[0] for r in rows}
     except Exception:
@@ -240,6 +244,11 @@ def send_alert(message: str) -> tuple[bool, str]:
     return wa_ok, f'rc={last_rc} {detail}'.strip()
 
 
+def suppress_duplicate_tier(item: dict, tier: str | None) -> bool:
+    """Suppress only a natively delivered task's duplicate NEW alert."""
+    return tier == 'NEW' and bool(item.get('native_notified'))
+
+
 def format_message(tier: str, pageable: list[dict], now_epoch: int) -> str:
     prefix = '🚨 Frank-critical newly blocked kanban task(s):' if tier == 'NEW' else f'🚨 {tier}: Frank-critical blocked kanban task(s) still unacked:'
     lines = [prefix]
@@ -278,20 +287,22 @@ def main():
         try:
             con = kb.connect(db_path=db)
             rows = con.execute("SELECT id, title, body, result, last_failure_error FROM tasks WHERE status='blocked'").fetchall()
-            # ADOPT-7 (t_8d2b855a): tasks with an active native notify-subscription
-            # are already natively notified on block by the gateway notifier; skip
-            # them here so the same event is not double-flagged (native + notifier).
-            # Tasks without a subscription keep the full critical escalation path.
-            subscribed = subscribed_task_ids(con, [row['id'] for row in rows])
+            # ADOPT-7 (t_8d2b855a): classify every blocked task. The native
+            # suppression below is limited to the duplicate NEW event leg, and
+            # only after the gateway cursor proves adapter.send() succeeded.
+            natively_notified = natively_notified_task_ids(con, [row['id'] for row in rows])
             for row in rows:
-                if row['id'] in subscribed:
-                    continue
                 key = f"{board}:{row['id']}"
                 label, cat = classify(fetch_context(con, row['id'], row))
-                now[key] = {'board': board, 'id': row['id'], 'title': (row['title'] or '').replace('\n', ' ')[:100], 'label': label, 'category': cat}
+                now[key] = {
+                    'board': board, 'id': row['id'],
+                    'title': (row['title'] or '').replace('\n', ' ')[:100],
+                    'label': label, 'category': cat,
+                    'native_notified': row['id'] in natively_notified,
+                }
         except Exception as exc:
             key = f'{board}:__notifier_db_error__'
-            now[key] = {'board': board, 'id': '__notifier_db_error__', 'title': f'blocked-task-notifier could not read board DB: {exc}', 'label': 'notifier-board-db-read-failure', 'category': 'material-regression'}
+            now[key] = {'board': board, 'id': '__notifier_db_error__', 'title': f'blocked-task-notifier could not read board DB: {exc}', 'label': 'notifier-board-db-read-failure', 'category': 'material-regression', 'native_notified': False}
         finally:
             if con is not None:
                 con.close()
@@ -302,7 +313,7 @@ def main():
     for key, entry in active_state.items():
         entry.setdefault('first_seen_epoch', now_epoch)
         entry.setdefault('delivered_tiers', [])
-        entry.update({k: now[key][k] for k in ('board', 'id', 'title', 'label', 'category')})
+        entry.update({k: now[key][k] for k in ('board', 'id', 'title', 'label', 'category', 'native_notified')})
 
     due_by_tier: dict[str, list[dict]] = {}
     for key, item in now.items():
@@ -310,6 +321,10 @@ def main():
             continue
         entry = active_state[key]
         tier = alert_tier(now_epoch - int(entry.get('first_seen_epoch', now_epoch)), list(entry.get('delivered_tiers', [])))
+        if suppress_duplicate_tier(item, tier):
+            # Native notify-subscribe already delivered this event. Keep the
+            # classified item eligible for 24H/72H governance escalation.
+            continue
         if tier:
             payload = dict(item)
             payload['key'] = key
