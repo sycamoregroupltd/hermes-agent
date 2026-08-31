@@ -3159,7 +3159,17 @@ def _cmd_gc(args: argparse.Namespace) -> int:
     )
     print(f"GC complete: {removed_ws} workspace(s), "
           f"{removed_events} event row(s), {removed_logs} log file(s) removed")
-    print(f"Audit record written to {kb.gc_events_audit_file_path()}")
+    audit_status = kb.gc_events_audit_write_succeeded()
+    if removed_events == 0:
+        print("No GC event audit record written (0 event rows deleted).")
+    elif audit_status is True:
+        print(f"Audit record written to {kb.gc_events_audit_file_path()}")
+    else:
+        print(
+            "WARNING: GC deleted event rows but no audit record was written; "
+            "reconcile-gc will not treat this sweep as authoritative.",
+            file=sys.stderr,
+        )
     return 0
 
 

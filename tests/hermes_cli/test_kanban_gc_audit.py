@@ -341,3 +341,105 @@ def test_concurrent_audit_writers_preserve_jsonl(kanban_home):
     assert len(records) == 8
     assert {record["status"] for record in records} == {"completed"}
     assert {record["min_event_id"] for record in records} == set(range(1, 9))
+
+
+def test_valid_but_incomplete_audit_fails_closed(kanban_home):
+    """A completed marker alone is never authoritative evidence."""
+    path = kb.gc_events_audit_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"status":"completed"}\n', encoding="utf-8")
+    with pytest.raises(kb.GcAuditCorruptionError, match="typed integer fields"):
+        kb.load_gc_audit_lines()
+
+
+def test_gc_audit_lock_fallback_without_fcntl(kanban_home, monkeypatch):
+    """The shared module remains importable and usable without POSIX fcntl."""
+    monkeypatch.setattr(kb, "_fcntl", None)
+    assert kb._emit_gc_audit([(7, "t_windows")], 1000, 3600, 500) is True
+    assert kb.load_gc_audit_lines()[0]["event_ids"] == [7]
+
+
+def test_post_commit_invariant_failure_still_emits_evidence(kanban_home, monkeypatch):
+    """A post-COMMIT invariant exception cannot lose the deletion record."""
+    with kb.connect_closing() as conn:
+        tid = _make_done_task_with_events(conn, count=2, age_days=60)
+        monkeypatch.setattr(
+            kb, "_check_file_length_invariant",
+            lambda _conn: (_ for _ in ()).throw(RuntimeError("post-commit check")),
+        )
+        assert kb.gc_events(conn, older_than_seconds=30 * 86400) == 2
+        records = kb.load_gc_audit_lines()
+        assert len(records) == 1
+        assert records[0]["task_ids"] == [str(tid)]
+
+
+def test_gc_audit_failure_status_is_false(kanban_home, monkeypatch):
+    """Best-effort audit failure is exposed to callers instead of claimed."""
+    monkeypatch.setattr(kb, "_gc_audit_file_path", lambda: Path("/proc/gc_events.jsonl"))
+    with kb.connect_closing() as conn:
+        _make_done_task_with_events(conn, count=1, age_days=60)
+        assert kb.gc_events(conn, older_than_seconds=30 * 86400) == 1
+        assert kb.gc_events_audit_write_succeeded() is False
+
+
+def test_cli_zero_deletion_does_not_claim_audit(capsys, monkeypatch, tmp_path):
+    """CLI reports zero deletion without inventing an audit record."""
+    class _RowsConn:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def execute(self, *_args):
+            class _Cursor:
+                def fetchall(self):
+                    return []
+            return _Cursor()
+
+    class _Args:
+        event_retention_days = 30
+        log_retention_days = 30
+        dry_run = False
+        audit_report = False
+
+    monkeypatch.setattr(kb, "connect_closing", lambda: _RowsConn())
+    monkeypatch.setattr(kb, "workspaces_root", lambda: tmp_path)
+    monkeypatch.setattr(kb, "gc_events", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(kb, "gc_worker_logs", lambda **_kwargs: 0)
+    monkeypatch.setattr(kb, "gc_events_audit_write_succeeded", lambda: None)
+    from hermes_cli.kanban import _cmd_gc
+    assert _cmd_gc(_Args()) == 0
+    out, err = capsys.readouterr()
+    assert "0 event row(s)" in out
+    assert "No GC event audit record written" in out
+    assert not err
+
+
+def test_cli_does_not_claim_failed_audit(capsys, monkeypatch, tmp_path):
+    """CLI output distinguishes deleted rows from missing evidence."""
+    class _RowsConn:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def execute(self, *_args):
+            class _Cursor:
+                def fetchall(self):
+                    return []
+            return _Cursor()
+
+    class _Args:
+        event_retention_days = 30
+        log_retention_days = 30
+        dry_run = False
+        audit_report = False
+
+    monkeypatch.setattr(kb, "connect_closing", lambda: _RowsConn())
+    monkeypatch.setattr(kb, "workspaces_root", lambda: tmp_path)
+    monkeypatch.setattr(kb, "gc_events", lambda *_args, **_kwargs: 2)
+    monkeypatch.setattr(kb, "gc_worker_logs", lambda **_kwargs: 0)
+    monkeypatch.setattr(kb, "gc_events_audit_write_succeeded", lambda: False)
+    from hermes_cli.kanban import _cmd_gc
+    assert _cmd_gc(_Args()) == 0
+    out, err = capsys.readouterr()
+    assert "Audit record written" not in out
+    assert "no audit record was written" in err

@@ -92,7 +92,10 @@ import sys
 import threading
 import logging
 import time
-import fcntl
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - exercised by Windows import smoke
+    _fcntl = None
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11814,6 +11817,44 @@ class GcAuditCorruptionError(RuntimeError):
     """The first-party GC audit stream cannot be trusted."""
 
 
+def _validate_gc_audit_record(record: dict, path: Path, line_no: int) -> None:
+    """Reject syntactically valid but semantically incomplete evidence."""
+    required_ints = (
+        "run_at", "retention_seconds", "cutoff", "min_event_id",
+        "max_event_id", "count",
+    )
+    if record.get("status") != "completed":
+        raise GcAuditCorruptionError(
+            f"GC audit file {path} line {line_no} has invalid status"
+        )
+    if any(
+        key not in record or isinstance(record[key], bool)
+        or not isinstance(record[key], int)
+        for key in required_ints
+    ):
+        raise GcAuditCorruptionError(
+            f"GC audit file {path} line {line_no} is missing typed integer fields"
+        )
+    if record["count"] <= 0 or record["retention_seconds"] < 0:
+        raise GcAuditCorruptionError(
+            f"GC audit file {path} line {line_no} has invalid numeric values"
+        )
+    event_ids = record.get("event_ids")
+    task_ids = record.get("task_ids")
+    if (
+        not isinstance(event_ids, list)
+        or len(event_ids) != record["count"]
+        or any(isinstance(value, bool) or not isinstance(value, int) for value in event_ids)
+        or not isinstance(task_ids, list)
+        or any(not isinstance(value, str) for value in task_ids)
+        or record["min_event_id"] != min(event_ids)
+        or record["max_event_id"] != max(event_ids)
+    ):
+        raise GcAuditCorruptionError(
+            f"GC audit file {path} line {line_no} has invalid completion fields"
+        )
+
+
 def load_gc_audit_lines() -> list[dict]:
     """Return completed GC records, newest-first, failing closed on corruption.
 
@@ -11842,12 +11883,23 @@ def load_gc_audit_lines() -> list[dict]:
                 f"GC audit file {path} line {line_no} is not an object"
             )
         if record.get("status") == "completed":
+            _validate_gc_audit_record(record, path, line_no)
             records.append(record)
     return records[::-1]
 
 
+_gc_audit_write_status: ContextVar[Optional[bool]] = ContextVar(
+    "gc_audit_write_status", default=None,
+)
+
+
+def gc_events_audit_write_succeeded() -> Optional[bool]:
+    """Return the current GC call's audit-write result for truthful CLI output."""
+    return _gc_audit_write_status.get()
+
+
 def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
-                   retention_seconds: int, cutoff: int) -> None:
+                   retention_seconds: int, cutoff: int) -> bool:
     """Append durable evidence for rows deleted by a committed GC transaction.
 
     The caller invokes this only after the delete commits. ``fcntl.flock``
@@ -11856,7 +11908,7 @@ def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
     not blocked, but a missing record can never be treated as a completion.
     """
     if not events_meta:
-        return
+        return False
     event_ids = [eid for eid, _ in events_meta]
     task_ids = sorted({tid for _, tid in events_meta})
     record = {
@@ -11878,16 +11930,20 @@ def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
         fd = os.open(str(audit_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         with os.fdopen(fd, "ab", closefd=True) as stream:
             fd = -1
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            if _fcntl is not None:
+                _fcntl.flock(stream.fileno(), _fcntl.LOCK_EX)
             stream.write(line)
             stream.flush()
             os.fsync(stream.fileno())
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            if _fcntl is not None:
+                _fcntl.flock(stream.fileno(), _fcntl.LOCK_UN)
+        return True
     except OSError:
         # A missing completion record is conservative: reconciliation fails
         # closed, while retention GC remains available.
         if fd >= 0:
             os.close(fd)
+        return False
 
 
 def gc_events_preview(
@@ -11937,30 +11993,48 @@ def gc_events(
     """
     cutoff = int(time.time()) - int(older_than_seconds)
     now = int(time.time())
-
-    with write_txn(conn):
-        meta_rows = conn.execute(
-            "SELECT id, task_id FROM task_events "
-            "WHERE created_at < ? AND task_id IN "
-            "(SELECT id FROM tasks WHERE status IN ('done', 'archived')) "
-            "ORDER BY id",
-            (cutoff,),
-        ).fetchall()
-        events_meta = [(int(r["id"]), str(r["task_id"])) for r in meta_rows]
+    _gc_audit_write_status.set(None)
+    events_meta: list[tuple[int, str]] = []
+    removed = 0
+    try:
+        with write_txn(conn):
+            meta_rows = conn.execute(
+                "SELECT id, task_id FROM task_events "
+                "WHERE created_at < ? AND task_id IN "
+                "(SELECT id FROM tasks WHERE status IN ('done', 'archived')) "
+                "ORDER BY id",
+                (cutoff,),
+            ).fetchall()
+            events_meta = [(int(r["id"]), str(r["task_id"])) for r in meta_rows]
+            if events_meta:
+                placeholders = ",".join("?" for _ in events_meta)
+                cur = conn.execute(
+                    f"DELETE FROM task_events WHERE id IN ({placeholders})",
+                    [event_id for event_id, _ in events_meta],
+                )
+                removed = int(cur.rowcount or 0)
+    except Exception:
+        # write_txn performs a post-COMMIT invariant check. If that check
+        # raises after SQLite committed, the rows are gone and must still get
+        # completion evidence; a rolled-back/pre-commit failure is re-raised.
         if events_meta:
             placeholders = ",".join("?" for _ in events_meta)
-            cur = conn.execute(
-                f"DELETE FROM task_events WHERE id IN ({placeholders})",
+            remaining = conn.execute(
+                f"SELECT count(*) FROM task_events WHERE id IN ({placeholders})",
                 [event_id for event_id, _ in events_meta],
-            )
+            ).fetchone()[0]
+            if remaining == 0:
+                removed = len(events_meta)
+            else:
+                raise
         else:
-            cur = None
+            raise
 
-    removed = int(cur.rowcount or 0) if cur is not None else 0
-    # Only committed rows are eligible for first-party completion evidence.
-    # The count guard protects against a future predicate mismatch.
     if removed == len(events_meta) and removed:
-        _emit_gc_audit(events_meta, now, older_than_seconds, cutoff)
+        written = _emit_gc_audit(events_meta, now, older_than_seconds, cutoff)
+        _gc_audit_write_status.set(written)
+    else:
+        _gc_audit_write_status.set(False if removed else None)
     return removed
 
 
