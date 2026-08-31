@@ -52,6 +52,7 @@ def _guard_cfg(**overrides) -> dict:
         "window_seconds": kb.DEFAULT_QUOTA_GUARD_WINDOW_SECONDS,
         "elevated_threshold": kb.DEFAULT_QUOTA_GUARD_ELEVATED_THRESHOLD,
         "critical_threshold": kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD,
+        "critical_tick_horizon": kb.DEFAULT_QUOTA_GUARD_CRITICAL_TICK_HORIZON,
     }
     cfg.update(overrides)
     return cfg
@@ -61,18 +62,28 @@ def _seed_rate_limited_run(conn, task_id: str, *, ago_seconds: int = 60) -> None
     """Insert a finished ``rate_limited`` run row, mirroring what
     ``detect_crashed_workers`` persists for an EX_TEMPFAIL worker death."""
     now = int(time.time())
+    task = conn.execute(
+        "SELECT assignee FROM tasks WHERE id = ?", (task_id,)
+    ).fetchone()
+    profile = task["assignee"] if task and task["assignee"] else "whoever"
     conn.execute(
         "INSERT INTO task_runs "
         "(task_id, profile, status, started_at, ended_at, outcome, error) "
         "VALUES (?, ?, 'rate_limited', ?, ?, 'rate_limited', 'quota wall')",
         (
             task_id,
-            "whoever",
+            profile,
             now - ago_seconds - 30,
             now - ago_seconds,
         ),
     )
     conn.commit()
+
+
+def _seed_sustained_rate_limits(conn, task_id: str) -> None:
+    """Seed one hit in each default quota tick bucket."""
+    for ago_seconds in (1, 301, 601):
+        _seed_rate_limited_run(conn, task_id, ago_seconds=ago_seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +103,10 @@ def test_quota_guard_config_defaults(kanban_home):
         cfg["critical_threshold"]
         == kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD
     )
+    assert (
+        cfg["critical_tick_horizon"]
+        == kb.DEFAULT_QUOTA_GUARD_CRITICAL_TICK_HORIZON
+    )
     # Sanity on the shipped defaults themselves.
     assert cfg["elevated_threshold"] < cfg["critical_threshold"]
     assert cfg["window_seconds"] > 0
@@ -110,6 +125,7 @@ def test_quota_guard_config_reads_kanban_quota_guard_keys(kanban_home, monkeypat
                     "window_seconds": 120,
                     "elevated_threshold": 2,
                     "critical_threshold": 5,
+                    "critical_tick_horizon": 4,
                 }
             }
         },
@@ -120,6 +136,7 @@ def test_quota_guard_config_reads_kanban_quota_guard_keys(kanban_home, monkeypat
         "window_seconds": 120,
         "elevated_threshold": 2,
         "critical_threshold": 5,
+        "critical_tick_horizon": 4,
     }
 
 
@@ -175,11 +192,30 @@ def test_snapshot_elevated_on_single_recent_hit(kanban_home):
 def test_snapshot_critical_on_sustained_hits(kanban_home):
     with kb.connect() as conn:
         tid = kb.create_task(conn, title="starved", assignee="alice")
-        for _ in range(kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD):
-            _seed_rate_limited_run(conn, tid, ago_seconds=60)
+        _seed_sustained_rate_limits(conn, tid)
         level, hits = kb._quota_pressure_snapshot(conn)
     assert level == "critical"
     assert hits["alice"] == kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD
+
+
+def test_snapshot_critical_requires_sustained_tick_horizon(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="burst", assignee="alice")
+        for _ in range(kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD):
+            _seed_rate_limited_run(conn, tid, ago_seconds=60)
+        level, hits = kb._quota_pressure_snapshot(conn)
+    assert level == "elevated"
+    assert hits == {"alice": kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD}
+
+
+def test_snapshot_does_not_combine_distinct_profiles_into_critical(kanban_home):
+    with kb.connect() as conn:
+        for assignee in ("alice", "bob", "carol"):
+            tid = kb.create_task(conn, title=assignee, assignee=assignee)
+            _seed_rate_limited_run(conn, tid, ago_seconds=60)
+        level, hits = kb._quota_pressure_snapshot(conn)
+    assert level == "elevated"
+    assert hits == {"alice": 1, "bob": 1, "carol": 1}
 
 
 def test_snapshot_recovers_when_hits_age_out_of_window(kanban_home):
@@ -222,7 +258,7 @@ def test_snapshot_disabled_reports_ok(kanban_home, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_dispatch_critical_spawns_nothing_and_defers(
+def test_dispatch_critical_suppresses_affected_and_continues(
     kanban_home, all_assignees_spawnable, calm_memory,
 ):
     spawns = []
@@ -233,17 +269,16 @@ def test_dispatch_critical_spawns_nothing_and_defers(
 
     with kb.connect() as conn:
         starved = kb.create_task(conn, title="starved", assignee="alice")
-        for _ in range(kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD):
-            _seed_rate_limited_run(conn, starved, ago_seconds=60)
+        _seed_sustained_rate_limits(conn, starved)
         fresh = kb.create_task(conn, title="fresh", assignee="bob")
         res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
         row = kb.get_task(conn, fresh)
 
-    assert not spawns
-    assert not res.spawned
+    assert spawns == [fresh]
     assert res.quota_pressure == "critical"
-    # Deferred, not dropped: the task is still ready for the next tick.
-    assert row is not None and row.status == "ready"
+    # Critical pressure is profile-scoped: alice is deferred while bob's
+    # unaffected work continues. Both cases are defer-not-drop.
+    assert row is not None and row.status == "running"
 
 
 def test_dispatch_elevated_suppresses_affected_profile_only(
@@ -389,6 +424,53 @@ def test_dispatch_recovers_after_window_expiry(
     assert "alice" in spawns and "bob" in spawns
 
 
+def test_dispatch_critical_profile_does_not_freeze_unaffected_profile(
+    kanban_home, all_assignees_spawnable, calm_memory,
+):
+    spawns = []
+
+    def fake_spawn(task, workspace, board=None):
+        spawns.append(task.assignee)
+        return 42
+
+    with kb.connect() as conn:
+        starved = kb.create_task(conn, title="starved", assignee="alice")
+        _seed_sustained_rate_limits(conn, starved)
+        alice_next = kb.create_task(conn, title="alice-next", assignee="alice")
+        bob_work = kb.create_task(conn, title="bob-work", assignee="bob")
+        res = kb.dispatch_once(conn, spawn_fn=fake_spawn)
+        alice_row = kb.get_task(conn, alice_next)
+        bob_row = kb.get_task(conn, bob_work)
+
+    assert res.quota_pressure == "critical"
+    assert "alice" not in spawns
+    assert "bob" in spawns
+    assert alice_row is not None and alice_row.status == "ready"
+    assert bob_row is not None and bob_row.status == "running"
+
+
+def test_dispatch_distinct_profile_hits_do_not_board_freeze(
+    kanban_home, all_assignees_spawnable, calm_memory,
+):
+    spawns = []
+
+    def fake_spawn(task, workspace, board=None):
+        spawns.append(task.assignee)
+        return 42
+
+    with kb.connect() as conn:
+        for assignee in ("alice", "bob", "carol"):
+            hit = kb.create_task(conn, title=f"hit-{assignee}", assignee=assignee)
+            _seed_rate_limited_run(conn, hit, ago_seconds=60)
+        unaffected = kb.create_task(conn, title="unaffected", assignee="dave")
+        res = kb.dispatch_once(conn, spawn_fn=fake_spawn, max_spawn=1)
+        row = kb.get_task(conn, unaffected)
+
+    assert res.quota_pressure == "elevated"
+    assert spawns == ["dave"]
+    assert row is not None and row.status == "running"
+
+
 def test_dispatch_critical_still_runs_reclaim_bookkeeping(
     kanban_home, all_assignees_spawnable, calm_memory,
 ):
@@ -396,8 +478,7 @@ def test_dispatch_critical_still_runs_reclaim_bookkeeping(
     bookkeeping still runs (same contract as the memory guard)."""
     with kb.connect() as conn:
         starved = kb.create_task(conn, title="starved", assignee="alice")
-        for _ in range(kb.DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD):
-            _seed_rate_limited_run(conn, starved, ago_seconds=60)
+        _seed_sustained_rate_limits(conn, starved)
         parent = kb.create_task(conn, title="parent", assignee="alice")
         child = kb.create_task(
             conn, title="child", assignee="alice", parents=[parent],

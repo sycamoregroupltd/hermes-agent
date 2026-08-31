@@ -9511,20 +9511,20 @@ class DispatchResult:
     quota_pressure: Optional[str] = None
     """Provider quota pressure observed at spawn time when the quota guard
     restricted this tick (t_58da250a): ``"critical"`` — sustained
-    ``rate_limited`` run outcomes inside the sliding window; no new workers
-    were spawned this tick. ``"elevated"`` — recent ``rate_limited``
-    outcomes; spawns for the affected assignee(s) were suppressed and the
-    shared spawn budget shrank by one. ``None`` when the window was clean,
-    the guard was disabled, or pressure was unknown (fail-open — no
-    restriction). Reclaim/promotion bookkeeping still ran either way;
-    deferred tasks stay queued for the next tick."""
+    ``rate_limited`` outcomes for one affected profile; that profile's new
+    workers are deferred while unaffected profiles may continue. ``"elevated"``
+    — recent ``rate_limited`` outcomes; spawns for affected profiles are
+    suppressed and the shared spawn budget shrinks by one. ``None`` when the
+    window was clean, the guard was disabled, or pressure was unknown
+    (fail-open — no restriction). Reclaim/promotion bookkeeping still ran
+    either way; deferred tasks stay queued for the next tick."""
 
     skipped_quota_suppressed: list[tuple[str, str]] = field(default_factory=list)
     """Ready/review tasks skipped this tick because their assignee recently
-    hit a provider rate-limit wall, as ``(task_id, assignee)`` pairs. Only
-    populated under ``quota_pressure == "elevated"``: the per-task respawn
-    guard already defers the individual rate-limited task, and this adds
-    budget-level backpressure so OTHER tasks on the same starved provider
+    hit a provider rate-limit wall, as ``(task_id, assignee)`` pairs. Populated
+    for both elevated and critical profile-scoped pressure: the per-task
+    respawn guard already defers the individual rate-limited task, and this
+    adds budget-level backpressure so OTHER tasks on the same starved provider
     don't take its place and burn the same quota. Suppressed tasks stay
     ``ready`` and spawn normally once the window clears."""
 
@@ -12020,10 +12020,12 @@ def _memory_pressure_level(sample: Optional[Mapping[str, Any]] = None) -> str:
 # memory-pressure guard above:
 #
 #   * ``_quota_pressure_snapshot`` counts recent ``rate_limited`` run
-#     outcomes in a sliding window (default 15 minutes) and classifies:
-#     ok / elevated / critical / unknown, plus per-assignee hit counts.
-#   * critical  -> spawn nothing this tick (deferred, not dropped).
-#   * elevated  -> suppress spawns for the AFFECTED assignee(s) and shrink
+#     outcomes in a sliding window (default 15 minutes), grouped by the
+#     run's profile (task assignee is a legacy-row fallback), and classifies:
+#     ok / elevated / critical / unknown, plus per-profile hit counts.
+#   * critical  -> suppress new spawns only for the sustained affected
+#     profile(s); unaffected profiles continue this tick.
+#   * elevated  -> suppress spawns for the AFFECTED profile(s) and shrink
 #     the shared spawn budget by one.
 #   * unknown   -> no restriction (fail-open, same as the memory guard).
 #
@@ -12038,22 +12040,25 @@ def _memory_pressure_level(sample: Optional[Mapping[str, Any]] = None) -> str:
 #     quota_guard:
 #       enabled: true            # kill switch
 #       window_seconds: 900      # sliding window over task_runs.ended_at
-#       elevated_threshold: 1    # >= this many hits in window -> elevated
-#       critical_threshold: 3    # >= this many hits in window -> critical
+#       elevated_threshold: 1    # >= this many hits/profile -> elevated
+#       critical_threshold: 3    # >= this many hits/profile -> critical
+#       critical_tick_horizon: 3 # distinct time buckets required for critical
 # ---------------------------------------------------------------------------
 
 DEFAULT_QUOTA_GUARD_WINDOW_SECONDS = 15 * 60
 DEFAULT_QUOTA_GUARD_ELEVATED_THRESHOLD = 1
 DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD = 3
+DEFAULT_QUOTA_GUARD_CRITICAL_TICK_HORIZON = 3
 
 
 def _quota_guard_config() -> "dict[str, Any]":
     """Read ``kanban.quota_guard.*`` from config with validated defaults.
 
     Returns a dict with keys ``enabled``, ``window_seconds``,
-    ``elevated_threshold``, ``critical_threshold``. Invalid values (wrong
-    type, non-positive) fall back to the shipped defaults individually —
-    one bad key must not disable the whole guard or brick dispatch.
+    ``elevated_threshold``, ``critical_threshold``, and
+    ``critical_tick_horizon``. Invalid values (wrong type, non-positive)
+    fall back to the shipped defaults individually — one bad key must not
+    disable the whole guard or brick dispatch.
     """
     raw: "dict[str, Any]" = {}
     try:
@@ -12088,52 +12093,78 @@ def _quota_guard_config() -> "dict[str, Any]":
             raw.get("critical_threshold"),
             DEFAULT_QUOTA_GUARD_CRITICAL_THRESHOLD,
         ),
+        "critical_tick_horizon": _positive_int(
+            raw.get("critical_tick_horizon"),
+            DEFAULT_QUOTA_GUARD_CRITICAL_TICK_HORIZON,
+        ),
     }
 
 
 def _quota_pressure_snapshot(
     conn: sqlite3.Connection,
 ) -> "tuple[str, dict[str, int]]":
-    """Classify provider quota pressure from recent ``rate_limited`` runs.
+    """Classify recent provider quota pressure by profile.
 
-    Returns ``(level, hits)`` where ``level`` is one of ``"ok"`` /
-    ``"elevated"`` / ``"critical"`` / ``"unknown"`` and ``hits`` maps
-    assignee -> count of ``rate_limited`` run outcomes whose ``ended_at``
-    falls inside the configured sliding window.
+    The ``task_runs.profile`` value is the strongest provider-ish identity
+    currently persisted by the dispatcher; for legacy rows it falls back to
+    the task assignee. Pressure is therefore isolated to the affected
+    profile, rather than combining unrelated profiles into a board-wide
+    counter. Rows with neither identity are ignored and leave the guard
+    fail-open because there is no safe target to suppress.
 
-    ``rate_limited`` outcomes are exactly what the reap classifier persists
-    for EX_TEMPFAIL (quota wall) worker deaths — see
-    ``detect_crashed_workers``. Counting run outcomes (not task_events)
-    keys the guard off the same durable record the rest of the rate-limit
-    machinery already trusts.
+    Critical pressure requires both ``critical_threshold`` hits for ONE
+    profile and hits observed in ``critical_tick_horizon`` distinct time
+    buckets. Buckets are a deterministic approximation of dispatcher ticks
+    over the sliding window: a burst in one bucket is elevated, while
+    repeated pressure across the horizon is critical. The snapshot still
+    returns a two-item ``(level, hits)`` tuple for the dispatcher's existing
+    telemetry contract; ``hits`` maps profile -> recent hit count.
 
-    Fail-open contract (mirrors ``_memory_pressure_level``): a disabled
-    guard reports ``"ok"``; any query/config failure reports ``"unknown"``
-    — neither may ever brick dispatch.
+    A board-wide freeze is intentionally not used as a fallback: when a
+    provider/profile identity is unknown, fail-open is safer than freezing
+    unrelated work. The dispatch loop suppresses only the known affected
+    profiles, including at critical pressure.
     """
     try:
         cfg = _quota_guard_config()
         if not cfg["enabled"]:
             return ("ok", {})
-        cutoff = int(time.time()) - int(cfg["window_seconds"])
+        now = int(time.time())
+        window_seconds = int(cfg["window_seconds"])
+        tick_horizon = int(cfg["critical_tick_horizon"])
+        bucket_seconds = max(1, window_seconds // tick_horizon)
+        cutoff = now - window_seconds
         rows = conn.execute(
-            "SELECT COALESCE(t.assignee, r.profile) AS who, COUNT(*) AS n "
+            "SELECT COALESCE(NULLIF(r.profile, ''), "
+            "NULLIF(t.assignee, '')) AS who, r.ended_at "
             "FROM task_runs r LEFT JOIN tasks t ON t.id = r.task_id "
             "WHERE r.outcome = 'rate_limited' AND r.ended_at IS NOT NULL "
-            "AND r.ended_at >= ? "
-            "GROUP BY COALESCE(t.assignee, r.profile)",
+            "AND r.ended_at >= ?",
             (cutoff,),
         ).fetchall()
         hits: "dict[str, int]" = {}
-        total = 0
+        buckets: "dict[str, set[int]]" = {}
         for row in rows:
-            n = int(row["n"])
-            total += n
-            if row["who"]:
-                hits[row["who"]] = hits.get(row["who"], 0) + n
-        if total >= int(cfg["critical_threshold"]):
+            who = row["who"]
+            if not who:
+                continue
+            ended_at = int(row["ended_at"])
+            age = max(0, now - ended_at)
+            bucket = min(age // bucket_seconds, tick_horizon - 1)
+            hits[who] = hits.get(who, 0) + 1
+            buckets.setdefault(who, set()).add(bucket)
+
+        critical_threshold = int(cfg["critical_threshold"])
+        if any(
+            count >= critical_threshold
+            and len(buckets.get(who, set())) >= tick_horizon
+            for who, count in hits.items()
+        ):
             return ("critical", hits)
-        if total >= int(cfg["elevated_threshold"]):
+        if any(
+            count >= int(cfg["elevated_threshold"])
+            for count in hits.values()
+        ):
             return ("elevated", hits)
         return ("ok", hits)
     except Exception:
@@ -12401,15 +12432,20 @@ def _dispatch_once_locked(
     quota_suppressed_assignees: "set[str]" = set()
     if quota_level == "critical":
         result.quota_pressure = quota_level
+        # Critical is profile-scoped. A sustained wall for one provider-ish
+        # profile must not freeze unrelated providers; only profiles with a
+        # recent quota hit are deferred. There is deliberately no board-wide
+        # fallback when identity is unknown.
+        quota_suppressed_assignees = set(quota_hits)
         _log.warning(
-            "kanban dispatch: provider quota pressure is critical "
-            "(%d rate-limited worker exit(s) in window; assignees: %s); "
-            "spawning no new workers this tick (deferred, not dropped)",
+            "kanban dispatch: provider quota pressure is critical for "
+            "affected profile(s) (%d rate-limited worker exit(s) in window; "
+            "profiles: %s); suppressing only affected spawns "
+            "(unaffected profiles continue)",
             sum(quota_hits.values()),
-            ", ".join(sorted(quota_hits)) or "unknown",
+            ", ".join(sorted(quota_suppressed_assignees)) or "unknown",
         )
-        return result
-    if quota_level == "elevated":
+    elif quota_level == "elevated":
         result.quota_pressure = quota_level
         quota_suppressed_assignees = set(quota_hits)
         _log.warning(
