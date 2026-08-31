@@ -6596,6 +6596,244 @@ class ArtifactPreservationError(RuntimeError):
     """Raised when a declared scratch deliverable cannot be preserved."""
 
 
+class WorkspaceDeliveryError(RuntimeError):
+    """Raised when a Git-backed task workspace is unsafe to close.
+
+    The payload contains reason codes and counts only. Changed file names and
+    contents are deliberately never collected or written to the board. When an
+    explicit ``--discard-wip`` was attempted, ``discarded`` reflects whether a
+    discard ran and ``discard_record`` carries the (partial) set-aside refs and
+    sanitized path names for the board-owned exception trail -- still never
+    file contents.
+    """
+
+    def __init__(
+        self,
+        task_id: str,
+        issues: list[dict[str, Any]],
+        *,
+        discarded: bool = False,
+        discard_record: Optional[dict[str, Any]] = None,
+    ):
+        self.task_id = task_id
+        self.issues = list(issues)
+        self.discarded = bool(discarded)
+        self.discard_record = discard_record
+        details = ", ".join(
+            f"{item['code']}={item['count']}" if item.get("count") is not None
+            else str(item["code"])
+            for item in issues
+        )
+        if discarded:
+            note = (
+                "a --discard-wip was requested; remaining issues could not be "
+                "resolved by discarding WIP"
+            )
+        else:
+            note = "No files were discarded"
+        super().__init__(
+            f"completion blocked for Git workspace ({details}); restore a valid "
+            f"branch/worktree and remote, commit and push the task work, then "
+            f"retry. {note}"
+        )
+
+
+def _git_workspace_delivery_issues(task: Task) -> list[dict[str, Any]]:
+    """Return fail-closed delivery issues for a Git-backed task workspace.
+
+    ``scratch`` workspaces are intentionally excluded: they are artifact
+    staging areas, not source-control delivery surfaces. ``dir`` workspaces
+    are checked when they resolve inside Git; non-Git directories retain their
+    existing completion semantics. Explicit ``worktree`` tasks must resolve to
+    an inspectable Git worktree.
+    """
+    kind = task.workspace_kind or "scratch"
+    if kind not in {"worktree", "dir"}:
+        return []
+    if not task.workspace_path:
+        return [{"code": "workspace_path_missing"}]
+    path = Path(task.workspace_path).expanduser()
+    if not path.is_dir():
+        return [{"code": "workspace_missing"}]
+
+    def probe(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(f"git probe failed with exit {result.returncode}")
+        return result
+
+    try:
+        inside = probe("rev-parse", "--is-inside-work-tree", check=False)
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            if kind == "dir":
+                return []
+            return [{"code": "not_a_git_worktree"}]
+
+        issues: list[dict[str, Any]] = []
+        branch = probe("symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+        if branch.returncode != 0:
+            issues.append({"code": "detached_head"})
+
+        status = probe("status", "--porcelain=v1", "--untracked-files=all")
+        dirty_count = len([line for line in status.stdout.splitlines() if line])
+        if dirty_count:
+            issues.append({"code": "dirty_worktree", "count": dirty_count})
+
+        remotes = [line for line in probe("remote").stdout.splitlines() if line.strip()]
+        if not remotes:
+            issues.append({"code": "no_remote"})
+        else:
+            unpushed = probe("rev-list", "--count", "HEAD", "--not", "--remotes")
+            unpushed_count = int(unpushed.stdout.strip() or "0")
+            if unpushed_count:
+                issues.append({"code": "unpushed_commits", "count": unpushed_count})
+        return issues
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+        return [{"code": "git_inspection_failed"}]
+
+
+def _porcelain_paths(lines: list[str]) -> list[str]:
+    """Extract relative file paths from ``git status --porcelain=v1`` lines.
+
+    Returns only path names (never contents). Rename lines contribute the
+    destination path. Quoted porcelain paths are unescaped for readability.
+    """
+    paths: list[str] = []
+    for line in lines:
+        if len(line) < 4:
+            continue
+        rest = line[3:].strip()
+        if " -> " in rest:
+            rest = rest.split(" -> ", 1)[1]
+        if rest.startswith('"') and rest.endswith('"'):
+            try:
+                rest = rest[1:-1].encode("utf-8").decode("unicode_escape")
+            except Exception:
+                rest = rest[1:-1]
+        paths.append(rest)
+    return paths
+
+
+def _discard_workspace_wip(task: Task) -> dict[str, Any]:
+    """Set aside undelivered Git WIP, returning a record for the board trail.
+
+    Runs only on an explicit opt-in (``--discard-wip``). Dirty tracked +
+    untracked changes are moved into a recoverable ``git stash``; commits not
+    present on any remote are snapshotted to a backup ref and the branch is
+    reset to its upstream. The returned record carries refs and sanitized path
+    names only -- file contents are never collected or logged.
+    """
+    path = Path(task.workspace_path).expanduser()
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+
+    record: dict[str, Any] = {}
+
+    status = run("status", "--porcelain=v1", "--untracked-files=all")
+    changed_lines = [ln for ln in status.stdout.splitlines() if ln]
+    if changed_lines:
+        stashed = run(
+            "stash", "push", "--include-untracked", "-m", f"kanban discard {task.id}"
+        )
+        if stashed.returncode != 0:
+            raise RuntimeError(f"git stash failed: {stashed.stderr.strip()}")
+        stash_ref = run("rev-parse", "refs/stash")
+        record["stash_ref"] = stash_ref.stdout.strip() or "stash@{0}"
+        record["discarded_paths"] = _porcelain_paths(changed_lines)[:100]
+
+    unpushed = run("rev-list", "--count", "HEAD", "--not", "--remotes")
+    unpushed_count = int(unpushed.stdout.strip() or "0")
+    if unpushed_count:
+        backup_ref = f"refs/kanban-discard/{task.id}"
+        if run("update-ref", backup_ref, "HEAD").returncode != 0:
+            raise RuntimeError(f"could not create backup ref {backup_ref}")
+        upstream = run(
+            "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
+        )
+        if upstream.returncode != 0 or not upstream.stdout.strip():
+            raise RuntimeError("cannot set aside unpushed commits: branch has no upstream")
+        shas = run("rev-list", "HEAD", "--not", "--remotes")
+        record["unpushed_commits"] = [s for s in shas.stdout.splitlines() if s]
+        record["backup_ref"] = backup_ref
+        reset = run("reset", "--hard", upstream.stdout.strip())
+        if reset.returncode != 0:
+            raise RuntimeError(f"git reset failed: {reset.stderr.strip()}")
+
+    return record
+
+
+def _enforce_workspace_delivery_gate(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    discard_wip: bool = False,
+) -> None:
+    task = get_task(conn, task_id)
+    if task is None:
+        return
+    issues = _git_workspace_delivery_issues(task)
+    if not issues:
+        return
+
+    discard_record: Optional[dict[str, Any]] = None
+    if discard_wip:
+        # Explicit opt-in: set aside the fixable WIP (dirty tree / unpushed
+        # commits) and re-check. Unfixable states (detached, missing, no
+        # remote, not-a-git-worktree) still block even with the override.
+        try:
+            discard_record = _discard_workspace_wip(task)
+            remaining = _git_workspace_delivery_issues(task)
+            if not remaining:
+                with write_txn(conn):
+                    _append_event(
+                        conn,
+                        task_id,
+                        "workspace_wip_discarded",
+                        {
+                            "workspace_kind": task.workspace_kind,
+                            "discarded": True,
+                            **(discard_record or {}),
+                        },
+                    )
+                return
+            issues = remaining
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+            discard_record = {"discard_failed": str(exc)}
+
+    with write_txn(conn):
+        _append_event(
+            conn,
+            task_id,
+            "completion_blocked_workspace_delivery",
+            {
+                "workspace_kind": task.workspace_kind,
+                "issues": issues,
+                "discarded": bool(discard_wip),
+                "discard_record": discard_record,
+            },
+        )
+    raise WorkspaceDeliveryError(
+        task_id, issues, discarded=bool(discard_wip), discard_record=discard_record
+    )
+
+
 def complete_task(
     conn: sqlite3.Connection,
     task_id: str,
@@ -6606,6 +6844,7 @@ def complete_task(
     created_cards: Optional[Iterable[str]] = None,
     expected_run_id: Optional[int] = None,
     fire_lifecycle_hook: bool = True,
+    discard_wip: bool = False,
 ) -> bool:
     """Transition ``running|ready|blocked|review -> done`` and record ``result``.
 
@@ -6644,6 +6883,13 @@ def complete_task(
     # final write transaction below to close the parent-reopen race.
     if not _parents_satisfied(conn, task_id):
         return False
+
+    # Source-delivery gate: no completion surface (worker tool, CLI, dashboard,
+    # or direct DB caller) may silently strand Git work. The check happens
+    # before artifact staging and before the terminal state transaction. An
+    # explicit ``discard_wip`` opt-in sets aside the fixable WIP (recoverable
+    # stash + upstream reset) and records what was set aside on the board.
+    _enforce_workspace_delivery_gate(conn, task_id, discard_wip=discard_wip)
 
     # Gate: verify created_cards BEFORE the main write txn. A rejected
     # completion still needs an auditable event, so we emit it in a

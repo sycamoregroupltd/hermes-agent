@@ -283,6 +283,57 @@ def test_task_detail_includes_links_and_events(client):
 # ---------------------------------------------------------------------------
 
 
+def test_patch_done_rejects_dirty_git_workspace_without_leaking_paths(
+    client, tmp_path,
+):
+    """The dashboard must preserve a dirty source workspace and return 409."""
+    remote = tmp_path / "remote.git"
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Kanban Test"],
+        check=True,
+    )
+    (repo / "tracked.txt").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "initial"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(remote)],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "push", "-u", "origin", "main"],
+        check=True,
+    )
+
+    private_name = "do-not-leak-this.env"
+    (repo / private_name).write_text("fixture\n", encoding="utf-8")
+    with kb.connect() as conn:
+        task_id = kb.create_task(
+            conn,
+            title="source delivery",
+            workspace_kind="worktree",
+            workspace_path=str(repo),
+            triage=True,
+        )
+
+    response = client.patch(
+        f"/api/plugins/kanban/tasks/{task_id}",
+        json={"status": "done", "summary": "not actually delivered"},
+    )
+
+    assert response.status_code == 409
+    assert "dirty_worktree" in response.json()["detail"]
+    assert private_name not in response.text
+    with kb.connect() as conn:
+        assert kb.get_task(conn, task_id).status == "triage"
+
+
 def test_patch_review_lifecycle_preserves_handoff_and_reopens(client):
     secret = "ghp_" + "D" * 40
     task = client.post(
@@ -1286,5 +1337,4 @@ def test_specify_happy_path(client, monkeypatch):
 # ---------------------------------------------------------------------------
 # Final result visibility for Done cards
 # ---------------------------------------------------------------------------
-
 

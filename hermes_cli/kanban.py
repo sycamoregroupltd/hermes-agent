@@ -639,6 +639,13 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
     p_complete.add_argument("--metadata", default=None,
                             help='JSON dict of structured facts (e.g. \'{"changed_files": [...], '
                                  '"tests_run": 12}\'). Stored on the closing run.')
+    p_complete.add_argument("--discard-wip", action="store_true", default=False,
+                            help="Explicit opt-in override: set aside undelivered Git "
+                                 "workspace work (recoverable stash + upstream reset) "
+                                 "and record WHAT was discarded on the board before "
+                                 "completing. Default is fail-closed: completion is "
+                                 "refused while the workspace holds dirty or unpushed "
+                                 "work unless this flag is given.")
 
     p_edit = sub.add_parser(
         "edit",
@@ -2418,13 +2425,20 @@ def _cmd_complete(args: argparse.Namespace) -> int:
                 failed.append(tid)
                 continue
 
-            if not kb.complete_task(
-                conn, tid,
-                result=args.result,
-                summary=summary,
-                metadata=metadata,
-                expected_run_id=_worker_run_id_for(tid),
-            ):
+            try:
+                completed = kb.complete_task(
+                    conn, tid,
+                    result=args.result,
+                    summary=summary,
+                    metadata=metadata,
+                    expected_run_id=_worker_run_id_for(tid),
+                    discard_wip=getattr(args, "discard_wip", False),
+                )
+            except kb.WorkspaceDeliveryError as exc:
+                failed.append(tid)
+                print(f"kanban: {exc}", file=sys.stderr)
+                continue
+            if not completed:
                 failed.append(tid)
                 # Surface the ACTUAL status instead of the factually false
                 # "unknown id or terminal state" string. A card in `triage`

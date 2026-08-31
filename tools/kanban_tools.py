@@ -702,6 +702,7 @@ def _handle_complete(args: dict, **kw) -> str:
     summary = args.get("summary")
     metadata = args.get("metadata")
     result = args.get("result")
+    discard_wip = bool(args.get("discard_wip"))
     if summary:
         summary = redact_sensitive_text(str(summary), force=True)
     if result:
@@ -809,6 +810,12 @@ def _handle_complete(args: dict, **kw) -> str:
                     result=result, summary=summary, metadata=metadata,
                     created_cards=created_cards,
                     expected_run_id=_worker_run_id(tid),
+                    discard_wip=discard_wip,
+                )
+            except kb.WorkspaceDeliveryError as workspace_err:
+                return tool_error(
+                    f"kanban_complete blocked: {workspace_err}. Your task is "
+                    f"still in-flight and the workspace was not changed."
                 )
             except kb.ArtifactPreservationError as artifact_err:
                 return tool_error(
@@ -1896,6 +1903,20 @@ KANBAN_COMPLETE_SCHEMA = {
                 ),
             },
             "board": _board_schema_prop(),
+            "discard_wip": {
+                "type": "boolean",
+                "description": (
+                    "Explicit opt-in override (default false). When your "
+                    "completion is blocked because the task's Git workspace "
+                    "holds dirty or unpushed work that you are deliberately "
+                    "abandoning, set this to true to set that WIP aside "
+                    "(a recoverable git stash + upstream reset) and record "
+                    "WHAT was discarded — stash ref, backup ref and sanitized "
+                    "path names — on the board before completing. File "
+                    "contents are never logged. Default remains fail-closed: "
+                    "without this flag the completion is refused."
+                ),
+            },
         },
         "required": [],
     },
