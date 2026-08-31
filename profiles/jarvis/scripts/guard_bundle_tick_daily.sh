@@ -8,6 +8,11 @@
 # (key rtb-guard-bundle-daily), silent when clean, exit code preserved.
 set -uo pipefail
 export GUARD_TICK=daily
+# t_8cdc9260 (2026-08-31): Keep the live scheduled path below the observed
+# 600s kill boundary. The runner's daily wall-clock budget is 450s (see
+# BUDGETS in cron_guard_bundle_runner.py); report-to-board gets 520s, leaving
+# scheduler and card-routing slack while preserving nonzero alert semantics.
+export RTB_TIMEOUT=520
 export RTB_SCRIPT=/home/frank/.hermes/scripts/guard_bundle_run.sh
 export RTB_KEY=guard-bundle-daily
 export RTB_TITLE="Guard bundle (daily): a fleet guard/watchdog check is failing"
