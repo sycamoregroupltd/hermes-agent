@@ -8,11 +8,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
+
+
+MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class ArtifactGuardError(RuntimeError):
@@ -50,6 +55,23 @@ def sha256_file(path: Path) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
+def _validate_digest(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+        raise ArtifactGuardError(f"{field_name} must be 64 lowercase hexadecimal characters")
+    return value
+
+
+def _copy_bounded(source: Path, destination: Path) -> None:
+    """Copy in bounded chunks and reject growth beyond the configured cap."""
+    copied = 0
+    with source.open("rb") as source_stream, destination.open("wb") as destination_stream:
+        while chunk := source_stream.read(1024 * 1024):
+            copied += len(chunk)
+            if copied > MAX_ARTIFACT_BYTES:
+                raise ArtifactGuardError("artifact exceeds maximum size during copy")
+            destination_stream.write(chunk)
+
+
 class CompletionKernel:
     """Small model of two-phase stage -> CAS commit -> scratch cleanup."""
 
@@ -63,6 +85,7 @@ class CompletionKernel:
         *,
         expected_run_id: int = 1,
         copier: Optional[Callable[[Path, Path], None]] = None,
+        cleaner: Optional[Callable[[Path], None]] = None,
     ) -> bool:
         if task.status == "done":
             return False
@@ -83,36 +106,63 @@ class CompletionKernel:
 
         staged: list[tuple[Path, Path, Path, int, str, str]] = []
         final_dir = task.attachment_root / task.task_id
+        workspace = task.workspace.resolve()
         try:
             for entry in entries:
-                source = Path(str(entry.get("source_path", ""))).resolve()
-                workspace = task.workspace.resolve()
+                if not isinstance(entry, dict):
+                    raise ArtifactGuardError("artifact entry must be an object")
+                raw_source = entry.get("source_path")
+                source = Path(str(raw_source or "")).resolve()
                 if not source.is_relative_to(workspace) or not source.is_file():
                     raise ArtifactGuardError(f"invalid scratch source: {source}")
-                filename = Path(str(entry.get("filename") or source.name)).name
-                if filename != str(entry.get("filename") or source.name):
+
+                raw_filename = entry.get("filename")
+                filename = Path(str(raw_filename or source.name)).name
+                if filename != str(raw_filename or source.name):
                     raise ArtifactGuardError("filename must be a basename")
-                source_size, source_hash = sha256_file(source)
+
+                declared_size = entry.get("size")
+                if isinstance(declared_size, bool) or not isinstance(declared_size, int):
+                    raise ArtifactGuardError("size must be an integer")
+                if declared_size < 0 or declared_size > MAX_ARTIFACT_BYTES:
+                    raise ArtifactGuardError("artifact size exceeds maximum")
+                declared_hash = _validate_digest(entry.get("sha256"), "sha256")
                 expected_hash = entry.get("expected_sha256")
+                if expected_hash is not None:
+                    expected_hash = _validate_digest(expected_hash, "expected_sha256")
+
+                source_size, source_hash = sha256_file(source)
+                if source_size > MAX_ARTIFACT_BYTES:
+                    raise ArtifactGuardError("artifact exceeds maximum size")
+                if declared_size != source_size:
+                    raise ArtifactGuardError(f"declared size mismatch: {source}")
+                if declared_hash != source_hash:
+                    raise ArtifactGuardError(f"declared digest mismatch: {source}")
                 if expected_hash is not None and expected_hash != source_hash:
                     raise ArtifactGuardError(f"expected digest mismatch: {source}")
+
                 final_dir.mkdir(parents=True, exist_ok=True)
                 final = final_dir / filename
-                if final.exists() or any(row[2] == final for row in staged):
-                    stem, suffix = final.stem, final.suffix
-                    final = final_dir / f"{stem}_1{suffix}"
+                suffix_number = 1
+                while final.exists() or any(row[2] == final for row in staged):
+                    stem, suffix = Path(filename).stem, Path(filename).suffix
+                    final = final_dir / f"{stem}_{suffix_number}{suffix}"
+                    suffix_number += 1
                 with tempfile.NamedTemporaryFile(
                     prefix=f".{filename}.", suffix=".partial", dir=final_dir, delete=False
                 ) as temporary:
                     partial = Path(temporary.name)
                 try:
-                    (copier or shutil.copyfile)(source, partial)
+                    (copier or _copy_bounded)(source, partial)
                     with partial.open("rb+") as stream:
                         stream.flush()
                         os.fsync(stream.fileno())
                     copied_size, copied_hash = sha256_file(partial)
                     if (copied_size, copied_hash) != (source_size, source_hash):
                         raise ArtifactGuardError(f"stored digest mismatch: {source}")
+                    source_after_size, source_after_hash = sha256_file(source)
+                    if (source_after_size, source_after_hash) != (source_size, source_hash):
+                        raise ArtifactGuardError(f"source mutated during staging: {source}")
                     os.replace(partial, final)
                     final_size, final_hash = sha256_file(final)
                     if (final_size, final_hash) != (source_size, source_hash):
@@ -146,17 +196,18 @@ class CompletionKernel:
 
             # Simulated write transaction / CAS commit happens only now.
             task.attachments.extend(
-                Artifact(source_path=str(source), stored_path=str(final), filename=filename,
-                         size=size, sha256=digest, verified_at=self.clock())
+                Artifact(
+                    source_path=str(source),
+                    stored_path=str(final),
+                    filename=filename,
+                    size=size,
+                    sha256=digest,
+                    verified_at=self.clock(),
+                )
                 for source, _partial, final, size, digest, filename in staged
             )
             task.recovery_metadata = receipt
             task.status = "done"
-            shutil.rmtree(task.workspace)
-            receipt["cleanup_status"] = "completed"
-            task.recovery_metadata = receipt
-            receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
-            return True
         except Exception:
             # No status transition and no exposed final attachment on failure.
             for _source, partial, final, _size, _digest, _filename in staged:
@@ -171,3 +222,24 @@ class CompletionKernel:
                 except OSError:
                     pass
             raise
+
+        # Cleanup is deliberately post-commit. Its failure is recoverable and
+        # must not make a successfully committed task appear incomplete.
+        cleanup = cleaner or shutil.rmtree
+        try:
+            cleanup(task.workspace)
+        except Exception as exc:
+            receipt["cleanup_status"] = "deferred"
+            receipt["cleanup_error_type"] = type(exc).__name__
+            task.recovery_metadata = receipt
+            try:
+                receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+            except OSError:
+                # In-memory metadata still records that a recovery sweep is due.
+                receipt["recovery_metadata_write"] = "deferred"
+            return True
+
+        receipt["cleanup_status"] = "completed"
+        task.recovery_metadata = receipt
+        receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+        return True

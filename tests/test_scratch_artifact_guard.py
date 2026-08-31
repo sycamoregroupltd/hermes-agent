@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
-from prototypes.scratch_artifact_guard import (
+# Keep the documented direct-script command runnable from the repository root.
+import sys
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from prototypes.scratch_artifact_guard import (  # noqa: E402
+    MAX_ARTIFACT_BYTES,
     ArtifactGuardError,
     CompletionKernel,
     Task,
@@ -29,7 +37,13 @@ class ScratchArtifactGuardTests(unittest.TestCase):
         return Task("t_test", self.ws, self.store)
 
     def manifest(self, path: Path, expected: str | None = None) -> dict:
-        entry = {"source_path": str(path), "filename": path.name}
+        payload = path.read_bytes()
+        entry = {
+            "source_path": str(path),
+            "filename": path.name,
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
         if expected is not None:
             entry["expected_sha256"] = expected
         return {"schema_version": 1, "policy": "retain", "entries": [entry]}
@@ -60,10 +74,35 @@ class ScratchArtifactGuardTests(unittest.TestCase):
         source = self.ws / "report.md"
         source.write_bytes(b"original")
         task = self.task()
+        bad = self.manifest(source)
+        bad["entries"][0]["sha256"] = "0" * 64
         with self.assertRaisesRegex(ArtifactGuardError, "digest mismatch"):
-            self.kernel.complete(task, self.manifest(source, "0" * 64))
+            self.kernel.complete(task, bad)
         self.assertEqual(task.status, "running")
         self.assertTrue(self.ws.exists())
+        self.assertFalse(self.store.exists())
+
+    def test_invalid_digest_format_fails_closed(self) -> None:
+        source = self.ws / "report.md"
+        source.write_bytes(b"bad digest format")
+        task = self.task()
+        bad = self.manifest(source)
+        bad["entries"][0]["sha256"] = "not-a-sha256"
+        with self.assertRaisesRegex(ArtifactGuardError, "64 lowercase"):
+            self.kernel.complete(task, bad)
+        self.assertEqual(task.status, "running")
+        self.assertTrue(source.exists())
+
+    def test_oversize_declaration_fails_closed(self) -> None:
+        source = self.ws / "report.md"
+        source.write_bytes(b"small source")
+        task = self.task()
+        bad = self.manifest(source)
+        bad["entries"][0]["size"] = MAX_ARTIFACT_BYTES + 1
+        with self.assertRaisesRegex(ArtifactGuardError, "exceeds maximum"):
+            self.kernel.complete(task, bad)
+        self.assertEqual(task.status, "running")
+        self.assertTrue(source.exists())
         self.assertFalse(self.store.exists())
 
     def test_partial_copy_leaves_no_final_attachment(self) -> None:
@@ -81,6 +120,21 @@ class ScratchArtifactGuardTests(unittest.TestCase):
         self.assertTrue(self.ws.exists())
         self.assertFalse(self.store.exists())
 
+    def test_source_mutation_during_staging_fails_closed(self) -> None:
+        source = self.ws / "report.md"
+        source.write_bytes(b"before staging")
+        task = self.task()
+
+        def mutating_copy(src: Path, dst: Path) -> None:
+            shutil.copyfile(src, dst)
+            src.write_bytes(b"mutated after copy")
+
+        with self.assertRaisesRegex(ArtifactGuardError, "source mutated"):
+            self.kernel.complete(task, self.manifest(source), copier=mutating_copy)
+        self.assertEqual(task.status, "running")
+        self.assertTrue(source.exists())
+        self.assertFalse(self.store.exists())
+
     def test_repeated_completion_is_idempotent(self) -> None:
         source = self.ws / "report.md"
         source.write_bytes(b"one completion")
@@ -89,6 +143,23 @@ class ScratchArtifactGuardTests(unittest.TestCase):
         stored = list(task.attachments)
         self.assertFalse(self.kernel.complete(task, {"schema_version": 1, "policy": "none", "entries": []}))
         self.assertEqual(task.attachments, stored)
+
+    def test_cleanup_failure_records_deferred_recovery(self) -> None:
+        source = self.ws / "report.md"
+        source.write_bytes(b"cleanup can be retried")
+        task = self.task()
+
+        def failing_cleanup(_workspace: Path) -> None:
+            raise OSError("injected cleanup failure")
+
+        self.assertTrue(self.kernel.complete(task, self.manifest(source), cleaner=failing_cleanup))
+        self.assertEqual(task.status, "done")
+        self.assertTrue(self.ws.exists())
+        self.assertEqual(task.recovery_metadata["cleanup_status"], "deferred")  # type: ignore[index]
+        self.assertEqual(task.recovery_metadata["cleanup_error_type"], "OSError")  # type: ignore[index]
+        receipt_file = self.store / task.task_id / "recovery.json"
+        self.assertEqual(json.loads(receipt_file.read_text(encoding="utf-8"))["cleanup_status"], "deferred")
+        self.assertEqual(len(task.attachments), 1)
 
     def test_recovery_metadata_is_verified_and_persisted(self) -> None:
         source = self.ws / "report.md"
