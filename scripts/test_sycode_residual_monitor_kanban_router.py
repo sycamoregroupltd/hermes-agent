@@ -116,7 +116,7 @@ class RouterContractTests(unittest.TestCase):
         self.assertEqual(len(self.created), 1)
         create_args = self.created[0][0]
         self.assertIn("sycode-trading", create_args)
-        self.assertIn("trading-devops", create_args)
+        self.assertIn("sycode-trading-pm", create_args)
         self.assertIn(res["key"], create_args)
 
     def test_dedupe_then_recovery(self):

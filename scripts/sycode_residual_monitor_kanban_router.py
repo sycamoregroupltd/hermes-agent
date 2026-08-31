@@ -19,7 +19,7 @@ for it.
 Consumer (already configured, no new channel):
   hermes kanban --board sycode-trading  (idempotent incident route)
   created_by = sycode-residual-monitor
-  assignee   = trading-devops
+  assignee   = sycode-trading-pm
   ledger     = ~/.hermes/state/sycode-residual-monitor-kanban-ledger.json
 
 Contract:
@@ -49,7 +49,7 @@ from pathlib import Path
 
 HERMES = os.environ.get("HERMES_BIN", "/home/frank/.local/bin/hermes")
 BOARD = os.environ.get("SYCODE_RESIDUAL_KANBAN_BOARD", "sycode-trading")
-ASSIGNEE = os.environ.get("SYCODE_RESIDUAL_KANBAN_ASSIGNEE", "trading-devops")
+ASSIGNEE = os.environ.get("SYCODE_RESIDUAL_KANBAN_ASSIGNEE", "sycode-trading-pm")
 CREATED_BY = "sycode-residual-monitor"
 LEDGER_PATH = Path(os.environ.get(
     "SYCODE_RESIDUAL_KANBAN_LEDGER",

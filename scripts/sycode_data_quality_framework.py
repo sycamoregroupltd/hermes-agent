@@ -991,7 +991,9 @@ def route_breaches_to_kanban(breaches, exported_files, state=None):
     for b in breaches:
         metric = b["metric"]
         b_type = b["type"]
-        assignee = ROUTING_MAP.get(b_type, "trading-devops")
+        # Unknown diagnostic types belong to the Sycode PM lane by default;
+        # an unrecognised type must not fall back to this agent's queue.
+        assignee = ROUTING_MAP.get(b_type, "sycode-trading-pm")
 
         # Reset healthy counter for any metric that is currently breaching.
         healthy_tracker[metric] = 0
