@@ -48,14 +48,21 @@ For non-Hermes lanes (registered via a plugin), the plugin supplies its own `spa
 
 ### 3. A lifecycle terminator
 
-Every claim must end in exactly one of:
+Every dispatched claim must end with exactly one successful native lifecycle transition. Plain text, an empty/no-op result, and a rejected tool call are not lifecycle transitions.
 
-- `kanban_complete(summary=..., metadata=...)` — task succeeds, status flips to `done`.
-- `kanban_request_review(summary=..., metadata=..., reviewer=...)` — same-card implementation is complete and enters first-class review; status flips to `review`. The dispatcher loads the bundled `sdlc-review` skill unless `kanban.review_dispatch` is disabled. A reviewer approves with `kanban_complete`, returns actionable rework with `kanban_request_changes`, or escalates a genuine external blocker with `kanban_block`.
-- `kanban_block(reason=...)` — task waits for human input, status flips to `blocked`. The dispatcher respawns when `kanban_unblock` runs.
-- The worker process exits without a tool call. The kernel reaps it and emits `crashed` (PID died) or `gave_up` (consecutive-failure breaker tripped) or `timed_out` (max_runtime exceeded). This is the failure path; healthy workers don't end here.
+- `kanban_complete(summary=..., metadata=...)` — task succeeds, status flips to `done`; also use this when a pre-created review/QA/release child depends on the card.
+- `kanban_request_review(summary=..., metadata=..., reviewer=...)` — same-card implementation is complete and enters first-class review; status flips to `review`. The dispatcher loads the bundled `sdlc-review` skill unless `kanban.review_dispatch` is disabled.
+- `kanban_request_changes(reason=...)` — a reviewer closes its current review run and returns actionable rework to the implementer.
+- `kanban_block(reason=...)` — a genuine external dependency, human input, or hard capability wall prevents progress; the task routes according to block kind and respawns only through the applicable unblock/dependency policy.
 
-The kanban kernel enforces that exactly one of these terminates each run. A worker that calls neither and exits normally is treated as crashed.
+Stop after the successful transition; do not call two lifecycle terminals for the same handoff. Empty findings still close through the applicable terminal (normally `kanban_complete` or `kanban_request_review`), never by returning plain text.
+
+Hermes enforces this in two layers:
+
+1. The turn-end guard recognizes only successful native terminal results (`{"ok": true, ...}`). A rejected terminal remains retryable. A worker that returns plain text is nudged to close correctly; after the bounded nudge budget, Hermes records a concrete auto-guard `kanban_block` rather than claiming success.
+2. The dispatcher independently classifies a clean process exit (`rc=0`) while the card is still `running` as `protocol_violation`. The run outcome is recorded as `crashed`, never `completed`, and bounded retry/missing-exit review policy applies.
+
+`KANBAN_GUIDANCE` is injected into every dispatcher-spawned worker, independent of profile-specific prompts. It therefore covers generic workers, implementers, PM profiles, and reviewers uniformly. Profile prompts may restate the rule but cannot weaken the native guard or dispatcher classification.
 
 ## Outputs and the review handoff
 

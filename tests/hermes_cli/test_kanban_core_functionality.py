@@ -1405,6 +1405,16 @@ def test_detect_crashed_workers_protocol_violation_first_occurrence_retries(kanb
         assert "gave_up" not in kinds, (
             f"breaker must not trip on the first violation, got {kinds}"
         )
+        run = kb.latest_run(conn, tid)
+        assert run is not None
+        assert run.outcome == "crashed", (
+            "rc=0 without a lifecycle transition must be durably recorded as "
+            f"failure, got outcome={run.outcome!r}"
+        )
+        assert run.ended_at is not None
+        assert "completed" not in kinds, (
+            "rc=0 without lifecycle must never silently become success"
+        )
     finally:
         conn.close()
 

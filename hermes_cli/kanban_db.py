@@ -10783,12 +10783,14 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
                 else:
                     protocol_violation = True
                     error_text = (
-                        "worker exited cleanly (rc=0) without calling "
-                        "kanban_complete or kanban_block — protocol violation. "
-                        "If the prior run already did the work, verify it and "
-                        "report the result via kanban_complete; a run that ends "
-                        "without a terminal kanban call counts as failed no "
-                        "matter what it did."
+                        "worker exited cleanly (rc=0) without a successful native "
+                        "kanban terminal — protocol violation. Applicable terminals "
+                        "are kanban_complete, kanban_request_review, "
+                        "kanban_request_changes, or kanban_block. If the prior run "
+                        "already did the work, verify it and report the result through "
+                        "exactly one applicable terminal; a run that ends without a "
+                        "durable lifecycle transition counts as failed no matter what "
+                        "it did."
                     )
                     event_kind = "protocol_violation"
                     event_payload = {
