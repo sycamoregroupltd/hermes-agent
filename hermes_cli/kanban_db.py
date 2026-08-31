@@ -96,6 +96,10 @@ try:
     import fcntl as _fcntl
 except ImportError:  # pragma: no cover - exercised by Windows import smoke
     _fcntl = None
+try:
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - exercised by POSIX import
+    _msvcrt = None
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11846,7 +11850,8 @@ def _validate_gc_audit_record(record: dict, path: Path, line_no: int) -> None:
         or len(event_ids) != record["count"]
         or any(isinstance(value, bool) or not isinstance(value, int) for value in event_ids)
         or not isinstance(task_ids, list)
-        or any(not isinstance(value, str) for value in task_ids)
+        or any(not isinstance(value, str) or not value for value in task_ids)
+        or event_ids != sorted(set(event_ids))
         or record["min_event_id"] != min(event_ids)
         or record["max_event_id"] != max(event_ids)
     ):
@@ -11891,6 +11896,82 @@ def load_gc_audit_lines() -> list[dict]:
 _gc_audit_write_status: ContextVar[Optional[bool]] = ContextVar(
     "gc_audit_write_status", default=None,
 )
+_gc_audit_lock_holder = threading.local()
+
+
+@contextlib.contextmanager
+def _gc_audit_lock(lock_path: Path):
+    """Serialize audit writers on POSIX, Windows, and reduced runtimes.
+
+    Native advisory locks are used where available.  The final fallback uses
+    atomic lock-file creation (O_EXCL), which is supported by every filesystem
+    Python supports; a bounded stale-lock timeout prevents a crashed writer
+    from blocking GC forever.  The lock is separate from the JSONL stream so
+    append+flush+fsync is one serialized critical section.
+    """
+    if getattr(_gc_audit_lock_holder, "depth", 0):
+        _gc_audit_lock_holder.depth += 1
+        try:
+            yield
+        finally:
+            _gc_audit_lock_holder.depth -= 1
+        return
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = None
+    fallback_created = False
+    deadline = time.monotonic() + 30.0
+    try:
+        if _fcntl is not None or _msvcrt is not None:
+            if _msvcrt is not None and not lock_path.exists():
+                lock_path.write_bytes(b" ")
+            lock_file = lock_path.open("r+b" if _msvcrt is not None else "a+b")
+            while True:
+                try:
+                    if _fcntl is not None:
+                        _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                    else:
+                        lock_file.seek(0)
+                        _msvcrt.locking(lock_file.fileno(), _msvcrt.LK_NBLCK, 1)
+                    break
+                except (BlockingIOError, OSError, PermissionError):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timed out waiting for GC audit lock")
+                    time.sleep(0.01)
+        else:
+            while True:
+                try:
+                    fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                    os.close(fd)
+                    fallback_created = True
+                    break
+                except FileExistsError:
+                    try:
+                        if time.time() - lock_path.stat().st_mtime > 60.0:
+                            lock_path.unlink()
+                            continue
+                    except OSError:
+                        pass
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("timed out waiting for GC audit lock")
+                    time.sleep(0.01)
+        _gc_audit_lock_holder.depth = 1
+        yield
+    finally:
+        _gc_audit_lock_holder.depth = 0
+        if lock_file is not None:
+            try:
+                if _fcntl is not None:
+                    _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_UN)
+                elif _msvcrt is not None:
+                    lock_file.seek(0)
+                    _msvcrt.locking(lock_file.fileno(), _msvcrt.LK_UNLCK, 1)
+            finally:
+                lock_file.close()
+        if fallback_created:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def gc_events_audit_write_succeeded() -> Optional[bool]:
@@ -11927,19 +12008,15 @@ def _emit_gc_audit(events_meta: list[tuple[int, str]], run_at: int,
     try:
         audit_path = _gc_audit_file_path()
         audit_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(audit_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        with os.fdopen(fd, "ab", closefd=True) as stream:
-            fd = -1
-            if _fcntl is not None:
-                _fcntl.flock(stream.fileno(), _fcntl.LOCK_EX)
-            stream.write(line)
-            stream.flush()
-            os.fsync(stream.fileno())
-            if _fcntl is not None:
-                _fcntl.flock(stream.fileno(), _fcntl.LOCK_UN)
+        with _gc_audit_lock(audit_path.with_name(audit_path.name + ".lock")):
+            fd = os.open(str(audit_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            with os.fdopen(fd, "ab", closefd=True) as stream:
+                fd = -1
+                stream.write(line)
+                stream.flush()
+                os.fsync(stream.fileno())
         return True
-    except OSError:
-        # A missing completion record is conservative: reconciliation fails
+    except (OSError, TimeoutError):
         # closed, while retention GC remains available.
         if fd >= 0:
             os.close(fd)

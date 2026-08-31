@@ -352,11 +352,49 @@ def test_valid_but_incomplete_audit_fails_closed(kanban_home):
         kb.load_gc_audit_lines()
 
 
-def test_gc_audit_lock_fallback_without_fcntl(kanban_home, monkeypatch):
-    """The shared module remains importable and usable without POSIX fcntl."""
+def test_gc_audit_lock_fallback_without_native_locks(kanban_home, monkeypatch):
+    """Fallback lock serializes writers when native locks are unavailable."""
     monkeypatch.setattr(kb, "_fcntl", None)
+    monkeypatch.setattr(kb, "_msvcrt", None)
     assert kb._emit_gc_audit([(7, "t_windows")], 1000, 3600, 500) is True
     assert kb.load_gc_audit_lines()[0]["event_ids"] == [7]
+
+
+def test_gc_audit_lock_fallback_concurrent_writers(kanban_home, monkeypatch):
+    """O_EXCL fallback keeps concurrent records whole and parseable."""
+    monkeypatch.setattr(kb, "_fcntl", None)
+    monkeypatch.setattr(kb, "_msvcrt", None)
+
+    def write_record(index):
+        kb._fcntl = None
+        kb._msvcrt = None
+        assert kb._emit_gc_audit([(index + 1, f"fallback-{index}")], 2000 + index, 3600, 500)
+
+    workers = [multiprocessing.Process(target=write_record, args=(i,)) for i in range(8)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+        assert worker.exitcode == 0
+    records = kb.load_gc_audit_lines()
+    assert len(records) == 8
+    assert {record["min_event_id"] for record in records} == set(range(1, 9))
+
+
+def test_invalid_event_id_order_and_task_ids_fail_closed(kanban_home):
+    """Authoritative records reject duplicate/order and empty task IDs."""
+    path = kb.gc_events_audit_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = {
+        "status": "completed", "run_at": 1, "retention_seconds": 1,
+        "cutoff": 1, "min_event_id": 1, "max_event_id": 2, "event_ids": [1, 2],
+        "count": 2, "task_ids": ["task"],
+    }
+    for invalid in ({**base, "event_ids": [2, 1]}, {**base, "event_ids": [1, 1]},
+                    {**base, "task_ids": [""]}):
+        path.write_text(json.dumps(invalid) + "\n", encoding="utf-8")
+        with pytest.raises(kb.GcAuditCorruptionError, match="invalid completion fields"):
+            kb.load_gc_audit_lines()
 
 
 def test_post_commit_invariant_failure_still_emits_evidence(kanban_home, monkeypatch):
