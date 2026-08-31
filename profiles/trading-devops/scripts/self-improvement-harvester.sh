@@ -20,16 +20,27 @@ JOB_ID="c097aecdef5a"
 PROFILE_HOME="/home/frank/.hermes/profiles/trading-devops"
 CURSOR_FILE="/home/frank/.hermes/self-improvement-harvester-cursor.json"
 HERMES_BIN="${HERMES_BIN:-/home/frank/.local/bin/hermes}"
+NOTEPAD=(env HERMES_HOME="$PROFILE_HOME" "$HERMES_BIN" cron notepad "$JOB_ID")
 
 # 1) Hydrate the working cursor file from the notepad (durable source).
-cursor_val="$("$HERMES_BIN" cron notepad "$JOB_ID" get harvester:cursor 2>/dev/null | grep -v '^No notepad key' || true)"
-if [ -n "$cursor_val" ] && [ "$cursor_val" != "Notepad for job"* ]; then
-  printf '%s' "$cursor_val" > "$CURSOR_FILE"
-elif [ -f "$CURSOR_FILE" ]; then
+# Bridge failures are fatal: silently falling back to the loose file would
+# violate the notepad source-of-truth contract and hide a broken cron store.
+if ! cursor_val="$("${NOTEPAD[@]}" get harvester:cursor)"; then
+  printf '%s\n' "ERROR: unable to read cron notepad ${JOB_ID}:harvester:cursor" >&2
+  exit 1
+fi
+if [[ "$cursor_val" != No\ notepad\ key* ]]; then
+  if [[ -n "$cursor_val" ]]; then
+    printf '%s' "$cursor_val" > "$CURSOR_FILE"
+  fi
+elif [[ -f "$CURSOR_FILE" ]]; then
   # First notepad-enabled run: seed the notepad from the existing file so no
-  # prior watermark is lost.
-  seed="$(cat "$CURSOR_FILE")"
-  [ -n "$seed" ] && "$HERMES_BIN" cron notepad "$JOB_ID" set harvester:cursor "$seed" >/dev/null 2>&1 || true
+  # prior watermark is lost. A failed seed is fatal and visible to cron.
+  seed="$(<"$CURSOR_FILE")"
+  if [[ -n "$seed" ]] && ! "${NOTEPAD[@]}" set harvester:cursor "$seed" >/dev/null; then
+    printf '%s\n' "ERROR: unable to seed cron notepad ${JOB_ID}:harvester:cursor" >&2
+    exit 1
+  fi
 fi
 
 # 2) Run the canonical harvester against the working file.
@@ -41,10 +52,14 @@ python3 /home/frank/sycode-trading/tools/self-improvement-harvester/self-improve
   --board jarvis-os \
   "$@" || rc=$?
 
-# 3) Persist the updated cursor back to the notepad (durable).
-if [ -f "$CURSOR_FILE" ]; then
-  final="$(cat "$CURSOR_FILE")"
-  [ -n "$final" ] && "$HERMES_BIN" cron notepad "$JOB_ID" set harvester:cursor "$final" >/dev/null 2>&1 || true
+# 3) Persist the updated cursor back to the notepad (durable). A failed write
+# is a failed job even when the harvester itself returned success.
+if [[ -f "$CURSOR_FILE" ]]; then
+  final="$(<"$CURSOR_FILE")"
+  if [[ -n "$final" ]] && ! "${NOTEPAD[@]}" set harvester:cursor "$final" >/dev/null; then
+    printf '%s\n' "ERROR: unable to persist cron notepad ${JOB_ID}:harvester:cursor" >&2
+    exit 1
+  fi
 fi
 
 exit "$rc"
