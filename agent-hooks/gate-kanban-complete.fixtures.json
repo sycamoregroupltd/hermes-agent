@@ -1346,7 +1346,7 @@
   "name": "t_d64a01d1-route-follow-up-fix-card-allows",
   "task_id": "t_d64a01d1_dispatch_followup_allow",
   "expected": "allow",
-  "expected_class": "not_web",
+  "expected_class": "readonly_nonapp",
   "title": "REVIEW: configuration verification and Obsidian text audit",
   "body": "Record the exact failing item with evidence so a human/PM can route a follow-up fix card. This is a review-only configuration task with no app surface.",
   "summary": "review-only configuration evidence; route a follow-up fix card; no running app VERIFY_PASS supplied",
