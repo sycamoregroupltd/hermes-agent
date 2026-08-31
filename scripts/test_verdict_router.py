@@ -661,7 +661,7 @@ class VerdictRouterC4NegatedVerdictTests(VerdictRouterRegressionTests):
                 (
                     task_id,
                     "Add unit tests for tenant id injection",
-                    "Source/test-only change. Tenant coverage.",
+                    "review-required: Source/test-only change. Tenant coverage.",
                     "devops",
                     "blocked",
                     10,
@@ -721,6 +721,172 @@ class VerdictRouterC4NegatedVerdictTests(VerdictRouterRegressionTests):
                 "REVIEW_VERDICT gate: NO REVIEW_VERDICT issued. "
                 "No REVIEW_VERDICT=APPROVED/CHANGES_REQUESTED."
             ))
+
+
+class VerdictRouterB1B4RegressionTests(VerdictRouterRegressionTests):
+    """B1/B2/B4 (t_65a0c080) regression gates.
+
+    - B1: a verdict *quoted/relayed* from another reviewer seat must not be
+      attributed to the comment author. In particular the relay-hint author
+      set must be matched as whole tokens, never as substrings, so ``jarvis``
+      does not match ``jarvis-os-pm`` / ``jarvis-voice`` and skip the relay
+      check (quoted-verdict blindness).
+    - B2: a reviewer cannot self-certify its own card — author == assignee
+      must fail closed to None (already implemented; regression-proven here).
+    - B4: the durable COMPLETE marker must be persisted as a task_comments row
+      in the apply path so a reopened+re-blocked card re-runs and sees the
+      marker (prior_router_marker) instead of re-completing off a stale
+      approval.
+    """
+
+    def test_b1_quoted_verdict_by_jarvis_quoting_other_reviewer_fails_closed(self) -> None:
+        """B1: `jarvis` (a reviewer seat) RELAYING another seat's verdict by
+        writing 'trading-risk-reviewer posts REVIEW_VERDICT=APPROVED' must NOT
+        be treated as issuing the verdict. The relay-hint author-set membership
+        check must be whole-token, so 'jarvis' is recognized as a reviewer seat
+        (it is in the set) AND the window naming a *different* seat is still an
+        attribution. The substring bug made 'jarvis' match 'jarvis-os-pm' and
+        skip the relay check entirely.
+        """
+        task_id = "t_b1a1b2c3"
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, task_id)
+            self.add_comment(
+                board,
+                task_id,
+                "jarvis",
+                "trading-risk-reviewer posts REVIEW_VERDICT=APPROVED\n"
+                "Target: t_b1a1b2c3. Relaying the reviewer's verdict on their behalf.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            candidate = candidates[0]
+            decision = vr.decide(candidate, dry_run=True)
+            # The verdict is quoted/attributed to trading-risk-reviewer, NOT
+            # issued by jarvis, so it must fail closed (None -> needs_pm),
+            # never auto-complete.
+            self.assertEqual(decision.verdict, None)
+            self.assertNotEqual(decision.action, "complete")
+            self.assertEqual(decision.action, "needs_pm")
+
+    def test_b1_jarvis_own_verdict_still_routes(self) -> None:
+        """B1 positive control: `jarvis` ISSUING its own verdict (not relaying)
+        must still route. The whole-token fix must not suppress genuine
+        reviewer verdicts.
+        """
+        task_id = "t_b1c0de01"
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, task_id)
+            self.add_comment(
+                board,
+                task_id,
+                "jarvis",
+                "REVIEW_VERDICT=APPROVED\nTarget: t_b1c0de01. Jarvis's own verdict, source-only scope.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=True)
+            self.assertEqual(decision.verdict, "APPROVED")
+            self.assertEqual(decision.action, "complete")
+
+    def test_b2_builder_self_approve_fails_closed_to_none(self) -> None:
+        """B2: a card's OWN assignee (builder) cannot approve its own card.
+        author == assignee must fail closed -> parse_verdict returns None ->
+        never auto-complete.
+        """
+        task_id = "t_b2self01"
+        tmp, board = self.make_board()
+        with tmp:
+            # assignee == author == builder (self-certification)
+            con = sqlite3.connect(board.db)
+            con.execute(
+                "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at,block_kind) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (task_id, "review-required source code patch", "review-required source patch",
+                 "builder", "blocked", 10, int(time.time()), None),
+            )
+            con.commit()
+            con.close()
+            self.add_comment(
+                board,
+                task_id,
+                "builder",
+                "REVIEW_VERDICT=APPROVED\nTarget: t_b2self01. Self-approval attempt.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            candidate = candidates[0]
+            # Direct parse: author==assignee==builder -> fail closed.
+            self.assertIsNone(vr.parse_verdict(
+                candidate.latest_comment_body,
+                author=candidate.latest_comment_author,
+                assignee=candidate.assignee,
+            ))
+            decision = vr.decide(candidate, dry_run=True)
+            self.assertEqual(decision.verdict, None)
+            self.assertNotEqual(decision.action, "complete")
+
+    def test_b4_apply_complete_writes_durable_marker_comment_row(self) -> None:
+        """B4: in the apply path the COMPLETE marker must be persisted as a
+        task_comments row (via --comment) so a reopened+re-blocked card re-runs
+        and prior_router_marker() sees it. This is the regression that the
+        apply-era completes (marker only in summary/metadata) missed.
+        """
+        task_id = "t_b4a1b2c3"
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, task_id)
+            self.add_comment(
+                board,
+                task_id,
+                "os-reviewer",
+                "REVIEW_VERDICT=APPROVED\nTarget: t_b4a1b2c3. Source/test-only, approvable.",
+            )
+            candidates = vr.candidates_for_board(board)
+            self.assertEqual(len(candidates), 1)
+            decision = vr.decide(candidates[0], dry_run=False)
+            self.assertEqual(decision.action, "complete")
+
+            # The apply path must emit a --comment carrying the durable marker
+            # (so perform() writes it as a task_comments row). Capture the CLI
+            # args and prove the marker is present as a comment payload.
+            captured: dict[str, list[str]] = {}
+
+            def fake_run_cli(args: list[str]):
+                captured["args"] = args
+                # Faithfully simulate the apply path: `hermes kanban complete
+                # --comment <marker>` writes the marker as a task_comments row.
+                if "complete" in args and "--comment" in args:
+                    ci = args.index("--comment")
+                    marker_body = args[ci + 1]
+                    self.add_comment(board, task_id, vr.AUTHOR, marker_body)
+                return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+            with mock.patch.object(vr, "run_cli", side_effect=fake_run_cli):
+                vr.perform(decision, candidates[0])
+
+            self.assertIn("--comment", captured["args"])
+            comment_idx = captured["args"].index("--comment")
+            marker_comment = captured["args"][comment_idx + 1]
+            self.assertIn(
+                f"verdict-router COMPLETE marker={decision.idempotency_key}",
+                marker_comment,
+                "apply-path complete must persist the COMPLETE marker as a comment row",
+            )
+
+            # Durability: simulate the completed card being reopened/re-blocked
+            # (the marker now exists as a task_comments row). A fresh scan must
+            # not re-route the stale approval: prior_router_marker returns True.
+            con = vr.open_db_ro(board.db)
+            try:
+                self.assertTrue(
+                    vr.prior_router_marker(con, task_id, decision.idempotency_key),
+                    "durable COMPLETE marker must be visible to prior_router_marker",
+                )
+            finally:
+                con.close()
 
 
 class VerdictRouterBoardExclusionTests(unittest.TestCase):
@@ -824,7 +990,14 @@ class ScanCorruptTimestampsTests(unittest.TestCase):
                 assignee TEXT,
                 status TEXT NOT NULL,
                 priority INTEGER DEFAULT 0,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                claim_lock TEXT,
+                claim_expires INTEGER,
+                worker_pid INTEGER,
+                max_runtime_seconds INTEGER,
+                last_heartbeat_at INTEGER,
+                started_at INTEGER,
+                current_run_id INTEGER
             );
             CREATE TABLE task_comments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -860,7 +1033,14 @@ class ScanCorruptTimestampsTests(unittest.TestCase):
                 assignee TEXT,
                 status TEXT NOT NULL,
                 priority INTEGER DEFAULT 0,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                claim_lock TEXT,
+                claim_expires INTEGER,
+                worker_pid INTEGER,
+                max_runtime_seconds INTEGER,
+                last_heartbeat_at INTEGER,
+                started_at INTEGER,
+                current_run_id INTEGER
             );
             CREATE TABLE task_comments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
