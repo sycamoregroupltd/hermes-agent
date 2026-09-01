@@ -6,7 +6,12 @@ one line per commit or actionable failure.
 
 When a vault has an `origin` remote, push HEAD after a successful commit, and
 also push when there is nothing new to commit but local HEAD is still ahead.
-A failing push is always printed (PUSH-FAILED) so it cannot go silent.
+A failing push is always printed so it cannot go silent, and the two kinds are
+scored differently (t_61312ab9 review F1): PUSH-FAILED (network/auth/hook — may
+self-heal next tick) is advisory and leaves rc=0; PUSH-DIVERGED (remote history
+moved under us: non-fast-forward / fetch first) never self-heals without a human,
+so it is a FAILURE_MARKER and exits 1 — the exit code is the only liveness signal
+a Deliver:local no_agent cron has. No force push, ever.
 
 Staged content is scanned with the tight second-brain secret patterns before
 commit. A hit blocks the commit and does not push. A false positive is cleared by
@@ -19,6 +24,7 @@ card as well as printing. See main()'s FAILURE POLICY before changing exit codes
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import os
 import re
 import subprocess
@@ -304,23 +310,70 @@ def clear_alert(key: str) -> str | None:
         )
     except Exception as exc:  # noqa: BLE001
         return f'ALERT-CARD-STUCK {key} card={card} {exc!r}'
+    cleared_note: str | None = None
     if done.returncode != 0:
         err = (done.stderr or done.stdout).strip().replace('\n', ' ')[:200]
-        return f'ALERT-CARD-STUCK {key} card={card} rc={done.returncode} {err}'
+        # `complete` prints ONE message — "unknown id or terminal state" — for three
+        # different situations: the card is already done/archived (pointer is
+        # stale, e.g. an --idempotency-key create handed back a DONE card, which
+        # is how vaultcommit_obsidian-fleet-vault -> t_bb78e42d logged
+        # ALERT-CARD-STUCK on every run, review F5), the id no longer exists, OR
+        # the card is live but has an open parent. Only the first two mean
+        # "already resolved", so read the card's status before dropping the
+        # pointer: popping a live card's pointer would orphan it (the pile again).
+        if 'terminal state' in err or 'unknown id' in err:
+            gone = alert_card_gone(card, board)
+            if gone is None:
+                return f'ALERT-CARD-STUCK {key} card={card} rc={done.returncode} {err}'
+            cleared_note = f'ALERT-POINTER-CLEARED {key} card={card} ({gone})'
+        else:
+            return f'ALERT-CARD-STUCK {key} card={card} rc={done.returncode} {err}'
     state.pop(key, None)
     try:
         ALERT_STATE.write_text(json.dumps(state, indent=1, sort_keys=True))
     except OSError as exc:
         return f'ALERT-CARD-STUCK {key} card={card} state-write-failed {exc!r}'
-    return None
+    return cleared_note
+
+
+# Statuses `hermes kanban complete` can still transition FROM (kanban_db.complete_task).
+# A card in any OTHER status is terminal for our purposes: nothing we do can close it.
+ALERT_CARD_OPEN_STATUSES = ('running', 'ready', 'blocked', 'review')
+
+
+def alert_card_gone(card: str, board: str) -> str | None:
+    """Why a stale alert pointer may be dropped, or None if the card is still live.
+
+    Returns 'status=done' / 'no such task' when the card is terminal or missing,
+    None when it is open (an open parent is the usual cause) or when its status
+    cannot be read (a dead CLI must not look like a resolved alert).
+    """
+    try:
+        shown = subprocess.run(
+            ['hermes', 'kanban', '--board', board, 'show', card],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    text = (shown.stdout or '') + (shown.stderr or '')
+    if shown.returncode != 0:
+        return 'no such task' if 'no such task' in text else None
+    match = re.search(r'^\s*status:\s*(\S+)', text, re.M)
+    if not match:
+        return None
+    status = match.group(1)
+    return None if status in ALERT_CARD_OPEN_STATUSES else f'status={status}'
 
 
 def resolved_vaults() -> list[Path]:
-    """VAULTS deduplicated by real path.
+    """VAULTS deduplicated by real path — the CANONICAL entry per repo.
 
     /home/frank/obsidian/sycode-trading is a SYMLINK to /home/frank/obsidian/quant-team,
     so the raw list ran the same repo twice every tick — wasted work, and a single
-    fault printed twice, which reads like two broken vaults.
+    fault printed twice, which reads like two broken vaults. The first VAULTS entry
+    for a real path is canonical (quant-team); the later ones are aliases, which
+    vault_aliases() reports so the push-state file carries BOTH names (review F3:
+    a digest keyed on 'sycode-trading' must not read the vault as never-pushed).
     """
     seen: set[Path] = set()
     out: list[Path] = []
@@ -336,10 +389,71 @@ def resolved_vaults() -> list[Path]:
     return out
 
 
+def vault_aliases(vault: Path) -> list[Path]:
+    """Every OTHER VAULTS entry that resolves to the same repo as `vault`."""
+    try:
+        target = vault.resolve()
+    except OSError:
+        return []
+    out: list[Path] = []
+    for other in VAULTS:
+        if other == vault:
+            continue
+        try:
+            if other.resolve() == target:
+                out.append(other)
+        except OSError:
+            continue
+    return out
+
+
+PUSH_STATE = Path('/home/frank/.hermes/state/vault-autocommit-push-state.json')
+
+
+def record_push_state(vault: Path, pushed: bool) -> str | None:
+    """Persist per-vault push state without affecting the backup run.
+
+    One entry per VAULTS name (aliases get a copy tagged `alias_of`), each a dict:
+      pushed_at  — last time THIS script pushed commits (unchanged semantics)
+      synced_at  — last time HEAD was verified equal to @{upstream}, whether by a
+                   push just now or by finding 0 ahead. Without it an unchanging
+                   vault never got a key and a "last successful push" digest would
+                   read a healthy vault as never-pushed (review F3).
+    A legacy bare-string value (pre-F3 format) is upgraded to {pushed_at: value}.
+    """
+    try:
+        try:
+            state = json.loads(PUSH_STATE.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        entry = state.get(str(vault))
+        if isinstance(entry, str):
+            entry = {'pushed_at': entry}
+        elif not isinstance(entry, dict):
+            entry = {}
+        if pushed:
+            entry['pushed_at'] = now
+        entry['synced_at'] = now
+        entry.pop('alias_of', None)
+        state[str(vault)] = entry
+        for alias in vault_aliases(vault):
+            state[str(alias)] = dict(entry, alias_of=str(vault))
+        PUSH_STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PUSH_STATE.with_suffix('.tmp')
+        tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+        tmp.replace(PUSH_STATE)
+    except OSError as exc:
+        return f'PUSH-METRIC-FAILED {vault} {exc}'
+    return None
+
+
 def maybe_push(vault: Path) -> str | None:
     remotes = run(['git', 'remote'], vault, check=False).stdout.split()
     if 'origin' not in remotes:
-        return None
+        return f'NO-REMOTE {vault} — push skipped'
     ahead = run(
         ['git', 'rev-list', '--count', '@{upstream}..HEAD'],
         vault,
@@ -347,12 +461,26 @@ def maybe_push(vault: Path) -> str | None:
     )
     # No upstream yet (first push) still needs a push.
     if ahead.returncode == 0 and ahead.stdout.strip() == '0':
-        return None
+        # In sync: nothing to push, but record that we VERIFIED it (review F3).
+        return record_push_state(vault, pushed=False)
     result = run(['git', 'push', '-u', 'origin', 'HEAD'], vault, check=False)
     if result.returncode != 0:
         err = (result.stderr or result.stdout).strip().replace('\n', ' ')[:300]
-        return f'PUSH-FAILED {vault} rc={result.returncode} {err}'
-    return f'PUSHED {vault}'
+        # Divergence = the REMOTE history moved and ours is not a descendant. Git
+        # says exactly one of: "! [rejected] ... (non-fast-forward)" or
+        # "... (fetch first)". A "[remote rejected] ... (pre-receive hook declined)"
+        # or push-protection refusal is NOT divergence (review F4) — that stays
+        # PUSH-FAILED, so a bare 'rejected' substring must not be matched here.
+        lowered = err.lower()
+        diverged = (
+            'non-fast-forward' in lowered
+            or 'fetch first' in lowered
+            or '[rejected]' in lowered
+        )
+        marker = 'PUSH-DIVERGED' if diverged else 'PUSH-FAILED'
+        return f'{marker} {vault} rc={result.returncode} {err}'
+    metric_error = record_push_state(vault, pushed=True)
+    return '\n'.join(filter(None, [f'PUSHED {vault}', metric_error]))
 
 
 def autocommit(vault: Path) -> str | None:
@@ -432,14 +560,21 @@ def autocommit(vault: Path) -> str | None:
 # rc=1 = the backup CHAIN failed for this vault. Keep this list to real chain
 # deaths: the exit code is the only liveness signal Hermes no_agent cron reads, so
 # widening it to advisories would make a permanently-red job that means nothing.
+# PUSH-DIVERGED is a chain death (t_61312ab9 review F1): the off-box copy has
+# stopped advancing and will not resume without a human, and the notice-card path
+# had never fired for a vaultnotice_* key — so rc=0 here read as GREEN everywhere.
 FAILURE_MARKERS = (
-    'SECRET-SCAN-BLOCKED', 'COMMIT-FAILED', 'PUSH-FAILED', 'ERROR ', 'MISSING ',
+    'SECRET-SCAN-BLOCKED', 'COMMIT-FAILED', 'ERROR ', 'MISSING ', 'PUSH-DIVERGED',
 )
 
 # Worth a board card, but NOT a chain death — these do not touch rc. Without this
 # split, an ignored README.md in a pytest cache would hold the job red forever and
-# the exit code would stop meaning "the backup is broken".
-NOTICE_MARKERS = ('ALLOWLIST-INVALID', 'IGNORED-NOTES')
+# the exit code would stop meaning "the backup is broken". PUSH-FAILED stays here:
+# a network/auth/hook refusal usually clears on the next 30-minute tick.
+NOTICE_MARKERS = (
+    'ALLOWLIST-INVALID', 'IGNORED-NOTES', 'NO-REMOTE',
+    'PUSH-FAILED', 'PUSH-METRIC-FAILED',
+)
 
 
 def main() -> int:
