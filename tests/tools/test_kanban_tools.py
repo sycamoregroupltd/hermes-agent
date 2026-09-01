@@ -1134,3 +1134,127 @@ def test_attach_url_happy_path_public_host(worker_env, default_url_guard, monkey
         assert Path(atts[0].stored_path).read_bytes() == payload
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Phantom-assignee guards (t_96e0e791)
+#
+# Weak models copied the old schema example tokens ('reviewer', 'writer',
+# 'researcher-a') verbatim into kanban_create / kanban_request_review, which
+# stranded cards on profiles that do not exist (the dispatcher never spawns
+# them, silently). kanban_create rejects those specific tokens unless a real
+# profile of that name exists; kanban_request_review soft-drops an unknown
+# reviewer to None and returns a warning.
+# ---------------------------------------------------------------------------
+
+
+def test_create_rejects_example_token_assignee(monkeypatch, worker_env):
+    from tools import kanban_tools as kt
+    monkeypatch.setattr("hermes_cli.profiles.profile_exists", lambda name: False)
+    monkeypatch.setattr(
+        "hermes_cli.profiles.list_profiles",
+        lambda: [type("P", (), {"name": "os-reviewer"})(),
+                 type("P", (), {"name": "fleet-engineer"})()],
+    )
+    for token in ("reviewer", "writer", "researcher-a", "Reviewer "):
+        out = json.loads(kt._handle_create({
+            "title": "child", "assignee": token, "parents": [worker_env],
+        }))
+        assert out.get("error"), f"{token!r} should be rejected: {out}"
+        assert "not an existing profile" in out["error"]
+        assert "fleet-engineer" in out["error"] and "os-reviewer" in out["error"]
+    # Nothing was written.
+    from hermes_cli import kanban_db as kb
+    conn = kb.connect()
+    try:
+        titles = [t.title for t in kb.list_tasks(conn)]
+    finally:
+        conn.close()
+    assert "child" not in titles
+
+
+def test_create_allows_example_token_when_profile_exists(monkeypatch, worker_env):
+    from tools import kanban_tools as kt
+    monkeypatch.setattr(
+        "hermes_cli.profiles.profile_exists", lambda name: name == "reviewer"
+    )
+    out = json.loads(kt._handle_create({
+        "title": "child", "assignee": "reviewer", "parents": [worker_env],
+    }))
+    assert out["ok"] is True, out
+
+
+def test_create_leaves_non_example_assignees_alone(monkeypatch, worker_env):
+    """External seats have no profile dir and must stay accepted."""
+    from tools import kanban_tools as kt
+    monkeypatch.setattr("hermes_cli.profiles.profile_exists", lambda name: False)
+    for name in ("external-claude-dgx-lab20-3", "fable", "jarvis", "peer"):
+        out = json.loads(kt._handle_create({
+            "title": f"child-{name}", "assignee": name, "parents": [worker_env],
+        }))
+        assert out["ok"] is True, (name, out)
+
+
+def _own_worker_run(monkeypatch, tid):
+    """request_review needs the worker's run id to prove claim ownership."""
+    from hermes_cli import kanban_db as kb
+    conn = kb.connect()
+    try:
+        run_id = kb.get_task(conn, tid).current_run_id
+    finally:
+        conn.close()
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(run_id))
+
+
+def test_request_review_soft_drops_unknown_reviewer(monkeypatch, worker_env):
+    from tools import kanban_tools as kt
+    _own_worker_run(monkeypatch, worker_env)
+    monkeypatch.setattr("hermes_cli.profiles.profile_exists", lambda name: False)
+    out = json.loads(kt._handle_request_review({
+        "summary": "implemented and tested",
+        "reviewer": "reviewer",
+    }))
+    assert out["ok"] is True, out
+    assert out["status"] == "review"
+    assert "warning" in out and "'reviewer'" in out["warning"]
+    from hermes_cli import kanban_db as kb
+    conn = kb.connect()
+    try:
+        task = kb.get_task(conn, worker_env)
+        # Not reassigned to the phantom profile.
+        assert task.assignee != "reviewer"
+    finally:
+        conn.close()
+
+
+def test_request_review_keeps_known_reviewer(monkeypatch, worker_env):
+    from tools import kanban_tools as kt
+    _own_worker_run(monkeypatch, worker_env)
+    monkeypatch.setattr(
+        "hermes_cli.profiles.profile_exists", lambda name: name == "os-reviewer"
+    )
+    out = json.loads(kt._handle_request_review({
+        "summary": "implemented and tested",
+        "reviewer": "os-reviewer",
+    }))
+    assert out["ok"] is True, out
+    assert "warning" not in out
+    from hermes_cli import kanban_db as kb
+    conn = kb.connect()
+    try:
+        assert kb.get_task(conn, worker_env).assignee == "os-reviewer"
+    finally:
+        conn.close()
+
+
+def test_schema_descriptions_carry_no_copyable_example_tokens():
+    """Weak-model-safe authoring: no token in the assignee/reviewer
+    descriptions may look like a real profile name."""
+    from tools import kanban_tools as kt
+    create = kt.KANBAN_CREATE_SCHEMA["parameters"]["properties"]["assignee"]
+    review = kt.KANBAN_REQUEST_REVIEW_SCHEMA["parameters"]["properties"]["reviewer"]
+    for desc in (create["description"], review["description"]):
+        low = desc.lower()
+        for token in ("'reviewer'", "'writer'", "'researcher-a'"):
+            assert token not in low, (token, desc)
+        assert "~/.hermes/profiles" in desc

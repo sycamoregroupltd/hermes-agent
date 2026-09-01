@@ -450,6 +450,57 @@ def _normalize_profile(value: Any) -> Optional[str]:
     return text
 
 
+# Historic example tokens that once appeared in the kanban_create schema
+# description ("e.g. 'researcher-a', 'reviewer', 'writer'"). Literal-minded
+# models copied them verbatim, producing cards assigned to profiles that do
+# not exist; the dispatcher never spawns those, so the card stalls silently
+# forever. These tokens are rejected unless a real profile of that name
+# exists. Every other assignee is left untouched: external seats (e.g.
+# ``external-...``, ``fable``, ``jarvis``) are legitimate and have no
+# profile directory.
+_EXAMPLE_TOKEN_ASSIGNEES = frozenset({"reviewer", "writer", "researcher-a"})
+
+
+def _profile_exists_safe(name: Any) -> bool:
+    """True when *name* is a live profile directory (or ``default``).
+
+    Never raises: an invalid/empty name or an unavailable profiles helper
+    reads as "does not exist".
+    """
+    try:
+        from hermes_cli.profiles import profile_exists
+        return bool(profile_exists(str(name)))
+    except Exception:
+        return False
+
+
+def _real_profile_names() -> list[str]:
+    """Sorted names of the profiles that exist on disk (best effort)."""
+    try:
+        from hermes_cli.profiles import list_profiles
+        return sorted(p.name for p in list_profiles())
+    except Exception:
+        return []
+
+
+def _reject_example_token_assignee(assignee: Any) -> Optional[str]:
+    """Return a tool_error when *assignee* is a copied schema example token
+    that does not name a real profile, else ``None``."""
+    text = str(assignee).strip().lower()
+    if text not in _EXAMPLE_TOKEN_ASSIGNEES:
+        return None
+    if _profile_exists_safe(text):
+        return None
+    names = _real_profile_names()
+    listing = ", ".join(names) if names else "(none found on disk)"
+    return tool_error(
+        f"assignee {text!r} is not an existing profile — it is a placeholder "
+        "token copied from an old tool description, and tasks assigned to it "
+        "are never dispatched. Use one of the real profiles under "
+        f"~/.hermes/profiles: {listing}"
+    )
+
+
 def _parse_bool_arg(args: dict, name: str, *, default: bool = False):
     value = args.get(name)
     if value is None:
@@ -932,6 +983,18 @@ def _handle_request_review(args: dict, **kw) -> str:
         # Model-supplied free text stored durably on the event payload —
         # redact like summary / kanban_block's reason.
         reviewer = redact_sensitive_text(str(reviewer), force=True)
+    reviewer_warning: Optional[str] = None
+    if reviewer and not _profile_exists_safe(reviewer):
+        # An unknown reviewer would reassign the card to a profile the
+        # dispatcher can never spawn, stranding it in review forever.
+        # Drop to None so the native dispatcher picks the review profile,
+        # and tell the caller.
+        reviewer_warning = (
+            f"reviewer {reviewer!r} is not an existing profile under "
+            "~/.hermes/profiles; ignored — the dispatcher will choose the "
+            "review profile"
+        )
+        reviewer = None
     board = args.get("board")
     try:
         kb, conn = _connect(board=board)
@@ -959,11 +1022,14 @@ def _handle_request_review(args: dict, **kw) -> str:
                 )
             run = kb.latest_run(conn, tid)
             landed = kb.get_task(conn, tid)
-            return _ok(
-                task_id=tid,
-                run_id=run.id if run else None,
-                status=landed.status if landed else "review",
-            )
+            result: dict[str, Any] = {
+                "task_id": tid,
+                "run_id": run.id if run else None,
+                "status": landed.status if landed else "review",
+            }
+            if reviewer_warning:
+                result["warning"] = reviewer_warning
+            return _ok(**result)
         finally:
             conn.close()
     except ValueError as e:
@@ -1358,6 +1424,9 @@ def _handle_create(args: dict, **kw) -> str:
             "assignee is required — name the profile that should execute this "
             "task (the dispatcher will only spawn tasks with an assignee)"
         )
+    assignee_err = _reject_example_token_assignee(assignee)
+    if assignee_err:
+        return assignee_err
     body = args.get("body")
     parents = args.get("parents") or []
     tenant = args.get("tenant") or os.environ.get("HERMES_TENANT")
@@ -1930,8 +1999,14 @@ KANBAN_REQUEST_REVIEW_SCHEMA = {
             "reviewer": {
                 "type": "string",
                 "description": (
-                    "Optional reviewer profile. When provided, the task is "
-                    "reassigned to that profile before review dispatch."
+                    "Optional reviewer profile name. Must be the name of an "
+                    "existing profile directory under ~/.hermes/profiles "
+                    "(e.g. '<existing-review-profile>'); names that do not "
+                    "exist are ignored with a warning and the dispatcher "
+                    "chooses the review profile. Omit it unless you know a "
+                    "specific existing profile must review. When provided "
+                    "and valid, the task is reassigned to that profile "
+                    "before review dispatch."
                 ),
             },
             "metadata": {
@@ -2149,10 +2224,12 @@ KANBAN_CREATE_SCHEMA = {
             "assignee": {
                 "type": "string",
                 "description": (
-                    "Profile name that should execute this task "
-                    "(e.g. 'researcher-a', 'reviewer', 'writer'). "
-                    "Required — tasks without an assignee are never "
-                    "dispatched."
+                    "Name of the profile that should execute this task. "
+                    "Must be an existing profile directory under "
+                    "~/.hermes/profiles (e.g. '<existing-profile-name>'), "
+                    "or a registered external seat. Never invent a name or "
+                    "use a generic role word: tasks assigned to a "
+                    "non-existent profile are never dispatched. Required."
                 ),
             },
             "body": {
