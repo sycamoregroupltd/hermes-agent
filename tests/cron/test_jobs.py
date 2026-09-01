@@ -319,11 +319,15 @@ class TestResolveJobRef:
 
 class TestMarkJobRun:
     def test_missing_job_persists_probe_visible_drop_counter(self, tmp_cron_dir):
-        mark_job_run("missing-job", success=True)
+        assert mark_job_run("missing-job", success=True) is False
         stats = json.loads((tmp_cron_dir / "cron" / "mark_job_run_drops.json").read_text())
         assert stats["count"] >= 1
         assert stats["last_job_id"] == "missing-job"
         assert get_mark_not_found_stats()[0] >= 1
+
+    def test_successful_run_reports_persisted_metadata(self, tmp_cron_dir):
+        job = create_job(prompt="Test", schedule="every 1h")
+        assert mark_job_run(job["id"], success=True) is True
 
     def test_increments_completed(self, tmp_cron_dir):
         job = create_job(prompt="Test", schedule="every 1h")

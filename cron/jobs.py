@@ -1760,7 +1760,7 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                         job["state"] = "completed"
                         job["next_run_at"] = None
                         save_jobs(jobs)
-                        return
+                        return True
                 
                 # Compute next run
                 job["next_run_at"] = compute_next_run(job["schedule"], now)
@@ -1795,7 +1795,7 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                     job["state"] = "scheduled"
 
                 save_jobs(jobs)
-                return
+                return True
 
         # C2 (t_95fbd07c): persist a drop counter so an out-of-process liveness
         # probe can report this class of failure instead of a silent
@@ -1828,6 +1828,7 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
             now,
             stats_path,
         )
+        return False
 
 
 # C2 (t_95fbd07c): exported accessor for the mark_job_run not-found drop
