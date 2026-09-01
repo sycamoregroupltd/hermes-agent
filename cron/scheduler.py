@@ -4046,8 +4046,24 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
         # persists the store.  If the interrupted-path's mark_job_run silently
         # dropped (e.g. job removed by dead-pin sweep), the normal-path call
         # here is the only surviving chance to write last_run_at (#C2 t_95fbd07c).
-        mark_job_run(job["id"], success, error, delivery_error=delivery_error)
+        marked = mark_job_run(
+            job["id"], success, error, delivery_error=delivery_error
+        )
         _consume_interrupted_flag(job["id"])  # discard stale flag for next cycle
+        if not marked:
+            # An execution ledger success without a durable jobs.json terminal
+            # write creates the exact metadata/artifact divergence this path is
+            # intended to prevent. Fail closed and make the drop visible in the
+            # execution ledger/log; mark_job_run itself persists a drop counter.
+            success = False
+            error = (
+                error
+                or "Cron terminal metadata write failed: mark_job_run did not persist jobs.json"
+            )
+            logger.error(
+                "Job %s terminal metadata was not persisted; failing closed",
+                job["id"],
+            )
         normalized_deliver = _normalize_deliver_value(job.get("deliver", "local"))
         if delivery_error:
             delivery_outcome = "failed"

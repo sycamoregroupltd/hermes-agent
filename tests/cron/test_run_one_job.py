@@ -33,6 +33,7 @@ def _patch_pipeline(monkeypatch, *, success=True, output="out", final="final res
 
     def fake_mark(jid, ok, err=None, delivery_error=None):
         calls.append(("mark", jid, ok))
+        return True
 
     monkeypatch.setattr(s, "run_job", fake_run_job)
     monkeypatch.setattr(s, "save_job_output", fake_save)
@@ -107,5 +108,45 @@ def test_run_one_job_installs_secret_scope_under_multiplex(monkeypatch, tmp_path
     assert scope_during_run["base_url"] == "https://openrouter.ai/api/v1"
     # And it was torn down after run_one_job returned (no leak).
     assert ss.current_secret_scope() is None
+
+
+def test_run_one_job_fails_closed_when_terminal_metadata_write_is_dropped(monkeypatch):
+    """A successful run must not become ledger-success when jobs.json drops its terminal write."""
+    calls = []
+    finished = []
+
+    monkeypatch.setattr(
+        s,
+        "run_job",
+        lambda job, **kwargs: (
+            calls.append(("run", job["id"])) or (True, "out", "final", None)
+        ),
+    )
+    monkeypatch.setattr(
+        s,
+        "save_job_output",
+        lambda jid, out: calls.append(("save", jid)) or "/tmp/out",
+    )
+    monkeypatch.setattr(
+        s,
+        "_deliver_result",
+        lambda job, content, **kwargs: calls.append(("deliver", job["id"])) or None,
+    )
+
+    def dropped_mark(jid, ok, err=None, delivery_error=None):
+        calls.append(("mark", jid, ok))
+        return False
+
+    monkeypatch.setattr(s, "mark_job_run", dropped_mark)
+    monkeypatch.setattr(
+        s,
+        "finish_execution",
+        lambda execution_id, **kwargs: finished.append((execution_id, kwargs)),
+    )
+
+    assert s.run_one_job({"id": "j-drop", "name": "t"}) is True
+    assert calls[-1] == ("mark", "j-drop", True)
+    assert finished[-1][1]["success"] is False
+    assert "terminal metadata write failed" in finished[-1][1]["error"].lower()
 
 
