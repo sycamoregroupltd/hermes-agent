@@ -214,9 +214,15 @@ def run_prompt_self_test() -> int:
         here = Path(__file__).resolve()
         # Walk up to a dir that contains profiles/jarvis/cron/jobs.json
         for parent in [here, *here.parents]:
-            cand = parent / "profiles" / "jarvis" / "cron" / "jobs.json"
-            if cand.is_file():
-                yield str(cand)
+            # Live cron stores are intentionally untracked; fresh checkouts
+            # validate the sanitized committed snapshot instead.
+            candidates = (
+                parent / "profiles" / "jarvis" / "cron" / "jobs.json",
+                parent / "cron-snapshots" / "profiles" / "jarvis" / "cron" / "jobs.json",
+            )
+            for cand in candidates:
+                if cand.is_file():
+                    yield str(cand)
         yield str(PROFILES_DIR / "jarvis" / "cron" / "jobs.json")
     expected_jobs_path = next(_candidate_jobs_paths())
     expected_job_id = "e51c9e2fa5df"
