@@ -28,7 +28,7 @@ def review_worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
     monkeypatch.setenv("HERMES_KANBAN_TASK", task_id)
     monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(task.current_run_id))
     # These tests use 'reviewer' as a real review profile; kanban_request_review
-    # now drops reviewers that have no profile dir, so declare it exists here.
+    # now rejects reviewers that have no profile dir, so declare it exists here.
     monkeypatch.setattr(
         "hermes_cli.profiles.profile_exists",
         lambda name: str(name).strip().lower() in {"reviewer", "builder", "default"},

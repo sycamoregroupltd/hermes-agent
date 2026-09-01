@@ -483,6 +483,49 @@ def _real_profile_names() -> list[str]:
         return []
 
 
+def _reject_placeholder_profile_name(kind: str, value: Any) -> Optional[str]:
+    """Return a tool_error when *value* is whitespace-only or carries angle
+    brackets (a copied ``<placeholder>`` from a description), else ``None``.
+
+    Cheap structural check that catches every future placeholder token
+    without having to enumerate them.
+    """
+    text = str(value)
+    if not text.strip():
+        return tool_error(f"{kind} must not be empty or whitespace-only")
+    if "<" in text or ">" in text:
+        return tool_error(
+            f"{kind} {text!r} is a placeholder, not a profile name — pass the "
+            "name of an existing profile directory under ~/.hermes/profiles "
+            "(no angle brackets)"
+        )
+    return None
+
+
+def _reject_unknown_reviewer(reviewer: Any) -> Optional[str]:
+    """Return a tool_error when *reviewer* is not an existing profile.
+
+    Fail closed: an unknown reviewer would reassign the card to a profile the
+    dispatcher can never spawn (stranded forever). Silently dropping it is
+    worse — the card then stays on the implementer profile and the review
+    lane spawns the implementer to review its own work, while the caller
+    believes an independent reviewer was assigned. A wrong name is a
+    retryable error for the caller; self-review is not.
+    """
+    text = str(reviewer).strip()
+    if _profile_exists_safe(text):
+        return None
+    names = _real_profile_names()
+    listing = ", ".join(names) if names else "(none found on disk)"
+    return tool_error(
+        f"reviewer {text!r} is not an existing profile under ~/.hermes/profiles, "
+        "so the review was NOT requested. Pass one of the real profiles: "
+        f"{listing} — or omit reviewer, in which case the card stays on its "
+        "current assignee (the implementer profile) and that profile runs the "
+        "review lane."
+    )
+
+
 def _reject_example_token_assignee(assignee: Any) -> Optional[str]:
     """Return a tool_error when *assignee* is a copied schema example token
     that does not name a real profile, else ``None``."""
@@ -983,18 +1026,13 @@ def _handle_request_review(args: dict, **kw) -> str:
         # Model-supplied free text stored durably on the event payload —
         # redact like summary / kanban_block's reason.
         reviewer = redact_sensitive_text(str(reviewer), force=True)
-    reviewer_warning: Optional[str] = None
-    if reviewer and not _profile_exists_safe(reviewer):
-        # An unknown reviewer would reassign the card to a profile the
-        # dispatcher can never spawn, stranding it in review forever.
-        # Drop to None so the native dispatcher picks the review profile,
-        # and tell the caller.
-        reviewer_warning = (
-            f"reviewer {reviewer!r} is not an existing profile under "
-            "~/.hermes/profiles; ignored — the dispatcher will choose the "
-            "review profile"
+    if reviewer:
+        reviewer_err = (
+            _reject_placeholder_profile_name("reviewer", reviewer)
+            or _reject_unknown_reviewer(reviewer)
         )
-        reviewer = None
+        if reviewer_err:
+            return reviewer_err
     board = args.get("board")
     try:
         kb, conn = _connect(board=board)
@@ -1022,14 +1060,11 @@ def _handle_request_review(args: dict, **kw) -> str:
                 )
             run = kb.latest_run(conn, tid)
             landed = kb.get_task(conn, tid)
-            result: dict[str, Any] = {
-                "task_id": tid,
-                "run_id": run.id if run else None,
-                "status": landed.status if landed else "review",
-            }
-            if reviewer_warning:
-                result["warning"] = reviewer_warning
-            return _ok(**result)
+            return _ok(
+                task_id=tid,
+                run_id=run.id if run else None,
+                status=landed.status if landed else "review",
+            )
         finally:
             conn.close()
     except ValueError as e:
@@ -1424,7 +1459,10 @@ def _handle_create(args: dict, **kw) -> str:
             "assignee is required — name the profile that should execute this "
             "task (the dispatcher will only spawn tasks with an assignee)"
         )
-    assignee_err = _reject_example_token_assignee(assignee)
+    assignee_err = (
+        _reject_placeholder_profile_name("assignee", assignee)
+        or _reject_example_token_assignee(assignee)
+    )
     if assignee_err:
         return assignee_err
     body = args.get("body")
@@ -1999,14 +2037,17 @@ KANBAN_REQUEST_REVIEW_SCHEMA = {
             "reviewer": {
                 "type": "string",
                 "description": (
-                    "Optional reviewer profile name. Must be the name of an "
-                    "existing profile directory under ~/.hermes/profiles "
-                    "(e.g. '<existing-review-profile>'); names that do not "
-                    "exist are ignored with a warning and the dispatcher "
-                    "chooses the review profile. Omit it unless you know a "
-                    "specific existing profile must review. When provided "
-                    "and valid, the task is reassigned to that profile "
-                    "before review dispatch."
+                    "Optional. Name of the profile that must perform the "
+                    "review; it must be an existing profile directory under "
+                    "~/.hermes/profiles, and the task is reassigned to it "
+                    "before review dispatch. A name that does not exist is "
+                    "rejected with an error listing the real profiles (the "
+                    "review is not requested). If you omit it, the task keeps "
+                    "its current assignee — the implementer profile — and "
+                    "that same profile runs the review lane, i.e. it reviews "
+                    "its own work. Name a different existing profile when an "
+                    "independent review is required. Do not invent names and "
+                    "do not use role words or placeholders."
                 ),
             },
             "metadata": {
@@ -2224,12 +2265,13 @@ KANBAN_CREATE_SCHEMA = {
             "assignee": {
                 "type": "string",
                 "description": (
-                    "Name of the profile that should execute this task. "
-                    "Must be an existing profile directory under "
-                    "~/.hermes/profiles (e.g. '<existing-profile-name>'), "
-                    "or a registered external seat. Never invent a name or "
-                    "use a generic role word: tasks assigned to a "
-                    "non-existent profile are never dispatched. Required."
+                    "Required. Name of the profile that should execute this "
+                    "task: an existing profile directory under "
+                    "~/.hermes/profiles, or the name of an external seat "
+                    "that works the board outside the dispatcher. Never "
+                    "invent a name, never use a generic role word, and never "
+                    "copy a placeholder: tasks assigned to a non-existent "
+                    "profile are never dispatched and stall silently."
                 ),
             },
             "body": {

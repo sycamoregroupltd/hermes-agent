@@ -9,6 +9,7 @@ Verifies:
 from __future__ import annotations
 
 import json
+import re
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -1143,8 +1144,11 @@ def test_attach_url_happy_path_public_host(worker_env, default_url_guard, monkey
 # 'researcher-a') verbatim into kanban_create / kanban_request_review, which
 # stranded cards on profiles that do not exist (the dispatcher never spawns
 # them, silently). kanban_create rejects those specific tokens unless a real
-# profile of that name exists; kanban_request_review soft-drops an unknown
-# reviewer to None and returns a warning.
+# profile of that name exists; kanban_request_review rejects any reviewer that
+# is not an existing profile (dropping it silently would leave the card on
+# the implementer, which the review lane then spawns = self-review); both
+# reject whitespace-only names and anything carrying angle brackets (a copied
+# <placeholder>).
 # ---------------------------------------------------------------------------
 
 
@@ -1206,23 +1210,71 @@ def _own_worker_run(monkeypatch, tid):
     monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(run_id))
 
 
-def test_request_review_soft_drops_unknown_reviewer(monkeypatch, worker_env):
+def test_request_review_rejects_unknown_reviewer(monkeypatch, worker_env):
+    """An unknown reviewer is a hard error, never a silent drop (a drop
+    leaves the implementer as assignee and the review lane spawns it to
+    review its own work)."""
     from tools import kanban_tools as kt
     _own_worker_run(monkeypatch, worker_env)
     monkeypatch.setattr("hermes_cli.profiles.profile_exists", lambda name: False)
+    monkeypatch.setattr(
+        "hermes_cli.profiles.list_profiles",
+        lambda: [type("P", (), {"name": "os-reviewer"})()],
+    )
     out = json.loads(kt._handle_request_review({
         "summary": "implemented and tested",
         "reviewer": "reviewer",
     }))
-    assert out["ok"] is True, out
-    assert out["status"] == "review"
-    assert "warning" in out and "'reviewer'" in out["warning"]
+    assert out.get("error"), out
+    assert "'reviewer'" in out["error"]
+    assert "not an existing profile" in out["error"]
+    assert "os-reviewer" in out["error"]
+    assert "warning" not in out
     from hermes_cli import kanban_db as kb
     conn = kb.connect()
     try:
         task = kb.get_task(conn, worker_env)
-        # Not reassigned to the phantom profile.
+        # Nothing happened: still claimed by the worker, not in review,
+        # not reassigned to the phantom profile.
+        assert task.status != "review"
         assert task.assignee != "reviewer"
+    finally:
+        conn.close()
+
+
+def test_request_review_rejects_placeholder_and_blank_reviewer(monkeypatch, worker_env):
+    from tools import kanban_tools as kt
+    _own_worker_run(monkeypatch, worker_env)
+    # Even if profile_exists lied, angle brackets are rejected structurally.
+    monkeypatch.setattr("hermes_cli.profiles.profile_exists", lambda name: True)
+    for bad in ("<existing-review-profile>", "os-reviewer>", "   "):
+        out = json.loads(kt._handle_request_review({
+            "summary": "implemented and tested",
+            "reviewer": bad,
+        }))
+        assert out.get("error"), (bad, out)
+        assert "placeholder" in out["error"] or "whitespace-only" in out["error"]
+    from hermes_cli import kanban_db as kb
+    conn = kb.connect()
+    try:
+        assert kb.get_task(conn, worker_env).status != "review"
+    finally:
+        conn.close()
+
+
+def test_create_rejects_placeholder_and_blank_assignee(monkeypatch, worker_env):
+    from tools import kanban_tools as kt
+    monkeypatch.setattr("hermes_cli.profiles.profile_exists", lambda name: True)
+    for bad in ("<existing-profile-name>", "<fleet-engineer>", "fleet>engineer", "   "):
+        out = json.loads(kt._handle_create({
+            "title": "child-ph", "assignee": bad, "parents": [worker_env],
+        }))
+        assert out.get("error"), (bad, out)
+        assert "placeholder" in out["error"] or "whitespace-only" in out["error"]
+    from hermes_cli import kanban_db as kb
+    conn = kb.connect()
+    try:
+        assert "child-ph" not in [t.title for t in kb.list_tasks(conn)]
     finally:
         conn.close()
 
@@ -1257,4 +1309,11 @@ def test_schema_descriptions_carry_no_copyable_example_tokens():
         low = desc.lower()
         for token in ("'reviewer'", "'writer'", "'researcher-a'"):
             assert token not in low, (token, desc)
+        # No quoted fragment of any kind (a quoted string reads as "copy me"
+        # to a literal-minded model) and no angle-bracket placeholders.
+        assert not re.search(r"['\"`][^'\"`]*['\"`]", desc), desc
+        assert "<" not in desc and ">" not in desc, desc
+        assert "e.g." not in low, desc
         assert "~/.hermes/profiles" in desc
+    # The reviewer contract must state the self-review consequence plainly.
+    assert "its own work" in review["description"]
