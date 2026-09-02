@@ -437,6 +437,42 @@ def test_recompute_ready_fan_in_waits_for_all_parents(kanban_home):
 # Atomic claim (CAS)
 # ---------------------------------------------------------------------------
 
+def test_claim_task_stamps_active_profile_when_task_is_unassigned(kanban_home, monkeypatch):
+    monkeypatch.setattr(kb, "_claimer_id", lambda: "host:worker")
+    monkeypatch.setattr("hermes_cli.profiles.get_active_profile_name", lambda: "producer")
+    with kb.connect() as conn:
+        task_id = kb.create_task(conn, title="unassigned")
+        assert kb.claim_task(conn, task_id) is not None
+        run = conn.execute(
+            "SELECT profile FROM task_runs WHERE task_id = ?", (task_id,)
+        ).fetchone()
+    assert run["profile"] == "producer"
+
+
+def test_claim_review_task_stamps_active_profile_when_task_is_unassigned(kanban_home, monkeypatch):
+    monkeypatch.setattr("hermes_cli.profiles.get_active_profile_name", lambda: "reviewer")
+    with kb.connect() as conn:
+        task_id = kb.create_task(conn, title="review")
+        conn.execute("UPDATE tasks SET status = 'review' WHERE id = ?", (task_id,))
+        conn.commit()
+        assert kb.claim_review_task(conn, task_id) is not None
+        run = conn.execute(
+            "SELECT profile FROM task_runs WHERE task_id = ?", (task_id,)
+        ).fetchone()
+    assert run["profile"] == "reviewer"
+
+
+def test_synthetic_completion_run_stamps_active_profile_when_unassigned(kanban_home, monkeypatch):
+    monkeypatch.setattr("hermes_cli.profiles.get_active_profile_name", lambda: "operator")
+    with kb.connect() as conn:
+        task_id = kb.create_task(conn, title="manual completion")
+        assert kb.complete_task(conn, task_id, summary="closed") is True
+        run = conn.execute(
+            "SELECT profile FROM task_runs WHERE task_id = ?", (task_id,)
+        ).fetchone()
+    assert run["profile"] == "operator"
+
+
 def test_claim_once_wins_second_loses(kanban_home):
     with kb.connect() as conn:
         t = kb.create_task(conn, title="x", assignee="a")

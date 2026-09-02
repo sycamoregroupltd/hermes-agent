@@ -3056,7 +3056,7 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
                     ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        row["id"], row["assignee"], row["claim_lock"],
+                        row["id"], _run_profile(row), row["claim_lock"],
                         row["claim_expires"], row["worker_pid"],
                         row["max_runtime_seconds"], row["last_heartbeat_at"],
                         started,
@@ -3379,6 +3379,21 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     from hermes_cli.profiles import normalize_profile_name
 
     return normalize_profile_name(assignee)
+
+
+def _run_profile(task_row: Optional[sqlite3.Row]) -> str:
+    """Resolve a non-null owning profile for a newly-created run.
+
+    Runs normally inherit the task assignee. Legacy/manual producers can
+    create unassigned tasks, though; the active Hermes profile is the
+    producer identity in that case so ``task_runs.profile`` stays attributable.
+    """
+    assignee = task_row["assignee"] if task_row is not None else None
+    if assignee:
+        return assignee
+    from hermes_cli.profiles import get_active_profile_name
+
+    return get_active_profile_name() or "default"
 
 
 def create_task(
@@ -4777,7 +4792,7 @@ def _synthesize_ended_run(
         "SELECT assignee, current_step_key FROM tasks WHERE id = ?",
         (task_id,),
     ).fetchone()
-    profile = trow["assignee"] if trow else None
+    profile = _run_profile(trow)
     step_key = trow["current_step_key"] if trow else None
     cur = conn.execute(
         """
@@ -5280,7 +5295,7 @@ def claim_task(
             """,
             (
                 task_id,
-                trow["assignee"] if trow else None,
+                _run_profile(trow),
                 trow["current_step_key"] if trow else None,
                 lock,
                 expires,
@@ -5362,7 +5377,7 @@ def claim_review_task(
             """,
             (
                 task_id,
-                trow["assignee"] if trow else None,
+                _run_profile(trow),
                 trow["current_step_key"] if trow else None,
                 lock,
                 expires,
