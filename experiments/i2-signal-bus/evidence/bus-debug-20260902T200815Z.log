@@ -1,0 +1,7 @@
+=== i2-signal-bus debug === stream=hermes:agent-state:v1 length=82
+group=replay-demo-group consumers=1 pending={'pending': 0, 'min': None, 'max': None, 'consumers': []}
+group=state-readers consumers=1 pending={'pending': 0, 'min': None, 'max': None, 'consumers': []}
+--- live view (stale_ttl=6.0s) ---
+  agent=demo-crash                   status=STALE(last=working)  age= 39.53s task=t_dc046875-i2-probe session=i2demo-df46984e
+  agent=demo-happy-path              status=done                 age= 42.63s task=t_dc046875-i2-probe session=i2demo-e6db6d70
+  agent=demo-replay                  status=done                 age=  1.12s task=t_dc046875-i2-probe session=i2demo-ef611b0b

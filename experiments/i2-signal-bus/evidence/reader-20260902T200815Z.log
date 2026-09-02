@@ -1,0 +1,146 @@
+[LIVE]   20:08:18.997 agent=demo-happy-path type=idle data={'phase': 'pre-spawn'}
+  VIEW agent=demo-happy-path status=idle age=0.01s
+[LIVE]   20:08:19.006 agent=demo-happy-path type=working data={'pid': 1893826, 'model': 'gpt-5.6-luna', 'provider': 'openai-codex'}
+[LIVE]   20:08:20.508 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.02s
+[LIVE]   20:08:22.011 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:23.521 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=0.01s
+[LIVE]   20:08:25.023 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.1s
+[LIVE]   20:08:26.525 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:28.027 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.05s
+[LIVE]   20:08:29.529 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:31.032 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.09s
+[LIVE]   20:08:32.535 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:34.038 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.05s
+[LIVE]   20:08:35.541 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:37.044 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.09s
+[LIVE]   20:08:38.546 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:40.047 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.04s
+[LIVE]   20:08:41.550 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:43.053 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.09s
+[LIVE]   20:08:44.556 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:46.059 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+  VIEW agent=demo-happy-path status=working age=1.03s
+[LIVE]   20:08:47.561 agent=demo-happy-path type=heartbeat data={'pid': 1893826}
+[LIVE]   20:08:48.118 agent=demo-happy-path type=done data={'returncode': 0, 'output_tail': 'done\n'}
+  VIEW agent=demo-happy-path status=done age=1.11s
+[LIVE]   20:08:49.707 agent=demo-crash type=idle data={'phase': 'pre-spawn'}
+[LIVE]   20:08:49.714 agent=demo-crash type=working data={'pid': 1899067, 'model': 'gpt-5.6-luna', 'provider': 'openai-codex'}
+[LIVE]   20:08:51.216 agent=demo-crash type=heartbeat data={'pid': 1899067}
+  VIEW agent=demo-happy-path status=done age=4.16s
+  VIEW agent=demo-crash status=working age=1.06s
+  VIEW agent=demo-happy-path status=done age=6.2s
+  VIEW agent=demo-crash status=working age=3.1s
+  VIEW agent=demo-happy-path status=done age=8.32s
+  VIEW agent=demo-crash status=working age=5.22s
+  VIEW agent=demo-happy-path status=done age=10.37s
+  VIEW agent=demo-crash status=STALE(last=working) age=7.27s
+  VIEW agent=demo-happy-path status=done age=12.4s
+  VIEW agent=demo-crash status=STALE(last=working) age=9.3s
+[LIVE]   20:09:02.095 agent=demo-replay type=idle data={'phase': 'pre-spawn'}
+[LIVE]   20:09:02.106 agent=demo-replay type=working data={'pid': 1902991, 'model': 'gpt-5.6-luna', 'provider': 'openai-codex'}
+[LIVE]   20:09:02.611 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=14.5s
+  VIEW agent=demo-crash status=STALE(last=working) age=11.4s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:03.115 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:03.618 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:04.121 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:04.623 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=16.51s
+  VIEW agent=demo-crash status=STALE(last=working) age=13.41s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:05.125 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:05.628 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:06.131 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:06.634 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=18.52s
+  VIEW agent=demo-crash status=STALE(last=working) age=15.42s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:07.136 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:07.638 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:08.145 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:08.646 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=20.53s
+  VIEW agent=demo-crash status=STALE(last=working) age=17.43s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:09.147 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:09.649 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:10.151 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:10.653 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=22.54s
+  VIEW agent=demo-crash status=STALE(last=working) age=19.44s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:11.155 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:11.657 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:12.160 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:12.662 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=24.55s
+  VIEW agent=demo-crash status=STALE(last=working) age=21.45s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:13.165 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:13.667 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:14.170 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:14.672 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=26.56s
+  VIEW agent=demo-crash status=STALE(last=working) age=23.46s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:15.174 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:15.675 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:16.179 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:16.680 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=28.57s
+  VIEW agent=demo-crash status=STALE(last=working) age=25.47s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:17.191 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:17.693 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:18.195 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:18.698 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=30.58s
+  VIEW agent=demo-crash status=STALE(last=working) age=27.49s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:19.199 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:19.701 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:20.203 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:20.706 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=32.59s
+  VIEW agent=demo-crash status=STALE(last=working) age=29.49s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:21.207 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:21.709 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:22.211 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:22.715 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=34.6s
+  VIEW agent=demo-crash status=STALE(last=working) age=31.5s
+  VIEW agent=demo-replay status=working age=0.01s
+[LIVE]   20:09:23.218 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:23.722 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:24.224 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:24.727 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=36.61s
+  VIEW agent=demo-crash status=STALE(last=working) age=33.51s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:25.229 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:25.731 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:26.233 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:26.736 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=38.62s
+  VIEW agent=demo-crash status=STALE(last=working) age=35.53s
+  VIEW agent=demo-replay status=working age=0.01s
+[LIVE]   20:09:27.239 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:27.742 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:28.244 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:28.746 agent=demo-replay type=heartbeat data={'pid': 1902991}
+  VIEW agent=demo-happy-path status=done age=40.63s
+  VIEW agent=demo-crash status=STALE(last=working) age=37.54s
+  VIEW agent=demo-replay status=working age=0.0s
+[LIVE]   20:09:29.250 agent=demo-replay type=heartbeat data={'pid': 1902991}
+[LIVE]   20:09:29.625 agent=demo-replay type=done data={'returncode': 0, 'output_tail': 'done\n'}
