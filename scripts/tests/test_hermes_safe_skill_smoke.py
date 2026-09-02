@@ -117,17 +117,20 @@ def test_guidance_installer_rewrites_both_consumers_in_fixture(tmp_path: Path):
     gap.parent.mkdir(parents=True)
     sector.parent.mkdir(parents=True)
     gap.write_text(
-        Path("/home/frank/.hermes/skills/devops/gap-plugging/SKILL.md").read_text(
-            encoding="utf-8"
-        ),
+        "# fixture gap skill\n"
+        "## 8. Smoke-test pattern\n"
+        "unsafe inline guidance\n"
+        "For mechanism fixtures\n",
         encoding="utf-8",
     )
     sector.write_text(
-        Path(
-            "/home/frank/.hermes/skills/devops/sector-development-codebase-loop/SKILL.md"
-        ).read_text(encoding="utf-8"),
+        "# fixture sector skill\n"
+        "Do not create/resume a cron, change permissions/branch protection, deploy, "
+        "mutate live data, or spawn a dynamic workforce from this skill.\n",
         encoding="utf-8",
     )
+    assert "SAFE_SKILL_SMOKE_WRAPPER" not in gap.read_text(encoding="utf-8")
+    assert "SAFE_SKILL_SMOKE_WRAPPER" not in sector.read_text(encoding="utf-8")
 
     result = subprocess.run(
         ["python3", str(installer), "--skills-root", str(skills_root)],
