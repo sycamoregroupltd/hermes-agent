@@ -3387,13 +3387,15 @@ def _run_profile(task_row: Optional[sqlite3.Row]) -> str:
     Runs normally inherit the task assignee. Legacy/manual producers can
     create unassigned tasks, though; the active Hermes profile is the
     producer identity in that case so ``task_runs.profile`` stays attributable.
+    Normalize both sources because migration and external-seat callers may
+    provide rows that predate the task-creation ingress normalization.
     """
     assignee = task_row["assignee"] if task_row is not None else None
-    if assignee:
-        return assignee
+    if assignee and str(assignee).strip():
+        return _canonical_assignee(assignee) or "default"
     from hermes_cli.profiles import get_active_profile_name
 
-    return get_active_profile_name() or "default"
+    return _canonical_assignee(get_active_profile_name()) or "default"
 
 
 def create_task(
