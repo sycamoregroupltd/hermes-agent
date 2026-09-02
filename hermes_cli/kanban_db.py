@@ -3381,7 +3381,7 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     return normalize_profile_name(assignee)
 
 
-def _run_profile(task_row: Optional[sqlite3.Row]) -> str:
+def _run_profile(task_row: Optional[sqlite3.Row]) -> Optional[str]:
     """Resolve the owning profile for a newly-created run.
 
     Runs normally inherit the task assignee. Legacy/manual producers can
@@ -3390,36 +3390,30 @@ def _run_profile(task_row: Optional[sqlite3.Row]) -> str:
     Normalize both sources because migration and external-seat callers may
     provide rows that predate the task-creation ingress normalization.
     """
-    # For tasks with an assignee, use it directly (same as old behavior for assigned tasks)
+    # First, try the assignee (original behavior)
     assignee = task_row["assignee"] if task_row is not None else None
-    if assignee and str(assignee).strip():
-        # Normalize the assignee through the profile normalization path
+    if assignee:
+        # Try to normalize it
         try:
-            normalized = _canonical_assignee(assignee)
-            if normalized:
-                return normalized
+            return _canonical_assignee(assignee)
         except Exception:
-            pass
-        # If normalization fails or returns None, use the assignee as-is
-        return assignee
+            # If normalization fails, return the assignee as-is (old behavior)
+            return assignee
     
-    # For unassigned tasks, try to get the active profile
+    # For unassigned tasks, try to get and normalize the active profile
     try:
         from hermes_cli.profiles import get_active_profile_name
         active_profile = get_active_profile_name()
         if active_profile:
             try:
-                normalized = _canonical_assignee(active_profile)
-                if normalized:
-                    return normalized
+                return _canonical_assignee(active_profile)
             except Exception:
-                pass
-            return active_profile
+                return active_profile
     except Exception:
         pass
     
-    # Ultimate fallback for unassigned tasks when profile resolution fails
-    return "default"
+    # If everything fails, return None (old behavior for unassigned tasks)
+    return None
 
 
 def create_task(
