@@ -136,6 +136,7 @@ def _transactional_backup_and_replace(
     entries: list[tuple[Path, Path, Path]] = []
     replaced: list[tuple[Path, Path, Path]] = []
     committed = False
+    rollback_failed = False
     try:
         # Prepare every backup and temp file before replacing any target.
         for path, content in rendered.items():
@@ -168,14 +169,18 @@ def _transactional_backup_and_replace(
             except OSError as rollback_error:
                 rollback_errors.append(rollback_error)
         if rollback_errors:
+            # Preserve every recovery artifact, including uncommitted temps,
+            # when an operator may need to repair the partially restored pair.
+            rollback_failed = True
             raise OSError(
                 "guidance install failed and rollback failed; backups retained"
             ) from rollback_errors[0]
         raise
     finally:
-        for _path, _backup, temp in entries:
-            _remove_if_present(temp)
-        if not committed:
+        if not rollback_failed:
+            for _path, _backup, temp in entries:
+                _remove_if_present(temp)
+        if not committed and not rollback_failed:
             for _path, backup, _temp in entries:
                 _remove_if_present(backup)
 

@@ -168,6 +168,38 @@ def test_inconsistent_second_target_failure_rolls_back_both_consumers(tmp_path: 
     assert not list(sector.parent.glob(".SKILL.md.*"))
 
 
+def test_rollback_failure_retains_recovery_artifacts(tmp_path: Path, monkeypatch):
+    installer = _load_installer()
+    gap, sector = _unsafe_guidance_fixtures(tmp_path / "skills")
+    calls = []
+    real_replace = installer.os.replace
+    real_copy2 = installer.shutil.copy2
+
+    def fail_on_second_replace(source, destination):
+        calls.append(Path(destination))
+        if len(calls) == 2:
+            raise OSError("fixture second-target replace failure")
+        return real_replace(source, destination)
+
+    def fail_during_rollback(source, destination):
+        if Path(source).name.startswith("SKILL.md.bak-safe-skill-smoke-"):
+            raise OSError("fixture rollback copy failure")
+        return real_copy2(source, destination)
+
+    monkeypatch.setattr(installer.os, "replace", fail_on_second_replace)
+    monkeypatch.setattr(installer.shutil, "copy2", fail_during_rollback)
+    result = installer.main(["--skills-root", str(tmp_path / "skills")])
+
+    assert result == 2
+    assert calls == [gap, sector]
+    backups = list(gap.parent.glob("SKILL.md.bak-safe-skill-smoke-*"))
+    backups += list(sector.parent.glob("SKILL.md.bak-safe-skill-smoke-*"))
+    assert len(backups) == 2, "rollback backups must remain for operator recovery"
+    assert list(gap.parent.glob(".SKILL.md.*")) or list(sector.parent.glob(".SKILL.md.*")), (
+        "uncommitted temp state must remain when rollback fails"
+    )
+
+
 def test_guidance_installer_rewrites_both_consumers_in_fixture(tmp_path: Path):
     installer = Path(__file__).parents[1] / "install-hermes-safe-skill-guidance.py"
     skills_root = tmp_path / "skills"
