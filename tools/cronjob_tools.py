@@ -1617,6 +1617,7 @@ def cronjob(
 
             try:
                 job = create_job_with_scheduler_registration(
+                    job_id=job_id,
                     prompt=prompt or "",
                     schedule=schedule,
                     name=name,
@@ -2027,7 +2028,7 @@ Jobs run in a fresh session with no current-chat context, so prompts must be sel
             },
             "job_id": {
                 "type": "string",
-                "description": "Required for update/pause/resume/remove/run"
+                "description": "Required for update/pause/resume/remove/run. Optional for create; Jarvis profile creates require an explicit ID that is already registered in the loop registry.",
             },
             "prompt": {
                 "type": "string",

@@ -787,6 +787,7 @@ def cron_create(args):
     # branch below prints it in red and exits 1 — same UX as before.
     result = _cron_api(
         action="create",
+        job_id=getattr(args, "job_id", None),
         schedule=args.schedule,
         prompt=args.prompt,
         name=getattr(args, "name", None),
