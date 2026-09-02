@@ -3382,7 +3382,7 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
 
 
 def _run_profile(task_row: Optional[sqlite3.Row]) -> str:
-    """Resolve a non-null owning profile for a newly-created run.
+    """Resolve the owning profile for a newly-created run.
 
     Runs normally inherit the task assignee. Legacy/manual producers can
     create unassigned tasks, though; the active Hermes profile is the
@@ -3390,20 +3390,36 @@ def _run_profile(task_row: Optional[sqlite3.Row]) -> str:
     Normalize both sources because migration and external-seat callers may
     provide rows that predate the task-creation ingress normalization.
     """
-    try:
-        assignee = task_row["assignee"] if task_row is not None else None
-        if assignee and str(assignee).strip():
-            return _canonical_assignee(assignee) or "default"
+    # For tasks with an assignee, use it directly (same as old behavior for assigned tasks)
+    assignee = task_row["assignee"] if task_row is not None else None
+    if assignee and str(assignee).strip():
+        # Normalize the assignee through the profile normalization path
         try:
-            from hermes_cli.profiles import get_active_profile_name
-            active_profile = get_active_profile_name()
-            return _canonical_assignee(active_profile) or "default"
+            normalized = _canonical_assignee(assignee)
+            if normalized:
+                return normalized
         except Exception:
-            # Fallback to "default" if profile resolution fails (e.g., in tests)
-            return "default"
+            pass
+        # If normalization fails or returns None, use the assignee as-is
+        return assignee
+    
+    # For unassigned tasks, try to get the active profile
+    try:
+        from hermes_cli.profiles import get_active_profile_name
+        active_profile = get_active_profile_name()
+        if active_profile:
+            try:
+                normalized = _canonical_assignee(active_profile)
+                if normalized:
+                    return normalized
+            except Exception:
+                pass
+            return active_profile
     except Exception:
-        # Ultimate fallback if any operation fails
-        return "default"
+        pass
+    
+    # Ultimate fallback for unassigned tasks when profile resolution fails
+    return "default"
 
 
 def create_task(
