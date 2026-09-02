@@ -6803,6 +6803,76 @@ def block_task(
 
 
 
+
+def relabel_block_kind(
+    conn: sqlite3.Connection,
+    task_id: str,
+    kind: Optional[str],
+    *,
+    reason: Optional[str] = None,
+) -> bool:
+    """Set ``block_kind`` on a task that is already ``blocked``.
+
+    ``block_task`` only transitions ``running``/``ready`` → ``blocked``.
+    A card already sitting in ``blocked`` with ``block_kind`` NULL (legacy
+    un-typed blocks, a crash that skipped classification) has no
+    running/ready state left, so ``hermes kanban block --kind`` would
+    otherwise print ``cannot block <id>``. Unblock-then-reblock is unsafe:
+    it parks the card in ready where a dispatcher can claim a
+    deliberately-held card.
+
+    This path is a kind-only metadata setter: no status change, no
+    ``block_recurrences`` bump, no claim/run mutation. ``kind="dependency"``
+    is rejected because dependency waits live in ``todo``, never ``blocked``.
+
+    Returns True when the already-blocked row was updated, False if the
+    task does not exist or is not currently ``blocked``.
+    """
+    if kind is not None and kind not in VALID_BLOCK_KINDS:
+        raise ValueError(
+            f"block kind must be one of {sorted(VALID_BLOCK_KINDS)} or None"
+        )
+    if kind == "dependency":
+        raise ValueError(
+            "cannot set kind=dependency on an already-blocked task — "
+            "dependency waits live in todo, not blocked"
+        )
+    if kind is None:
+        return False
+    _updated_task = None
+    prev_kind = None
+    with write_txn(conn):
+        cur_row = conn.execute(
+            "SELECT block_kind, block_recurrences, claim_lock, worker_pid, "
+            "current_run_id FROM tasks WHERE id = ? AND status = 'blocked'",
+            (task_id,),
+        ).fetchone()
+        if cur_row is None:
+            return False
+        prev_kind = cur_row["block_kind"]
+        cur = conn.execute(
+            "UPDATE tasks SET block_kind = ? WHERE id = ? AND status = 'blocked'",
+            (kind, task_id),
+        )
+        if cur.rowcount != 1:
+            return False
+        _append_event(
+            conn, task_id, "block_relabeled",
+            {"prev_kind": prev_kind, "kind": kind, "reason": reason},
+        )
+        _updated_task = get_task(conn, task_id)
+    _fire_kanban_lifecycle_hook(
+        "kanban_task_updated",
+        task_id,
+        board=get_current_board(),
+        assignee=_updated_task.assignee if _updated_task else None,
+        prev_kind=prev_kind,
+        kind=kind,
+        reason=reason,
+    )
+    return True
+
+
 def promote_task(
     conn: sqlite3.Connection,
     task_id: str,

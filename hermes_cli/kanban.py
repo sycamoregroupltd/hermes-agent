@@ -2301,6 +2301,29 @@ def _cmd_block(args: argparse.Namespace) -> int:
     failed: list[str] = []
     with kb.connect_closing() as conn:
         for tid in ids:
+            existing = kb.get_task(conn, tid)
+            # Already-blocked + --kind is a metadata setter, not a new
+            # block transition. Do not require --relabel and do not
+            # unblock-then-reblock (that would expose the card as ready).
+            if existing is not None and existing.status == "blocked" and kind is not None:
+                try:
+                    ok = kb.relabel_block_kind(conn, tid, kind, reason=reason)
+                except ValueError as exc:
+                    print(f"cannot block {tid}: {exc}", file=sys.stderr)
+                    return 2
+                if not ok:
+                    failed.append(tid)
+                    print(f"cannot block {tid}", file=sys.stderr)
+                else:
+                    if reason:
+                        kb.add_comment(
+                            conn, tid, author, f"RELABELED ({kind}): {reason}"
+                        )
+                    print(
+                        f"Relabeled {tid} → {kind}"
+                        + (f": {reason}" if reason else "")
+                    )
+                continue
             if reason:
                 kb.add_comment(conn, tid, author, f"BLOCKED: {reason}")
             if not kb.block_task(
