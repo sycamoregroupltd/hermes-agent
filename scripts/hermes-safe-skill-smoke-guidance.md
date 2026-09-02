@@ -1,8 +1,9 @@
-# Safe skill-preload smoke guidance (staged)
+# Safe skill-preload smoke guidance (reviewable install packet)
 
-This packet is the reviewable guidance update for the installed `gap-plugging`
-and `sector-development-codebase-loop` skills. It is intentionally staged in
-the Hermes worktree; do not install it into live profile skills until the
+This packet and `install-hermes-safe-skill-guidance.py` are the reviewable
+guidance update for the installed `gap-plugging` and
+`sector-development-codebase-loop` skills. They are intentionally staged in
+the Hermes worktree; do not install them into live profile skills until the
 `os-reviewer` approval for `t_08ceae63` is recorded.
 
 ## Canonical command
@@ -22,10 +23,25 @@ HERMES_HOME=/home/frank/.hermes/profiles/<profile> \
 ```
 
 The wrapper accepts exactly one skill name, validates it, refuses any inherited
-`HERMES_KANBAN_*`, `HERMES_SESSION_SOURCE`, `HERMES_TENANT`, or delegated-child
-context, explicitly removes those variables for the child, and invokes Hermes
-with `--toolsets ""` plus a no-tools prompt. It must be used instead of an
-inline nested `hermes ... chat -q` command from a Kanban worker.
+`HERMES_KANBAN_*`, `HERMES_SESSION_*`, supervisor markers,
+`HERMES_SESSION_SOURCE`, `HERMES_TENANT`, or delegated-child context,
+explicitly removes those variables for the child, and invokes Hermes with
+`--toolsets ""` plus a no-tools prompt. It must be used instead of any inline
+nested Hermes invocation from a Kanban worker.
+
+## Reviewed installation (after approval only)
+
+The installer is the only approved mutation path for these two consumer skills.
+It requires exact source anchors, writes each file atomically, makes a sibling
+timestamped backup, and refuses partial installation on drift:
+
+```bash
+python3 /home/frank/.hermes/hermes-agent/scripts/install-hermes-safe-skill-guidance.py \
+  --skills-root /home/frank/.hermes/skills
+```
+
+Use `--check` for a read-only post-install assertion. Do not edit either live
+`SKILL.md` by hand or paste a nested Hermes command into a review.
 
 ## Gap-plugging verification rule
 
@@ -42,8 +58,10 @@ proven, report `NOT_PLUGGED` and stop.
 A SECTOR/controller skill-load check is a read-only preload check, not a loop
 run. Use the same wrapper with the exact skill name, capture the command output,
 and separately verify the controller/ledger through its registered board and
-runtime owners. Do not use `-z`, `--profile` nested in a worker, or a manually
-constructed “dispatcher-shaped” command with inherited worker variables.
+runtime owners. Do not use `-z`, a nested `--profile`, or a manually
+constructed dispatcher-shaped command from inside a worker. The wrapper fails
+closed with exit 78 if any Kanban, session, delegated-child, or supervisor
+context is inherited.
 
 Required evidence packet:
 

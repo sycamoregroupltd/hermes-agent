@@ -31,8 +31,12 @@ launched:
 Observed refusal names the inherited worker variables, including
 `HERMES_KANBAN_TASK`, `HERMES_KANBAN_RUN_ID`, `HERMES_KANBAN_CLAIM_LOCK`,
 `HERMES_KANBAN_DB`, `HERMES_KANBAN_BOARD`, and
-`HERMES_KANBAN_WORKSPACE`.
+`HERMES_KANBAN_WORKSPACE`, plus the live process markers
+`HERMES_SESSION_ID` and `HERMES_SUPERVISED_CHILD`.
 
+The wrapper's explicit fail-closed list also covers
+`HERMES_DELEGATED_CHILD_CONTEXT` and `HERMES_S6_SUPERVISED_CHILD`; the
+wildcard scan covers any future `HERMES_KANBAN_*` variable.
 With the complete worker environment removed and the live Hermes executable,
 the canonical wrapper returned `HERMES_SAFE_SKILL_SMOKE_PASS`; Hermes reported
 `Messages: 2 (1 user, 0 tool calls)` and exit 0. The prompt was fixed and
@@ -41,9 +45,13 @@ explicitly says not to use tools.
 ## Automated verification
 
 - `bash -n scripts/hermes-safe-skill-smoke.sh` -> pass
-- `python3 -m pytest scripts/tests/test_hermes_safe_skill_smoke.py -q -o addopts=` -> 3 passed
+- `python3 -m pytest scripts/tests/test_hermes_safe_skill_smoke.py -q -o addopts=` -> 8 passed
 - `python3 -m pytest tests/cron/test_cron_kanban_env_isolation.py tests/hermes_cli/test_kanban_worker_spawn_toolsets.py -q -o addopts=` -> 21 passed
+- Fixture installer read-back -> both consumer skills contain
+  `SAFE_SKILL_SMOKE_WRAPPER` and `hermes-safe-skill-smoke.sh`, contain no inline
+  nested smoke command, and retain timestamped backups.
+- `python3 scripts/install-hermes-safe-skill-guidance.py --check --skills-root /home/frank/.hermes/skills` -> expected NOT_INSTALLED (exit 1) before reviewed installation; live consumer files were not changed.
 
 No gateway restart, deploy, credential, cron, or live-card fixture mutation was
-performed. The guidance update remains staged in
-`scripts/hermes-safe-skill-smoke-guidance.md` pending `os-reviewer` approval.
+performed. The installer and guidance update remain staged pending
+`os-reviewer` approval and a separate post-approval live install/read-back.
