@@ -1,9 +1,16 @@
 # R8 REMEDIATE — draft (t_c826fb72), Claude Sonnet seat, 2026-09-02
 
+## ⚠️ ISOLATION HOLD — Draft Only
+
+**DO NOT MERGE.** **DO NOT RUN `apply-fixed-souls.sh`.**
+
 Isolation HOLD in effect for this seat: no merge-to-main, no live A3, no hermes
 update, no extra gateways, draft PR only, no live profile writes. This
 directory is a **draft-only** deliverable; nothing under `/home/frank/.hermes/profiles/`
 was touched.
+
+**`apply-fixed-souls.sh` is live-write capable** — it targets `~/.hermes/profiles/`
+and must remain UNRUN under this Isolation HOLD. For interactive operator review only.
 
 ## Scope re-check (live, read-only, 2026-09-02)
 
