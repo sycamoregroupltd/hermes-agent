@@ -76,7 +76,7 @@ def _clean_env() -> dict[str, str]:
 
 def read_state() -> dict[str, Any]:
     try:
-        return json.loads((STATE_DIR / "state.json").read_text())
+        return json.loads((STATE_DIR / "state.json").read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -84,7 +84,8 @@ def read_state() -> dict[str, Any]:
 def write_state(state: dict[str, Any]) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = STATE_DIR / (".state.tmp-%d" % os.getpid())
-    tmp.write_text(json.dumps(state, sort_keys=True, indent=2) + "\n")
+    tmp.write_text(json.dumps(state, sort_keys=True, indent=2) + "\n",
+                   encoding="utf-8")
     os.replace(tmp, STATE_DIR / "state.json")
 
 
@@ -161,8 +162,8 @@ def create_board_card(args: argparse.Namespace, summary: str) -> bool:
         "--json",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
-                              env=_clean_env())
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60, env=_clean_env())
         if proc.returncode != 0:
             print("ERROR sycode_monitor_alert_route: board card failed rc=%d: %s"
                   % (proc.returncode, proc.stderr.strip()[:300]), file=sys.stderr)
@@ -315,7 +316,7 @@ def self_test() -> int:
     # family-keyed alertname: "sycode-" + family_key(monitor)).
     if spool_files:
         try:
-            payload = json.loads(spool_files[0].read_text())
+            payload = json.loads(spool_files[0].read_text(encoding="utf-8"))
             expected = "sycode-" + family_key("selftest-breach")
             if payload.get("alerts", [{}])[0].get("labels", {}).get("alertname") != expected:
                 failures.append("spool alertname must be monitor-keyed (got %r, want %r)"
@@ -329,7 +330,7 @@ def self_test() -> int:
     checks += 1
     invoc_log = DEFAULT_SPOOL.parent / "hermes_invocations.log"
     try:
-        invoc_text = invoc_log.read_text()
+        invoc_text = invoc_log.read_text(encoding="utf-8")
     except Exception:
         invoc_text = ""
     boards = set(re.findall(r"--board\s+(\S+)", invoc_text))
