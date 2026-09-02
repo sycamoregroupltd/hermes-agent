@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 from hermes_time import now as _hermes_now
 from utils import atomic_replace, atomic_write_text
+from cron.loop_registry_guard import assert_enabled_job_registered
 
 # ``croniter`` compiles ~15 ms of regexes at import and only matters for
 # 5-field cron expressions. Resolve lazily; ``HAS_CRONITER`` stays a module
@@ -489,12 +490,17 @@ def _job_output_dir(job_id: str) -> Path:
     allow output writes/deletes to escape the cron output sandbox. Reject
     anything that isn't a single safe path component.
     """
+    return _current_cron_store().output_dir / _validate_job_id_component(job_id)
+
+
+def _validate_job_id_component(job_id: Any) -> str:
+    """Validate an explicit job ID before it becomes a store/path key."""
     text = str(job_id or "").strip()
     if not text or text in {".", ".."} or "/" in text or "\\" in text:
         raise ValueError(f"Invalid cron job id for output path: {job_id!r}")
     if Path(text).is_absolute() or Path(text).drive:
         raise ValueError(f"Invalid cron job id for output path: {job_id!r}")
-    return _current_cron_store().output_dir / text
+    return text
 
 
 def _normalize_skill_list(skill: Optional[str] = None, skills: Optional[Any] = None) -> List[str]:
@@ -2350,6 +2356,7 @@ def create_job(
     monitor_script: Optional[str] = None,
     monitor_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -2409,14 +2416,16 @@ def create_job(
                 hash-suppression semantics as ``monitor_script``.
         reasoning_effort: Optional per-job reasoning effort pin. One of the
                 canonical Hermes levels (none|minimal|low|medium|high|xhigh|
-                max|ultra, case-insensitive). When set, it wins over BOTH the
-                global ``agent.reasoning_effort`` and per-model
+                max|ultra, case-insensitive). When set, it wins over BOTH
+                the global ``agent.reasoning_effort`` and per-model
                 ``agent.reasoning_overrides`` at fire time. Capability is NOT
                 validated here: levels above what the resolved model supports
                 are clamped or omitted by the provider transport at send time,
                 exactly like config-set effort. Inert with ``no_agent=True``
                 (no LLM call to configure). None/empty = unset (job follows
                 config resolution, pre-existing behavior).
+        job_id: Optional explicit job ID. Jarvis profile jobs must provide an
+                ID that already has an active, complete loop-registry row.
 
     Returns:
         The created job dict
@@ -2437,7 +2446,7 @@ def create_job(
     if deliver is None:
         deliver = "origin" if origin else "local"
 
-    job_id = uuid.uuid4().hex[:12]
+    job_id = _validate_job_id_component(job_id or uuid.uuid4().hex[:12])
     now = _hermes_now().isoformat()
 
     normalized_skills = _normalize_skill_list(skill, skills)
@@ -2573,6 +2582,11 @@ def create_job(
         job["reasoning_effort"] = normalized_reasoning_effort
 
     with _jobs_lock():
+        # Jarvis jobs are governed loops: the registry row must exist before
+        # the enabled record can reach the live profile store. Keep this in
+        # the persistence choke point so CLI, agent-tool, API, and direct
+        # Python callers share the same fail-closed boundary.
+        assert_enabled_job_registered(job)
         jobs = load_jobs()
         jobs.append(job)
         save_jobs(jobs)
@@ -2823,6 +2837,9 @@ def update_job(job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
                     "through update_job; use cron resume --run-now or --at."
                 )
 
+            # Check the merged record immediately before persistence. This
+            # covers direct update_job callers as well as cronjob/CLI/API paths.
+            assert_enabled_job_registered(updated)
             jobs[i] = updated
             save_jobs(jobs)
             return _normalize_job_record(jobs[i])

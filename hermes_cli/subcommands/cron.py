@@ -35,6 +35,11 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
     )
     cron_create.add_argument("--name", help="Optional human-friendly job name")
     cron_create.add_argument(
+        "--job-id",
+        dest="job_id",
+        help="Explicit job ID. Required for Jarvis profile jobs and must be pre-registered in the loop registry.",
+    )
+    cron_create.add_argument(
         "--deliver",
         help=(
             "Delivery target: origin, local, telegram, discord, signal, "
