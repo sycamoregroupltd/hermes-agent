@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import stat
 import subprocess
@@ -109,9 +110,16 @@ def test_process_context_marker_fails_closed_before_launch(tmp_path: Path, marke
     assert not launched.exists(), "worker-context child must not be launched"
 
 
-def test_guidance_installer_rewrites_both_consumers_in_fixture(tmp_path: Path):
-    installer = Path(__file__).parents[1] / "install-hermes-safe-skill-guidance.py"
-    skills_root = tmp_path / "skills"
+def _load_installer():
+    path = Path(__file__).parents[1] / "install-hermes-safe-skill-guidance.py"
+    spec = importlib.util.spec_from_file_location("safe_skill_guidance_installer", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _unsafe_guidance_fixtures(skills_root: Path) -> tuple[Path, Path]:
     gap = skills_root / "devops" / "gap-plugging" / "SKILL.md"
     sector = skills_root / "devops" / "sector-development-codebase-loop" / "SKILL.md"
     gap.parent.mkdir(parents=True)
@@ -125,10 +133,45 @@ def test_guidance_installer_rewrites_both_consumers_in_fixture(tmp_path: Path):
     )
     sector.write_text(
         "# fixture sector skill\n"
+        "Delivery target and routing consumers: `jarvis-os-pm`, `sycode-ai-pm`, "
+        "and `yorkstone-supplies-pm`.\n"
         "Do not create/resume a cron, change permissions/branch protection, deploy, "
         "mutate live data, or spawn a dynamic workforce from this skill.\n",
         encoding="utf-8",
     )
+    return gap, sector
+
+
+def test_inconsistent_second_target_failure_rolls_back_both_consumers(tmp_path: Path, monkeypatch):
+    installer = _load_installer()
+    gap, sector = _unsafe_guidance_fixtures(tmp_path / "skills")
+    before = {gap: gap.read_bytes(), sector: sector.read_bytes()}
+    calls = []
+    real_replace = installer.os.replace
+
+    def fail_on_second_replace(source, destination):
+        calls.append(Path(destination))
+        if len(calls) == 2:
+            raise OSError("fixture second-target replace failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(installer.os, "replace", fail_on_second_replace)
+    result = installer.main(["--skills-root", str(tmp_path / "skills")])
+
+    assert result == 2
+    assert calls == [gap, sector]
+    assert gap.read_bytes() == before[gap]
+    assert sector.read_bytes() == before[sector]
+    assert not list(gap.parent.glob("SKILL.md.bak-safe-skill-smoke-*"))
+    assert not list(sector.parent.glob("SKILL.md.bak-safe-skill-smoke-*"))
+    assert not list(gap.parent.glob(".SKILL.md.*"))
+    assert not list(sector.parent.glob(".SKILL.md.*"))
+
+
+def test_guidance_installer_rewrites_both_consumers_in_fixture(tmp_path: Path):
+    installer = Path(__file__).parents[1] / "install-hermes-safe-skill-guidance.py"
+    skills_root = tmp_path / "skills"
+    gap, sector = _unsafe_guidance_fixtures(skills_root)
     assert "SAFE_SKILL_SMOKE_WRAPPER" not in gap.read_text(encoding="utf-8")
     assert "SAFE_SKILL_SMOKE_WRAPPER" not in sector.read_text(encoding="utf-8")
 
@@ -145,8 +188,11 @@ def test_guidance_installer_rewrites_both_consumers_in_fixture(tmp_path: Path):
         assert "SAFE_SKILL_SMOKE_WRAPPER" in content
         assert "hermes-safe-skill-smoke.sh" in content
         assert "hermes --accept-hooks --skills" not in content
+        assert "sycode-ai-pm" not in content
         if path == gap:
             assert content.count("For mechanism fixtures") == 1
+        else:
+            assert "upero-pm (registry tracker alias: sycode-ai)" in content
         assert list(path.parent.glob("SKILL.md.bak-safe-skill-smoke-*"))
 
     check = subprocess.run(

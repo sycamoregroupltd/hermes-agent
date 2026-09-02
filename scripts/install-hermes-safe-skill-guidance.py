@@ -42,6 +42,8 @@ SECTOR_ANCHOR = (
     "Do not create/resume a cron, change permissions/branch protection, deploy, "
     "mutate live data, or spawn a dynamic workforce from this skill.\n"
 )
+PHANTOM_CONSUMER = "sycode-ai-pm"
+RESOLVED_UPERO_CONSUMER = "upero-pm (registry tracker alias: sycode-ai)"
 SECTOR_SECTION = """
 
 ## Safe skill-load verification
@@ -60,6 +62,11 @@ The wrapper fails closed with exit 78 if any `HERMES_KANBAN_*`,
 use `-z`, a nested `--profile`, or a hand-built dispatcher-shaped command from
 inside a worker. Separately verify the controller and ledger through their
 registered board/runtime owners, read-only, without targeting a live worker card.
+
+Resolved routing consumers are `jarvis-os-pm` (controller), `upero-pm` (the
+registry's `sycode-ai` tracker alias), `yorkstone-supplies-pm`, and
+`os-reviewer` for independent review. Verify these profile names against the
+registry and `hermes profile list` before any separate installation.
 """
 
 
@@ -72,7 +79,12 @@ def _targets(skills_root: Path) -> tuple[Path, Path]:
 
 
 def _is_safe(content: str) -> bool:
-    return MARKER in content and "hermes-safe-skill-smoke.sh" in content and RAW_NESTED_SMOKE not in content
+    return (
+        MARKER in content
+        and "hermes-safe-skill-smoke.sh" in content
+        and RAW_NESTED_SMOKE not in content
+        and PHANTOM_CONSUMER not in content
+    )
 
 
 def _render_gap(content: str) -> str:
@@ -86,6 +98,8 @@ def _render_gap(content: str) -> str:
 
 
 def _render_sector(content: str) -> str:
+    if PHANTOM_CONSUMER in content:
+        content = content.replace(PHANTOM_CONSUMER, RESOLVED_UPERO_CONSUMER)
     if MARKER in content:
         return content
     if content.count(SECTOR_ANCHOR) != 1:
@@ -93,23 +107,77 @@ def _render_sector(content: str) -> str:
     return content.replace(SECTOR_ANCHOR, SECTOR_ANCHOR + SECTOR_SECTION, 1)
 
 
-def _backup_and_replace(path: Path, content: str, stamp: str) -> Path:
-    backup = path.with_name(f"{path.name}.bak-safe-skill-smoke-{stamp}")
-    shutil.copy2(path, backup)
+def _prepare_temp(path: Path, content: str) -> Path:
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_name, path)
     except BaseException:
         try:
             os.unlink(temp_name)
         except FileNotFoundError:
             pass
         raise
-    return backup
+    return Path(temp_name)
+
+
+def _remove_if_present(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _transactional_backup_and_replace(
+    rendered: dict[Path, str], stamp: str
+) -> list[Path]:
+    entries: list[tuple[Path, Path, Path]] = []
+    replaced: list[tuple[Path, Path, Path]] = []
+    committed = False
+    try:
+        # Prepare every backup and temp file before replacing any target.
+        for path, content in rendered.items():
+            backup = path.with_name(f"{path.name}.bak-safe-skill-smoke-{stamp}")
+            temp: Path | None = None
+            try:
+                shutil.copy2(path, backup)
+                temp = _prepare_temp(path, content)
+            except BaseException:
+                _remove_if_present(backup)
+                if temp is not None:
+                    _remove_if_present(temp)
+                raise
+            assert temp is not None
+            entries.append((path, backup, temp))
+
+        # os.replace is atomic per file; the rollback below makes the pair
+        # transactional when a later target fails.
+        for entry in entries:
+            path, _backup, temp = entry
+            os.replace(temp, path)
+            replaced.append(entry)
+        committed = True
+        return [backup for _path, backup, _temp in entries]
+    except BaseException as exc:
+        rollback_errors: list[OSError] = []
+        for path, backup, _temp in reversed(replaced):
+            try:
+                shutil.copy2(backup, path)
+            except OSError as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            raise OSError(
+                "guidance install failed and rollback failed; backups retained"
+            ) from rollback_errors[0]
+        raise
+    finally:
+        for _path, _backup, temp in entries:
+            _remove_if_present(temp)
+        if not committed:
+            for _path, backup, _temp in entries:
+                _remove_if_present(backup)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -153,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         if any(not _is_safe(content) for content in rendered.values()):
             raise ValueError("rendered guidance did not satisfy wrapper-only invariant")
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        backups = [_backup_and_replace(path, rendered[path], stamp) for path in (gap, sector)]
+        backups = _transactional_backup_and_replace(rendered, stamp)
     except (OSError, ValueError) as exc:
         print(f"safe skill guidance: refusing partial install: {exc}", file=sys.stderr)
         return 2

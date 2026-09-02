@@ -42,10 +42,29 @@ the canonical wrapper returned `HERMES_SAFE_SKILL_SMOKE_PASS`; Hermes reported
 `Messages: 2 (1 user, 0 tool calls)` and exit 0. The prompt was fixed and
 explicitly says not to use tools.
 
+## Consumer-routing read-back (source-review gate)
+
+The registered control-plane project in
+`/home/frank/obsidian-fleet-vault/Projects/Portfolio/registry.yaml` names
+`jarvis-os` as the execution board and `jarvis` as primary owner. The live
+`jarvis-os` controller `t_a81fc7e6` is assigned to `jarvis-os-pm` and remains
+blocked/paused. The same registry maps the Sycode-AI tracker alias to the
+`upero-platform` project, whose real owner is `upero-pm`; Yorkstone is owned by
+`yorkstone-supplies-pm`. A live `hermes profile list` read-back confirms
+`jarvis-os-pm`, `upero-pm`, `yorkstone-supplies-pm`, and `os-reviewer` exist;
+`sycode-ai-pm` is absent and is not a valid consumer name.
+
+The installer now rewrites that stale SECTOR routing token to the registry
+mapping and fails its wrapper-only check if the stale token remains. Before a
+separate approved live installation, rerun the registry/profile read-back,
+run the installer with `--check`, and inspect both installed `SKILL.md` files
+for the wrapper marker, resolved map, and absence of `sycode-ai-pm`. This source
+review performs no installation or activation.
+
 ## Automated verification
 
 - `bash -n scripts/hermes-safe-skill-smoke.sh` -> pass
-- `python3 -m pytest scripts/tests/test_hermes_safe_skill_smoke.py -q -o addopts=` -> 8 passed
+- `python3 -m pytest scripts/tests/test_hermes_safe_skill_smoke.py -q -o addopts=` -> 9 passed (including second-target rollback and consumer-alias fixtures)
 - `python3 -m pytest tests/cron/test_cron_kanban_env_isolation.py tests/hermes_cli/test_kanban_worker_spawn_toolsets.py -q -o addopts=` -> 21 passed
 - Fixture installer read-back -> both consumer skills contain
   `SAFE_SKILL_SMOKE_WRAPPER` and `hermes-safe-skill-smoke.sh`, contain no inline

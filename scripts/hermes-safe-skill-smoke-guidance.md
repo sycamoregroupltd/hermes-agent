@@ -32,8 +32,9 @@ nested Hermes invocation from a Kanban worker.
 ## Reviewed installation (after approval only)
 
 The installer is the only approved mutation path for these two consumer skills.
-It requires exact source anchors, writes each file atomically, makes a sibling
-timestamped backup, and refuses partial installation on drift:
+It requires exact source anchors, preflights and prepares both targets, replaces
+both files transactionally with rollback if a later write fails, makes a sibling
+timestamped backup on success, and refuses drift:
 
 ```bash
 python3 /home/frank/.hermes/hermes-agent/scripts/install-hermes-safe-skill-guidance.py \
@@ -69,7 +70,14 @@ Required evidence packet:
 - negative exit-78 receipt showing inherited worker variables were rejected;
 - positive named-skill preload receipt with zero tool calls;
 - controller/ledger read-back from the owning runtime/board (read-only);
-- named consumer: `jarvis-os-pm` and the independent reviewer.
+- named consumers resolved from the registry and live profile roster: `jarvis-os-pm`
+  (controller), `upero-pm` (Upero/Sycode-AI tracker alias `sycode-ai`),
+  `yorkstone-supplies-pm`, and `os-reviewer` (independent review). The former
+  `sycode-ai-pm` name is not a live profile and must not be retained.
 
-The wrapper is a safety boundary, not proof that a skill is installed in every
-profile. Run a separate target-profile read-back when that claim is required.
+Before any separately approved live install, read the control-plane and
+upero-platform entries in `/home/frank/obsidian-fleet-vault/Projects/Portfolio/registry.yaml`,
+confirm the four names with `hermes profile list`, then run the installer with
+`--check` and read both installed `SKILL.md` files. The post-install read-back
+must show the wrapper marker, the resolved consumer map, and no `sycode-ai-pm`;
+this packet itself does not authorize installation or activation.
