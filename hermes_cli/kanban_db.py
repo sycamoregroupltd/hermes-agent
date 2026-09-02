@@ -3393,9 +3393,13 @@ def _run_profile(task_row: Optional[sqlite3.Row]) -> str:
     assignee = task_row["assignee"] if task_row is not None else None
     if assignee and str(assignee).strip():
         return _canonical_assignee(assignee) or "default"
-    from hermes_cli.profiles import get_active_profile_name
-
-    return _canonical_assignee(get_active_profile_name()) or "default"
+    try:
+        from hermes_cli.profiles import get_active_profile_name
+        active_profile = get_active_profile_name()
+        return _canonical_assignee(active_profile) or "default"
+    except Exception:
+        # Fallback to "default" if profile resolution fails (e.g., in tests)
+        return "default"
 
 
 def create_task(
