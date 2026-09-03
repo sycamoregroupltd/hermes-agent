@@ -4484,8 +4484,7 @@ def _drive_worker_exit(conn, tid, fake_pid, raw_status):
     claimed = _kb.claim_task(conn, tid, claimer=f"{host_prefix}:mock")
     assert claimed is not None, "task was not claimable for the next attempt"
     _kb._set_worker_pid(conn, tid, fake_pid)
-    # Pass conn so durable verdict (dispatch_death_reason) is persisted
-    _kb._record_worker_exit(fake_pid, raw_status, conn=conn)
+    _kb._record_worker_exit(fake_pid, raw_status)
     original_alive = _kb._pid_alive
     _kb._pid_alive = lambda p: False
     try:
