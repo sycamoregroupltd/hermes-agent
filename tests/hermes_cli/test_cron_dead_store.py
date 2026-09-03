@@ -90,6 +90,10 @@ class TestCronCreateDeadStoreGate:
         _heartbeat(store, age_seconds=3600)  # stale
         calls = []
         monkeypatch.setattr(cron_cli, "_cron_api", lambda **kw: calls.append(kw) or _ok_result())
+        monkeypatch.setattr(
+            "cron.jobs.update_job",
+            lambda job_id, updates: {"id": job_id, **updates},
+        )
         rc = cron_cli.cron_create(_args(store=str(store), force=True))
         out = capsys.readouterr().out
         assert rc == 0
@@ -111,6 +115,37 @@ class TestCronCreateDeadStoreGate:
         data = json.loads(jobs_file.read_text(encoding="utf-8"))
         jobs = data.get("jobs", data)
         assert any(j.get("dead_store_override") for j in jobs)
+
+    @pytest.mark.parametrize("failure", ["none", "exception"])
+    def test_force_stamp_failure_is_visible_and_rolls_back(
+        self, tmp_path, monkeypatch, capsys, failure
+    ):
+        # A force create must never report success without its audit stamp. If
+        # stamping fails, the just-created record is removed and the CLI returns
+        # a visible failure instead of leaving an ambiguous job behind.
+        store = tmp_path / "store"
+        _heartbeat(store, age_seconds=3600)
+        monkeypatch.setattr(cron_cli, "_cron_api", lambda **kw: _ok_result())
+
+        def broken_update(*args, **kwargs):
+            if failure == "exception":
+                raise RuntimeError("stamp unavailable")
+            return None
+
+        removed = []
+        monkeypatch.setattr("cron.jobs.update_job", broken_update)
+        monkeypatch.setattr(
+            "cron.jobs.remove_job",
+            lambda job_id: removed.append(job_id) or True,
+        )
+
+        rc = cron_cli.cron_create(_args(store=str(store), force=True))
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "Could not record required dead_store_override metadata" in out
+        assert "Created job" not in out
+        assert removed == ["abc123def456"]
 
     def test_root_store_default_refuses_when_dead(self, tmp_path, monkeypatch, capsys):
         # No --store: the active profile's store (the resolved current store).

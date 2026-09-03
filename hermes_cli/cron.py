@@ -351,6 +351,7 @@ def cron_create(args):
     from cron.jobs import (
         _current_cron_store,
         dead_store_reason,
+        remove_job,
         update_job,
         use_cron_store_dir,
     )
@@ -414,12 +415,41 @@ def cron_create(args):
             return result
         # Record the dead-store override in job metadata when --force bypassed
         # a dead store, so operators can audit that this job was intentionally
-        # registered into a store with no live ticker.
+        # registered into a store with no live ticker. Creation is not reported
+        # as successful unless the stamp is persisted and returned by update_job.
         if reason and force:
+            job_id = result.get("job_id")
+            stamp_error = None
             try:
-                update_job(result["job_id"], {"dead_store_override": reason})
-            except Exception:
-                pass  # metadata stamp is best-effort; the job is already created
+                stamped = update_job(job_id, {"dead_store_override": reason})
+                if not stamped or stamped.get("dead_store_override") != reason:
+                    stamp_error = "update_job returned no stamped job"
+                else:
+                    # Keep the returned payload consistent with the persisted
+                    # record for callers that inspect the create response.
+                    result["job"] = stamped
+            except Exception as exc:
+                stamp_error = f"update_job failed: {exc}"
+
+            if stamp_error:
+                rollback_error = None
+                try:
+                    if not remove_job(job_id):
+                        rollback_error = "remove_job returned false"
+                except Exception as exc:
+                    rollback_error = f"remove_job failed: {exc}"
+                rollback_detail = (
+                    f" Rollback failed: {rollback_error}."
+                    if rollback_error
+                    else " The un-stamped job was rolled back."
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        "Could not record required dead_store_override metadata "
+                        f"for job '{job_id}': {stamp_error}.{rollback_detail}"
+                    ),
+                }
         return result
 
     if store_dir:
