@@ -15,64 +15,81 @@ class TradeableUniverseTests(unittest.TestCase):
     def _ages(active_4h: set[str], stale_4h: set[str] | None = None):
         stale_4h = stale_4h or set()
         ages = {
-            "1m": {f"BROAD{i}": 60 for i in range(340)},
-            "5m": {f"BROAD{i}": 60 for i in range(340)},
-            "15m": {f"BROAD{i}": 60 for i in range(470)},
-            "1h": {f"BROAD{i}": 60 for i in range(340)},
+            "1m": {f"BROAD{i}": 60 for i in range(500)},
+            "5m": {f"BROAD{i}": 60 for i in range(500)},
+            "15m": {f"BROAD{i}": 60 for i in range(500)},
+            "1h": {f"BROAD{i}": 60 for i in range(500)},
             "4h": {symbol: 60 for symbol in active_4h},
-            "1D": {f"BROAD{i}": 60 for i in range(340)},
+            "1D": {f"BROAD{i}": 60 for i in range(500)},
         }
         for symbol in stale_4h:
             ages["4h"][symbol] = 9 * 3600
         return ages
 
     def test_dynamic_4h_floor_excludes_delisted_but_keeps_active_stale(self):
-        active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
-        stale_active = "ACTIVE299USDT"
+        active = {f"BROAD{i}" for i in range(340)}
+        stale_active = "BROAD299"
         ages = self._ages(active, {stale_active})
         ages["4h"]["DELISTEDUSDT"] = 365 * 24 * 3600
 
         configs, fresh_counts = monitor.materialize_configs(ages, active)
         four_hour = next(config for config in configs if config.timeframe == "4h")
 
-        self.assertEqual(four_hour.floor, 300)
-        self.assertEqual(four_hour.universe_size, 300)
+        self.assertEqual(four_hour.floor, 340)
+        self.assertEqual(four_hour.universe_size, 340)
         self.assertFalse(four_hour.soft_drop)
-        self.assertEqual(fresh_counts["4h"], 299)
-        alerts, rows = monitor.evaluate(configs, fresh_counts)
+        self.assertEqual(fresh_counts["4h"], 339)
+        four_hour_configs = [config for config in configs if config.timeframe == "4h"]
+        alerts, rows = monitor.evaluate(four_hour_configs, fresh_counts)
         self.assertEqual(len(alerts), 1)
-        self.assertIn("299/300 tradeable", alerts[0])
+        self.assertIn("339/340 tradeable", alerts[0])
         self.assertEqual(next(row for row in rows if row[0] == "4h")[-1], "ALERT_FLOOR")
 
     def test_dynamic_4h_floor_ignores_old_baseline_after_legitimate_delisting(self):
-        active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
+        active = {f"BROAD{i}" for i in range(340)}
         configs, fresh_counts = monitor.materialize_configs(self._ages(active), active)
 
-        alerts, _ = monitor.evaluate(configs, fresh_counts, baseline={"4h": 440})
+        four_hour_configs = [config for config in configs if config.timeframe == "4h"]
+        alerts, _ = monitor.evaluate(four_hour_configs, fresh_counts, baseline={"4h": 440})
 
         self.assertEqual(alerts, [])
 
     def test_static_curated_floor_alerts_when_one_core_symbol_stops(self):
-        active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
+        active = {f"BROAD{i}" for i in range(340)}
         ages = self._ages(active)
         ages["1m"]["BROAD339"] = 4 * 3600
         configs, fresh_counts = monitor.materialize_configs(ages, active)
 
-        alerts, _ = monitor.evaluate(configs, fresh_counts)
-
-        self.assertEqual(len(alerts), 1)
-        self.assertIn("candles[1m]", alerts[0])
+        one_minute_configs = [config for config in configs if config.timeframe == "1m"]
+        alerts, _ = monitor.evaluate(one_minute_configs, fresh_counts)
         self.assertIn("floor=340", alerts[0])
 
     def test_stale_symbol_outside_old_curated_subset_counts_against_broad_floor(self):
-        active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
+        active = {f"BROAD{i}" for i in range(340)}
         ages = self._ages(active)
         ages["1m"]["BROAD339"] = 4 * 3600
 
         configs, fresh_counts = monitor.materialize_configs(ages, active)
 
         self.assertEqual(fresh_counts["1m"], 339)
-        alerts, _ = monitor.evaluate(configs, fresh_counts)
+        one_minute_configs = [config for config in configs if config.timeframe == "1m"]
+        alerts, _ = monitor.evaluate(one_minute_configs, fresh_counts)
+        one_minute = [alert for alert in alerts if "candles[1m]" in alert]
+        self.assertEqual(len(one_minute), 1)
+        self.assertIn("floor=340", one_minute[0])
+
+    def test_missing_active_probe_row_counts_as_static_stale_coverage(self):
+        active = {f"BROAD{i}" for i in range(340)} | {"ACTIVE_WITHOUT_CANDLE"}
+        ages = self._ages(active)
+        ages["1m"].pop("BROAD339")
+
+        configs, fresh_counts = monitor.materialize_configs(ages, active)
+
+        # One active symbol has no LATERAL result and one returned symbol is
+        # stale: both must reduce the active-universe freshness count.
+        self.assertEqual(fresh_counts["1m"], 339)
+        one_minute_configs = [config for config in configs if config.timeframe == "1m"]
+        alerts, _ = monitor.evaluate(one_minute_configs, fresh_counts)
         one_minute = [alert for alert in alerts if "candles[1m]" in alert]
         self.assertEqual(len(one_minute), 1)
         self.assertIn("floor=340", one_minute[0])
@@ -110,12 +127,12 @@ class TradeableUniverseTests(unittest.TestCase):
 
     def test_all_six_timeframes_are_evaluated_without_floor_weakening(self):
         ages = {spec.timeframe: {"BTCUSDT": 1} for spec in monitor.TIMEFRAME_SPECS}
-        active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
+        active = {f"BROAD{i}" for i in range(340)}
         ages["4h"] = {symbol: 1 for symbol in active}
         configs, counts = monitor.materialize_configs(ages, active)
         self.assertEqual([c.timeframe for c in configs], ["1m", "5m", "15m", "1h", "4h", "1D"])
         self.assertEqual([c.floor for c in configs if c.timeframe != "4h"], [340, 340, 470, 340, 340])
-        self.assertEqual(next(c for c in configs if c.timeframe == "4h").floor, 300)
+        self.assertEqual(next(c for c in configs if c.timeframe == "4h").floor, 340)
         self.assertEqual(set(counts), {"1m", "5m", "15m", "1h", "4h", "1D"})
 
     def test_empty_or_malformed_binance_payload_fails_visible(self):

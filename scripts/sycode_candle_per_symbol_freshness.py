@@ -190,7 +190,10 @@ def materialize_configs(symbol_ages_by_tf, active_spot_symbols):
                 raise RuntimeError("tradeable 4h universe unexpectedly small: %d < %d" % (len(eligible), MIN_TRADEABLE_4H_SYMBOLS))
             floor, universe_size = len(eligible), len(eligible)
         else:
-            eligible, floor = set(ages), spec.floor
+            # Static lanes use the live Binance universe as their denominator.
+            # A missing latest-row probe must count as stale rather than being
+            # silently removed from coverage accounting.
+            eligible, floor = set(active_spot_symbols), spec.floor
         fresh_counts[spec.timeframe] = sum(1 for symbol in eligible if ages.get(symbol, spec.budget_hours * 3600 + 1) <= spec.budget_hours * 3600)
         configs.append(RuntimeConfig(spec.timeframe, spec.budget_hours, floor, spec.note, spec.soft_drop, universe_size))
     return configs, fresh_counts
