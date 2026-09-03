@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -84,6 +85,35 @@ class TradeableUniverseTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "tradeable 4h universe unexpectedly small"):
             monitor.materialize_configs(self._ages(active), active)
+
+    def test_latest_row_query_is_parameterized_and_index_bounded(self):
+        query = monitor.build_symbol_age_query("1m", {"BTCUSDT", "ETHUSDT"})
+        self.assertIn("CROSS JOIN LATERAL", query)
+        self.assertIn("ORDER BY c.timestamp DESC LIMIT 1", query)
+        self.assertIn("'[\"BTCUSDT\",\"ETHUSDT\"]'", query)
+        self.assertIn("'1m'", query)
+        injection = monitor.build_symbol_age_query("1m", {"BAD'); DROP TABLE candles; --"})
+        self.assertIn("BAD''); DROP TABLE candles; --", injection)
+
+    def test_all_six_timeframes_are_evaluated_without_floor_weakening(self):
+        ages = {spec.timeframe: {"BTCUSDT": 1} for spec in monitor.TIMEFRAME_SPECS}
+        active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
+        ages["4h"] = {symbol: 1 for symbol in active}
+        configs, counts = monitor.materialize_configs(ages, active)
+        self.assertEqual([c.timeframe for c in configs], ["1m", "5m", "15m", "1h", "4h", "1D"])
+        self.assertEqual([c.floor for c in configs if c.timeframe != "4h"], [10, 10, 250, 10, 10])
+        self.assertEqual(next(c for c in configs if c.timeframe == "4h").floor, 300)
+        self.assertEqual(set(counts), {"1m", "5m", "15m", "1h", "4h", "1D"})
+
+    def test_empty_or_malformed_binance_payload_fails_visible(self):
+        for payload in ({}, {"symbols": "not-a-list"}):
+            with self.assertRaisesRegex(RuntimeError, "missing symbols list"):
+                monitor.parse_active_binance_spot_symbols(payload)
+
+    def test_probe_error_is_not_converted_to_health_result(self):
+        with mock.patch.object(monitor, "fetch_symbol_ages", side_effect=RuntimeError("statement timeout")):
+            with self.assertRaisesRegex(RuntimeError, "statement timeout"):
+                monitor.fetch_symbol_ages("1m")
 
 
 if __name__ == "__main__":
