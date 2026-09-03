@@ -65,13 +65,14 @@ done
 # fabricated-success class this whole backup fix exists to kill.
 # This host drops ~33% of IPv6 packets, which is the most likely cause of the 2026-08-14
 # "client_loop: send disconnect: Broken pipe" (rsync rc=10). Force IPv4 and keep the link alive.
-SSH_OPTS='ssh -4 -o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=20 -o ServerAliveCountMax=6'
+SSH_OPTS='ssh -4 -o BatchMode=yes -o ConnectTimeout=60 -o ServerAliveInterval=20 -o ServerAliveCountMax=6'
 # The Mac link transfers ~5.5GB at only 1-1.4MB/s (~65-80 minutes). A 3600s per-file
 # I/O timeout is intentionally generous for that duration while still detecting a dead stall;
 # the cron store timeout is 10800s, leaving room for connection setup, retries, and verification.
-# Installed rsync 3.2.7 has no literal --contimems or --retries options: --contimeout=60
-# is the valid connection-timeout equivalent, and this bounded loop supplies 3 retries.
-# --partial-dir isolates resumable fragments; --bwlimit=0 explicitly leaves throughput uncapped.
+# Installed rsync 3.2.7 has no literal --contimems or --retries options. The requested
+# --contimems=60000 maps to SSH -o ConnectTimeout=60 (rsync --contimeout is daemon-only),
+# and this bounded loop supplies 3 retries. --partial-dir isolates resumable fragments;
+# --bwlimit=0 explicitly leaves throughput uncapped.
 push_ok=0
 if $SSH_OPTS mac true 2>/dev/null; then
     for attempt in 1 2 3; do
