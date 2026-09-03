@@ -193,7 +193,7 @@ def materialize_configs(symbol_ages_by_tf, active_spot_symbols):
 
 def read_state():
     try:
-        return json.loads(STATE.read_text())
+        return json.loads(STATE.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
