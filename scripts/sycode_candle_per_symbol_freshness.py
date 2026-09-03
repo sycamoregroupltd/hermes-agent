@@ -20,8 +20,8 @@
 # Read-only (PGOPTIONS default_transaction_read_only=on).
 #
 # SLOs (mode=alert if fresh_count < floor):
-#   - 1m/5m/1h/1D: curated feed; floor=10.
-#   - 15m:           broad rotating feed; floor=250 for the 3h window.
+#   - 1m/5m/1h/1D: broad feed; floors preserve the reviewed 340-symbol SLO.
+#   - 15m:           broad rotating feed; floor=470 for the 3h window.
 #   - 4h:            all currently tradeable Binance spot-USDT symbols with
 #                    a represented 4h candle; the floor is dynamic.
 #
@@ -82,12 +82,12 @@ class RuntimeConfig(NamedTuple):
 #               reality on 2026-07-13 is far lower — that is the finding, not a
 #               mis-calibration. Universe sizes: 1m/5m/1h/1D~370, 15m~504, 4h~473.
 TIMEFRAME_SPECS = [
-    TimeframeSpec("1m", 3, 10, "curated 10-symbol major feed", True),
-    TimeframeSpec("5m", 3, 10, "curated 10-symbol major feed", True),
-    TimeframeSpec("15m", 3, 250, "broad rotating feed; reviewed 3h floor", True),
-    TimeframeSpec("1h", 3, 10, "curated 10-symbol major feed", True),
+    TimeframeSpec("1m", 3, 340, "broad streaming feed; reviewed 340-symbol floor", True),
+    TimeframeSpec("5m", 3, 340, "broad streaming feed; reviewed 340-symbol floor", True),
+    TimeframeSpec("15m", 3, 470, "broad rotating feed; reviewed 470-symbol floor", True),
+    TimeframeSpec("1h", 3, 340, "broad streaming feed; reviewed 340-symbol floor", True),
     TimeframeSpec("4h", 8, None, "dynamic Binance SPOT/TRADING/USDT symbols already represented in candles", False),
-    TimeframeSpec("1D", 27, 10, "curated 10-symbol major feed", True),
+    TimeframeSpec("1D", 27, 340, "broad daily feed; reviewed 340-symbol floor", True),
 ]
 
 STATE = Path(os.getenv(
@@ -247,14 +247,14 @@ def main():
     args = ap.parse_args()
 
     if args.self_test:
-        test_configs = [RuntimeConfig("1m", 3, 10, "test", True, None),
-                        RuntimeConfig("15m", 3, 250, "test", True, None),
+        test_configs = [RuntimeConfig("1m", 3, 340, "test", True, None),
+                        RuntimeConfig("15m", 3, 470, "test", True, None),
                         RuntimeConfig("4h", 8, 300, "test", False, 300)]
-        healthy = {"1m": 10, "15m": 300, "4h": 300}
+        healthy = {"1m": 340, "15m": 470, "4h": 300}
         a1, _ = evaluate(test_configs, healthy, baseline=healthy)
-        dead = dict(healthy); dead["1m"] = 9
+        dead = dict(healthy); dead["1m"] = 339
         a2, r2 = evaluate(test_configs, dead, baseline=healthy)
-        drop = dict(healthy); drop["15m"] = 260
+        drop = dict(healthy); drop["15m"] = 400
         a3, r3 = evaluate(test_configs, drop, baseline=healthy)
         ok = (len(a1) == 0) and (len(a2) == 1) and (len(a3) == 1)
         for r in (r2 + r3):

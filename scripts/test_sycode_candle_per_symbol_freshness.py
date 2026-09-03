@@ -15,12 +15,12 @@ class TradeableUniverseTests(unittest.TestCase):
     def _ages(active_4h: set[str], stale_4h: set[str] | None = None):
         stale_4h = stale_4h or set()
         ages = {
-            "1m": {f"CORE{i}": 60 for i in range(10)},
-            "5m": {f"CORE{i}": 60 for i in range(10)},
-            "15m": {f"BROAD{i}": 60 for i in range(250)},
-            "1h": {f"CORE{i}": 60 for i in range(10)},
+            "1m": {f"BROAD{i}": 60 for i in range(340)},
+            "5m": {f"BROAD{i}": 60 for i in range(340)},
+            "15m": {f"BROAD{i}": 60 for i in range(470)},
+            "1h": {f"BROAD{i}": 60 for i in range(340)},
             "4h": {symbol: 60 for symbol in active_4h},
-            "1D": {f"CORE{i}": 60 for i in range(10)},
+            "1D": {f"BROAD{i}": 60 for i in range(340)},
         }
         for symbol in stale_4h:
             ages["4h"][symbol] = 9 * 3600
@@ -55,14 +55,27 @@ class TradeableUniverseTests(unittest.TestCase):
     def test_static_curated_floor_alerts_when_one_core_symbol_stops(self):
         active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
         ages = self._ages(active)
-        ages["1m"]["CORE9"] = 4 * 3600
+        ages["1m"]["BROAD339"] = 4 * 3600
         configs, fresh_counts = monitor.materialize_configs(ages, active)
 
         alerts, _ = monitor.evaluate(configs, fresh_counts)
 
         self.assertEqual(len(alerts), 1)
         self.assertIn("candles[1m]", alerts[0])
-        self.assertIn("floor=10", alerts[0])
+        self.assertIn("floor=340", alerts[0])
+
+    def test_stale_symbol_outside_old_curated_subset_counts_against_broad_floor(self):
+        active = {f"ACTIVE{i:03d}USDT" for i in range(300)}
+        ages = self._ages(active)
+        ages["1m"]["BROAD339"] = 4 * 3600
+
+        configs, fresh_counts = monitor.materialize_configs(ages, active)
+
+        self.assertEqual(fresh_counts["1m"], 339)
+        alerts, _ = monitor.evaluate(configs, fresh_counts)
+        one_minute = [alert for alert in alerts if "candles[1m]" in alert]
+        self.assertEqual(len(one_minute), 1)
+        self.assertIn("floor=340", one_minute[0])
 
     def test_active_spot_parser_filters_non_usdt_non_trading_and_non_spot(self):
         payload = {
@@ -101,7 +114,7 @@ class TradeableUniverseTests(unittest.TestCase):
         ages["4h"] = {symbol: 1 for symbol in active}
         configs, counts = monitor.materialize_configs(ages, active)
         self.assertEqual([c.timeframe for c in configs], ["1m", "5m", "15m", "1h", "4h", "1D"])
-        self.assertEqual([c.floor for c in configs if c.timeframe != "4h"], [10, 10, 250, 10, 10])
+        self.assertEqual([c.floor for c in configs if c.timeframe != "4h"], [340, 340, 470, 340, 340])
         self.assertEqual(next(c for c in configs if c.timeframe == "4h").floor, 300)
         self.assertEqual(set(counts), {"1m", "5m", "15m", "1h", "4h", "1D"})
 
