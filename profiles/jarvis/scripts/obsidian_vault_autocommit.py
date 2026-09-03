@@ -24,10 +24,13 @@ card as well as printing. See main()'s FAILURE POLICY before changing exit codes
 from __future__ import annotations
 
 import datetime as _dt
+import fcntl
 import json
 import os
 import re
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 # All four vaults are git repos with GitHub remotes; git IS the off-box backup.
@@ -280,6 +283,60 @@ def raise_alert(key: str, subject: str, body: str) -> None:
 
 
 ALERT_STATE = Path('/home/frank/.hermes/state/host-cron-alert-cards.json')
+ALERT_STATE_LOCK = ALERT_STATE.with_name(ALERT_STATE.name + '.lock')
+
+
+def _clear_alert_pointer(key: str) -> str | None:
+    """Drop one pointer under the shared alert-state lock, atomically.
+
+    The slow kanban completion happens before this helper. Re-reading while
+    holding the lock ensures concurrent alert producers' keys are preserved.
+    """
+    lock_fh = None
+    tmp_name = None
+    try:
+        ALERT_STATE.parent.mkdir(parents=True, exist_ok=True)
+        lock_fh = ALERT_STATE_LOCK.open('a+')
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    return 'state-lock-timeout'
+                time.sleep(0.25)
+        try:
+            latest = json.loads(ALERT_STATE.read_text())
+        except Exception as exc:  # noqa: BLE001 - never overwrite unreadable state
+            return f'state-reread-failed {exc!r}'
+        if not isinstance(latest, dict):
+            return 'state-reread-failed non-object JSON'
+        latest.pop(key, None)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(ALERT_STATE.parent), prefix=f'.{ALERT_STATE.name}.',
+        )
+        with os.fdopen(fd, 'w', encoding='utf-8') as tmp:
+            json.dump(latest, tmp, indent=1, sort_keys=True)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, ALERT_STATE)
+        tmp_name = None
+        return None
+    except OSError as exc:
+        return f'state-write-failed {exc!r}'
+    finally:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        if lock_fh is not None:
+            try:
+                fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            lock_fh.close()
 
 
 def clear_alert(key: str) -> str | None:
@@ -328,18 +385,14 @@ def clear_alert(key: str) -> str | None:
             cleared_note = f'ALERT-POINTER-CLEARED {key} card={card} ({gone})'
         else:
             return f'ALERT-CARD-STUCK {key} card={card} rc={done.returncode} {err}'
-    state.pop(key, None)
-    try:
-        ALERT_STATE.write_text(json.dumps(state, indent=1, sort_keys=True))
-    except OSError as exc:
-        return f'ALERT-CARD-STUCK {key} card={card} state-write-failed {exc!r}'
+    write_error = _clear_alert_pointer(key)
+    if write_error:
+        return f'ALERT-CARD-STUCK {key} card={card} {write_error}'
     return cleared_note
 
 
-# Statuses `hermes kanban complete` can still transition FROM (kanban_db.complete_task).
-# A card in any OTHER status is terminal for our purposes: nothing we do can close it.
-ALERT_CARD_OPEN_STATUSES = ('running', 'ready', 'blocked', 'review')
-
+# Only done/archived cards are safe to forget; triage/todo/scheduled and
+# unknown future statuses remain live pointers for operator recovery.
 
 def alert_card_gone(card: str, board: str) -> str | None:
     """Why a stale alert pointer may be dropped, or None if the card is still live.
@@ -362,7 +415,7 @@ def alert_card_gone(card: str, board: str) -> str | None:
     if not match:
         return None
     status = match.group(1)
-    return None if status in ALERT_CARD_OPEN_STATUSES else f'status={status}'
+    return f'status={status}' if status in ('done', 'archived') else None
 
 
 def resolved_vaults() -> list[Path]:
