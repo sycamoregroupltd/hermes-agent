@@ -100,6 +100,13 @@ from typing import Any, Iterable, Mapping, Optional
 from hermes_cli.sqlite_util import add_column_if_missing as _add_column_if_missing
 from toolsets import get_toolset_names
 
+# Import module at load time so the import doesn't happen during _run_profile execution.
+# This allows test monkeypatches to work correctly.
+try:
+    from hermes_cli import profiles as _profiles_module
+except ImportError:
+    _profiles_module = None
+
 _log = logging.getLogger(__name__)
 
 
@@ -3402,13 +3409,13 @@ def _run_profile(task_row: Optional[sqlite3.Row]) -> Optional[str]:
     
     # For unassigned tasks, try to get and normalize the active profile
     try:
-        from hermes_cli.profiles import get_active_profile_name
-        active_profile = get_active_profile_name()
-        if active_profile:
-            try:
-                return _canonical_assignee(active_profile)
-            except Exception:
-                return active_profile
+        if _profiles_module is not None:
+            active_profile = _profiles_module.get_active_profile_name()
+            if active_profile:
+                try:
+                    return _canonical_assignee(active_profile)
+                except Exception:
+                    return active_profile
     except Exception:
         pass
     
