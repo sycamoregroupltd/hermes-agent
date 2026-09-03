@@ -490,6 +490,7 @@ def test_public_message_agent_delivery_scrubs_worker_context(
 
     observed = tmp_path / "target-observed.json"
     transport = tmp_path / "hermes"
+    repo_root = Path(bot_mode_dm.__file__).resolve().parent.parent
     transport.write_text(
         textwrap.dedent(
             f"""\
@@ -499,6 +500,9 @@ def test_public_message_agent_delivery_scrubs_worker_context(
             import pathlib
             import sys
 
+            sys.path.insert(0, {str(repo_root)!r})
+            from tools.kanban_tools import _handle_show
+
             args = sys.argv[1:]
             if "--query-file" in args:
                 source = open(args[args.index("--query-file") + 1], encoding="utf-8")
@@ -506,6 +510,7 @@ def test_public_message_agent_delivery_scrubs_worker_context(
                 source = sys.stdin
             with source:
                 payload = source.read()
+            no_arg_lookup = _handle_show({{}})
             keys = [
                 key for key in os.environ
                 if key.startswith("HERMES_KANBAN_")
@@ -513,7 +518,7 @@ def test_public_message_agent_delivery_scrubs_worker_context(
                 or key in ("HERMES_PROFILE", "HERMES_UI_SESSION_ID")
             ]
             pathlib.Path({str(observed)!r}).write_text(
-                json.dumps({{"env": {{key: os.environ[key] for key in keys}}, "payload": payload}})
+                json.dumps({{"env": {{key: os.environ[key] for key in keys}}, "payload": payload, "no_arg_lookup": no_arg_lookup}})
                 + "\\n",
                 encoding="utf-8",
             )
@@ -555,6 +560,9 @@ def test_public_message_agent_delivery_scrubs_worker_context(
 
     delivered = json.loads(observed.read_text(encoding="utf-8"))
     assert delivered["env"] == {}
+    no_arg_lookup = json.loads(delivered["no_arg_lookup"])
+    assert "error" in no_arg_lookup
+    assert "task_id is required" in no_arg_lookup["error"]
     assert delivered["payload"].startswith(
         "Message from 🤖 sender (@sender): worker-context probe"
     )
