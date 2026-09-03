@@ -319,7 +319,11 @@ def main() -> int:
         parser.error("GITHUB_TOKEN is required")
     session_token = os.environ.get("GH_SESSION_TOKEN", "")
     if not session_token:
-        parser.error("GH_SESSION_TOKEN is required")
+        # Forks do not have access to the protected gh-image environment.
+        # Keep the workflow green while making the missing publisher capability
+        # explicit; trusted repositories still publish when the secret exists.
+        print("Skipping inline E2E evidence: GH_SESSION_TOKEN is unavailable.")
+        return 0
     publish(token, args.source_repo, args.evidence_dir, args.pr_number, session_token)
     return 0
 

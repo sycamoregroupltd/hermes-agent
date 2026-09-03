@@ -338,7 +338,7 @@ class TestWedgedJobRefiresWithoutRestart:
         with patch.object(sched, "_get_hermes_home", return_value=tmp_path), \
              patch.object(sched, "get_due_jobs", return_value=[job]), \
              patch("cron.jobs.load_jobs", return_value=[job]), \
-             patch.object(sched, "advance_next_runs"), \
+             patch.object(sched, "advance_next_run"), \
              patch.object(sched, "mark_job_run"), \
              patch.object(sched, "create_execution", return_value={"id": "exec-1"}), \
              patch.object(sched, "finish_execution"), \
