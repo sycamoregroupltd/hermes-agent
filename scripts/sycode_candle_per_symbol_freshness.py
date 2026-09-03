@@ -44,6 +44,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
+try:
+    from hermes_constants import get_hermes_home
+except ImportError:
+    # Installed profile scripts may not have the Hermes source root on sys.path.
+    def get_hermes_home():
+        return Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+
 DB_CONTAINER = "sycodetrading-supabase-db"
 BINANCE_SPOT_EXCHANGE_INFO_URL = (
     "https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT&showPermissionSets=false"
@@ -85,12 +92,10 @@ TIMEFRAME_SPECS = [
 
 STATE = Path(os.getenv(
     "CANDLE_FRESHNESS_STATE",
-    "/home/frank/.hermes/profiles/jarvis/cron/state/sycode_candle_per_symbol_freshness.json"))
+    get_hermes_home() / "profiles" / "jarvis" / "cron" / "state"
+    / "sycode_candle_per_symbol_freshness.json"))
 # Soft-drop baseline = max fresh_count observed per tf (ratchet up only).
 SOFT_DROP_PCT = 0.90  # alert if fresh_count < 90% of baseline
-
-EMPTY_SENTINEL = -1.0
-
 
 def build_symbol_age_query(timeframe, eligible_symbols=None):
     """Build an index-backed latest-row probe with safely quoted literals.
@@ -193,7 +198,7 @@ def materialize_configs(symbol_ages_by_tf, active_spot_symbols):
 
 def read_state():
     try:
-        return json.loads(STATE.read_text())
+        return json.loads(STATE.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
