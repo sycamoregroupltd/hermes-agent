@@ -11,9 +11,10 @@ import sys
 from hermes_constants import get_hermes_home
 
 LOG = get_hermes_home() / "logs" / "append-only-write-gate.log"
-REDIRECT = re.compile(r"(?:^|[;&|]\s*)[^;&|]*?(?P<op>>>?|\btee\b)(?:\s+-a)?\s+(?P<path>[^;&|]+)")
+REDIRECT = re.compile(r"(?:^|[;&|]\s*)[^;&|]*?(?P<op>>>?|\btee\b)(?P<append>\s+-a)?\s+(?P<path>[^;&|]+)")
 TRUNCATE = re.compile(r"\b(?:truncate|sed\s+-i|perl\s+-i)\b")
-V4A_HEADER = re.compile(r"^\*\*\* (Update|Delete|Move) File: (.+)$", re.MULTILINE)
+# Match V4A headers with optional space after *** (aligned with tools/patch_parser.py)
+V4A_HEADER = re.compile(r"^\*{3}\s*(Add|Update|Delete|Move|Rename)\s+File:\s*(.+)$", re.MULTILINE)
 
 
 def emit(value: dict) -> None:
@@ -34,13 +35,22 @@ def block(reason: str, target: str) -> None:
     emit({"decision": "block", "action": "block", "reason": reason, "message": reason})
 
 
-def resolved(path: str) -> Path:
+def resolved(path: str, base_dir: str = None) -> Path:
+    """Resolve a path, optionally relative to base_dir.
+    
+    Note: This resolves against the hook's host filesystem. When tools execute
+    in Docker/SSH/Modal/Daytona or with a custom workdir, the resolved path
+    may not match the tool's effective location. This is a known limitation.
+    """
     # Strip/unquote redirect targets
     path = path.strip()
     if path.startswith(("'", '"')) and path.endswith(path[0]):
         path = path[1:-1]
     try:
-        return Path(path).expanduser().resolve(strict=False)
+        p = Path(path)
+        if base_dir and not p.is_absolute():
+            p = Path(base_dir) / p
+        return p.expanduser().resolve(strict=False)
     except (OSError, RuntimeError, ValueError):
         raise
 
@@ -69,16 +79,17 @@ def strings(value: object) -> list[str]:
 def extract_patch_targets(patch: str) -> list[tuple[str, str]]:
     """Extract (operation, path) pairs from V4A patch headers.
     
-    Returns list of (op, path) where op is 'Update', 'Delete', or 'Move'.
-    For Move operations, returns both source and dest as separate entries.
+    Returns list of (op, path) where op is 'Add', 'Update', 'Delete', 'Move', or 'Rename'.
+    For Move/Rename operations, returns both source and dest as separate entries.
+    Add operations are recognized but not enforced (adding new files is safe).
     """
     targets = []
     for match in V4A_HEADER.finditer(patch):
         op = match.group(1)
         path = match.group(2).strip()
         
-        # For Move operations, parse "src -> dest" into separate paths
-        if op == "Move" and "->" in path:
+        # For Move/Rename operations, parse "src -> dest" into separate paths
+        if op in ("Move", "Rename") and "->" in path:
             parts = path.split("->", 1)
             src = parts[0].strip()
             dest = parts[1].strip() if len(parts) > 1 else ""
@@ -125,8 +136,19 @@ def patch_preserves(path: Path, args: dict) -> bool:
         candidate = current.replace(old, new, count)
         if len(candidate) < len(current):
             return False
+        # Check that all historical lines are preserved with correct multiplicity
         body = current.split("\n---\n", 1)[-1] if "\n---\n" in current else current
-        return all(line in candidate for line in body.splitlines() if line.strip())
+        body_lines = [line for line in body.splitlines() if line.strip()]
+        candidate_lines = [line for line in candidate.splitlines() if line.strip()]
+        # Build multiplicity maps
+        from collections import Counter
+        body_counts = Counter(body_lines)
+        candidate_counts = Counter(candidate_lines)
+        # Every historical line must appear at least as many times in candidate
+        for line, count in body_counts.items():
+            if candidate_counts[line] < count:
+                return False
+        return True
     
     patch = args.get("patch")
     if isinstance(patch, str):
@@ -151,8 +173,8 @@ def patch_preserves(path: Path, args: dict) -> bool:
             )
             
             if is_match:
-                # Fail-closed: block Delete/Move operations
-                if op in ("Delete", "Move"):
+                # Fail-closed: block Delete/Move/Rename operations
+                if op in ("Delete", "Move", "Rename"):
                     return False
                 # For Update, check if patch removes lines
                 if op == "Update":
@@ -170,6 +192,9 @@ def main() -> None:
             return allow()
         tool, args, command = tool_data(payload)
         
+        # Extract workdir if provided (for relative path resolution)
+        workdir = args.get("workdir") or args.get("cwd") or None
+        
         # Build target set from explicit path args and V4A patch headers
         path = str(args.get("path") or args.get("file_path") or args.get("filename") or "")
         has_explicit_path = bool(path)  # Track if path was explicitly provided
@@ -177,7 +202,7 @@ def main() -> None:
         
         if path:
             try:
-                targets.append((path, resolved(path)))
+                targets.append((path, resolved(path, workdir)))
             except (OSError, RuntimeError, ValueError):
                 # If we can't resolve explicit path, still keep it for pattern matching
                 targets.append((path, None))
@@ -188,7 +213,7 @@ def main() -> None:
             patch_targets = extract_patch_targets(patch_str)
             for op, target_path in patch_targets:
                 try:
-                    abs_path = resolved(target_path)
+                    abs_path = resolved(target_path, workdir)
                     # Add both relative and absolute forms
                     targets.append((target_path, abs_path))
                 except (OSError, RuntimeError, ValueError):
@@ -214,12 +239,12 @@ def main() -> None:
             if tool in {"patch", "patch_file", "apply_patch"} or "old_string" in args or "patch" in args:
                 # If file doesn't exist, we can't verify - fail-closed for Delete/Move
                 if not target or not target.is_file():
-                    # Check if this is a Delete/Move from V4A headers
+                    # Check if this is a Delete/Move/Rename from V4A headers
                     if isinstance(patch_str, str):
                         patch_targets = extract_patch_targets(patch_str)
                         for op, target_path in patch_targets:
-                            if op in ("Delete", "Move"):
-                                # Fail-closed: can't verify history preservation on non-existent file for Delete/Move
+                            if op in ("Delete", "Move", "Rename"):
+                                # Fail-closed: can't verify history preservation on non-existent file for Delete/Move/Rename
                                 return block(f"append-only path {op} operation cannot be verified; file must exist", raw)
                     
                     # For Update on non-existent file:
@@ -243,11 +268,25 @@ def main() -> None:
         
         # Check terminal redirects independently
         if tool == "terminal" and command:
+            # First check for truncating commands that don't use redirects
+            if TRUNCATE.search(command):
+                # Extract operands from truncate/sed -i/perl -i
+                # truncate: look for file paths after -s or as positional args
+                # sed -i / perl -i: file paths come after the script
+                for truncate_match in re.finditer(r"truncate\s+(?:-s\s+\S+\s+)?(\S+)|(?:sed|perl)\s+-i\s+(?:'[^']*'|\"[^\"]*\"|\S+)\s+(\S+)", command):
+                    target_path = truncate_match.group(1) or truncate_match.group(2)
+                    if target_path and append_only(target_path):
+                        return block("append-only path terminal rewrite is blocked; use >> or tee -a", target_path)
+            
             for match in REDIRECT.finditer(command):
                 op = match.group("op")
+                is_append = match.group("append")  # Captured -a flag
                 raw = match.group("path")
                 if append_only(raw):
                     if op == ">":
+                        return block("append-only path terminal rewrite is blocked; use >> or tee -a", raw)
+                    # Block plain tee without -a (truncates); allow tee -a
+                    if op == "tee" and not is_append:
                         return block("append-only path terminal rewrite is blocked; use >> or tee -a", raw)
                     if TRUNCATE.search(command):
                         return block("append-only path terminal rewrite is blocked; use >> or tee -a", raw)
