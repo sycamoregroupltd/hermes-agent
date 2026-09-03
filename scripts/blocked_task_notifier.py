@@ -208,7 +208,12 @@ def _run_hermes_send(target: str, subject: str, message: str, timeout: int) -> t
     fail over instead of crashing the notifier (root cause of t_36a16eb1 DEAD status).
     """
     env = os.environ.copy()
-    env['HERMES_HOME'] = '/home/frank/.hermes'
+    # The notifier is executed by a profile-local cron gateway.  Preserve the
+    # gateway-selected HERMES_HOME so `hermes send` resolves that profile's
+    # configured adapters and channel directory.  The old unconditional root
+    # override selected the dead legacy root store and made Discord appear
+    # unconfigured even while Jarvis had live channels.
+    env.setdefault('HERMES_HOME', '/home/frank/.hermes/profiles/jarvis')
     try:
         result = subprocess.run(
             [HERMES, 'send', '-q', '-t', target, '-s', subject, message],
