@@ -70,12 +70,25 @@ def extract_patch_targets(patch: str) -> list[tuple[str, str]]:
     """Extract (operation, path) pairs from V4A patch headers.
     
     Returns list of (op, path) where op is 'Update', 'Delete', or 'Move'.
+    For Move operations, returns both source and dest as separate entries.
     """
     targets = []
     for match in V4A_HEADER.finditer(patch):
         op = match.group(1)
         path = match.group(2).strip()
-        targets.append((op, path))
+        
+        # For Move operations, parse "src -> dest" into separate paths
+        if op == "Move" and "->" in path:
+            parts = path.split("->", 1)
+            src = parts[0].strip()
+            dest = parts[1].strip() if len(parts) > 1 else ""
+            # Check both source and destination
+            if src:
+                targets.append((op, src))
+            if dest:
+                targets.append((op, dest))
+        else:
+            targets.append((op, path))
     return targets
 
 
@@ -159,6 +172,7 @@ def main() -> None:
         
         # Build target set from explicit path args and V4A patch headers
         path = str(args.get("path") or args.get("file_path") or args.get("filename") or "")
+        has_explicit_path = bool(path)  # Track if path was explicitly provided
         targets = []
         
         if path:
@@ -207,7 +221,12 @@ def main() -> None:
                             if op in ("Delete", "Move"):
                                 # Fail-closed: can't verify history preservation on non-existent file for Delete/Move
                                 return block(f"append-only path {op} operation cannot be verified; file must exist", raw)
-                    # For Update on non-existent file, allow (creating new file is OK)
+                    
+                    # For Update on non-existent file:
+                    # - If NO explicit path provided (path-less apply_patch), fail-closed
+                    # - If explicit path provided, allow (creating new file is OK)
+                    if not has_explicit_path:
+                        return block("append-only path update on non-existent file without explicit path; cannot verify append-only safety", raw)
                     continue
                 
                 # File exists, verify it preserves history

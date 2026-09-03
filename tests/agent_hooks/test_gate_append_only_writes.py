@@ -25,7 +25,7 @@ def run_gate(payload: dict) -> dict:
 
 
 def test_patch_without_path_extracts_v4a_targets():
-    """When patch tool has no explicit path, extract from V4A headers."""
+    """When patch tool has no explicit path, extract from V4A headers and fail-closed."""
     patch = """*** Update File: trading-arena/trader-1/journal.md
 
 --- trading-arena/trader-1/journal.md
@@ -41,12 +41,9 @@ def test_patch_without_path_extracts_v4a_targets():
     }
     
     # Should detect the journal.md target even without explicit path arg
-    # Since we're adding a line (not deleting), should allow
+    # Since file doesn't exist to verify, should block (fail-closed)
     result = run_gate(payload)
-    # This will fail-closed block because we can't verify the file exists/content
-    # In production, if the file doesn't exist it would also block
-    # The key is that it PARSED the target and didn't emit empty {} allow
-    assert result.get("decision") in ("block", None)  # Not empty allow
+    assert result.get("decision") == "block", f"Expected block, got {result}"
 
 
 def test_patch_delete_operation_blocks():
