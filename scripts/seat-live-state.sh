@@ -20,8 +20,8 @@
 #   - The output is SELF-DATED and lists every failed probe in a header.
 #   - NO psql (classifier-blocked for the seat). Trading mode via :7777/health; live
 #     open-positions is NOT shell-reachable — the block tells the seat to call the MCP.
-#   - Read-only: the only write is `git fetch` of remote-tracking refs (safe; never
-#     touches working tree or local branches), and it is hard-bounded by `timeout`.
+#   - Read-only: remote freshness uses a hard-bounded `git ls-remote`; local topology
+#     uses existing refs only. Neither probe writes the primary checkout.
 set -uo pipefail
 
 REPO="/home/frank/sycode-trading"
@@ -38,15 +38,21 @@ DEPLOYED="$(timeout 3 docker inspect "$CONTAINER" \
 [ -n "$DEPLOYED" ] || { DEPLOYED="PROBE FAILED"; note_fail "deployed-sha"; }
 
 # ---- origin/main tip + deploy gap (the merged!=deployed trap) --------------------
-# Only-network call, hard-bounded. Falls back to the cached ref if the fetch times out.
-FETCH_NOTE="cached"
-if timeout 3 git -C "$REPO" fetch -q --depth=50 origin main 2>/dev/null; then
-  FETCH_NOTE="fetched"
+# Check remote freshness without updating refs; topology below uses the cached local ref.
+FETCH_NOTE="unavailable"
+REMOTE_MAIN="$(timeout 3 git -C "$REPO" ls-remote --heads origin refs/heads/main 2>/dev/null \
+  | awk 'NR == 1 { print $1 }')"
+if [ -n "$REMOTE_MAIN" ]; then
+  FETCH_NOTE="remote-checked"
 else
-  note_fail "git-fetch(fell back to cached origin/main)"
+  note_fail "git-ls-remote(remote unavailable)"
 fi
 MAIN="$(timeout 2 git -C "$REPO" rev-parse origin/main 2>/dev/null)"
 if [ -z "$MAIN" ]; then MAIN="PROBE FAILED"; note_fail "origin-main"; fi
+if [ -n "$REMOTE_MAIN" ] && [ "$MAIN" != "$REMOTE_MAIN" ]; then
+  FETCH_NOTE="remote-ahead"
+  note_fail "origin-main(local ref differs from remote)"
+fi
 GAP="unknown"
 if [ "$DEPLOYED" != "PROBE FAILED" ] && [ "$MAIN" != "PROBE FAILED" ]; then
   # Guard against shallow-clone ancestry lies: the deployed sha must be a known object.
