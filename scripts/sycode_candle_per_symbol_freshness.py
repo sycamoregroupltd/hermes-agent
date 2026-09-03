@@ -255,9 +255,11 @@ def main():
                         RuntimeConfig("4h", 8, 300, "test", False, 300)]
         healthy = {"1m": 340, "15m": 470, "4h": 300}
         a1, _ = evaluate(test_configs, healthy, baseline=healthy)
-        dead = dict(healthy); dead["1m"] = 339
+        dead = dict(healthy)
+        dead["1m"] = 339
         a2, r2 = evaluate(test_configs, dead, baseline=healthy)
-        drop = dict(healthy); drop["15m"] = 400
+        drop = dict(healthy)
+        drop["15m"] = 400
         a3, r3 = evaluate(test_configs, drop, baseline=healthy)
         ok = (len(a1) == 0) and (len(a2) == 1) and (len(a3) == 1)
         for r in (r2 + r3):
