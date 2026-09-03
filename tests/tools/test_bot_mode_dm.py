@@ -454,6 +454,112 @@ pathlib.Path({str(observed)!r}).write_text(
     assert child_env["MESSAGE_AGENT_ENV_SENTINEL"] == "preserved"
 
 
+@pytest.mark.parametrize("stdin_file", [False, True])
+def test_public_message_agent_delivery_scrubs_worker_context(
+    tmp_path, monkeypatch, stdin_file
+):
+    """The public message_agent -> runner path isolates both transports.
+
+    This models a live sender worker, but runs a disposable Hermes-shaped
+    transport in the test temp directory.  The runner itself is the real
+    subprocess boundary used by message_agent; no board, gateway, or target
+    profile is touched.
+    """
+    home = _managed_home(tmp_path, peers=("spark",) if stdin_file else ())
+    sender_home = home / "profiles" / "sender"
+    sender_home.mkdir(parents=True, exist_ok=True)
+    agent = _FakeAgent(sender_home, title="Bot Chat")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    sender_values = {
+        "HERMES_KANBAN_TASK": "t_07cf0ea4",
+        "HERMES_KANBAN_RUN_ID": "113331",
+        "HERMES_KANBAN_CLAIM_LOCK": "sender-lock",
+        "HERMES_KANBAN_WORKSPACE": str(tmp_path / "sender-workspace"),
+        "HERMES_KANBAN_WORKSPACES_ROOT": str(tmp_path / "workspaces"),
+        "HERMES_KANBAN_DB": str(tmp_path / "kanban.db"),
+        "HERMES_KANBAN_BOARD": "jarvis-os",
+        "HERMES_PROFILE": "sender",
+        "HERMES_SESSION_ID": "sender-session",
+        "HERMES_SESSION_SOURCE": "kanban",
+        "HERMES_SESSION_CHAT_ID": "sender-chat",
+        "HERMES_UI_SESSION_ID": "sender-ui-session",
+    }
+    for key, value in sender_values.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("MESSAGE_AGENT_ENV_SENTINEL", "preserved")
+
+    observed = tmp_path / "target-observed.json"
+    transport = tmp_path / "hermes"
+    transport.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env python3
+            import json
+            import os
+            import pathlib
+            import sys
+
+            args = sys.argv[1:]
+            if "--query-file" in args:
+                source = open(args[args.index("--query-file") + 1], encoding="utf-8")
+            else:
+                source = sys.stdin
+            with source:
+                payload = source.read()
+            keys = [
+                key for key in os.environ
+                if key.startswith("HERMES_KANBAN_")
+                or key.startswith("HERMES_SESSION_")
+                or key in ("HERMES_PROFILE", "HERMES_UI_SESSION_ID")
+            ]
+            pathlib.Path({str(observed)!r}).write_text(
+                json.dumps({{"env": {{key: os.environ[key] for key in keys}}, "payload": payload}})
+                + "\\n",
+                encoding="utf-8",
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    transport.chmod(0o755)
+
+    calls = []
+
+    def fake_terminal_tool(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        completed = subprocess.run(
+            shlex.split(command), check=False, capture_output=True, text=True
+        )
+        assert completed.returncode == 0, completed.stderr or completed.stdout
+        return json.dumps({"output": "Background process started", "session_id": "proc_e2e"})
+
+    import tools.terminal_tool as terminal_tool_module
+
+    monkeypatch.setattr(terminal_tool_module, "terminal_tool", fake_terminal_tool)
+
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ.get('PATH', '')}")
+    target = "spark" if stdin_file else "researcher"
+    result = json.loads(
+        bot_mode_dm.message_agent_tool(
+            target=target, message="worker-context probe", task_id="t_07cf0ea4", agent=agent
+        )
+    )
+
+    assert result["status"] == "sent"
+    assert result["process_id"] == "proc_e2e"
+    assert len(calls) == 1
+    mode, dm_file, transport_argv = _runner_parts(calls[0]["command"])
+    assert mode == ("stdin" if stdin_file else "query-file")
+    assert transport_argv[0] == "hermes"
+    assert not Path(dm_file).exists(), "runner must clean up after the target consumes the file"
+
+    delivered = json.loads(observed.read_text(encoding="utf-8"))
+    assert delivered["env"] == {}
+    assert delivered["payload"].startswith(
+        "Message from 🤖 sender (@sender): worker-context probe"
+    )
+
+
 def test_delivery_runner_preserves_child_failure_and_unlinks(tmp_path):
     dm_file = tmp_path / "message.txt"
     dm_file.write_text("secret", encoding="utf-8")
