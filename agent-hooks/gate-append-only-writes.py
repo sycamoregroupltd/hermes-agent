@@ -55,9 +55,18 @@ def resolved(path: str, base_dir: str = None) -> Path:
         raise
 
 
-def append_only(path: str) -> bool:
+def append_only(path: str, workdir: str = None) -> bool:
+    """Check if a path refers to an append-only protected journal.
+    
+    Args:
+        path: The path to check (can be relative or absolute)
+        workdir: Optional working directory for relative path resolution
+    
+    Returns:
+        True if the path is a protected journal, False otherwise
+    """
     try:
-        p = resolved(path)
+        p = resolved(path, workdir)
     except (OSError, RuntimeError, ValueError):
         return False
     parts = p.parts
@@ -226,7 +235,7 @@ def main() -> None:
         
         # Check each target
         for raw, target in targets:
-            if not append_only(raw):
+            if not append_only(raw, workdir):
                 continue
             
             # For write_file, block if file exists (would replace)
@@ -275,14 +284,14 @@ def main() -> None:
                 # sed -i / perl -i: file paths come after the script
                 for truncate_match in re.finditer(r"truncate\s+(?:-s\s+\S+\s+)?(\S+)|(?:sed|perl)\s+-i\s+(?:'[^']*'|\"[^\"]*\"|\S+)\s+(\S+)", command):
                     target_path = truncate_match.group(1) or truncate_match.group(2)
-                    if target_path and append_only(target_path):
+                    if target_path and append_only(target_path, workdir):
                         return block("append-only path terminal rewrite is blocked; use >> or tee -a", target_path)
             
             for match in REDIRECT.finditer(command):
                 op = match.group("op")
                 is_append = match.group("append")  # Captured -a flag
                 raw = match.group("path")
-                if append_only(raw):
+                if append_only(raw, workdir):
                     if op == ">":
                         return block("append-only path terminal rewrite is blocked; use >> or tee -a", raw)
                     # Block plain tee without -a (truncates); allow tee -a

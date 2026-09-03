@@ -194,5 +194,53 @@ def test_improvements_md_protection():
     assert result.get("decision") == "block"
 
 
+def test_relative_path_with_workdir_blocks():
+    """Relative paths + workdir should resolve correctly and block protected journals."""
+    payload = {
+        "tool_name": "terminal",
+        "args": {
+            "command": "echo x | tee journal.md",
+            "workdir": "/workspace/trading-arena/trader-1"
+        }
+    }
+    
+    result = run_gate(payload)
+    assert result.get("decision") == "block", f"Expected block, got {result}"
+
+
+def test_write_file_with_workdir_blocks():
+    """write_file with relative path + workdir should block if file exists."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        journal = Path(tmpdir) / "trading-arena" / "trader-1" / "journal.md"
+        journal.parent.mkdir(parents=True)
+        journal.write_text("- Existing content\n")
+        
+        payload = {
+            "tool_name": "write_file",
+            "args": {
+                "path": "journal.md",
+                "content": "- New content\n",
+                "workdir": str(journal.parent)
+            }
+        }
+        
+        result = run_gate(payload)
+        assert result.get("decision") == "block", f"Expected block, got {result}"
+
+
+def test_truncate_with_workdir_blocks():
+    """truncate with relative path + workdir should block."""
+    payload = {
+        "tool_name": "terminal",
+        "args": {
+            "command": "truncate -s 0 journal.md",
+            "workdir": "/workspace/trading-arena/trader-1"
+        }
+    }
+    
+    result = run_gate(payload)
+    assert result.get("decision") == "block", f"Expected block, got {result}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
