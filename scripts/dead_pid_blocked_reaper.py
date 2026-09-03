@@ -135,7 +135,12 @@ def any_open_drain_card(boards: list[str]) -> bool:
     """
     for board in boards:
         db = BOARD_ROOT / board / "kanban.db"
-        if db.exists() and open_drain_card(db):
+        # A missing requested board is indistinguishable from an unreadable
+        # board at this gate: keep reaping closed until a later tick can read
+        # every requested board successfully.
+        if not db.exists():
+            return True
+        if open_drain_card(db):
             return True
     return False
 

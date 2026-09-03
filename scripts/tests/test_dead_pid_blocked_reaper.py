@@ -26,6 +26,24 @@ def test_open_drain_card_fails_closed_on_os_read_error() -> None:
         assert reaper.open_drain_card(db) is True
 
 
+def test_any_open_drain_card_fails_closed_on_missing_requested_board(tmp_path: Path) -> None:
+    missing_root = tmp_path / "boards-does-not-exist"
+    with patch.object(reaper, "BOARD_ROOT", missing_root):
+        assert reaper.any_open_drain_card(["jarvis-os"]) is True
+
+        db = missing_root / "jarvis-os" / "kanban.db"
+        db.parent.mkdir(parents=True)
+        con = sqlite3.connect(db)
+        try:
+            con.execute("CREATE TABLE tasks (title TEXT, status TEXT)")
+            con.commit()
+        finally:
+            con.close()
+
+        # A later successful read with no open drain card permits reaping.
+        assert reaper.any_open_drain_card(["jarvis-os"]) is False
+
+
 def test_read_error_keeps_reaping_closed_without_unblock() -> None:
     db = Path("/unavailable/kanban.db")
     with patch.object(reaper, "connect", side_effect=sqlite3.DatabaseError("malformed")):
