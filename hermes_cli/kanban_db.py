@@ -9010,7 +9010,18 @@ def _protocol_violation_streak(conn: sqlite3.Connection, task_id: str) -> int:
                 except (ValueError, TypeError):
                     is_violation = False
             if not is_violation:
-                is_violation = "protocol violation" in (row["error"] or "")
+                # Fallback for runs created before the metadata marker existed.
+                # Check if the error is a PRIMARY protocol-violation error, not
+                # a crash error that happens to MENTION a previous violation as
+                # prepended context. A real violation error does NOT have the
+                # "(worker pid ... exited" suffix that detect_crashed_workers adds
+                # when prepending context from last_failure_error.
+                err = row["error"] or ""
+                is_violation = (
+                    "protocol violation" in err
+                    and "(worker pid" not in err
+                    and "exited with code" not in err
+                )
             if is_violation:
                 streak += 1
                 continue
