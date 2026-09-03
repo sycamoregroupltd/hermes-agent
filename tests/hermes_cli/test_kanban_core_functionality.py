@@ -4672,26 +4672,26 @@ def test_protocol_violation_streak_resets_on_other_failure_kind(kanban_home):
         _drive_nonzero_crash(conn, tid, 993002)
         assert kb.get_task(conn, tid).status == "ready"
 
-        # DEBUG: print the last 3 runs to see their outcomes/metadata
+        # DEBUG: print the last 3 runs to see their outcomes/metadata/error
         runs = conn.execute(
-            "SELECT id, outcome, metadata FROM task_runs WHERE task_id = ? "
+            "SELECT id, outcome, metadata, error FROM task_runs WHERE task_id = ? "
             "ORDER BY id DESC LIMIT 3", (tid,)
         ).fetchall()
         print(f"\nDEBUG: Last 3 runs after crash:")
         for r in runs:
-            print(f"  run_id={r['id']}, outcome={r['outcome']}, metadata={r['metadata']}")
+            print(f"  run_id={r['id']}, outcome={r['outcome']}, metadata={r['metadata']}, error={r['error'][:100] if r['error'] else None}")
 
         # Streak restarts at 1, 2 — the pre-crash violations no longer count.
         _drive_protocol_violation(conn, tid, 993003)
         
         # DEBUG: print runs again after the third violation
         runs = conn.execute(
-            "SELECT id, outcome, metadata FROM task_runs WHERE task_id = ? "
+            "SELECT id, outcome, metadata, error FROM task_runs WHERE task_id = ? "
             "ORDER BY id DESC LIMIT 4", (tid,)
         ).fetchall()
         print(f"\nDEBUG: Last 4 runs after third violation:")
         for r in runs:
-            print(f"  run_id={r['id']}, outcome={r['outcome']}, metadata={r['metadata']}")
+            print(f"  run_id={r['id']}, outcome={r['outcome']}, metadata={r['metadata']}, error={r['error'][:100] if r['error'] else None}")
         
         assert kb.get_task(conn, tid).status == "ready", (
             "violation streak must reset after a non-violation failure"
