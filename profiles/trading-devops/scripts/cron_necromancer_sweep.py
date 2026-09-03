@@ -13,9 +13,10 @@ store it guards). On each tick:
      (joined against the store's executions.db where present).
   2. Files ONE deduped kanban card per dead job on the jarvis-os board, assignee
      devops, using an idempotency key so re-runs never duplicate.
-  3. Emits a compact daily digest to stdout, which the no_agent cron delivers to a
-     verified channel (discord:#critical-alerts). SILENT when clean (watchdog
-     pattern: empty stdout = nothing delivered).
+  3. Emits a compact daily digest to stdout, which the no_agent cron delivers to
+     the configured bot-chat:jarvis channel for Jarvis. Findings are filed on
+     jarvis-os for the jarvis-os-pm consumer. SILENT when clean (watchdog pattern:
+     empty stdout = nothing delivered).
 
 Read-only with respect to cron stores: it never edits jobs.json or executions.db.
 It only CREATES kanban cards (deduped) and prints a digest.
