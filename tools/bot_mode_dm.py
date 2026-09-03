@@ -71,6 +71,49 @@ _DM_STALE_SECONDS = 24 * 60 * 60
 _PEER_TARGET_RE = re.compile(r"^([a-z0-9][a-z0-9_-]{0,63})/([a-zA-Z0-9][a-zA-Z0-9_-]{0,63})$")
 _LOCAL_TARGET_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 
+# A Bot-Chat delivery is launched from the sender's process, which may be a
+# dispatcher-owned Kanban worker.  The target CLI gets its profile from its
+# explicit ``-p`` argument; inheriting any sender identity from the ambient
+# environment would make target-side tools attribute work to the sender.
+_DELIVERY_IDENTITY_ENV_KEYS = (
+    "HERMES_KANBAN_TASK",
+    "HERMES_KANBAN_RUN_ID",
+    "HERMES_KANBAN_CLAIM_LOCK",
+    "HERMES_KANBAN_WORKSPACE",
+    "HERMES_KANBAN_WORKSPACES_ROOT",
+    "HERMES_KANBAN_DB",
+    "HERMES_KANBAN_BOARD",
+    "HERMES_PROFILE",
+    "HERMES_SESSION_ID",
+    "HERMES_SESSION_SOURCE",
+)
+
+
+def _delivery_subprocess_env() -> dict[str, str]:
+    """Return the sender env without dispatcher/session identity context.
+
+    ``message_agent`` starts the delivery runner from the sender's process.
+    Supplying an explicit env to the runner's transport subprocess is the
+    process-boundary equivalent of the Kanban dispatcher's ``_VAR_MAP`` pop
+    loop.  Strip all known context-map keys plus future-prefixed Kanban and
+    session keys, rather than relying on ``-p`` to override raw ``os.environ``.
+    Credentials and unrelated configuration remain inherited so the target
+    Hermes CLI can authenticate normally.
+    """
+    env = os.environ.copy()
+    for key in _DELIVERY_IDENTITY_ENV_KEYS:
+        env.pop(key, None)
+    try:
+        from gateway.session_context import _VAR_MAP
+    except Exception:
+        _VAR_MAP = {}
+    for key in _VAR_MAP:
+        env.pop(key, None)
+    for key in list(env):
+        if key.startswith("HERMES_KANBAN_") or key.startswith("HERMES_SESSION_"):
+            env.pop(key, None)
+    return env
+
 
 def message_agent_tool_schema() -> dict:
     """OpenAI-format schema for ``message_agent`` (injected, not registered)."""
@@ -578,18 +621,25 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool) -> int:
     gateway's deliver path, not here.
     """
     try:
+        delivery_env = _delivery_subprocess_env()
         with _delivery_lock(argv, stdin_file=stdin_file):
             if stdin_file:
                 # Keep the file open until the transport exits; cleanup occurs
                 # after subprocess.run returns, not merely after stdin reaches EOF.
                 with open(dm_file, "r", encoding="utf-8") as stream:
-                    return subprocess.run(argv, stdin=stream, check=False).returncode
+                    return subprocess.run(
+                        argv,
+                        stdin=stream,
+                        check=False,
+                        env=delivery_env,
+                    ).returncode
             proc = subprocess.run(
                 [*argv, "--query-file", dm_file],
                 check=False,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
+                env=delivery_env,
             )
             if proc.returncode != 0:
                 from tools.bot_failure_reasons import (
@@ -606,6 +656,7 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool) -> int:
                         stdin=subprocess.DEVNULL,
                         capture_output=True,
                         text=True,
+                        env=delivery_env,
                     )
             # Re-emit the transport's streams: stdout is the reply text the
             # completion notification carries back to the sending agent.

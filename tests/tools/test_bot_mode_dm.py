@@ -403,6 +403,57 @@ def test_delivery_runner_unlinks_when_child_launch_raises(tmp_path, monkeypatch)
     assert not dm_file.exists()
 
 
+def test_delivery_runner_scrubs_sender_identity_context(tmp_path, monkeypatch):
+    """A target process must not inherit the sender's worker/session identity."""
+    sender_values = {
+        "HERMES_KANBAN_TASK": "sender-task",
+        "HERMES_KANBAN_RUN_ID": "sender-run",
+        "HERMES_KANBAN_CLAIM_LOCK": "sender-lock",
+        "HERMES_KANBAN_WORKSPACE": "/sender/workspace",
+        "HERMES_KANBAN_WORKSPACES_ROOT": "/sender/workspaces",
+        "HERMES_KANBAN_DB": "/sender/kanban.db",
+        "HERMES_KANBAN_BOARD": "sender-board",
+        "HERMES_KANBAN_GOAL_MODE": "1",
+        "HERMES_KANBAN_FUTURE": "future-worker-context",
+        "HERMES_PROFILE": "sender-profile",
+        "HERMES_SESSION_ID": "sender-session",
+        "HERMES_SESSION_SOURCE": "kanban",
+        "HERMES_SESSION_CHAT_ID": "sender-chat",
+        "HERMES_SESSION_PROFILE": "sender-session-profile",
+        "HERMES_SESSION_FUTURE": "future-session-context",
+        "HERMES_UI_SESSION_ID": "sender-ui-session",
+    }
+    for key, value in sender_values.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("MESSAGE_AGENT_ENV_SENTINEL", "preserved")
+
+    observed = tmp_path / "child-env.json"
+    child = tmp_path / "observe-env.py"
+    child.write_text(
+        f"""import json, os, pathlib
+keys = [k for k in os.environ if k.startswith('HERMES_KANBAN_') or k.startswith('HERMES_SESSION_') or k in ('HERMES_PROFILE', 'HERMES_UI_SESSION_ID')]
+pathlib.Path({str(observed)!r}).write_text(
+    json.dumps({{k: os.environ[k] for k in keys}}) + "\\n", encoding="utf-8"
+)
+""",
+        encoding="utf-8",
+    )
+    dm_file = tmp_path / "message.txt"
+    dm_file.write_text("hello", encoding="utf-8")
+
+    returncode = bot_mode_dm._run_delivery(
+        [sys.executable, str(child)], str(dm_file), stdin_file=False
+    )
+
+    assert returncode == 0
+    assert json.loads(observed.read_text(encoding="utf-8")) == {}
+    assert not dm_file.exists()
+
+    # This is an identity scrub, not a blanket credential/config scrub.
+    child_env = bot_mode_dm._delivery_subprocess_env()
+    assert child_env["MESSAGE_AGENT_ENV_SENTINEL"] == "preserved"
+
+
 def test_delivery_runner_preserves_child_failure_and_unlinks(tmp_path):
     dm_file = tmp_path / "message.txt"
     dm_file.write_text("secret", encoding="utf-8")
