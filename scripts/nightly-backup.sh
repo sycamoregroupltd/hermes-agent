@@ -77,7 +77,7 @@ push_ok=0
 if $SSH_OPTS mac true 2>/dev/null; then
     for attempt in 1 2 3; do
         if rsync -a --partial --partial-dir=.rsync-partial --timeout=3600 \
-                --contimeout=60 --bwlimit=0 -e "$SSH_OPTS" \
+                --bwlimit=0 -e "$SSH_OPTS" \
                 "$HOME/fleet-backups/$TS" mac:dgx-fleet-backups/; then
             push_ok=1
             break
