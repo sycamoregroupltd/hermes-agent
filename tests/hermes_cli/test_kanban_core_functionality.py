@@ -4679,7 +4679,9 @@ def test_protocol_violation_streak_resets_on_other_failure_kind(kanban_home):
         ).fetchall()
         print(f"\nDEBUG: Last 3 runs after crash:")
         for r in runs:
-            print(f"  run_id={r['id']}, outcome={r['outcome']}, metadata={r['metadata']}, error={r['error'][:100] if r['error'] else None}")
+            print(f"  run_id={r['id']}, outcome={r['outcome']}")
+            print(f"    metadata={r['metadata']}")
+            print(f"    error={r['error']}")
 
         # Streak restarts at 1, 2 — the pre-crash violations no longer count.
         _drive_protocol_violation(conn, tid, 993003)
