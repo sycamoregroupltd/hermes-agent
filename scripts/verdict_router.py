@@ -986,7 +986,7 @@ def run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.setdefault("HERMES_PROFILE", AUTHOR)
     env.setdefault("HERMES_PROFILE_NAME", AUTHOR)
-    return subprocess.run(args, capture_output=True, text=True, timeout=60, env=env)
+    return subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60, env=env)
 
 
 def board_cli_prefix(board: str) -> list[str]:
