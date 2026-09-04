@@ -477,14 +477,15 @@ def discover_candidates(board_dir: Path, boards: Iterable[str] = BOARD_REVIEWERS
                     latest_comments = filtered[:5]
                     _reason = source_block_reason(conn, source_id)
                     _title_body = "\n".join([task["title"] or "", comment_excerpt(latest_comments)])
-                    classification = risk_classification_from_body(task["body"])
-                    # Known paper-only work stays below the standalone risk lane;
-                    # CI-green plus inline review remains the mandatory policy.
-                    if not classification.requires_standalone_risk_review and not classification.fail_closed:
-                        continue
-                    _route_kind = classify_route_kind(task["block_kind"], _reason, _title_body)
-                    _reviewer = TRUE_OWNER_PROFILES[_route_kind] if _route_kind != "reviewer" else risk_reviewer(classification, BOARD_REVIEWERS[board])
-                    candidates.append(
+                classification = risk_classification_from_body(task["body"])
+                # Known paper-only work stays below the standalone risk lane;
+                # CI-green plus inline review remains the mandatory policy.
+                if not classification.requires_standalone_risk_review and not classification.fail_closed:
+                    continue
+                _route_kind = classify_route_kind(task["block_kind"], _reason, _title_body)
+                # Apply risk_reviewer BEFORE TRUE_OWNER_PROFILES override so high-risk/fail-closed cannot route to elon/devops
+                _reviewer = risk_reviewer(classification, BOARD_REVIEWERS[board]) if _route_kind == "reviewer" else TRUE_OWNER_PROFILES[_route_kind]
+                candidates.append(
                         Candidate(
                             board=board,
                             source_id=source_id,
@@ -530,14 +531,15 @@ def discover_candidates(board_dir: Path, boards: Iterable[str] = BOARD_REVIEWERS
                     latest_comments = filtered[:5]
                     _reason = source_block_reason(conn, source_id)
                     _title_body = "\n".join([task["title"] or "", comment_excerpt(latest_comments)])
-                    classification = risk_classification_from_body(task["body"])
-                    # Known paper-only work stays below the standalone risk lane;
-                    # CI-green plus inline review remains the mandatory policy.
-                    if not classification.requires_standalone_risk_review and not classification.fail_closed:
-                        continue
-                    _route_kind = classify_route_kind(task["block_kind"], _reason, _title_body)
-                    _reviewer = TRUE_OWNER_PROFILES[_route_kind] if _route_kind != "reviewer" else risk_reviewer(classification, BOARD_REVIEWERS[board])
-                    candidates.append(
+                classification = risk_classification_from_body(task["body"])
+                # Known paper-only work stays below the standalone risk lane;
+                # CI-green plus inline review remains the mandatory policy.
+                if not classification.requires_standalone_risk_review and not classification.fail_closed:
+                    continue
+                _route_kind = classify_route_kind(task["block_kind"], _reason, _title_body)
+                # Apply risk_reviewer BEFORE TRUE_OWNER_PROFILES override so high-risk/fail-closed cannot route to elon/devops
+                _reviewer = risk_reviewer(classification, BOARD_REVIEWERS[board]) if _route_kind == "reviewer" else TRUE_OWNER_PROFILES[_route_kind]
+                candidates.append(
                         Candidate(
                             board=board,
                             source_id=source_id,

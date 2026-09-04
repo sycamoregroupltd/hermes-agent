@@ -92,7 +92,11 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
         if not isinstance(raw_path, str) or not raw_path.strip():
             fail_closed = True
             continue
-        path = raw_path.strip().replace("\\", "/").lstrip("./").casefold()
+        # Strip only a leading "./" prefix (not arbitrary dots/slashes)
+        path = raw_path.strip().replace("\\", "/")
+        if path.startswith("./"):
+            path = path[2:]
+        path = path.casefold()
         if not path or path.startswith("/") or ".." in path.split("/"):
             fail_closed = True
             continue
@@ -203,7 +207,8 @@ def verdict_is_attributed(text: str, author: str, start: int, end: int) -> bool:
     # Bare mention of another reviewer seat adjacent to the verdict phrasing in the
     # same window (e.g. "trading-risk-reviewer REVIEW_VERDICT=APPROVED" written by a
     # third party) without the comment author themselves being that seat.
-    if (author or "").lower() not in _RELAY_HINT_RE.pattern.lower().replace("\\b", ""):
+    author_is_reviewer_seat = _RELAY_HINT_RE.match((author or "").lower()) is not None
+    if not author_is_reviewer_seat:
         # author is not one of the named reviewer seats; if the window names a
         # reviewer seat that the comment author is NOT, it is an attribution.
         for m in _RELAY_HINT_RE.finditer(window):
