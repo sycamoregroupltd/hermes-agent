@@ -45,8 +45,8 @@ class RiskRoutingIntegrationTests(unittest.TestCase):
         con.close()
         return tmp, db
 
-    def discover(self, body: str):
-        tmp, db = self.make_board(body)
+    def discover(self, body: str, *, comment: str = "review-required: inspect"):
+        tmp, db = self.make_board(body, comment=comment)
         self.addCleanup(tmp.cleanup)
         return router.discover_candidates(Path(tmp.name), ["sycode-trading"])
 
@@ -90,6 +90,31 @@ class RiskRoutingIntegrationTests(unittest.TestCase):
             self.assertEqual(len(candidates), 1)
             self.assertTrue(candidates[0].risk_classification.fail_closed)
             self.assertIn("unknown_input", candidates[0].risk_classification.matched_reasons)
+
+    def test_high_risk_self_improve_route_still_uses_risk_reviewer(self):
+        body = 'change_manifest: {"changed_paths":["server/orders/close.ts"],"change_flags":{}}'
+        comment = "review-required: VERIFY_PASS misapplied defect on completion gate"
+        candidates = self.discover(body, comment=comment)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].route_kind, "self_improve")
+        self.assertEqual(candidates[0].reviewer, "trading-risk-reviewer")
+
+    def test_high_risk_devops_owner_route_still_uses_risk_reviewer(self):
+        body = 'change_manifest: {"changed_paths":["server/orders/close.ts"],"change_flags":{}}'
+        comment = "review-required: maker still running on source task"
+        candidates = self.discover(body, comment=comment)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].route_kind, "devops_owner")
+        self.assertEqual(candidates[0].reviewer, "trading-risk-reviewer")
+
+    def test_fail_closed_elon_route_still_uses_risk_reviewer(self):
+        body = "No manifest here; live execution is not intended."
+        comment = "review-required: verdict-router auto-close left child creation blocked"
+        candidates = self.discover(body, comment=comment)
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].route_kind, "elon")
+        self.assertTrue(candidates[0].risk_classification.fail_closed)
+        self.assertEqual(candidates[0].reviewer, "trading-risk-reviewer")
 
 
 if __name__ == "__main__":
