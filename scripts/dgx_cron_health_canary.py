@@ -28,13 +28,45 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 REAL_HERMES_HOME = Path(os.environ.get("HERMES_REAL_HOME", "/home/frank/.hermes")).expanduser()
 if not (REAL_HERMES_HOME / "profiles").exists() and (REAL_HERMES_HOME / ".hermes" / "profiles").exists():
     REAL_HERMES_HOME = REAL_HERMES_HOME / ".hermes"
 PROFILES_DIR = REAL_HERMES_HOME / "profiles"
 MAX_ALERTS = int(os.environ.get("CRON_HEALTH_MAX_ALERTS", "25"))
+# Job-only pin for fe49f09f4e53 / kanban-classify-failure-cron (t_ed054723).
+# MAX_ALERTS otherwise truncates this ERROR behind UNPINNED/DRIFT. Pinning
+# does not dump the rest of the fleet canary into the 15m bundle.
+NAMED_JOB_ALERT_PREFIXES = (
+    "ERROR jarvis/kanban-classify-failure-cron",
+    "ERROR jarvis/fe49f09f4e53",
+)
+
+
+def is_named_job_alert(line: str) -> bool:
+    return any(line.startswith(prefix) for prefix in NAMED_JOB_ALERT_PREFIXES)
+
+
+def select_shown_alerts(bad: Iterable[str], max_alerts: int | None = None) -> list[str]:
+    """Keep ERROR jarvis/kanban-classify-failure-cron in consumer-visible output.
+
+    UNPINNED/DRIFT still sort first, but the named job is reserved a slot so
+    MAX_ALERTS truncation cannot hide it behind fleet noise. Remaining slots
+    keep the original order. Detection counts are unchanged.
+    """
+    items = list(bad)
+    cap = MAX_ALERTS if max_alerts is None else int(max_alerts)
+    items.sort(key=lambda line: 0 if line.startswith(("UNPINNED", "DRIFT")) else 1)
+    pinned = [line for line in items if is_named_job_alert(line)]
+    rest = [line for line in items if not is_named_job_alert(line)]
+    if not pinned:
+        return rest[:cap]
+    reserved = min(len(pinned), cap)
+    shown_rest = rest[: max(0, cap - reserved)]
+    return shown_rest + pinned[:reserved]
+
+
 # Approved global baseline: root config.yaml model.provider / model.default.
 # Overridable for tests/simulation via CRON_HEALTH_BASELINE_CONFIG.
 BASELINE_CONFIG = Path(
@@ -300,17 +332,17 @@ def main() -> None:
                 bad.append(f"OVERDUE {prefix}: next_run_at is {late_h:.1f}h in the past")
 
     if bad:
-        # Show drift/unpinned alerts first: they are the proactive signal this
-        # canary exists for and must not be truncated behind legacy ERROR/OVERDUE
-        # noise when the total exceeds MAX_ALERTS. Detection counts are unchanged.
-        bad.sort(key=lambda line: 0 if line.startswith(("UNPINNED", "DRIFT")) else 1)
-        shown = bad[:MAX_ALERTS]
+        shown = select_shown_alerts(bad)
         lines = [f"🔴 CRON HEALTH: {len(bad)} issue(s) across {len(scanned_profiles)} profile cron store(s) ({len(suspended_profiles)} suspended by operator ESTOP), {scanned_jobs} enabled job(s) scanned"]
         lines.extend(f"  • {item}" for item in shown)
         if len(bad) > len(shown):
             lines.append(f"  • … {len(bad) - len(shown)} more")
         lines.append(f"Source: direct {PROFILES_DIR}/*/cron/jobs.json scan; silent when healthy.")
         print("\n".join(lines))
+        # Do not sys.exit(1) here. Blanket nonzero dumps every existing canary
+        # ERROR into guard-bundle-tick-15m (t_ed054723 / Isolation HOLD job-only
+        # scope). The wrapper already routes non-empty stdout to
+        # cron_health_kanban_router.py regardless of canary rc.
 
 
 if __name__ == "__main__":
