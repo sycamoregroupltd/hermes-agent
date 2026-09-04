@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -318,6 +319,12 @@ def main() -> None:
             lines.append(f"  • … {len(bad) - len(shown)} more")
         lines.append(f"Source: direct {PROFILES_DIR}/*/cron/jobs.json scan; silent when healthy.")
         print("\n".join(lines))
+        # Exit 1 when findings exist so guard-bundle runner propagates the output
+        # to the kanban router (t_a45e23da). The wrapper routes non-empty stdout
+        # to cron_health_kanban_router.py, but the bundle runner only preserves
+        # output when the wrapper's rc != 0. Previously this always exited 0,
+        # so ERROR lines were suppressed before reaching the consumer.
+        sys.exit(1)
 
 
 if __name__ == "__main__":
