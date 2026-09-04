@@ -5,8 +5,9 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 cp profiles/jarvis/scripts/kanban_classify_failure_and_reaper.sh "$root/wrapper.sh"
 cat >"$root/kanban_classify_failure_recent.py" <<'EOF'
-#!/usr/bin/env bash
-exit "${DIAG_RC:-0}"
+#!/usr/bin/env python3
+import os
+raise SystemExit(int(os.environ.get("DIAG_RC", "0")))
 EOF
 cat >"$root/reaper.py" <<'EOF'
 #!/usr/bin/env python3
@@ -21,7 +22,7 @@ sed -i "s#/home/frank/.hermes/scripts/dead_pid_blocked_reaper.py#$root/reaper.py
 run_case() {
   local diag=$1 reaper=$2 expected=$3 label=$4
   local stderr rc
-  stderr=$(mktemp)
+  stderr=$(mktemp -p "$root")
   set +e
   DIAG_RC=$diag REAPER_RC=$reaper "$root/wrapper.sh" 2>"$stderr"
   rc=$?
