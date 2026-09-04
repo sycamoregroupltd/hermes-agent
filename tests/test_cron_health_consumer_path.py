@@ -89,6 +89,8 @@ class CronHealthCanaryExitCodeTest(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 1, "Canary with ERROR findings must exit 1")
+        self.assertNotIn("NameError", result.stderr, "Canary must exit 1 cleanly, not via NameError")
+        self.assertNotIn("Traceback", result.stderr, "Canary must not raise when exiting on ERROR findings")
         self.assertIn("ERROR test/test-job", result.stdout)
         self.assertIn("stage failure", result.stdout)
 
