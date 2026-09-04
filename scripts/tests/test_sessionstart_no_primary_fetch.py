@@ -46,7 +46,7 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
         run("git", "init", str(self.repo))
         run("git", "-C", str(self.repo), "config", "user.email", "fixture@example.invalid")
         run("git", "-C", str(self.repo), "config", "user.name", "fixture")
-        (self.repo / "fixture.txt").write_text("fixture\n")
+        (self.repo / "fixture.txt").write_text("fixture\n", encoding="utf-8")
         run("git", "-C", str(self.repo), "add", "fixture.txt")
         self.commit = run("git", "-C", str(self.repo), "commit", "-m", "fixture")
         self.commit = run("git", "-C", str(self.repo), "rev-parse", "HEAD")
@@ -54,9 +54,9 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
         run("git", "-C", str(self.repo), "remote", "add", "origin", str(self.remote))
         run("git", "-C", str(self.repo), "push", "origin", "main")
         run("git", "-C", str(self.repo), "update-ref", "refs/remotes/origin/main", self.commit)
-        (self.state / "ns-phases.tsv").write_text("P1\tACTIVE\tFixture phase\tFixture next\n")
-        (self.state / "ns-phases.frontier").write_text("0\n")
-        (self.vault / "STATE.md").write_text("fixture state\n")
+        (self.state / "ns-phases.tsv").write_text("P1\tACTIVE\tFixture phase\tFixture next\n", encoding="utf-8")
+        (self.state / "ns-phases.frontier").write_text("0\n", encoding="utf-8")
+        (self.vault / "STATE.md").write_text("fixture state\n", encoding="utf-8")
         self._write_command("docker", "printf '%s\\n' " + repr(self.commit))
         self._write_command("curl", "printf '%s\\n' '{\"mode\":\"paper\"}'")
         self._write_command("hermes", "printf '%s\\n' 'Model: fixture' 'Provider: fixture'")
@@ -83,7 +83,7 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
 
     def _write_command(self, name: str, body: str) -> None:
         path = self.bin / name
-        path.write_text(f"#!/bin/sh\n{body}\n")
+        path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
         path.chmod(0o755)
 
     def _render(self, source: pathlib.Path, name: str) -> pathlib.Path:
@@ -95,7 +95,7 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
         text = text.replace("/home/frank/.hermes/state", str(self.state))
         text = text.replace("/home/frank/.hermes/scripts/seat-live-state.sh", str(self.tmp / "seat.sh"))
         text = text.replace("/home/frank/.hermes/scripts/reconcile-state.py", str(self.tmp / "reconcile.py"))
-        target.write_text(text)
+        target.write_text(text, encoding="utf-8")
         target.chmod(source.stat().st_mode & 0o777)
         return target
 
@@ -126,7 +126,7 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
         for field in ("DEPLOY :", "HEAD   :", "MODE   :", "BOARD  :", "PROVIDER:", "OPEN PRs:", "PR FRONTIER:", "NORTH STAR:", "FULL STATE:", "PROBES FAILED:"):
             self.assertIn(field, result.stdout)
         self.assertIn("origin/main remote-checked", result.stdout)
-        git_calls = self.git_log.read_text()
+        git_calls = self.git_log.read_text(encoding="utf-8")
         self.assertIn("ls-remote --heads origin refs/heads/main", git_calls)
         self.assertFalse(any(" fetch " in f" {line} " for line in git_calls.splitlines()))
 
@@ -148,7 +148,7 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
             ["python3", str(reconcile)], env=self._environment(), text=True, capture_output=True, check=True
         )
         self.assertIn("PROBES FAILED: git-ls-remote", reconcile_result.stdout)
-        state_text = (self.vault / "STATE.md").read_text()
+        state_text = (self.vault / "STATE.md").read_text(encoding="utf-8")
         for section in ("## Deploy & gate", "## Work lineage", "_PROBES FAILED: git-ls-remote_"):
             self.assertIn(section, state_text)
 
@@ -158,7 +158,7 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
         )
         time.sleep(0.2)
         self.assertIn("SEAT LIVE-STATE", hook_result.stdout)
-        self.assertFalse(any(" fetch " in f" {line} " for line in self.git_log.read_text().splitlines()))
+        self.assertFalse(any(" fetch " in f" {line} " for line in self.git_log.read_text(encoding="utf-8").splitlines()))
         self.assertTrue((self.state / "state-headline.txt").exists())
 
 

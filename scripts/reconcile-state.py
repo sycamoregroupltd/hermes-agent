@@ -40,7 +40,15 @@ FAILS     = []
 def sh(cmd, timeout=8):
     """Run a shell command read-only; return stripped stdout or None (never raises)."""
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
         if r.returncode != 0:
             return None
         out = (r.stdout or "").strip()
