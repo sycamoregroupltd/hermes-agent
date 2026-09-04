@@ -96,19 +96,18 @@ class TestChatCompletionHelpersGuard:
     def test_non_streaming_thread_exhaustion_propagates(self, mock_thread_class):
         """Non-streaming path propagates thread exhaustion immediately."""
         from agent.chat_completion_helpers import interruptible_api_call
-        from run_agent import AIAgent
         
         # Simulate thread exhaustion on Thread.start()
         mock_thread_instance = MagicMock()
         mock_thread_class.return_value = mock_thread_instance
         mock_thread_instance.start.side_effect = RuntimeError("can't start new thread")
         
-        agent = AIAgent(
-            provider="openai",
-            model="gpt-4",
-            enabled_toolsets=[],
-            quiet_mode=True,
-        )
+        # Create minimal mock agent with required attributes
+        agent = MagicMock()
+        agent.api_mode = "chat_completions"
+        agent.provider = "openai"
+        agent._interrupt_requested = False
+        agent._touch_activity = MagicMock()
         
         api_kwargs = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]}
         
@@ -119,19 +118,18 @@ class TestChatCompletionHelpersGuard:
     def test_non_streaming_other_runtime_error_propagates(self, mock_thread_class):
         """Non-streaming path propagates non-thread-exhaustion RuntimeError."""
         from agent.chat_completion_helpers import interruptible_api_call
-        from run_agent import AIAgent
         
         # Simulate some other RuntimeError (not thread exhaustion)
         mock_thread_instance = MagicMock()
         mock_thread_class.return_value = mock_thread_instance
         mock_thread_instance.start.side_effect = RuntimeError("some other error")
         
-        agent = AIAgent(
-            provider="openai",
-            model="gpt-4",
-            enabled_toolsets=[],
-            quiet_mode=True,
-        )
+        # Create minimal mock agent with required attributes
+        agent = MagicMock()
+        agent.api_mode = "chat_completions"
+        agent.provider = "openai"
+        agent._interrupt_requested = False
+        agent._touch_activity = MagicMock()
         
         api_kwargs = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]}
         
@@ -142,19 +140,18 @@ class TestChatCompletionHelpersGuard:
     def test_streaming_thread_exhaustion_propagates(self, mock_thread_class):
         """Streaming path propagates thread exhaustion immediately."""
         from agent.chat_completion_helpers import interruptible_streaming_api_call
-        from run_agent import AIAgent
         
         # Simulate thread exhaustion on Thread.start()
         mock_thread_instance = MagicMock()
         mock_thread_class.return_value = mock_thread_instance
         mock_thread_instance.start.side_effect = RuntimeError("can't start new thread")
         
-        agent = AIAgent(
-            provider="openai",
-            model="gpt-4",
-            enabled_toolsets=[],
-            quiet_mode=True,
-        )
+        # Create minimal mock agent with required attributes
+        agent = MagicMock()
+        agent.api_mode = "chat_completions"
+        agent.provider = "openai"
+        agent._interrupt_requested = False
+        agent._touch_activity = MagicMock()
         
         api_kwargs = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}], "stream": True}
         
