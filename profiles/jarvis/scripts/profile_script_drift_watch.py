@@ -187,7 +187,11 @@ def inspect_kanban_dupe_hook_coverage(root: Path) -> list[dict]:
             "hook": KANBAN_DUPE_HOOK,
             "task": KANBAN_DUPE_ROLLOUT_TASK_ID,
         })
+    seen_cfg: set[str] = set()
     for config_path in sorted(profiles.glob("*/config.yaml")):
+        if os.path.realpath(config_path) in seen_cfg:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        seen_cfg.add(os.path.realpath(config_path))
         profile = config_path.parent.name
         try:
             lines = config_path.read_text(errors="replace").splitlines()
@@ -252,7 +256,11 @@ def inspect_duplicate_mutation_scripts(root: Path) -> tuple[list[dict], list[dic
 
     # Collect all (script_name, job_id, profile, job_name, enabled, paused)
     script_entries: dict[str, list[dict]] = {}
+    seen_jobs: set[str] = set()
     for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+        if os.path.realpath(jobs_path) in seen_jobs:
+            continue  # symlink alias — dedupe
+        seen_jobs.add(os.path.realpath(jobs_path))
         profile = jobs_path.parents[1].name
         for job in load_jobs(jobs_path):
             if "_load_error" in job:
@@ -343,7 +351,13 @@ def inspect_retention_policy_duplicates(root: Path) -> list[dict]:
     search_roots = [root / "scripts"]
     profiles = root / "profiles"
     if profiles.exists():
-        search_roots += sorted(profiles.glob("*/scripts"))
+        seen_roots: set[str] = {os.path.realpath(root / "scripts")}
+        for scripts_dir in sorted(profiles.glob("*/scripts")):
+            rp = os.path.realpath(scripts_dir)
+            if rp in seen_roots:
+                continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+            seen_roots.add(rp)
+            search_roots.append(scripts_dir)
 
     for scripts_dir in search_roots:
         if not scripts_dir.exists():
@@ -408,7 +422,11 @@ def inspect_dry_run_required(root: Path) -> list[dict]:
     """
     alerts: list[dict] = []
     profiles = root / "profiles"
+    seen_dryrun: set[str] = set()
     for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+        if os.path.realpath(jobs_path) in seen_dryrun:
+            continue  # symlink alias — dedupe
+        seen_dryrun.add(os.path.realpath(jobs_path))
         profile_home = jobs_path.parents[1]
         profile = profile_home.name
         for job in load_jobs(jobs_path):
@@ -456,6 +474,108 @@ def inspect_dry_run_required(root: Path) -> list[dict]:
     return alerts
 
 
+def bundle_script_names(runner: Path) -> tuple[set[str], str | None]:
+    """Extract subprocess script names from a guard-bundle manifest.
+
+    Parse the runner rather than importing it: importing a live cron runner can
+    execute setup or spawn work. Only string values under a ``script`` key in
+    CHECKS/PIPELINES dispatch tables are considered.
+    """
+    try:
+        tree = ast.parse(runner.read_text(errors="replace"), filename=str(runner))
+    except (OSError, SyntaxError) as exc:
+        return set(), f"{type(exc).__name__}: {exc}"
+
+    names: set[str] = set()
+    manifest_names = {"CHECKS", "PIPELINES"}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(isinstance(target, ast.Name) and target.id in manifest_names for target in targets):
+            continue
+        value = node.value
+        if value is None:
+            continue
+        for child in ast.walk(value):
+            if not isinstance(child, ast.Dict):
+                continue
+            for key, item in zip(child.keys, child.values):
+                if isinstance(key, ast.Constant) and key.value == "script":
+                    if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                        names.add(item.value)
+    return names, None
+
+
+def inspect_guard_bundle_scripts(root: Path) -> list[dict]:
+    """Check profile-local scripts dispatched indirectly by guard bundles."""
+    alerts: list[dict] = []
+    profiles = root / "profiles"
+    if not profiles.exists():
+        return alerts
+    seen_runners: set[str] = set()
+    for runner in sorted(profiles.glob("*/scripts/cron_guard_bundle_runner.py")):
+        if os.path.realpath(runner) in seen_runners:
+            continue
+        seen_runners.add(os.path.realpath(runner))
+        profile_home = runner.parents[1]
+        profile = profile_home.name
+        scripts, parse_error = bundle_script_names(runner)
+        if parse_error:
+            alerts.append({
+                "type": "GUARD_BUNDLE_MANIFEST_PARSE_ERROR",
+                "profile": profile,
+                "runner": str(runner),
+                "error": parse_error,
+                "task": TASK_ID,
+            })
+            continue
+        for script in sorted(scripts):
+            actual = profile_home / "scripts" / script
+            central = root / "scripts" / script
+            if not central.exists():
+                continue
+            if not actual.exists():
+                alerts.append({
+                    "type": "GUARD_BUNDLE_SCRIPT_MISSING",
+                    "profile": profile,
+                    "runner": str(runner),
+                    "script": script,
+                    "actual": str(actual),
+                    "central": str(central),
+                    "task": TASK_ID,
+                })
+                continue
+            try:
+                exact = sha256(actual) == sha256(central)
+            except Exception as exc:
+                alerts.append({
+                    "type": "GUARD_BUNDLE_SCRIPT_HASH_ERROR",
+                    "profile": profile,
+                    "runner": str(runner),
+                    "script": script,
+                    "actual": str(actual),
+                    "central": str(central),
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "task": TASK_ID,
+                })
+                continue
+            if exact or approved_shim(actual, central):
+                continue
+            alerts.append({
+                "type": "GUARD_BUNDLE_SCRIPT_FORK_DRIFT",
+                "profile": profile,
+                "runner": str(runner),
+                "script": script,
+                "actual": str(actual),
+                "central": str(central),
+                "actual_sha256": sha256(actual),
+                "central_sha256": sha256(central),
+                "task": TASK_ID,
+            })
+    return alerts
+
+
 def inspect(root: Path) -> tuple[list[dict], list[dict]]:
     """Return (drift_and_dupe_alerts, dormant_shadow_risk_alerts).
 
@@ -479,7 +599,12 @@ def inspect(root: Path) -> tuple[list[dict], list[dict]]:
     if not profiles.exists() or not central_scripts.exists():
         return [{"type": "ROOT_MISSING", "root": str(root)}], []
     alerts.extend(inspect_kanban_dupe_hook_coverage(root))
+    alerts.extend(inspect_guard_bundle_scripts(root))
+    seen_jobs2: set[str] = set()
     for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+        if os.path.realpath(jobs_path) in seen_jobs2:
+            continue  # symlink alias — dedupe
+        seen_jobs2.add(os.path.realpath(jobs_path))
         profile_home = jobs_path.parents[1]
         profile = profile_home.name
         for job in load_jobs(jobs_path):
