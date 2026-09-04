@@ -103,6 +103,11 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin}:{env['PATH']}"
         env["FIXTURE_GIT_LOG"] = str(self.git_log)
+        env["HERMES_HOME"] = str(self.tmp / "hermes")
+        env["HERMES_STATE_DIR"] = str(self.state)
+        env["SYCODE_REPO"] = str(self.repo)
+        env["SYCODE_VAULT"] = str(self.vault)
+        env["SYCODE_BOARD_DB"] = str(self.tmp / "kanban.db")
         return env
 
     def _make_board(self) -> None:

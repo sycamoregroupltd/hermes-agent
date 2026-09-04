@@ -24,9 +24,12 @@
 #     uses existing refs only. Neither probe writes the primary checkout.
 set -uo pipefail
 
-REPO="/home/frank/sycode-trading"
+REPO="${SYCODE_REPO:-${HOME}/sycode-trading}"
 CONTAINER="sycodetrading-server"
-BOARD_DB="/home/frank/.hermes/kanban/boards/sycode-trading/kanban.db"
+HERMES_HOME="${HERMES_HOME:-${HOME}/.hermes}"
+BOARD_DB="${SYCODE_BOARD_DB:-${HERMES_HOME}/kanban/boards/sycode-trading/kanban.db}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+RECONCILE_SCRIPT="${HERMES_RECONCILE_SCRIPT:-${SCRIPT_DIR}/reconcile-state.py}"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time)"
 FAILED=""
 
@@ -67,7 +70,9 @@ fi
 DEP_S="${DEPLOYED:0:9}"; MAIN_S="${MAIN:0:9}"
 GAP_TAG=""
 [ "$GAP" = "0" ] && GAP_TAG="(up-to-date)" || GAP_TAG="(+$GAP merged, UNDEPLOYED)  ⚠ SHIP PENDING"
-[ "$GAP" = "unknown" ] && GAP_TAG="(gap unknown — re-verify)"
+case "$GAP" in
+  unknown*) GAP_TAG="(gap unknown — re-verify)" ;;
+esac
 
 # ---- shared-checkout HEAD branch (off-main hazard) -------------------------------
 HEAD_BR="$(timeout 2 git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)"
@@ -78,7 +83,9 @@ if [ "$HEAD_BR" != "main" ] && [ "$HEAD_BR" != "PROBE FAILED" ]; then
 fi
 # Detect mid-operation states so a transient branch isn't misread as a settled one.
 if [ -d "$REPO/.git" ]; then
-  [ -d "$REPO/.git/rebase-merge" ] || [ -d "$REPO/.git/rebase-apply" ] && HEAD_TAG="$HEAD_TAG [REBASE IN PROGRESS]"
+  if [ -d "$REPO/.git/rebase-merge" ] || [ -d "$REPO/.git/rebase-apply" ]; then
+    HEAD_TAG="$HEAD_TAG [REBASE IN PROGRESS]"
+  fi
   [ -f "$REPO/.git/MERGE_HEAD" ] && HEAD_TAG="$HEAD_TAG [MERGE IN PROGRESS]"
 fi
 
@@ -128,7 +135,7 @@ RECENT_OPEN="$(timeout 8 gh pr list --repo sycamoregroupltd/sycode-trading --sta
 [ -n "$RECENT_OPEN" ] || { RECENT_OPEN="PROBE FAILED"; note_fail "recent-open-prs"; }
 
 # ---- North Star active phase (cheap, from curated board) + STATE.md pointer -------
-NS="$(grep -P '\tACTIVE\t' /home/frank/.hermes/state/ns-phases.tsv 2>/dev/null | head -1 | awk -F'\t' '{print $1" "$3" → "$4}')"
+NS="$(awk -F'\t' '$2 == "ACTIVE" {print $1" "$3" → "$4; exit}' "${HERMES_HOME}/state/ns-phases.tsv" 2>/dev/null)"
 [ -n "$NS" ] || NS="(phase board unavailable)"
 
 # ---- staleness guard: have PRs merged SINCE the phase board was last curated? -----
@@ -138,9 +145,9 @@ NS="$(grep -P '\tACTIVE\t' /home/frank/.hermes/state/ns-phases.tsv 2>/dev/null |
 # (NOT "highest PR the line names" — an honest line may reference an open PR below the
 # merged frontier). Re-stamp the frontier whenever you re-curate ns-phases.tsv.
 NS_STALE=""
-FRONTIER_FILE="/home/frank/.hermes/state/ns-phases.frontier"
-CURATED_AT_PR="$(cat "$FRONTIER_FILE" 2>/dev/null | grep -oP '^[0-9]+' | head -1)"
-LIVE_MAX_PR="$(printf '%s' "$LATEST_MERGED" | grep -oP '#\K[0-9]+' | head -1)"
+FRONTIER_FILE="${HERMES_HOME}/state/ns-phases.frontier"
+CURATED_AT_PR="$(grep -oE '^[0-9]+' "$FRONTIER_FILE" 2>/dev/null | head -1)"
+LIVE_MAX_PR="$(printf '%s' "$LATEST_MERGED" | grep -oE '#[0-9]+' | head -1 | tr -d '#')"
 # Count PRs actually MERGED above the stamp — a PR-number delta lies when a burst of
 # PRs is opened-but-unmerged (proven 2026-07-12: stamp 434, latest merged 460, "26 stale"
 # — but exactly ONE PR had merged in between).
@@ -149,12 +156,12 @@ MERGED_SINCE="$(timeout 8 gh pr list --repo sycamoregroupltd/sycode-trading --st
 if [ -n "$CURATED_AT_PR" ] && [ -n "$MERGED_SINCE" ] && [ "$MERGED_SINCE" -ge 3 ]; then
   NS_STALE="  ⚠ STALE: ${MERGED_SINCE} PRs merged since the phase board was curated (stamp #${CURATED_AT_PR}, latest merged #${LIVE_MAX_PR:-?}) — re-derive ns-phases.tsv + re-stamp ns-phases.frontier BEFORE trusting the phase text"
 fi
-SMD="/home/frank/obsidian/sycode-trading/STATE.md"
+SMD="${SYCODE_VAULT:-${HOME}/obsidian/sycode-trading}/STATE.md"
 if [ -f "$SMD" ]; then
   AGE=$(( ( $(date +%s) - $(stat -c %Y "$SMD" 2>/dev/null || echo 0) ) / 60 ))
-  STATE_PTR="${SMD} (reconciled ${AGE}m ago) — full task↔PR↔deploy↔note lineage; refresh: python3 ~/.hermes/scripts/reconcile-state.py"
+  STATE_PTR="${SMD} (reconciled ${AGE}m ago) — full task↔PR↔deploy↔note lineage; refresh: python3 ${RECONCILE_SCRIPT}"
 else
-  STATE_PTR="not yet generated — run: python3 ~/.hermes/scripts/reconcile-state.py"
+  STATE_PTR="not yet generated — run: python3 ${RECONCILE_SCRIPT}"
 fi
 
 # ---- emit (compact, one line per field; self-dated; fail-loud header) -------------

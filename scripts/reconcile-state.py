@@ -24,13 +24,14 @@ exits 0. Self-dated + content-hashed so staleness is visible.
 """
 import subprocess, sqlite3, hashlib, os, re, time, datetime
 
-REPO      = "/home/frank/sycode-trading"
-VAULT     = "/home/frank/obsidian/sycode-trading"
+HERMES_HOME = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+REPO      = os.environ.get("SYCODE_REPO", os.path.expanduser("~/sycode-trading"))
+VAULT     = os.environ.get("SYCODE_VAULT", os.path.expanduser("~/obsidian/sycode-trading"))
 STATE_MD  = os.path.join(VAULT, "STATE.md")
-BOARD_DB  = "/home/frank/.hermes/kanban/boards/sycode-trading/kanban.db"
+BOARD_DB  = os.environ.get("SYCODE_BOARD_DB", os.path.join(HERMES_HOME, "kanban/boards/sycode-trading/kanban.db"))
 GH_REPO   = "sycamoregroupltd/sycode-trading"
 CONTAINER = "sycodetrading-server"
-STATE_DIR = "/home/frank/.hermes/state"
+STATE_DIR = os.environ.get("HERMES_STATE_DIR", os.path.join(HERMES_HOME, "state"))
 HEADLINE  = os.path.join(STATE_DIR, "state-headline.txt")
 PHASES    = os.path.join(STATE_DIR, "ns-phases.tsv")
 TASK_RE   = re.compile(r"t_[0-9a-f]{6,}")
@@ -40,6 +41,8 @@ def sh(cmd, timeout=8):
     """Run a shell command read-only; return stripped stdout or None (never raises)."""
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            return None
         out = (r.stdout or "").strip()
         return out if out else None
     except Exception:
@@ -191,7 +194,7 @@ fail_line = ", ".join(FAILS) if FAILS else "none"
 body = []
 body.append(f"# sycode-trading — IMMUTABLE STATE\n")
 body.append(f"> Reconciled {now} · sources joined on `task_id` · **falsifiable prior** — a fresh probe wins; if it disagrees, `reconcile-state.py` is the bug.\n")
-body.append(f"> Regenerate: `python3 ~/.hermes/scripts/reconcile-state.py` · git-committed here = immutable history.\n")
+body.append(f"> Regenerate: `python3 {os.path.abspath(__file__)}` · git-committed here = immutable history.\n")
 
 body.append("\n## Deploy & gate\n")
 body.append(f"- **Deployed build**: `{deployed[:12]}` → **main** `{main[:12] if main!='PROBE FAILED' else main}` — **{gap_tag}**")
