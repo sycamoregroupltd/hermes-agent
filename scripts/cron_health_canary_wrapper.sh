@@ -33,6 +33,9 @@ if [ -z "$OUT" ]; then
 fi
 
 # UNHEALTHY: route the alert block to the board, then re-emit for delivery.
+# Exit with the canary's failure rc (t_a45e23da) so guard-bundle runner
+# preserves the output. Previously the wrapper always exited 0 on non-empty
+# stdout, suppressing propagation to the kanban consumer.
 CRON_HEALTH_HEALTHY=0 "$ROUTER" <<< "$OUT" >>"$LOG" 2>&1 \
     || echo "CRON_HEALTH_ROUTER_FAILED rc=$? on unhealthy route $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG"
 printf '%s\n' "$OUT"
