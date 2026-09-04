@@ -92,9 +92,8 @@ class TestErrorClassification:
 class TestChatCompletionHelpersGuard:
     """Test threading.Thread().start() guards in chat_completion_helpers."""
 
-    @patch("agent.chat_completion_helpers.litellm.completion")
     @patch("threading.Thread")
-    def test_non_streaming_thread_exhaustion_propagates(self, mock_thread_class, mock_completion):
+    def test_non_streaming_thread_exhaustion_propagates(self, mock_thread_class):
         """Non-streaming path propagates thread exhaustion immediately."""
         from agent.chat_completion_helpers import _make_non_streaming_codex_call
         from run_agent import AIAgent
@@ -118,9 +117,8 @@ class TestChatCompletionHelpersGuard:
                 _call=mock_completion,
             )
 
-    @patch("agent.chat_completion_helpers.litellm.completion")
     @patch("threading.Thread")
-    def test_non_streaming_other_runtime_error_propagates(self, mock_thread_class, mock_completion):
+    def test_non_streaming_other_runtime_error_propagates(self, mock_thread_class):
         """Non-streaming path propagates non-thread-exhaustion RuntimeError."""
         from agent.chat_completion_helpers import _make_non_streaming_codex_call
         from run_agent import AIAgent
@@ -144,9 +142,8 @@ class TestChatCompletionHelpersGuard:
                 _call=mock_completion,
             )
 
-    @patch("agent.chat_completion_helpers.litellm.completion")
     @patch("threading.Thread")
-    def test_streaming_thread_exhaustion_propagates(self, mock_thread_class, mock_completion):
+    def test_streaming_thread_exhaustion_propagates(self, mock_thread_class):
         """Streaming path propagates thread exhaustion immediately."""
         from agent.chat_completion_helpers import _make_streaming_codex_call
         from run_agent import AIAgent
@@ -194,7 +191,7 @@ class TestToolExecutorGuard:
 
     def test_concurrent_tools_thread_exhaustion_propagates(self):
         """Concurrent tool execution propagates thread exhaustion."""
-        from agent.tool_executor import handle_tool_calls
+        from agent.tool_executor import execute_tool_calls_concurrent
         from run_agent import AIAgent
         
         agent = AIAgent(
@@ -213,24 +210,29 @@ class TestToolExecutorGuard:
                     'arguments': '{"command": "echo test"}'
                 })()
         
-        tool_calls = [FakeToolCall()]
+        # Mock assistant message with tool calls
+        assistant_message = type('obj', (object,), {
+            'tool_calls': [FakeToolCall()]
+        })()
+        
+        messages = []
         
         # Patch ThreadPoolExecutor.submit to raise thread exhaustion
         def fake_submit(*args, **kwargs):
             raise RuntimeError("can't start new thread")
         
-        with patch("concurrent.futures.ThreadPoolExecutor.submit", side_effect=fake_submit):
+        with patch("tools.daemon_pool.DaemonThreadPoolExecutor.submit", side_effect=fake_submit):
             with pytest.raises(RuntimeError, match="can't start new thread"):
-                handle_tool_calls(
+                execute_tool_calls_concurrent(
                     agent,
-                    tool_calls=tool_calls,
-                    provider="openai",
-                    model="gpt-4",
+                    assistant_message=assistant_message,
+                    messages=messages,
+                    effective_task_id="default",
                 )
 
     def test_concurrent_tools_other_submit_error_propagates(self):
         """Concurrent tool execution propagates non-thread-exhaustion submit errors."""
-        from agent.tool_executor import handle_tool_calls
+        from agent.tool_executor import execute_tool_calls_concurrent
         from run_agent import AIAgent
         
         agent = AIAgent(
@@ -248,17 +250,22 @@ class TestToolExecutorGuard:
                     'arguments': '{"command": "echo test"}'
                 })()
         
-        tool_calls = [FakeToolCall()]
+        # Mock assistant message with tool calls
+        assistant_message = type('obj', (object,), {
+            'tool_calls': [FakeToolCall()]
+        })()
+        
+        messages = []
         
         # Patch ThreadPoolExecutor.submit to raise some other RuntimeError
         def fake_submit(*args, **kwargs):
             raise RuntimeError("some other submit error")
         
-        with patch("concurrent.futures.ThreadPoolExecutor.submit", side_effect=fake_submit):
+        with patch("tools.daemon_pool.DaemonThreadPoolExecutor.submit", side_effect=fake_submit):
             with pytest.raises(RuntimeError, match="some other submit error"):
-                handle_tool_calls(
+                execute_tool_calls_concurrent(
                     agent,
-                    tool_calls=tool_calls,
-                    provider="openai",
-                    model="gpt-4",
+                    assistant_message=assistant_message,
+                    messages=messages,
+                    effective_task_id="default",
                 )
