@@ -7850,6 +7850,29 @@ _GITHUB_PR_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Fleet reviewer profiles follow the ``*-reviewer`` naming convention
+# (os-reviewer, trading-risk-reviewer, platform-reviewer, ...). A task whose
+# assignee matches this is a *review* handoff — when such a task has an open-PR
+# handoff comment it is awaiting review, so the ``active_pr`` respawn guard must
+# NOT treat it as a duplicate-work signal. The check is deliberately conservative:
+# it matches the canonical suffix only (not arbitrary substrings) and tolerates
+# a NULL assignee.
+_REVIEWER_PROFILE_RE = re.compile(r"-reviewer$", re.IGNORECASE)
+
+
+def _is_reviewer_profile(assignee: Optional[str]) -> bool:
+    """True iff ``assignee`` is a fleet reviewer profile (``*-reviewer``).
+
+    Used by :func:`check_respawn_guard` to distinguish a review handoff
+    stranded in the ready lane (which must be dispatchable to its reviewer)
+    from a genuine implementation card with a worker-owned open PR (which
+    must stay suppressed to avoid duplicate work).
+    """
+    if not assignee:
+        return False
+    return bool(_REVIEWER_PROFILE_RE.search(assignee.strip()))
+
+
 # t_9799c507: the active_pr respawn guard was PR-state-BLIND — it blocked
 # re-spawn whenever a GitHub PR URL appeared in a recent comment, even after
 # the PR was MERGED/CLOSED. The 24.5d stall of sycode-trading/t_30c13209 was
@@ -9964,6 +9987,20 @@ def check_respawn_guard(conn: sqlite3.Connection, task_id: str) -> Optional[str]
             state = _github_pr_state(repo, number)
             if state not in ("MERGED", "CLOSED"):
                 # OPEN, or unknown (gh failed) — fail closed, keep the guard.
+                # EXCEPTION: a review-handoff card stranded in the ready lane
+                # whose assignee is a fleet ``*-reviewer`` profile (e.g.
+                # sycode-trading/t_82dae659) is *awaiting* that reviewer — the
+                # open-PR comment is the review artifact the reviewer needs,
+                # not proof of duplicate in-flight work. Such ready-lane review
+                # cards must be dispatchable; genuine implementation cards with
+                # a worker-owned open PR remain suppressed.
+                assignee_row = conn.execute(
+                    "SELECT assignee FROM tasks WHERE id = ?",
+                    (task_id,),
+                ).fetchone()
+                assignee = assignee_row["assignee"] if assignee_row else None
+                if _is_reviewer_profile(assignee):
+                    return None
                 return "active_pr"
         # Every recent PR URL resolves to MERGED/CLOSED — do not block.
         return None

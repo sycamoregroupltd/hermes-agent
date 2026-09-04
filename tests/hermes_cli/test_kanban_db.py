@@ -2599,6 +2599,59 @@ def test_respawn_guard_old_pr_comment_not_guarded(kanban_home):
     assert reason is None
 
 
+# ---------------------------------------------------------------------------
+# active_pr must not starve a review card stranded in ready (reviewer-profile
+# assignee + open-PR handoff comment), while still suppressing genuine
+# implementation cards with a worker-owned open PR.
+# ---------------------------------------------------------------------------
+
+
+def test_respawn_guard_active_pr_suppressed_for_implementation_card(kanban_home):
+    """An implementation assignee with an open-PR comment must STILL be
+    guarded (the duplicate-work signal is correct here)."""
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="impl card", assignee="worker-bee")
+        kb.add_comment(
+            conn, t, "worker",
+            "PR created: https://github.com/sycamoregroupltd/sycode-trading/pull/1110",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason == "active_pr"
+
+
+def test_respawn_guard_active_pr_releases_reviewer_assigned_ready_card(kanban_home):
+    """A review card stranded in the ready lane — reviewer-profile assignee
+    plus an open-PR handoff comment — must be dispatchable (no active_pr
+    guard). Regression for sycode-trading/t_82dae659."""
+    with kb.connect() as conn:
+        t = kb.create_task(
+            conn, title="REVIEW: improvement position-not-found-accounted-for",
+            assignee="trading-risk-reviewer",
+        )
+        kb.add_comment(
+            conn, t, "worker",
+            "REVIEW HANDOFF: PR https://github.com/sycamoregroupltd/sycode-trading/pull/1113 ready to review",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason is None
+
+
+def test_respawn_guard_active_pr_suppressed_when_assignee_null(kanban_home):
+    """A NULL assignee is not a reviewer profile → active_pr still guards
+    (preserves the default-safe behavior for unowned open-PR cards)."""
+    with kb.connect() as conn:
+        t = kb.create_task(conn, title="unowned pr", assignee=None)
+        kb.add_comment(
+            conn, t, "worker",
+            "PR: https://github.com/sycamoregroupltd/sycode-trading/pull/1110",
+        )
+        with unittest.mock.patch.object(kb, "_github_pr_state", return_value="OPEN"):
+            reason = kb.check_respawn_guard(conn, t)
+    assert reason == "active_pr"
+
+
 def test_dispatch_respawn_guard_defers_auth_error_without_auto_block(
     kanban_home, all_assignees_spawnable
 ):
