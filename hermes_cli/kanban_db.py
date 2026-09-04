@@ -6845,6 +6845,65 @@ def block_task(
     return True
 
 
+def relabel_block_kind(
+    conn: sqlite3.Connection,
+    task_id: str,
+    kind: Optional[str],
+    *,
+    reason: Optional[str] = None,
+) -> bool:
+    """Set/correct ``block_kind`` on a task that is ALREADY ``blocked``.
+
+    ``block_task`` only fires from ``running``/``ready`` (it's a transition),
+    so a task that lands in ``blocked`` with ``block_kind`` NULL — e.g. a
+    legacy un-typed block, or a crash that skipped classification — has no
+    running/ready state to transition from and can never be labeled after
+    the fact through ``block_task``. This is that retroactive path: it only
+    requires ``status = 'blocked'`` and touches nothing but ``block_kind``.
+
+    Does NOT touch ``block_recurrences``, ``claim_lock``, or any run —
+    this is a metadata correction, not a new block event, so it must not
+    feed the unblock-loop breaker or disturb run bookkeeping.
+
+    ``kind='dependency'`` is rejected: dependency blocks never sit in the
+    ``blocked`` bucket (see ``block_task``), so relabeling an already-blocked
+    task to ``dependency`` would leave ``status='blocked'`` with a kind that
+    means "should be in todo" — an inconsistent state. Unblock and re-block
+    with ``kind='dependency'`` instead.
+
+    Returns True if the task was ``blocked`` and its kind was updated, False
+    if the task doesn't exist or isn't currently ``blocked``.
+    """
+    if kind is not None and kind not in VALID_BLOCK_KINDS:
+        raise ValueError(
+            f"block kind must be one of {sorted(VALID_BLOCK_KINDS)} or None"
+        )
+    if kind == "dependency":
+        raise ValueError(
+            "cannot relabel an already-blocked task to kind='dependency' — "
+            "dependency blocks live in 'todo', not 'blocked'; unblock and "
+            "re-block with kind='dependency' instead"
+        )
+    with write_txn(conn):
+        cur_row = conn.execute(
+            "SELECT block_kind FROM tasks WHERE id = ? AND status = 'blocked'",
+            (task_id,),
+        ).fetchone()
+        if cur_row is None:
+            return False
+        prev_kind = cur_row["block_kind"]
+        cur = conn.execute(
+            "UPDATE tasks SET block_kind = ? WHERE id = ? AND status = 'blocked'",
+            (kind, task_id),
+        )
+        if cur.rowcount != 1:
+            return False
+        _append_event(
+            conn, task_id, "block_relabeled",
+            {"prev_kind": prev_kind, "kind": kind, "reason": reason},
+        )
+        return True
+
 
 def promote_task(
     conn: sqlite3.Connection,

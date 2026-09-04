@@ -17,6 +17,7 @@ forever. The fix gives ``block_task`` a typed ``kind`` and a persistent
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import pytest
@@ -200,3 +201,162 @@ def test_block_without_kind_is_backward_compatible(kanban_home: Path) -> None:
         t = kb.get_task(conn, tid)
         assert t.status == "blocked"
         assert t.block_kind is None
+
+
+# ---------------------------------------------------------------------------
+# Retroactive relabel of an already-blocked task
+# ---------------------------------------------------------------------------
+#
+# block_task() only fires from running/ready — a task that landed in
+# 'blocked' with block_kind unset (crash-era legacy blocks, un-typed
+# blocks) has no running/ready state to transition from, so a
+# classification pass can never label it via block_task(). This is the
+# dedicated retroactive path.
+
+
+def _blocked_task_no_kind(conn, title="t"):
+    """Create a task and drive it to 'blocked' with block_kind left NULL."""
+    tid = _running_task(conn, title=title)
+    assert kb.block_task(conn, tid, reason="legacy, unclassified")
+    t = kb.get_task(conn, tid)
+    assert t.status == "blocked"
+    assert t.block_kind is None
+    return tid
+
+
+def test_relabel_sets_kind_on_already_blocked_task(kanban_home: Path) -> None:
+    """The card t_2700aed2 scenario: blocked, block_kind NULL, needs labeling
+    without a running/ready -> blocked transition."""
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        assert kb.relabel_block_kind(conn, tid, "transient", reason="crash-casualty")
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked"  # unchanged — no transition happened
+        assert t.block_kind == "transient"
+
+
+def test_relabel_does_not_touch_recurrences_or_claim_fields(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        before = kb.get_task(conn, tid)
+        assert kb.relabel_block_kind(conn, tid, "capability")
+        after = kb.get_task(conn, tid)
+        assert after.block_recurrences == before.block_recurrences
+
+
+def test_relabel_corrects_an_existing_kind(kanban_home: Path) -> None:
+    """Also works when block_kind is already set but wrong, not just NULL."""
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+        kb.block_task(conn, tid, reason="x", kind="needs_input")
+        assert kb.relabel_block_kind(conn, tid, "transient", reason="actually flaky")
+        assert kb.get_task(conn, tid).block_kind == "transient"
+
+
+def test_relabel_fails_when_not_blocked(kanban_home: Path) -> None:
+    """relabel_block_kind is not a substitute for block_task — it only ever
+    corrects a task that is already sitting in 'blocked'."""
+    with kb.connect_closing() as conn:
+        tid = _running_task(conn)
+        assert kb.get_task(conn, tid).status == "running"
+        assert not kb.relabel_block_kind(conn, tid, "capability")
+        assert kb.get_task(conn, tid).block_kind is None
+
+
+def test_relabel_fails_for_unknown_task(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        assert not kb.relabel_block_kind(conn, "t_nope", "capability")
+
+
+def test_relabel_rejects_dependency_kind(kanban_home: Path) -> None:
+    """dependency blocks live in todo, not blocked — relabeling an
+    already-blocked task to 'dependency' would be an inconsistent state."""
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        with pytest.raises(ValueError):
+            kb.relabel_block_kind(conn, tid, "dependency")
+        assert kb.get_task(conn, tid).block_kind is None  # untouched
+
+
+def test_relabel_rejects_invalid_kind(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        with pytest.raises(ValueError):
+            kb.relabel_block_kind(conn, tid, "bogus")
+
+
+def test_relabel_emits_block_relabeled_event(kanban_home: Path) -> None:
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+        assert kb.relabel_block_kind(conn, tid, "transient", reason="crash-casualty")
+        events = [e for e in kb.list_events(conn, tid) if e.kind == "block_relabeled"]
+        assert events, "expected a block_relabeled event"
+        payload = events[-1].payload or {}
+        assert payload.get("prev_kind") is None
+        assert payload.get("kind") == "transient"
+        assert payload.get("reason") == "crash-casualty"
+
+
+# ---------------------------------------------------------------------------
+# CLI: `kanban block --kind <kind> --relabel <task_id>`
+# ---------------------------------------------------------------------------
+
+
+def test_cli_block_relabel_sets_kind_without_running_ready(kanban_home: Path, capsys) -> None:
+    from hermes_cli import kanban as kanban_cli
+
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+
+    ns = argparse.Namespace(
+        task_id=tid, reason=["crash-casualty", "evidence"], ids=None,
+        kind="transient", relabel=True,
+    )
+    rc = kanban_cli._cmd_block(ns)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Relabeled" in out and tid in out
+
+    with kb.connect_closing() as conn:
+        t = kb.get_task(conn, tid)
+        assert t.status == "blocked"
+        assert t.block_kind == "transient"
+        comments = kb.list_comments(conn, tid)
+        assert any("RELABELED" in (c.body or "") for c in comments)
+
+
+def test_cli_block_relabel_requires_kind(kanban_home: Path, capsys) -> None:
+    from hermes_cli import kanban as kanban_cli
+
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)
+
+    ns = argparse.Namespace(
+        task_id=tid, reason=[], ids=None, kind=None, relabel=True,
+    )
+    rc = kanban_cli._cmd_block(ns)
+    assert rc == 2
+    assert "--relabel requires --kind" in capsys.readouterr().err
+
+
+def test_cli_block_failed_mutation_leaves_no_comment(kanban_home: Path, capsys) -> None:
+    """Regression: a failed block_task() (task already blocked, not
+    running/ready) must not leave a stray 'BLOCKED: ...' comment behind."""
+    from hermes_cli import kanban as kanban_cli
+
+    with kb.connect_closing() as conn:
+        tid = _blocked_task_no_kind(conn)  # already blocked, not running/ready
+
+    ns = argparse.Namespace(
+        task_id=tid, reason=["should not stick"], ids=None,
+        kind=None, relabel=False,
+    )
+    rc = kanban_cli._cmd_block(ns)
+    assert rc == 1
+    assert f"cannot block {tid}" in capsys.readouterr().err
+
+    with kb.connect_closing() as conn:
+        comments = kb.list_comments(conn, tid)
+        assert not any("BLOCKED: should not stick" in (c.body or "") for c in comments)
+
+
