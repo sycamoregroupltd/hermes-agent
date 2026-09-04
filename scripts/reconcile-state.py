@@ -176,7 +176,7 @@ for t in sorted(task_ids, key=sort_key):
 # ── 7. phase board ─────────────────────────────────────────────────────────────
 phases = []
 try:
-    with open(PHASES) as f:
+    with open(PHASES, encoding="utf-8") as f:
         for ln in f:
             parts = ln.rstrip("\n").split("\t")
             if len(parts) >= 4: phases.append(parts[:4])
@@ -231,7 +231,7 @@ content = content.replace("**falsifiable prior**", f"**falsifiable prior** · st
 
 os.makedirs(STATE_DIR, exist_ok=True)
 try:
-    with open(STATE_MD, "w") as f: f.write(content)
+    with open(STATE_MD, "w", encoding="utf-8") as f: f.write(content)
 except Exception:
     print("FAILED to write STATE.md"); raise SystemExit(0)
 
@@ -247,7 +247,7 @@ if active_phase:
 hl.append(f"UNDEPLOYED: {len(undeployed)} commits | PROBES FAILED: {fail_line}")
 hl.append("DOCTRINE: memory=provenance, STATE.md=reconciled prior; re-probe the exact field before any deploy/merge/gate/DML.")
 try:
-    with open(HEADLINE, "w") as f: f.write("\n".join(hl) + "\n")
+    with open(HEADLINE, "w", encoding="utf-8") as f: f.write("\n".join(hl) + "\n")
 except Exception:
     pass
 

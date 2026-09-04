@@ -88,7 +88,7 @@ class SessionStartNoPrimaryFetchTest(unittest.TestCase):
 
     def _render(self, source: pathlib.Path, name: str) -> pathlib.Path:
         target = self.tmp / name
-        text = source.read_text()
+        text = source.read_text(encoding="utf-8")
         text = text.replace("/home/frank/sycode-trading", str(self.repo))
         text = text.replace("/home/frank/obsidian/sycode-trading", str(self.vault))
         text = text.replace("/home/frank/.hermes/kanban/boards/sycode-trading/kanban.db", str(self.tmp / "kanban.db"))
