@@ -16,6 +16,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import psutil
 import re
 import shlex
 import sqlite3
@@ -986,7 +987,7 @@ def run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.setdefault("HERMES_PROFILE", AUTHOR)
     env.setdefault("HERMES_PROFILE_NAME", AUTHOR)
-    return subprocess.run(args, capture_output=True, text=True, timeout=60, env=env)
+    return subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60, env=env)
 
 
 def board_cli_prefix(board: str) -> list[str]:
@@ -1088,17 +1089,10 @@ def perform(decision: Decision, candidate: Candidate) -> tuple[str | None, subpr
 
 
 def _pid_alive(pid: int) -> bool:
-    """Best-effort check that a PID is still running (cross-platform-ish)."""
+    """Best-effort check that a PID is still running (cross-platform)."""
     if pid <= 0:
         return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # pid exists but we cannot signal it -> still alive
-        return True
-    return True
+    return psutil.pid_exists(pid)
 
 
 def acquire_lock() -> int | None:
