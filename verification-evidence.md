@@ -1,135 +1,131 @@
 # Verification Evidence: Consumer/Alert Route for kanban_classify_failure_and_reaper.sh
 
-**Task**: jarvis-os/t_a45e23da — Propagate isolated stage failures from reaper wrapper  
-**PR**: https://github.com/sycamoregroupltd/hermes-agent/pull/47  
-**Status**: DRAFT, awaiting evidence of actual consumer route
+**Task**: jarvis-os/t_a45e23da — Propagate isolated stage failures from reaper wrapper
+**Prior PR**: https://github.com/sycamoregroupltd/hermes-agent/pull/47 (MERGED at
+`c79356d5520fc6a23da85c755eec977a7346d42a` from head
+`9353fbc3f754cdbcb134e70b1a0a56a9f4197c04`; Isolation HOLD was draft-only —
+this follow-up does not merge)
+**Status**: source-only consumer proof rewritten against LIVE jobs.json
 
 ## Summary
 
-The wrapper correctly propagates isolated stage failures (behavioral matrix passes
-all cases). The consumer/alert route is **direct Discord delivery**, NOT a
-separate monitor/router chain.
+The wrapper OR-propagation is unchanged and still required:
+`diag_rc!=0 OR reaper_rc!=0` exits 1 and emits both stage rc values; `0/0`
+exits 0. The round-4 blocker was a false consumer claim. Live
+`/home/frank/.hermes/profiles/jarvis/cron/jobs.json` for `fe49f09f4e53` is
+`deliver=local`. That is a local execution record only. It is not
+`discord:#fleet-reports`. The named Jarvis/Frank alert consumer of a
+resulting `last_status=error` is the already-configured cron-health canary
+path absorbed into live `guard-bundle-tick-15m`, which feeds
+`cron_health_kanban_router.py` (jarvis-os / jarvis-os-pm).
 
-## Evidence Chain
+## Evidence chain (read-only, live config)
 
-### 1. Producer: Jarvis cron job configuration
+### 1. Producer — LIVE jobs.json, not the recovery snapshot
 
-**Job ID**: `fe49f09f4e53`  
-**Name**: `kanban-classify-failure-cron`  
-**Schedule**: `every 30m` (interval: 30 minutes)  
-**Script**: `kanban_classify_failure_and_reaper.sh` (changed by this PR)  
-**Delivery**: `discord:#fleet-reports` ← **PRIMARY CONSUMER**  
-**State**: enabled
+Read `/home/frank/.hermes/profiles/jarvis/cron/jobs.json` job `fe49f09f4e53`
+(id at line 2528):
 
-**Source**: `cron-snapshots/profiles/jarvis/cron/jobs.json` (snapshot at PR branch head)
+- `name`: `kanban-classify-failure-cron`
+- `enabled`: true
+- `schedule`: interval 30m
+- `no_agent`: true
+- `script`: `kanban_classify_failure_and_reaper.sh`
+- `deliver`: `local`  ← local cron record only
+- `failure_streak`: 0 at the time of this read (healthy; no live fire of
+  the failure path was performed)
 
-```json
-{
-  "id": "fe49f09f4e53",
-  "name": "kanban-classify-failure-cron",
-  "script": "kanban_classify_failure_recent.py",
-  "schedule": {
-    "kind": "interval",
-    "minutes": 30,
-    "display": "every 30m"
-  },
-  "enabled": true,
-  "deliver": "discord:#fleet-reports"
-}
-```
+Explicitly **not** used as live deliver:
 
-**Note**: The snapshot shows the *current* script (`kanban_classify_failure_recent.py`);
-this PR changes it to `kanban_classify_failure_and_reaper.sh`. The `deliver` setting
-remains unchanged.
+- `cron-snapshots/profiles/jarvis/cron/jobs.json` still has this id with
+  `script: kanban_classify_failure_recent.py` and
+  `deliver: discord:#fleet-reports` (snapshot ~line 3090). Stale.
+- `/home/frank/.hermes/loop-registry/registry.yaml` row
+  `kanban-classify-failure-cron` still says
+  `consumer: discord:#fleet-reports`. Registry is not the ticking store.
 
-### 2. Store: Execution record persistence
+### 2. Store — local execution record
 
-**Location**: `~/.hermes/profiles/jarvis/cron/executions.db`  
-**Table**: `executions`  
-**Fields**: `job_id`, `status` (`completed`/`failed`), `claimed_at`, `finished_at`,
-`error` (contains stderr output)
+On nonzero wrapper exit the Hermes no_agent path returns
+`success=False` (`scheduler.py` ~5861-5878). `mark_job_run` then writes
+`last_status="error"` and `last_error` (`cron/jobs.py` ~3198-3204) and
+`finish_execution(..., success=False)` records `executions.db`
+`status=failed`. Because `deliver=local`, `_resolve_delivery_targets`
+returns `[]` and `delivery_outcome` is `suppressed` — no Discord/Telegram
+send.
 
-When the wrapper returns nonzero, the cron scheduler:
-1. Sets `status=failed` in the execution record
-2. Captures stderr (containing "stage failure diag rc=X reaper rc=Y") in the `error` field
-3. Triggers delivery based on the job's `deliver` setting
+That local record is what later readers consume. It is not itself a chat
+alert.
 
-### 3. Consumer: Discord #fleet-reports delivery
+### 3. Named consumer — existing cron-health kanban router
 
-**Mechanism**: Hermes cron scheduler's built-in delivery subsystem  
-**Trigger**: Any job with `deliver=discord:#channel` and `status=failed`  
-**Content**: The job's stderr output (wrapper line 32)  
-**Timing**: Immediate (within seconds of job completion)
+Already-configured chain (no new cron, no topology edit):
 
-**Wrapper stderr output on failure** (line 32 of `kanban_classify_failure_and_reaper.sh`):
-```bash
-echo "kanban_classify_failure_and_reaper: stage failure diag rc=$diag_rc reaper rc=$reaper_rc" >&2
-```
+1. Live job `guard-bundle-tick-15m` (`83cf8659dc32`, enabled, every 15m,
+   `deliver=local`, script `guard_bundle_tick_15m.sh`). Observed
+   `last_run_at` advancing; jarvis `ticker_heartbeat` fresh.
+2. Bundle manifest still includes absorbed check `cron-health-canary`
+   (`cron_guard_bundle_runner.py` CHECKS, interval 30m) which execs
+   profile shim → `/home/frank/.hermes/scripts/cron_health_canary_wrapper.sh`.
+3. Wrapper runs `/home/frank/.hermes/profiles/jarvis/scripts/dgx_cron_health_canary.py`.
+   For each enabled, unpaused job it does:
+   `if status in {"error", "failed"}: bad.append(f"ERROR {prefix}: {reason}")`
+   (lines 283-286). It prints a `CRON HEALTH` block when `bad` is nonempty.
+4. If stdout is nonempty, the wrapper invokes
+   `/home/frank/.hermes/scripts/cron_health_kanban_router.py` with
+   `CRON_HEALTH_HEALTHY=0`. Router defaults: `BOARD=jarvis-os`,
+   `ASSIGNEE=jarvis-os-pm`. That is the named Jarvis/Frank remediation
+   consumer (board card; voice bridge reads boards).
 
-This stderr line is:
-- Captured in `executions.db` `error` field
-- Sent to Discord #fleet-reports by the scheduler
-- Contains both stage return codes for diagnosis
+Repeated one-stage or both-stage wrapper failures keep `last_status=error`
+across 30m fires, so the canary continues to emit the ERROR line and the
+router updates the same signature card. A healed `0/0` run restores
+`last_status=ok` and the canary stops listing this job.
 
-### 4. Liveness monitor (orthogonal, secondary)
+Honesty bound (do not over-claim):
 
-**Script**: `scripts/hermes_cron_failure_monitor.py` (task t_8a90075d)  
-**Invocation**: HOST crontab (minute 37, every hour)  
-**Scope**: Scans **all** enabled jobs across **all** profiles  
-**Trigger**: ≥5 consecutive `failed` executions for any job  
-**Output**: Prints finding to stdout, exits 1  
-**Alert route**: HOST cron mail to root, OR host-level stderr forwarder  
-**Timing**: Delayed (minimum 5×30min = 2.5 hours for this 30-minute job)
+- `dgx_cron_health_canary.py` prints findings and still exits 0
+  (`main()` has no `sys.exit(1)`). Guard-bundle `report-to-board.py`
+  (`RTB_KEY=guard-bundle-15m`) only files when a check's process rc != 0,
+  so that RTB card is **not** this job's consumer. The consumer of the
+  printed ERROR block is the kanban router inside the canary wrapper.
+- Standalone `cron-health-canary` job `082ceadcc6d6` is paused
+  (`enabled: false`); the live executor is the 15m guard bundle.
 
-**Key distinction**: The streak monitor reads the `status` field from
-`executions.db`; it does NOT consume the wrapper's stderr output. It provides a
-**secondary, delayed** breach alert after multiple consecutive failures, NOT the
-primary immediate alert.
+### 4. Orthogonal / non-consumers (documented so they are not re-cited)
 
-**Source code** (`scripts/hermes_cron_failure_monitor.py` lines 86-93):
-```python
-if all(status == "failed" for status, _, _ in rows):
-    newest_err = (rows[0][2] or "").strip().splitlines()
-    err = newest_err[0][:160] if newest_err else "no error recorded"
-    bad.append(
-        f"FAIL-STREAK profile={profile} job={job_id} ({name}): "
-        f"last {STREAK} runs ALL failed; newest={rows[0][1]} err={err}"
-    )
-```
+- Host crontab line 74:
+  `37 * * * * python3 .../hermes_cron_failure_monitor.py >> /tmp/hermes_cron_failure_monitor.log 2>&1`
+  Read-only streak printer after five consecutive `executions.db` failures.
+  Output is the log file. `cron_liveness_wrapper.sh` drives
+  `cron_liveness_monitor.py` (missed occurrence) +
+  `cron_liveness_kanban_router.py`; it does not read the failure-monitor
+  log. Not a Jarvis/Frank chat route.
+- Host crontab `cron_liveness_wrapper.sh` every 10m: missed-occurrence
+  class only. An errored-but-recent job is explicitly not a miss
+  (`cron_liveness_monitor.py` comments).
 
-## Behavioral Matrix Verification
+## Behavioral matrix (re-run in this isolated clone)
 
-All required test cases pass:
+See `verify_wrapper.sh` output recorded in the follow-up commit message /
+handoff. Required rows:
 
 ```
 PASS clean-no-op: diag=0 reaper=0 wrapper=0
 PASS diagnostics-only-failure: diag=1 reaper=0 wrapper=1
 PASS reaper-only-failure: diag=0 reaper=1 wrapper=1
 PASS both-stages-fail: diag=1 reaper=1 wrapper=1
-PASS repeated-diagnostics-failure-1: diag=1 reaper=0 wrapper=1
-PASS repeated-reaper-failure-1: diag=0 reaper=1 wrapper=1
-PASS repeated-diagnostics-failure-2: diag=1 reaper=0 wrapper=1
-PASS repeated-reaper-failure-2: diag=0 reaper=1 wrapper=1
-PASS repeated-diagnostics-failure-3: diag=1 reaper=0 wrapper=1
-PASS repeated-reaper-failure-3: diag=0 reaper=1 wrapper=1
+PASS repeated-diagnostics-failure-{1,2,3}
+PASS repeated-reaper-failure-{1,2,3}
 PASS shell-syntax
 ```
 
-**Wrapper SHA256**: `73ba7aa272433f293cf27e9912fe480dbfb8acda487709a9ba08a24c507f1cdd`
+**Installed wrapper SHA256** (live file, independently hashed; matches the
+tracked wrapper in this tree):
+`73ba7aa272433f293cf27e9912fe480dbfb8acda487709a9ba08a24c507f1cdd`
 
-## Conclusion
+## Isolation holds
 
-The wrapper's failure propagation is **complete and correct**:
-
-1. ✅ **Producer**: Jarvis cron job runs wrapper every 30 minutes
-2. ✅ **Store**: Execution status + stderr persisted in `executions.db`
-3. ✅ **Consumer**: Direct Discord #fleet-reports delivery (immediate, real-time)
-4. ✅ **Liveness**: Secondary streak monitor (delayed, fleet-wide oversight)
-
-**No topology changes required**. The existing `deliver=discord:#fleet-reports`
-setting provides the named Frank/Jarvis consumer route. The failure streak becomes
-observable to the secondary monitor through the `status=failed` field after 5
-consecutive failures.
-
-**Isolation holds**: No live cron invocation, no board/vault/topology mutation,
-no secret exposure.
+No live cron invocation of `fe49f09f4e53`, no jobs.json or crontab edit, no
+new cron/loop, no vault write, no merge, no credential/deploy/runtime/DB/
+trading/board mutation from this verification.
