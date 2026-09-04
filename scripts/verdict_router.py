@@ -4,7 +4,7 @@
 
 Dry-run by default. In dry-run it only appends shadow decisions to the fleet
 Obsidian vault. Mutations require either VERDICT_ROUTER_APPLY=1 or the sentinel
-/home/frank/.hermes/cron/state/verdict-router.apply-enabled.
+$HERMES_HOME/cron/state/verdict-router.apply-enabled.
 
 This module also owns the deterministic risk-tier classifier used by review
 routing. It consumes explicit changed paths and structured change flags only;
@@ -28,15 +28,15 @@ from typing import Any, Iterable
 
 from second_brain_writer import append_markdown_event
 
-ROOT = Path(os.environ.get("VERDICT_ROUTER_ROOT", "/home/frank/.hermes"))
+ROOT = Path(os.environ.get("VERDICT_ROUTER_ROOT", os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))))
 BOARDS_DIR = Path(os.environ.get("VERDICT_ROUTER_BOARDS_DIR", str(ROOT / "kanban" / "boards")))
 DEFAULT_DB = Path(os.environ.get("VERDICT_ROUTER_DEFAULT_DB", str(ROOT / "kanban.db")))
 STATE_DIR = Path(os.environ.get("VERDICT_ROUTER_STATE_DIR", str(ROOT / "cron" / "state")))
 ENABLE_SENTINEL = STATE_DIR / "verdict-router.apply-enabled"
 LOG_DIR = ROOT / "scripts" / "logs"
-VAULT_ROOT = Path(os.environ.get("VERDICT_ROUTER_VAULT_ROOT", "/home/frank/obsidian-fleet-vault"))
+VAULT_ROOT = Path(os.environ.get("VERDICT_ROUTER_VAULT_ROOT", str(Path.home() / "obsidian-fleet-vault")))
 VAULT_NOTE_DIR = Path(os.environ.get("VERDICT_ROUTER_NOTE_DIR", str(VAULT_ROOT / "Orchestration" / "kanban-verdict-router")))
-HERMES_BIN = os.environ.get("HERMES_BIN", "/home/frank/.local/bin/hermes")
+HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
 AUTHOR = os.environ.get("VERDICT_ROUTER_AUTHOR", "verdict-router")
 LOCK_PATH = STATE_DIR / "verdict-router.lock"
 SCRIPT_VERSION = "v1"
