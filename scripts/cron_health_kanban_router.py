@@ -97,6 +97,12 @@ PROFILES_DIR = REAL_HERMES_HOME / "profiles"
 DEDUP_WINDOW_DAYS = int(os.environ.get("CRON_HEALTH_DEDUP_WINDOW_DAYS", "14"))
 DEDUP_WINDOW_SECONDS = DEDUP_WINDOW_DAYS * 24 * 3600
 PRIORITY = int(os.environ.get("CRON_HEALTH_KANBAN_PRIORITY", "20"))  # low priority
+# Job-only key for fe49f09f4e53. Live copies of this router currently return
+# the constant "cronhealth_current", which recurrence-suppresses against
+# closed t_a3055cd5. A dedicated key is the already-configured router path
+# without inventing a new cron/loop (t_ed054723).
+NAMED_JOB_KEY = "cronhealth_jarvis_kanban_classify_failure"
+NAMED_JOB_NAMES = {"kanban-classify-failure-cron", "fe49f09f4e53"}
 
 OPEN_STATUSES = ("ready", "todo", "running", "blocked", "review")
 ACTIVE_STATUSES = ("ready", "todo")  # eligible for auto-complete on resolve
@@ -483,6 +489,34 @@ def parse_alerts(alert_text: str) -> list[dict]:
     return issues
 
 
+def named_job_issues(issues: list[dict]) -> list[dict]:
+    """Return ERROR/FAILED issues for jarvis/kanban-classify-failure-cron only."""
+    out = []
+    for issue in issues:
+        job = str(issue.get("job") or "").strip()
+        profile = str(issue.get("profile") or "").strip().lower()
+        kind = str(issue.get("kind") or "").upper()
+        if profile == "jarvis" and job in NAMED_JOB_NAMES and kind in {"ERROR", "FAILED"}:
+            out.append(issue)
+    return out
+
+
+def named_job_alert_text(alert_text: str, issues: list[dict] | None = None) -> str:
+    """Consumer-visible subset: only the named job ERROR lines plus a header."""
+    issues = issues if issues is not None else parse_alerts(alert_text)
+    named = named_job_issues(issues)
+    if not named:
+        return ""
+    lines = [
+        f"🔴 CRON HEALTH (job-only): {len(named)} issue(s) for jarvis/kanban-classify-failure-cron",
+    ]
+    for issue in named:
+        body = issue.get("body") or ""
+        kind = issue.get("kind") or "ERROR"
+        lines.append(f"  • {kind} {body}" if not str(body).startswith(kind) else f"  • {body}")
+    return "\n".join(lines)
+
+
 def derive_key(alert_text: str) -> str | None:
     """Stable failure signature over the parsed (kind, profile, job) triples.
 
@@ -491,10 +525,17 @@ def derive_key(alert_text: str) -> str | None:
     to the same key across ticks, so the 14-day dedup actually holds. A NEW
     failing profile/job (or a new issue KIND) changes the key and opens a fresh
     card — the system-crontab targets_<md5> semantics.
+
+    Exception (t_ed054723): if the block contains ERROR jarvis/kanban-classify-
+    failure-cron, return NAMED_JOB_KEY so that job is not recurrence_suppressed
+    against closed t_a3055cd5 / cronhealth_current. Fleet-wide noise still uses
+    the content hash (or live constant-key copies) and is not dumped here.
     """
     issues = parse_alerts(alert_text)
     if not issues:
         return None
+    if named_job_issues(issues):
+        return NAMED_JOB_KEY
     sig_parts = sorted({f"{i['kind']}|{i['profile']}|{i['job']}" for i in issues})
     h = hashlib.md5("\n".join(sig_parts).encode("utf-8")).hexdigest()[:12]
     return f"cronhealth_{h}"
@@ -645,7 +686,15 @@ def process_tick(*, healthy: bool, alert_text: str, audit: Audit | None = None) 
     now_ts = datetime.now(timezone.utc).timestamp()
 
     if not healthy:
-        key = derive_key(alert_text)
+        issues = parse_alerts(alert_text)
+        named = named_job_issues(issues)
+        if named:
+            # Job-only consumer: do not dump the rest of the canary ERROR set
+            # onto the named-job card, and do not reuse cronhealth_current.
+            alert_text = named_job_alert_text(alert_text, issues)
+            key = NAMED_JOB_KEY
+        else:
+            key = derive_key(alert_text)
         if not key:
             # Alert block present but no parseable alert line -> report, no card.
             audit.write("unparsable_alert", key="none", detail=alert_text[:300])
@@ -818,6 +867,15 @@ def _selftest() -> int:
     k3 = derive_key("  • OVERDUE devops/job-y: old\n  • ERROR jarvis/job-x: boom")
     if k1 != k3:
         failures.append(f"key not order-invariant: {k1} != {k3}")
+    named_report = (
+        "  • UNPINNED other/job [x]: drift\n"
+        "  • ERROR jarvis/kanban-classify-failure-cron: stage failure diag rc=1 reaper rc=0\n"
+    )
+    kn = derive_key(named_report)
+    if kn != NAMED_JOB_KEY:
+        failures.append(f"named-job key wrong: {kn}")
+    if kn == "cronhealth_current":
+        failures.append("named-job key must not be cronhealth_current")
 
     # 2. Alert parsing.
     issues = parse_alerts("🔴 CRON HEALTH: 2 issue(s)...\n  • ERROR jarvis/job-x: boom\n  • PATH-MISMATCH devops/job-y: script missing")
