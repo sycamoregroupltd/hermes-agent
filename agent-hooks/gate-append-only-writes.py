@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Fail-closed pre_tool_call veto for append-only arena journals."""
+"""Fail-closed pre_tool_call veto for append-only arena journals.
+
+Arena trading-arena/**/journal.md and trading-arena/IMPROVEMENTS.md stay
+patch-append. Do not create those paths with write_file once they exist.
+Bypass: ALLOW_APPEND_ONLY_REWRITE=1 (operator-gated history recovery only).
+"""
 from __future__ import annotations
 
 import datetime as dt
