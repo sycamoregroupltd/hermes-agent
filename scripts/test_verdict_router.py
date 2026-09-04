@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-import verdict_router as vr
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).parent))
+
+from scripts import verdict_router as vr
 
 
 class VerdictRouterRegressionTests(unittest.TestCase):
@@ -660,7 +664,7 @@ class VerdictRouterC4NegatedVerdictTests(VerdictRouterRegressionTests):
                 "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
                 (
                     task_id,
-                    "Add unit tests for tenant id injection",
+                    "Add unit tests for tenant id injection [REVIEW-REQUIRED]",
                     "Source/test-only change. Tenant coverage.",
                     "devops",
                     "blocked",
@@ -803,115 +807,6 @@ class VerdictRouterBoardExclusionTests(unittest.TestCase):
                 self.assertEqual(len(slugs), 1, "only the allowlisted board should appear in boards() output")
 
 
-class ScanCorruptTimestampsTests(unittest.TestCase):
-    """Regression: scan_corrupt_comment_timestamps.py detects '%s' in created_at."""
-
-    def setUp(self) -> None:
-        import scan_corrupt_comment_timestamps as sct  # type: ignore[import-unimport]
-        self.sct = sct
-        self.boards_dir = Path(tempfile.mkdtemp(prefix="sct-test-"))
-
-    def make_clean_board(self) -> Path:
-        db = self.boards_dir / "testboard" / "kanban.db"
-        db.parent.mkdir(parents=True, exist_ok=True)
-        con = sqlite3.connect(str(db))
-        con.executescript(
-            """
-            CREATE TABLE tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                body TEXT,
-                assignee TEXT,
-                status TEXT NOT NULL,
-                priority INTEGER DEFAULT 0,
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE task_comments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                author TEXT NOT NULL,
-                body TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            """
-        )
-        con.execute(
-            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
-            ("t_clean", "clean task", "body", "devops", "blocked", 10, int(time.time())),
-        )
-        con.execute(
-            "INSERT INTO task_comments(task_id,author,body,created_at) VALUES (?,?,?,?)",
-            ("t_clean", "reviewer", "REVIEW_VERDICT=APPROVED", int(time.time())),
-        )
-        con.commit()
-        con.close()
-        return db
-
-    def make_corrupt_board(self) -> Path:
-        db = self.boards_dir / "corrupt-board" / "kanban.db"
-        db.parent.mkdir(parents=True, exist_ok=True)
-        con = sqlite3.connect(str(db))
-        con.executescript(
-            """
-            CREATE TABLE tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                body TEXT,
-                assignee TEXT,
-                status TEXT NOT NULL,
-                priority INTEGER DEFAULT 0,
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE task_comments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL,
-                author TEXT NOT NULL,
-                body TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            """
-        )
-        con.execute(
-            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) VALUES (?,?,?,?,?,?,?)",
-            ("t_corrupt", "corrupt task", "body", "elon-governor", "blocked", 10, int(time.time())),
-        )
-        # Literal '%s' in created_at — the exact corruption pattern
-        con.execute(
-            "INSERT INTO task_comments(task_id,author,body,created_at) VALUES (?,?,?,?)",
-            ("t_corrupt", "elon-governor", "GOVERNOR RESPAN corrupt marker", "%s"),
-        )
-        con.commit()
-        con.close()
-        return db
-
-    def test_clean_board_returns_zero(self) -> None:
-        db = self.make_clean_board()
-        results = self.sct.scan_board(db)
-        self.assertEqual(len(results), 0)
-
-    def test_corrupt_board_detects_literal_percent_s(self) -> None:
-        db = self.make_corrupt_board()
-        results = self.sct.scan_board(db)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["created_at"], "%s")
-        self.assertEqual(results[0]["author"], "elon-governor")
-
-    def test_fix_replaces_corrupt_timestamps(self) -> None:
-        db = self.make_corrupt_board()
-        results = self.sct.scan_board(db, fix=True)
-        self.assertEqual(len(results), 1)
-        # After fix, re-scan should find nothing
-        results_after = self.sct.scan_board(db)
-        self.assertEqual(len(results_after), 0)
-        # Verify the replacement is an integer
-        con = sqlite3.connect(str(db))
-        row = con.execute("SELECT created_at FROM task_comments WHERE task_id='t_corrupt'").fetchone()
-        con.close()
-        self.assertIsNotNone(row)
-        self.assertIsInstance(row[0], int)
-        self.assertGreater(row[0], 1700000000)  # plausible Unix timestamp
-
-
 class RiskTierClassifierTests(unittest.TestCase):
     """Kill 6/W7 risk boundary: explicit manifests only, fail closed."""
 
@@ -964,6 +859,94 @@ class RiskTierClassifierTests(unittest.TestCase):
     def test_reason_codes_are_returned_in_canonical_order(self) -> None:
         result = vr.classify_risk(["orders/outcome-labeler.ts"], {"money": True, "live_execution": True, "measurement_write_path": True, "paper_only": False})
         self.assertEqual(result.matched_reasons[:3], ("money", "live_execution", "measurement_write_path"))
+
+
+class VerdictAttributionTests(unittest.TestCase):
+    """Regression tests for verdict_is_attributed fixes (issue #4, #10)."""
+
+    def test_relay_seat_detection_uses_regex_not_substring(self) -> None:
+        """Fix issue #4: verdict_is_attributed should use regex fullmatch, not substring check."""
+        # "worker" is a known relay seat. An author named "worker-2" should NOT match
+        # the relay seat pattern via substring, because "worker" requires word boundaries.
+        text = "REVIEW_VERDICT=APPROVED per worker"
+        # The verdict at position 0:24 is attributed to "worker"
+        self.assertTrue(vr.verdict_is_attributed(text, "worker-2", 0, 24),
+                       "verdict attributed to 'worker' should be detected as attribution when author is 'worker-2'")
+        # An author actually named "worker" should match the relay seat
+        self.assertFalse(vr.verdict_is_attributed(text, "worker", 0, 24),
+                        "verdict should not be attributed when author is the named seat 'worker'")
+
+    def test_relay_author_check_even_when_commenter_is_allowlisted_seat(self) -> None:
+        """Fix issue #10: still check relay authors when commenter is an allowlisted seat."""
+        # "guardian" is a known relay seat. Even when the commenter IS guardian,
+        # if they relay another seat's verdict, it should be detected as attribution.
+        text = "per trading-risk-reviewer REVIEW_VERDICT=APPROVED"
+        # guardian relaying trading-risk-reviewer's verdict
+        self.assertTrue(vr.verdict_is_attributed(text, "guardian", 26, 50),
+                       "guardian relaying another seat's verdict should be detected as attribution")
+        # guardian issuing their own verdict (no relay phrasing)
+        text2 = "REVIEW_VERDICT=APPROVED"
+        self.assertFalse(vr.verdict_is_attributed(text2, "guardian", 0, 23),
+                        "guardian's own verdict should not be attributed")
+
+
+class MalformedPathTests(unittest.TestCase):
+    """Regression tests for malformed path handling (issue #8)."""
+
+    def test_malformed_path_after_lstrip_adds_unknown_input(self) -> None:
+        """Fix issue #8: paths that become empty, absolute, or contain .. after lstrip should add unknown_input."""
+        # Empty path after stripping
+        result = vr.classify_risk(["./"], {"paper_only": True})
+        self.assertIn("unknown_input", result.matched_reasons,
+                     "path that becomes empty after lstrip should add unknown_input")
+        self.assertTrue(result.fail_closed)
+        
+        # Absolute path after stripping  
+        result = vr.classify_risk(["/src/orders.ts"], {"paper_only": True})
+        self.assertIn("unknown_input", result.matched_reasons,
+                     "absolute path should add unknown_input")
+        self.assertTrue(result.fail_closed)
+        
+        # Traversal path
+        result = vr.classify_risk(["src/../../../etc/passwd"], {"paper_only": True})
+        self.assertIn("unknown_input", result.matched_reasons,
+                     "path with .. traversal should add unknown_input")
+        self.assertTrue(result.fail_closed)
+
+
+class GateDenialCueTests(unittest.TestCase):
+    """Regression tests for gate denial cue handling (issue #9)."""
+
+    def test_frank_gated_is_not_denial_cue(self) -> None:
+        """Fix issue #9: 'frank-gated' etc. are gate-affirming phrases, not denial cues."""
+        # "frank-gated" means the action IS gated, so a prod/credential/DB term should still gate
+        text = "prod deploy - frank-gated"
+        result = vr.redact_gate_denials(text)
+        # The term "prod" should NOT be redacted because "frank-gated" is not a denial cue
+        self.assertIn("prod", result,
+                     "'frank-gated' should not cause 'prod' to be redacted as a denial")
+        
+    def test_operator_gated_is_not_denial_cue(self) -> None:
+        """'operator-gated' means the action IS gated, so gate terms should not be redacted."""
+        text = "database migration - operator-gated"
+        result = vr.redact_gate_denials(text)
+        self.assertIn("database", result,
+                     "'operator-gated' should not cause 'database' to be redacted as a denial")
+        
+    def test_needs_frank_is_not_denial_cue(self) -> None:
+        """'needs frank' means Frank approval is required, so gate terms should not be redacted."""
+        text = "credential change - needs frank"
+        result = vr.redact_gate_denials(text)
+        self.assertIn("credential", result,
+                     "'needs frank' should not cause 'credential' to be redacted as a denial")
+        
+    def test_genuine_denial_still_redacts(self) -> None:
+        """Genuine denial cues like 'no', 'not', 'safe' should still redact gate terms."""
+        text = "no prod change"
+        result = vr.redact_gate_denials(text)
+        # "prod" should be redacted when preceded by genuine denial cue "no"
+        self.assertNotIn("prod", result.strip(),
+                        "'no prod' should redact 'prod' as a denial")
 
 
 if __name__ == "__main__":

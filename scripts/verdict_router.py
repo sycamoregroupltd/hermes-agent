@@ -26,17 +26,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from second_brain_writer import append_markdown_event
+try:
+    from scripts.second_brain_writer import append_markdown_event
+except ImportError:
+    from second_brain_writer import append_markdown_event
 
-ROOT = Path(os.environ.get("VERDICT_ROUTER_ROOT", "/home/frank/.hermes"))
+ROOT = Path(os.environ.get("VERDICT_ROUTER_ROOT", os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))))
 BOARDS_DIR = Path(os.environ.get("VERDICT_ROUTER_BOARDS_DIR", str(ROOT / "kanban" / "boards")))
 DEFAULT_DB = Path(os.environ.get("VERDICT_ROUTER_DEFAULT_DB", str(ROOT / "kanban.db")))
 STATE_DIR = Path(os.environ.get("VERDICT_ROUTER_STATE_DIR", str(ROOT / "cron" / "state")))
 ENABLE_SENTINEL = STATE_DIR / "verdict-router.apply-enabled"
 LOG_DIR = ROOT / "scripts" / "logs"
-VAULT_ROOT = Path(os.environ.get("VERDICT_ROUTER_VAULT_ROOT", "/home/frank/obsidian-fleet-vault"))
+VAULT_ROOT = Path(os.environ.get("VERDICT_ROUTER_VAULT_ROOT", str(Path.home() / "obsidian-fleet-vault")))
 VAULT_NOTE_DIR = Path(os.environ.get("VERDICT_ROUTER_NOTE_DIR", str(VAULT_ROOT / "Orchestration" / "kanban-verdict-router")))
-HERMES_BIN = os.environ.get("HERMES_BIN", "/home/frank/.local/bin/hermes")
+HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
 AUTHOR = os.environ.get("VERDICT_ROUTER_AUTHOR", "verdict-router")
 LOCK_PATH = STATE_DIR / "verdict-router.lock"
 SCRIPT_VERSION = "v1"
@@ -90,6 +93,7 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
     normalised_paths: list[str] = []
     for raw_path in changed_paths:
         if not isinstance(raw_path, str) or not raw_path.strip():
+            reasons.add("unknown_input")
             fail_closed = True
             continue
         # Strip only a leading "./" prefix (not arbitrary dots/slashes)
@@ -98,6 +102,7 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
             path = path[2:]
         path = path.casefold()
         if not path or path.startswith("/") or ".." in path.split("/"):
+            reasons.add("unknown_input")
             fail_closed = True
             continue
         normalised_paths.append(path)
@@ -207,13 +212,11 @@ def verdict_is_attributed(text: str, author: str, start: int, end: int) -> bool:
     # Bare mention of another reviewer seat adjacent to the verdict phrasing in the
     # same window (e.g. "trading-risk-reviewer REVIEW_VERDICT=APPROVED" written by a
     # third party) without the comment author themselves being that seat.
-    author_is_reviewer_seat = _RELAY_HINT_RE.match((author or "").lower()) is not None
-    if not author_is_reviewer_seat:
-        # author is not one of the named reviewer seats; if the window names a
-        # reviewer seat that the comment author is NOT, it is an attribution.
-        for m in _RELAY_HINT_RE.finditer(window):
-            if m.group(0).lower() != (author or "").lower():
-                return True
+    # We still check this even when the author is a known seat, because a seat can
+    # relay another seat's verdict (e.g. "per guardian REVIEW_VERDICT=APPROVED").
+    for m in _RELAY_HINT_RE.finditer(window):
+        if m.group(0).lower() != (author or "").lower():
+            return True
     return False
 
 # C4 fix (t_c996e275): negation-aware verdict detection so the router does not
@@ -328,18 +331,16 @@ FORBIDDEN_SCOPE_RE = re.compile(r"\b(" + FORBIDDEN_SCOPE_INNER + r")\b", re.I)
 # the detector. A *positive* gate assertion ("Run production DB migration and
 # live runtime deploy") lives in a clause with no denial cue, so it still gates.
 # This is general across all 25 terms (not the rejected brittle 3-term patch).
+#
+# B-major (t_65a0c080): 'frank-gated', 'operator-gated', 'a3-gated', 'awaiting
+# frank', 'needs operator', etc. are gate-AFFIRMING phrases (they mean the action
+# IS gated and requires that approval seat), so they must NOT be treated as denial
+# cues. A comment like "prod deploy - Frank-gated" correctly trips the operator
+# gate because "frank-gated" is a positive gate assertion, not a denial.
 _GATE_DENIAL_CUES = (
     r"no|not|without|do\s+not|don'?t|free\s+of|den(?:y|ied|ial)|avoid\w*|never|"
     r"unnecessary|exclud\w*|waiv\w*|safe|intact|preserv\w*|unchanged|"
-    r"no[- ]?op|non[- ]?gated|out[- ]?of[- ]?scope|"
-    # B-major (t_65a0c080): 'frank-gated' is itself a denial cue -- it means the
-    # action is GATED and requires Frank, i.e. it must NOT auto-complete. The old
-    # cue list treated 'frank-gated' as a safe/non-gated phrase, so a comment like
-    # 'prod deploy - Frank-gated' bypassed the operator gate. 'frank-gated' /
-    # 'frank approval' / 'awaiting frank' are now explicit gate-affirming phrases.
-    r"frank[- ]?gated|frank[- ]?approval|awaiting[- ]?frank|needs[- ]?frank|"
-    r"operator[- ]?gated|operator[- ]?approval|awaiting[- ]?operator|needs[- ]?operator|"
-    r"a3[- ]?gated|a3[- ]?approval"
+    r"no[- ]?op|non[- ]?gated|out[- ]?of[- ]?scope"
 )
 GATE_DENIAL_CUE_RE = re.compile(r"\b(?:" + _GATE_DENIAL_CUES + r")\b", re.I)
 # A forbidden noun is a gate-DENIAL (safe to ignore) when a denial cue precedes
@@ -718,7 +719,7 @@ def candidates_for_board(board: Board) -> list[Candidate]:
             # verdict token (that is already required above). We also restrict the
             # board list (see BOARD_ALLOWLIST), so junk/coordination boards never
             # reach this point.
-            if not (REVIEW_REQUIRED_RE.search(task_text) or REVIEW_REQUIRED_RE.search(body)):
+            if not REVIEW_REQUIRED_RE.search(task_text):
                 continue
             # C2 (t_c3bbc27b): surface the task's structured gate signals so the
             # operator-gate detector can gate on them WITHOUT scanning reviewer
