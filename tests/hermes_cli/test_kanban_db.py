@@ -1647,3 +1647,96 @@ def test_bare_connect_does_not_close_on_context_exit(tmp_path):
     # Still usable after with-block exit (the leak).
     conn.execute("SELECT 1").fetchone()
     conn.close()  # explicit close to avoid leaking THIS test
+
+
+# ---------------------------------------------------------------------------
+# relabel_block_kind(): kind-only setter for ALREADY-blocked tasks
+# Regression coverage for t_e2b2c116 — block_task() only transitions
+# running/ready → blocked, so a legacy block_kind=NULL blocked card could
+# never be labeled via the CLI. relabel_block_kind sets/clears block_kind on a
+# card already in status=blocked with NO status transition.
+# ---------------------------------------------------------------------------
+
+
+def test_relabel_block_kind_sets_kind_on_blocked_task(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="held", assignee="a")
+        # Park it in blocked with a NULL kind (the legacy state).
+        assert kb.block_task(conn, tid, kind=None)
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.block_kind is None
+
+        ok = kb.relabel_block_kind(conn, tid, "needs_input", reason="triage label")
+        assert ok is True
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked", "status must not change"
+        assert task.block_kind == "needs_input"
+
+
+def test_relabel_block_kind_can_change_kind_in_place(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="held", assignee="a")
+        kb.block_task(conn, tid, kind=None)
+        before = kb.get_task(conn, tid).block_recurrences
+        kb.relabel_block_kind(conn, tid, "needs_input")
+        kb.relabel_block_kind(conn, tid, "capability")
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.block_kind == "capability"
+        # A genuine in-place relabel (not a re-block) must NOT bump the
+        # unblock-loop breaker — the recurrence count stays as set by the
+        # original block, never incremented by relabeling.
+        assert task.block_recurrences == before
+
+
+def test_relabel_block_kind_can_clear_kind_to_none(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="held", assignee="a")
+        kb.block_task(conn, tid, kind=None)
+        kb.relabel_block_kind(conn, tid, "capability")
+        ok = kb.relabel_block_kind(conn, tid, None)
+        assert ok is True
+        task = kb.get_task(conn, tid)
+        assert task.status == "blocked"
+        assert task.block_kind is None
+
+
+def test_relabel_block_kind_records_event(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="held", assignee="a")
+        kb.block_task(conn, tid, kind=None)
+        kb.relabel_block_kind(conn, tid, "transient", reason="flaky")
+        rows = conn.execute(
+            "SELECT kind, payload FROM task_events "
+            "WHERE task_id = ? AND kind = 'block_relabel' ORDER BY created_at DESC",
+            (tid,),
+        ).fetchall()
+        assert rows, "expected a block_relabel event"
+        import json as _json
+        pl = _json.loads(rows[0]["payload"])
+        assert pl["prev_kind"] is None
+        assert pl["kind"] == "transient"
+        assert pl["reason"] == "flaky"
+
+
+def test_relabel_block_kind_rejects_non_blocked_task(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="running", assignee="a")
+        # New task is not blocked — relabel must refuse.
+        assert kb.relabel_block_kind(conn, tid, "needs_input") is False
+        task = kb.get_task(conn, tid)
+        assert task.status != "blocked"
+
+
+def test_relabel_block_kind_rejects_unknown_task(kanban_home):
+    with kb.connect() as conn:
+        assert kb.relabel_block_kind(conn, "no-such-task", "needs_input") is False
+
+
+def test_relabel_block_kind_rejects_invalid_kind(kanban_home):
+    with kb.connect() as conn:
+        tid = kb.create_task(conn, title="held", assignee="a")
+        kb.block_task(conn, tid, kind=None)
+        with pytest.raises(ValueError):
+            kb.relabel_block_kind(conn, tid, "bogus")

@@ -676,6 +676,26 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
         ),
     )
 
+    p_relabel = sub.add_parser(
+        "relabel",
+        help="Set/clear block_kind on an ALREADY-blocked task (no status transition)",
+    )
+    p_relabel.add_argument("task_id")
+    p_relabel.add_argument("reason", nargs="*",
+                           help="Reason (also appended as a comment)")
+    p_relabel.add_argument(
+        "--kind", default=None, choices=sorted(kb.VALID_BLOCK_KINDS),
+        help=(
+            "Typed block reason to set on the already-blocked task. "
+            "'needs_input'/'capability'/'transient' are the kinds that sit in "
+            "blocked for a human. 'dependency' is NOT meaningful for an "
+            "already-blocked card (dependency waits live in todo) but is "
+            "accepted for consistency. Omit to clear block_kind back to "
+            "un-typed (NULL). This verb NEVER changes status — a "
+            "deliberately-held blocked card stays blocked."
+        ),
+    )
+
     p_schedule = sub.add_parser("schedule", help="Park one or more tasks in Scheduled (waiting on time, not human input)")
     p_schedule.add_argument("task_id")
     p_schedule.add_argument("reason", nargs="*", help="Reason/timing note (also appended as a comment)")
@@ -1166,6 +1186,7 @@ def kanban_command(args: argparse.Namespace) -> int:
             "complete": _cmd_complete,
             "edit":     _cmd_edit,
             "block":    _cmd_block,
+            "relabel":  _cmd_relabel,
             "schedule": _cmd_schedule,
             "unblock":  _cmd_unblock,
             "request-review": _cmd_request_review,
@@ -2484,6 +2505,34 @@ def _cmd_block(args: argparse.Namespace) -> int:
                 else:
                     print(f"Blocked {tid}{suffix}")
     return 0 if not failed else 1
+
+
+def _cmd_relabel(args: argparse.Namespace) -> int:
+    reason = " ".join(args.reason).strip() if args.reason else None
+    kind = getattr(args, "kind", None)
+    author = _profile_author()
+    with kb.connect_closing() as conn:
+        if not kb.relabel_block_kind(
+            conn,
+            args.task_id,
+            kind=kind,
+            reason=reason,
+        ):
+            print(
+                f"cannot relabel {args.task_id} (unknown id or task is not "
+                "currently blocked)",
+                file=sys.stderr,
+            )
+            return 1
+        # Comment only after a successful relabel so a failed call cannot
+        # leave a stray RELABEL note implying the kind landed.
+        if reason:
+            kb.add_comment(conn, args.task_id, author, f"RELABEL → {kind}: {reason}")
+        landed = kb.get_task(conn, args.task_id)
+        where = landed.status if landed else "blocked"
+        suffix = f": {reason}" if reason else ""
+        print(f"Relabeled {args.task_id} (block_kind → {kind}, status stays {where}){suffix}")
+    return 0
 
 
 def _cmd_schedule(args: argparse.Namespace) -> int:

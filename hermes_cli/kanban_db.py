@@ -6482,6 +6482,73 @@ def block_task(
     return True
 
 
+def relabel_block_kind(
+    conn: sqlite3.Connection,
+    task_id: str,
+    kind: Optional[str] = None,
+    *,
+    reason: Optional[str] = None,
+) -> bool:
+    """Set/clear ``block_kind`` on a task that is ALREADY ``status=blocked``.
+
+    ``block_task`` only transitions ``running``/``ready`` → ``blocked``, so it
+    cannot label (or relabel) a task that is already blocked — e.g. the legacy
+    ``block_kind IS NULL`` pile. This is the kind-only metadata setter for that
+    case.
+
+    Safety contract:
+    * NO status transition — the task stays ``blocked``. It never passes
+      through ``ready``/``running``, so a dispatcher can never claim a
+      deliberately-held card mid-relabel.
+    * Only applies to a task currently in ``status='blocked'``; anything else
+      returns False (mirrors ``block_task`` returning False for an unblockable
+      state).
+    * Does NOT bump ``block_recurrences`` (this is a relabel, not a re-block
+      after an unblock — it must not feed the unblock-loop breaker).
+    * Does NOT touch ``claim_lock``/``worker_pid`` (the task is already parked
+      in ``blocked``).
+
+    ``kind`` must be one of :data:`VALID_BLOCK_KINDS`, or ``None`` to clear a
+    previously-set kind back to un-typed. Returns True when ``block_kind`` was
+    applied, False when the task is unknown or not currently blocked.
+    """
+    if kind is not None and kind not in VALID_BLOCK_KINDS:
+        raise ValueError(
+            f"block kind must be one of {sorted(VALID_BLOCK_KINDS)} or None"
+        )
+    with write_txn(conn):
+        cur_row = conn.execute(
+            "SELECT status, block_kind FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if cur_row is None or cur_row["status"] != "blocked":
+            return False
+        prev_kind = cur_row["block_kind"] if "block_kind" in cur_row.keys() else None
+        if prev_kind == kind:
+            # No-op relabel — nothing changed; report success.
+            return True
+        cur = conn.execute(
+            "UPDATE tasks SET block_kind = ? WHERE id = ? AND status = 'blocked'",
+            (kind, task_id),
+        )
+        if cur.rowcount != 1:
+            return False
+        _append_event(
+            conn,
+            task_id,
+            "block_relabel",
+            {
+                "prev_kind": prev_kind,
+                "kind": kind,
+                "reason": reason,
+            },
+        )
+    notify_task_updated(
+        conn, task_id, ["block_kind"],
+        board=get_current_board(),
+    )
+    return True
+
 
 def redact_review_value(value: Any) -> Any:
     """Redact secrets at the domain boundary for durable review handoffs."""
