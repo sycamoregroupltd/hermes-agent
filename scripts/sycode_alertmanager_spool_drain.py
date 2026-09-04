@@ -510,13 +510,24 @@ def _selftest() -> int:
     if len(results) != 2:
         failures.append(f"warning must be skipped; got {len(results)} results: {results}")
 
+    # Test kill switch: KANBAN_ENABLED=False with dry_run=False must return kanban_disabled
+    global KANBAN_ENABLED
+    saved_enabled = KANBAN_ENABLED
+    try:
+        KANBAN_ENABLED = False
+        kill_results = route_payload_to_kanban({"alerts": [firing]}, dry_run=False)
+        if len(kill_results) != 1 or kill_results[0].get("action") != "kanban_disabled":
+            failures.append(f"kill switch test failed: expected [{{action: kanban_disabled}}], got {kill_results}")
+    finally:
+        KANBAN_ENABLED = saved_enabled
+
     if failures:
         print("SELFTEST_FAIL")
         for fl in failures:
             print(" -", fl)
         return 1
     print(
-        "SELFTEST_PASS critical_filter dedupe_key fallback_fp "
+        "SELFTEST_PASS critical_filter dedupe_key fallback_fp kill_switch "
         f"dry_run_create={actions.count('dry_run_create')}"
     )
     return 0

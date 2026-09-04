@@ -26,7 +26,7 @@ Extend canonical `scripts/sycode_alertmanager_spool_drain.py`:
 - Comment cooldown 1h on repeat firing
 - Fail-open: kanban errors never block spool archive / Discord emit
 - Flags: `--selftest`, `--dry-run`, `--file <json>` (no consume)
-- Kill switch: `ALERT_KANBAN_ENABLED=0`
+- Kill switch: `ALERT_KANBAN_ENABLED=0` (default=1/ON is intentional for apply-time)
 
 ## Dry-run / verify (pre-apply)
 
