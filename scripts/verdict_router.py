@@ -1093,17 +1093,22 @@ def perform(decision: Decision, candidate: Candidate) -> tuple[str | None, subpr
 
 
 def _pid_alive(pid: int) -> bool:
-    """Best-effort check that a PID is still running (cross-platform-ish)."""
+    """Best-effort check that a PID is still running (cross-platform)."""
     if pid <= 0:
         return False
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        from gateway.status import _pid_exists
+
+        return bool(_pid_exists(int(pid)))
+    except Exception:
+        pass
+    # Last-resort fallback if gateway.status is unavailable: psutil directly.
+    try:
+        import psutil  # type: ignore
+
+        return bool(psutil.pid_exists(int(pid)))
+    except Exception:
         return False
-    except PermissionError:
-        # pid exists but we cannot signal it -> still alive
-        return True
-    return True
 
 
 def acquire_lock() -> int | None:
