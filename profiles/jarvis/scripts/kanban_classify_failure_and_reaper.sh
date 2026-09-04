@@ -26,9 +26,10 @@ KANBAN_DEAD_PID_DRAIN_GATE=1 \
   python3 /home/frank/.hermes/scripts/dead_pid_blocked_reaper.py --apply
 reaper_rc=$?
 
-# Return nonzero only if BOTH stages failed (a clean no-op returns 0).
-if [[ $diag_rc -ne 0 && $reaper_rc -ne 0 ]]; then
-  echo "kanban_classify_failure_and_reaper: diag rc=$diag_rc reaper rc=$reaper_rc" >&2
+# Any stage failure must reach the cron consumer/alert route. A clean no-op
+# means both existing stages ran successfully and returned zero.
+if [[ $diag_rc -ne 0 || $reaper_rc -ne 0 ]]; then
+  echo "kanban_classify_failure_and_reaper: stage failure diag rc=$diag_rc reaper rc=$reaper_rc" >&2
   exit 1
 fi
 exit 0
