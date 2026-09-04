@@ -5,6 +5,10 @@
 Dry-run by default. In dry-run it only appends shadow decisions to the fleet
 Obsidian vault. Mutations require either VERDICT_ROUTER_APPLY=1 or the sentinel
 /home/frank/.hermes/cron/state/verdict-router.apply-enabled.
+
+This module also owns the deterministic risk-tier classifier used by review
+routing. It consumes explicit changed paths and structured change flags only;
+title prose and free-form keywords are deliberately not inputs to that policy.
 """
 from __future__ import annotations
 
@@ -41,6 +45,102 @@ VERDICT_RE = re.compile(r"\bREVIEW_VERDICT\s*[:=]\s*([A-Z0-9_]+)", re.I)
 TASK_ID_RE = re.compile(r"\bt_[0-9a-f]{8,}\b", re.I)
 ROUTER_AUTHORS = {AUTHOR, "cron:deterministic-verdict-router"}
 VALID_VERDICTS = {"APPROVE", "APPROVED", "CHANGES_REQUESTED"}
+
+# Kill 6 / W7: stable reason codes for the standalone risk-review boundary.
+RISK_REASON_CODES = (
+    "money",
+    "live_execution",
+    "access_material",
+    "ddl_or_irreversible_data",
+    "measurement_write_path",
+    "unknown_input",
+)
+_RISK_FLAGS = frozenset(RISK_REASON_CODES) | {"paper_only", "refactor", "research", "tests", "docs"}
+_RISK_PATH_RULES = (
+    ("money", re.compile(r"(?:^|/)(?:billing|payments?|checkout|refund|pricing|spend|money)(?:/|$)|(?:^|/).*?(?:payment|billing|checkout|refund|pricing|spend).*", re.I)),
+    ("live_execution", re.compile(r"(?:^|/)(?:orders?|positions?|trade[_-]?intents?|execution|autotrader|live[-_ ]?trading)(?:/|$)|(?:^|/).*?(?:order|position|execution|trade[_-]?intent|live[-_ ]?trading).*", re.I)),
+    ("access_material", re.compile(r"(?:^|/)(?:credentials?|secrets?|auth|oauth|tokens?)(?:/|$)|(?:^|/).*?(?:credential|secret|auth|oauth|token|\.env(?:\.|$)).*", re.I)),
+    ("ddl_or_irreversible_data", re.compile(r"(?:^|/)(?:supabase/migrations?|drizzle/migrations?|migrations?|schema)(?:/|$)|(?:^|/).*?(?:migration|schema|ddl|backfill|drop|truncate|mass[-_ ]?(?:delete|update)).*", re.I)),
+    ("measurement_write_path", re.compile(r"(?:^|/).*?(?:label|outcome|metric|measurement|evaluation|reward|ledger|signal[_-]?journey).*", re.I)),
+)
+_SAFE_PATH_RE = re.compile(r"^(?:docs?/|research/|tests?/|.*(?:^|/)(?:__tests__|fixtures?)(?:/|$)|.*\.(?:md|mdx|txt|rst|test\.[cm]?[jt]sx?|spec\.[cm]?[jt]sx?))$", re.I)
+
+
+@dataclass(frozen=True)
+class RiskClassification:
+    """Fail-closed classification of an explicit change manifest."""
+
+    requires_standalone_risk_review: bool
+    matched_reasons: tuple[str, ...]
+    fail_closed: bool
+
+
+def classify_risk(changed_paths: object, change_flags: object) -> RiskClassification:
+    """Classify a change using paths and structured flags, never title prose.
+
+    Missing, malformed, unknown, or contradictory manifests fail closed. Safe
+    paths/flags are intentionally narrow: an unrecognised path is not approval.
+    Matching is case-insensitive and path separators are canonicalised so case
+    variants and generated-path tricks cannot evade a rule.
+    """
+    reasons: set[str] = set()
+    fail_closed = False
+    if not isinstance(changed_paths, (list, tuple)) or not changed_paths:
+        return RiskClassification(True, ("unknown_input",), True)
+    normalised_paths: list[str] = []
+    for raw_path in changed_paths:
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            fail_closed = True
+            continue
+        path = raw_path.strip().replace("\\", "/").lstrip("./").casefold()
+        if not path or path.startswith("/") or ".." in path.split("/"):
+            fail_closed = True
+            continue
+        normalised_paths.append(path)
+        matched = False
+        for code, rule in _RISK_PATH_RULES:
+            if rule.search(path):
+                reasons.add(code)
+                matched = True
+        if not matched and not _SAFE_PATH_RE.match(path):
+            # A structured safe classification (docs/research/tests/refactor)
+            # may cover a normal source path; an absent flag may not.
+            reasons.add("unknown_input")
+            fail_closed = True
+
+    if not isinstance(change_flags, dict):
+        return RiskClassification(True, tuple(sorted(reasons | {"unknown_input"})), True)
+    unknown_flags = set(change_flags) - _RISK_FLAGS
+    if unknown_flags:
+        reasons.add("unknown_input")
+        fail_closed = True
+    # Explicit safe-kind flags are the only permitted classification for normal
+    # source paths that are not themselves risk-bearing. They do not waive a
+    # matched high-risk path, and malformed/absolute/traversal paths remain bad.
+    safe_kind = any(change_flags.get(flag) is True for flag in ("refactor", "research", "tests", "docs"))
+    if safe_kind and not unknown_flags and "unknown_input" in reasons and all(
+        isinstance(path, str) and not path.strip().startswith(("/", "\\")) and ".." not in path.replace("\\", "/").split("/")
+        for path in changed_paths
+    ):
+        reasons.discard("unknown_input")
+        fail_closed = False
+    for flag, value in change_flags.items():
+        if not isinstance(value, bool):
+            reasons.add("unknown_input")
+            fail_closed = True
+        elif value and flag in RISK_REASON_CODES:
+            reasons.add(flag)
+    if change_flags.get("paper_only") is True and reasons & (set(RISK_REASON_CODES) - {"unknown_input"}):
+        # Paper-only is not a waiver for a risky path/flag; contradictory claims
+        # are retained as a fail-closed input rather than silently downgraded.
+        reasons.add("unknown_input")
+        fail_closed = True
+    if change_flags.get("paper_only") is not True and not any(
+        change_flags.get(flag) is True for flag in ("money", "live_execution", "access_material", "ddl_or_irreversible_data", "measurement_write_path", "paper_only", "refactor", "research", "tests", "docs")
+    ):
+        reasons.add("unknown_input")
+        fail_closed = True
+    return RiskClassification(bool(reasons & set(RISK_REASON_CODES)), tuple(code for code in RISK_REASON_CODES if code in reasons), fail_closed)
 
 # B1/B2 (adversarial write-path review 2026-08-02, task t_65a0c080): a REVIEW_VERDICT
 # token may only auto-complete / auto-route when it is *issued* by an authorized

@@ -912,5 +912,59 @@ class ScanCorruptTimestampsTests(unittest.TestCase):
         self.assertGreater(row[0], 1700000000)  # plausible Unix timestamp
 
 
+class RiskTierClassifierTests(unittest.TestCase):
+    """Kill 6/W7 risk boundary: explicit manifests only, fail closed."""
+
+    def assert_risky(self, paths: object, flags: object, *reasons: str) -> None:
+        result = vr.classify_risk(paths, flags)
+        self.assertTrue(result.requires_standalone_risk_review)
+        self.assertTrue(result.fail_closed is False or "unknown_input" in result.matched_reasons)
+        for reason in reasons:
+            self.assertIn(reason, result.matched_reasons)
+
+    def test_every_high_risk_class_has_stable_reason_code(self) -> None:
+        cases = ((["server/src/billing/fees.ts"], {"paper_only": False}, "money"), (["server/src/orders/submit.ts"], {"paper_only": False}, "live_execution"), (["server/.env.example"], {"paper_only": False}, "access_material"), (["supabase/migrations/0123.sql"], {"paper_only": False}, "ddl_or_irreversible_data"), (["server/src/outcome-labeler.ts"], {"paper_only": False}, "measurement_write_path"))
+        for paths, flags, reason in cases:
+            with self.subTest(reason=reason):
+                self.assert_risky(paths, flags, reason)
+
+    def test_known_paper_only_docs_research_tests_and_refactors_do_not_need_standalone(self) -> None:
+        for path, flag in (("docs/review-routing.md", "docs"), ("research/hypothesis.md", "research"), ("tests/router.test.ts", "tests"), ("src/formatter.ts", "refactor")):
+            with self.subTest(path=path):
+                result = vr.classify_risk([path], {"paper_only": True, flag: True})
+                self.assertFalse(result.requires_standalone_risk_review)
+                self.assertFalse(result.fail_closed)
+                self.assertEqual(result.matched_reasons, ())
+
+    def test_missing_malformed_and_unknown_inputs_fail_closed(self) -> None:
+        for paths, flags in (([], {"paper_only": True}), (["src/newthing.bin"], {"paper_only": True}), (["src/a.ts"], None), ([""], {"docs": "yes"}), (["../orders.ts"], {"paper_only": False})):
+            with self.subTest(paths=paths, flags=flags):
+                result = vr.classify_risk(paths, flags)
+                self.assertTrue(result.requires_standalone_risk_review)
+                self.assertTrue(result.fail_closed)
+                self.assertIn("unknown_input", result.matched_reasons)
+
+    def test_conflicting_paper_only_and_risky_flag_fails_closed(self) -> None:
+        result = vr.classify_risk(["docs/summary.md"], {"paper_only": True, "live_execution": True})
+        self.assertTrue(result.requires_standalone_risk_review)
+        self.assertTrue(result.fail_closed)
+        self.assertEqual(result.matched_reasons, ("live_execution", "unknown_input"))
+
+    def test_title_only_negation_is_not_an_input_or_override(self) -> None:
+        result = vr.classify_risk(["server/src/orders/submit.ts"], {"paper_only": True})
+        self.assertTrue(result.requires_standalone_risk_review)
+        self.assertIn("live_execution", result.matched_reasons)
+        self.assertIn("unknown_input", result.matched_reasons)
+
+    def test_generated_and_case_variant_paths_match_risk_rules(self) -> None:
+        for path, reason in (("GENERATED/Orders/submit.json", "live_execution"), ("Generated/OUTCOME-LABELS.json", "measurement_write_path"), ("generated/SUPABASE/MIGRATIONS/0001.sql", "ddl_or_irreversible_data")):
+            with self.subTest(path=path):
+                self.assert_risky([path], {"paper_only": False}, reason)
+
+    def test_reason_codes_are_returned_in_canonical_order(self) -> None:
+        result = vr.classify_risk(["orders/outcome-labeler.ts"], {"money": True, "live_execution": True, "measurement_write_path": True, "paper_only": False})
+        self.assertEqual(result.matched_reasons[:3], ("money", "live_execution", "measurement_write_path"))
+
+
 if __name__ == "__main__":
     unittest.main()
