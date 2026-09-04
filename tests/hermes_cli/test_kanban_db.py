@@ -5034,6 +5034,66 @@ def test_connect_refuses_corrupt_existing_file(tmp_path):
         kb.connect(db_path=db_path)
 
 
+def test_connect_emits_startup_warning_on_non_ok_integrity_check(
+    tmp_path, monkeypatch, caplog,
+):
+    """Cold-path connect() must log when integrity_check is non-ok.
+
+    Fail-closed quarantine/raise is preserved — the warning is an
+    observability signal so a bad board is caught at dispatch/connect
+    startup, not later at task-open.
+    """
+    import logging
+
+    db_path = tmp_path / "kanban.db"
+    kb.init_db(db_path=db_path)
+    kb._INITIALIZED_PATHS.discard(str(db_path.resolve()))
+
+    monkeypatch.setattr(
+        kb, "_run_integrity_check",
+        lambda _conn: ["database disk image is malformed"],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="hermes_cli.kanban_db"):
+        with pytest.raises(kb.KanbanDbCorruptError) as excinfo:
+            kb.connect(db_path=db_path)
+
+    warns = [
+        r.getMessage() for r in caplog.records
+        if "integrity_check non-ok" in r.getMessage()
+    ]
+    assert len(warns) == 1, (
+        f"Expected one dispatch/connect startup integrity warning, got "
+        f"{len(warns)}: {warns!r}"
+    )
+    assert "dispatch/connect startup" in warns[0]
+    assert str(db_path.resolve()) in warns[0]
+    assert "database disk image is malformed" in warns[0]
+    assert "malformed" in excinfo.value.reason
+
+
+def test_connect_does_not_warn_on_ok_integrity_check(tmp_path, caplog):
+    """Healthy boards must not emit the integrity_check startup warning."""
+    import logging
+
+    db_path = tmp_path / "kanban.db"
+    kb.init_db(db_path=db_path)
+    kb._INITIALIZED_PATHS.discard(str(db_path.resolve()))
+
+    with caplog.at_level(logging.WARNING, logger="hermes_cli.kanban_db"):
+        conn = kb.connect(db_path=db_path)
+        conn.close()
+
+    warns = [
+        r.getMessage() for r in caplog.records
+        if "integrity_check non-ok" in r.getMessage()
+        or "dispatch/connect startup" in r.getMessage()
+    ]
+    assert warns == [], (
+        f"ok board must not emit integrity startup warning; got {warns!r}"
+    )
+
+
 def test_repeated_corrupt_open_reuses_single_backup(tmp_path):
     """Repeated quarantines of the same corrupt bytes must not amplify disk usage.
 

@@ -2502,6 +2502,14 @@ def _guard_existing_db_is_healthy(path: Path) -> None:
         reason = f"sqlite refused to open file: {exc}"
     if reason is None:
         return
+    # Dispatch/connect startup signal: surface a non-ok board at first
+    # connect, not later at task-open. Fail-closed quarantine/raise below
+    # is unchanged.
+    _log.warning(
+        "kanban dispatch/connect startup: integrity_check non-ok for %s: %s",
+        resolved,
+        reason,
+    )
     # Quarantine FIRST — both the repair path and the fail-closed path
     # preserve the pre-touch bytes before anything mutates the file.
     backup = _backup_corrupt_db(resolved)
