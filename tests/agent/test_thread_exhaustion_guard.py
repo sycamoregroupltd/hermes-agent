@@ -95,7 +95,7 @@ class TestChatCompletionHelpersGuard:
     @patch("threading.Thread")
     def test_non_streaming_thread_exhaustion_propagates(self, mock_thread_class):
         """Non-streaming path propagates thread exhaustion immediately."""
-        from agent.chat_completion_helpers import _make_non_streaming_codex_call
+        from agent.chat_completion_helpers import interruptible_api_call
         from run_agent import AIAgent
         
         # Simulate thread exhaustion on Thread.start()
@@ -110,17 +110,15 @@ class TestChatCompletionHelpersGuard:
             quiet_mode=True,
         )
         
+        api_kwargs = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]}
+        
         with pytest.raises(RuntimeError, match="can't start new thread"):
-            _make_non_streaming_codex_call(
-                agent=agent,
-                api_kwargs={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]},
-                _call=mock_completion,
-            )
+            interruptible_api_call(agent, api_kwargs)
 
     @patch("threading.Thread")
     def test_non_streaming_other_runtime_error_propagates(self, mock_thread_class):
         """Non-streaming path propagates non-thread-exhaustion RuntimeError."""
-        from agent.chat_completion_helpers import _make_non_streaming_codex_call
+        from agent.chat_completion_helpers import interruptible_api_call
         from run_agent import AIAgent
         
         # Simulate some other RuntimeError (not thread exhaustion)
@@ -135,17 +133,15 @@ class TestChatCompletionHelpersGuard:
             quiet_mode=True,
         )
         
+        api_kwargs = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]}
+        
         with pytest.raises(RuntimeError, match="some other error"):
-            _make_non_streaming_codex_call(
-                agent=agent,
-                api_kwargs={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]},
-                _call=mock_completion,
-            )
+            interruptible_api_call(agent, api_kwargs)
 
     @patch("threading.Thread")
     def test_streaming_thread_exhaustion_propagates(self, mock_thread_class):
         """Streaming path propagates thread exhaustion immediately."""
-        from agent.chat_completion_helpers import _make_streaming_codex_call
+        from agent.chat_completion_helpers import interruptible_streaming_api_call
         from run_agent import AIAgent
         
         # Simulate thread exhaustion on Thread.start()
@@ -160,12 +156,10 @@ class TestChatCompletionHelpersGuard:
             quiet_mode=True,
         )
         
+        api_kwargs = {"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}], "stream": True}
+        
         with pytest.raises(RuntimeError, match="can't start new thread"):
-            _make_streaming_codex_call(
-                agent=agent,
-                api_kwargs={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}], "stream": True},
-                _call=mock_completion,
-            )
+            interruptible_streaming_api_call(agent, api_kwargs)
 
 
 class TestToolExecutorGuard:
@@ -192,14 +186,18 @@ class TestToolExecutorGuard:
     def test_concurrent_tools_thread_exhaustion_propagates(self):
         """Concurrent tool execution propagates thread exhaustion."""
         from agent.tool_executor import execute_tool_calls_concurrent
-        from run_agent import AIAgent
         
-        agent = AIAgent(
-            provider="openai",
-            model="gpt-4",
-            enabled_toolsets=["terminal"],
-            quiet_mode=True,
-        )
+        # Create minimal mock agent with required attributes
+        agent = MagicMock()
+        agent.quiet_mode = True
+        agent._interrupt_requested = False
+        agent._should_emit_quiet_tool_messages.return_value = False
+        agent._should_start_quiet_spinner.return_value = False
+        agent._current_tool = None
+        agent._touch_activity = MagicMock()
+        agent._tool_worker_threads = set()
+        agent._tool_worker_threads_lock = threading.Lock()
+        agent.log_prefix = "[test] "
         
         # Mock tool call
         class FakeToolCall:
@@ -233,14 +231,18 @@ class TestToolExecutorGuard:
     def test_concurrent_tools_other_submit_error_propagates(self):
         """Concurrent tool execution propagates non-thread-exhaustion submit errors."""
         from agent.tool_executor import execute_tool_calls_concurrent
-        from run_agent import AIAgent
         
-        agent = AIAgent(
-            provider="openai",
-            model="gpt-4",
-            enabled_toolsets=["terminal"],
-            quiet_mode=True,
-        )
+        # Create minimal mock agent with required attributes
+        agent = MagicMock()
+        agent.quiet_mode = True
+        agent._interrupt_requested = False
+        agent._should_emit_quiet_tool_messages.return_value = False
+        agent._should_start_quiet_spinner.return_value = False
+        agent._current_tool = None
+        agent._touch_activity = MagicMock()
+        agent._tool_worker_threads = set()
+        agent._tool_worker_threads_lock = threading.Lock()
+        agent.log_prefix = "[test] "
         
         class FakeToolCall:
             def __init__(self):
