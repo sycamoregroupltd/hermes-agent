@@ -1462,7 +1462,8 @@ display:
 # hooks:
 #   pre_tool_call:
 #     # Arena journal.md / IMPROVEMENTS.md stay patch-append. Wire this BEFORE
-#     # any second-brain write gate so a later "use write_file" allow cannot win.
+#     # any second-brain write gate: Hermes first-directive semantics mean the
+#     # first matching hook wins, so this veto must come before any allow.
 #     # Bypass for operator-gated history recovery: ALLOW_APPEND_ONLY_REWRITE=1
 #     - matcher: "^(write_file|patch|terminal)$"
 #       command: "~/.hermes/agent-hooks/gate-append-only-writes.sh"

@@ -50,5 +50,17 @@ assert_block terminal-redirect '{"tool_name":"terminal","tool_input":{"command":
 assert_allow terminal-true-append '{"tool_name":"terminal","tool_input":{"command":"echo x >> '"$JOURNAL"'"}}'
 assert_allow unrelated-write '{"tool_name":"write_file","tool_input":{"path":"/tmp/foo.md","content":"new"}}'
 assert_allow fail-open-garbage 'not-json'
+
+# Wrapper bypass smoke test: ALLOW_APPEND_ONLY_REWRITE=1 should allow everything
+WRAPPER="$(dirname "$0")/gate-append-only-writes.sh"
+BYPASS_OUT="$(ALLOW_APPEND_ONLY_REWRITE=1 printf '%s' "$EXISTING" | bash "$WRAPPER")"
+if [ "$BYPASS_OUT" = "{}" ]; then
+  printf 'PASS allow: bypass-wrapper-rewrite\n'
+  PASS=$((PASS + 1))
+else
+  printf 'FAIL allow: bypass-wrapper-rewrite -> %s\n' "$BYPASS_OUT"
+  FAIL=$((FAIL + 1))
+fi
+
 printf 'gate-append-only selftest: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -3,7 +3,8 @@
 
 Arena trading-arena/**/journal.md and trading-arena/IMPROVEMENTS.md stay
 patch-append. Do not create those paths with write_file once they exist.
-Bypass: ALLOW_APPEND_ONLY_REWRITE=1 (operator-gated history recovery only).
+Bypass: ALLOW_APPEND_ONLY_REWRITE=1 (shell-wrapper-only; checked in the
+gate-append-only-writes.sh wrapper before this Python script is called).
 """
 from __future__ import annotations
 

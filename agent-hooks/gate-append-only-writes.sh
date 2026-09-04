@@ -7,10 +7,10 @@ if [ "${ALLOW_APPEND_ONLY_REWRITE:-}" = "1" ]; then
   printf '{}\n'
   exit 0
 fi
-PAYLOAD=$(cat 2>/dev/null || true)
-if ! printf '%s' "$PAYLOAD" | grep -qiE 'journal\.md|IMPROVEMENTS\.md'; then
+# Stream payload via pipe instead of reading full JSON body into Bash variable
+if ! grep -qiE 'journal\.md|IMPROVEMENTS\.md'; then
   printf '{}\n'
   exit 0
 fi
-printf '%s' "$PAYLOAD" | python3 "$(dirname "$0")/gate-append-only-writes.py" 2>/dev/null || printf '{}\n'
+python3 "$(dirname "$0")/gate-append-only-writes.py" 2>/dev/null || printf '{}\n'
 exit 0

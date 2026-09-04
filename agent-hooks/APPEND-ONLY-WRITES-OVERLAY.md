@@ -7,16 +7,16 @@ This file is the fleet overlay install recipe. Do **not** commit live
 ## Install (isolated copy, never mutate a dirty shared checkout)
 
 1. Copy `gate-append-only-writes.py`, `gate-append-only-writes.sh`, and
-   `gate-append-only-writes.selftest.sh` into `/home/frank/.hermes/agent-hooks/`.
+   `gate-append-only-writes.selftest.sh` into `~/.hermes/agent-hooks/`.
 2. `chmod +x` the two `.sh` files.
 3. Insert this `pre_tool_call` row **before** `gate-second-brain-writes`:
 
 ```yaml
   pre_tool_call:
-    - command: /home/frank/.hermes/agent-hooks/gate-append-only-writes.sh
+    - command: ~/.hermes/agent-hooks/gate-append-only-writes.sh
       matcher: ^(write_file|patch|terminal)$
       timeout: 15
-    - command: /home/frank/.hermes/agent-hooks/gate-second-brain-writes.sh
+    - command: ~/.hermes/agent-hooks/gate-second-brain-writes.sh
       matcher: ^(write_file|patch|terminal)$
       timeout: 20
 ```
