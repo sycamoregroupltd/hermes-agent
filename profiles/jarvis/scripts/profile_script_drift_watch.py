@@ -530,6 +530,15 @@ def inspect_guard_bundle_scripts(root: Path) -> list[dict]:
                 "task": TASK_ID,
             })
             continue
+        if not scripts:
+            alerts.append({
+                "type": "GUARD_BUNDLE_MANIFEST_EMPTY",
+                "profile": profile,
+                "runner": str(runner),
+                "manifests": ["CHECKS", "PIPELINES"],
+                "task": TASK_ID,
+            })
+            continue
         for script in sorted(scripts):
             actual = profile_home / "scripts" / script
             central = root / "scripts" / script

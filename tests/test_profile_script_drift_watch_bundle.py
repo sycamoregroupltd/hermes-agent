@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "profile_script_drift_watch.py"
+RUNNER = Path(__file__).parents[1] / "profiles" / "jarvis" / "scripts" / "cron_guard_bundle_runner.py"
 spec = importlib.util.spec_from_file_location("profile_script_drift_watch", SCRIPT)
 assert spec is not None and spec.loader is not None
 watch = importlib.util.module_from_spec(spec)
@@ -62,6 +63,27 @@ class GuardBundleDriftTests(unittest.TestCase):
             )
             (profile / "profile_only.py").write_text("profile-owned\n")
             self.assertEqual(watch.inspect_guard_bundle_scripts(root), [])
+
+    def test_alerts_when_runner_manifest_is_empty_or_renamed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profiles" / "jarvis" / "scripts"
+            (root / "scripts").mkdir(parents=True)
+            profile.mkdir(parents=True)
+            (profile / "cron_guard_bundle_runner.py").write_text(
+                "RENAMED_CHECKS = {'freshness': {'script': 'probe.py'}}\n"
+            )
+
+            alerts = watch.inspect_guard_bundle_scripts(root)
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["type"], "GUARD_BUNDLE_MANIFEST_EMPTY")
+
+    def test_extracts_freshness_script_from_committed_live_shaped_runner(self):
+        names, error = watch.bundle_script_names(RUNNER)
+
+        self.assertIsNone(error)
+        self.assertIn("dgx_data_freshness_probe.py", names)
 
 
 if __name__ == "__main__":
