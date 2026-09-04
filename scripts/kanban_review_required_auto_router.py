@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from verdict_router import RiskClassification, classify_risk
+
 BOARD_REVIEWERS = {
     "jarvis-os": "os-reviewer",
     "sycode-trading": "trading-risk-reviewer",
@@ -205,6 +207,7 @@ class Candidate:
     block_kind: str | None = None
     block_reason: str | None = None
     route_kind: str = "reviewer"
+    risk_classification: RiskClassification | None = None
 
 
 class RouterError(RuntimeError):
@@ -393,6 +396,32 @@ def comment_excerpt(comments: Iterable[sqlite3.Row], max_len: int = 700) -> str:
     return text
 
 
+# ── Risk manifest and discovery ─────────────────────────────────────────────
+
+CHANGE_MANIFEST_RE = re.compile(r"^\s*change_manifest\s*:\s*(\{.*\})\s*$", re.I | re.M)
+
+
+def risk_classification_from_body(body: str | None) -> RiskClassification:
+    """Classify only an explicit JSON manifest in the source task body."""
+    match = CHANGE_MANIFEST_RE.search(body or "")
+    if not match:
+        return classify_risk([], {})
+    try:
+        manifest = json.loads(match.group(1))
+    except (json.JSONDecodeError, TypeError):
+        return classify_risk(None, None)
+    if not isinstance(manifest, dict):
+        return classify_risk(None, None)
+    return classify_risk(manifest.get("changed_paths"), manifest.get("change_flags"))
+
+
+def risk_reviewer(classification: RiskClassification, board_reviewer: str) -> str:
+    """Keep risk-bearing and fail-closed review cards on the risk lane."""
+    if classification.requires_standalone_risk_review or classification.fail_closed:
+        return "trading-risk-reviewer"
+    return board_reviewer
+
+
 # ── Discovery ────────────────────────────────────────────────────────────────
 
 def discover_candidates(board_dir: Path, boards: Iterable[str] = BOARD_REVIEWERS.keys()) -> list[Candidate]:
@@ -448,8 +477,13 @@ def discover_candidates(board_dir: Path, boards: Iterable[str] = BOARD_REVIEWERS
                     latest_comments = filtered[:5]
                     _reason = source_block_reason(conn, source_id)
                     _title_body = "\n".join([task["title"] or "", comment_excerpt(latest_comments)])
+                    classification = risk_classification_from_body(task["body"])
+                    # Known paper-only work stays below the standalone risk lane;
+                    # CI-green plus inline review remains the mandatory policy.
+                    if not classification.requires_standalone_risk_review and not classification.fail_closed:
+                        continue
                     _route_kind = classify_route_kind(task["block_kind"], _reason, _title_body)
-                    _reviewer = TRUE_OWNER_PROFILES[_route_kind] if _route_kind != "reviewer" else BOARD_REVIEWERS[board]
+                    _reviewer = TRUE_OWNER_PROFILES[_route_kind] if _route_kind != "reviewer" else risk_reviewer(classification, BOARD_REVIEWERS[board])
                     candidates.append(
                         Candidate(
                             board=board,
@@ -465,6 +499,7 @@ def discover_candidates(board_dir: Path, boards: Iterable[str] = BOARD_REVIEWERS
                             block_kind=task["block_kind"],
                             block_reason=_reason,
                             route_kind=_route_kind,
+                            risk_classification=classification,
                         )
                     )
                     continue
@@ -495,8 +530,13 @@ def discover_candidates(board_dir: Path, boards: Iterable[str] = BOARD_REVIEWERS
                     latest_comments = filtered[:5]
                     _reason = source_block_reason(conn, source_id)
                     _title_body = "\n".join([task["title"] or "", comment_excerpt(latest_comments)])
+                    classification = risk_classification_from_body(task["body"])
+                    # Known paper-only work stays below the standalone risk lane;
+                    # CI-green plus inline review remains the mandatory policy.
+                    if not classification.requires_standalone_risk_review and not classification.fail_closed:
+                        continue
                     _route_kind = classify_route_kind(task["block_kind"], _reason, _title_body)
-                    _reviewer = TRUE_OWNER_PROFILES[_route_kind] if _route_kind != "reviewer" else BOARD_REVIEWERS[board]
+                    _reviewer = TRUE_OWNER_PROFILES[_route_kind] if _route_kind != "reviewer" else risk_reviewer(classification, BOARD_REVIEWERS[board])
                     candidates.append(
                         Candidate(
                             board=board,
@@ -512,6 +552,7 @@ def discover_candidates(board_dir: Path, boards: Iterable[str] = BOARD_REVIEWERS
                             block_kind=task["block_kind"],
                             block_reason=_reason,
                             route_kind=_route_kind,
+                            risk_classification=classification,
                         )
                     )
     return candidates
@@ -546,6 +587,7 @@ def review_body(candidate: Candidate) -> str:
         f"Detection source: {candidate.detection_source}\n"
         f"Block kind: {candidate.block_kind or 'unknown'}\n"
         f"True-owner route: {candidate.route_kind} (assigned to `{candidate.reviewer}`)\n"
+        f"Risk classification: {candidate.risk_classification}\n"
         f"Block reason (source): {candidate.block_reason or '(none captured)'}\n"
         f"Idempotency key: `{candidate.idempotency_key}`\n\n"
         "Important: this card is intentionally NOT parent-linked to the source task; "
@@ -606,6 +648,7 @@ def insert_review_card(board_dir: Path, candidate: Candidate) -> str:
                             "source_task": candidate.source_id,
                             "idempotency_key": candidate.idempotency_key,
                             "route_kind": candidate.route_kind,
+                            "risk_classification": candidate.risk_classification.__dict__ if candidate.risk_classification else None,
                             "block_kind": candidate.block_kind,
                             "block_reason": candidate.block_reason,
                         },
