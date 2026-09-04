@@ -53,12 +53,27 @@ assert_allow fail-open-garbage 'not-json'
 
 # Wrapper bypass smoke test: ALLOW_APPEND_ONLY_REWRITE=1 should allow everything
 WRAPPER="$(dirname "$0")/gate-append-only-writes.sh"
-BYPASS_OUT="$(ALLOW_APPEND_ONLY_REWRITE=1 printf '%s' "$EXISTING" | bash "$WRAPPER")"
+BYPASS_OUT="$(printf '%s' "$EXISTING" | ALLOW_APPEND_ONLY_REWRITE=1 bash "$WRAPPER")"
 if [ "$BYPASS_OUT" = "{}" ]; then
   printf 'PASS allow: bypass-wrapper-rewrite\n'
   PASS=$((PASS + 1))
 else
   printf 'FAIL allow: bypass-wrapper-rewrite -> %s\n' "$BYPASS_OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+# Wrapper block smoke test: ensure stdin drain fix works and Python still receives payload
+WRAPPER_BLOCK_OUT="$(printf '%s' "$EXISTING" | bash "$WRAPPER")"
+if python3 - "$WRAPPER_BLOCK_OUT" <<'PY'
+import json, sys
+obj = json.loads(sys.argv[1])
+assert obj.get("decision") == "block" and obj.get("action") == "block", obj
+PY
+then
+  printf 'PASS block: wrapper-stdin-preserved\n'
+  PASS=$((PASS + 1))
+else
+  printf 'FAIL block: wrapper-stdin-preserved -> %s\n' "$WRAPPER_BLOCK_OUT"
   FAIL=$((FAIL + 1))
 fi
 
