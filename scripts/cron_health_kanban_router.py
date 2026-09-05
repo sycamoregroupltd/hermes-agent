@@ -100,12 +100,18 @@ PRIORITY = int(os.environ.get("CRON_HEALTH_KANBAN_PRIORITY", "20"))  # low prior
 # Job-only key for fe49f09f4e53. Live copies of this router currently return
 # the constant "cronhealth_current", which recurrence-suppresses against
 # closed t_a3055cd5. A dedicated key is the already-configured router path
-# without inventing a new cron/loop (t_ed054723).
+# without inventing a new cron/loop (t_ed054723 / t_b2d79d73 splice).
+# Fleet noise MUST keep returning "cronhealth_current" — do not restore
+# content-hash keys (that re-ratchets cards).
 NAMED_JOB_KEY = "cronhealth_jarvis_kanban_classify_failure"
 NAMED_JOB_NAMES = {"kanban-classify-failure-cron", "fe49f09f4e53"}
 
 OPEN_STATUSES = ("ready", "todo", "running", "blocked", "review")
-ACTIVE_STATUSES = ("ready", "todo")  # eligible for auto-complete on resolve
+ACTIVE_STATUSES = ("ready", "todo", "blocked")  # eligible for auto-complete on resolve
+# "blocked" included 2026-08-27: six CRON-HEALTH cards had been auto-blocked by the
+# board and were therefore permanently ineligible for self-resolve -- immortal cards
+# for problems that had long since cleared. A card the detector cannot close is the
+# ratchet half of the same defect as the churning key above.
 CLOSED_STATUSES = ("done", "archived")
 
 # ---------------------------------------------------------------------------
@@ -362,7 +368,7 @@ def _card_status(task_id: str) -> str | None:
     if not db.exists():
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
         con.close()
         return row[0] if row else None
@@ -376,7 +382,7 @@ def _task_created_at(task_id: str) -> float | None:
     if not db.exists():
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute("SELECT created_at FROM tasks WHERE id=?", (task_id,)).fetchone()
         con.close()
         return row[0] if row and row[0] else None
@@ -392,7 +398,7 @@ def _parent_is_usable(parent: str | None) -> bool:
     if not db.exists():
         return False
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute("SELECT status FROM tasks WHERE id=?", (parent,)).fetchone()
         con.close()
         return bool(row) and row[0] not in ("archived",)
@@ -411,7 +417,7 @@ def existing_open_card(key: str) -> str | None:
     if not db.exists():
         return None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         placeholders = ",".join("?" * len(OPEN_STATUSES))
         row = con.execute(
             "SELECT id FROM tasks WHERE idempotency_key=? AND created_by=? "
@@ -430,7 +436,7 @@ def existing_any_card(key: str) -> tuple[str | None, str | None]:
     if not db.exists():
         return None, None
     try:
-        con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         row = con.execute(
             "SELECT id, status FROM tasks WHERE idempotency_key=? AND created_by=? "
             "AND status != 'archived' ORDER BY created_at DESC LIMIT 1",
@@ -525,20 +531,48 @@ def derive_key(alert_text: str) -> str | None:
     to the same key across ticks, so the 14-day dedup actually holds. A NEW
     failing profile/job (or a new issue KIND) changes the key and opens a fresh
     card — the system-crontab targets_<md5> semantics.
-
-    Exception (t_ed054723): if the block contains ERROR jarvis/kanban-classify-
-    failure-cron, return NAMED_JOB_KEY so that job is not recurrence_suppressed
-    against closed t_a3055cd5 / cronhealth_current. Fleet-wide noise still uses
-    the content hash (or live constant-key copies) and is not dumped here.
     """
     issues = parse_alerts(alert_text)
     if not issues:
         return None
+    # 2026-08-27: keyed on the issue KIND SET only, not (kind, profile, job).
+    #
+    # The original triple-keying was deliberate ("a NEW failing profile/job opens
+    # a fresh card") and it is what produced 232 cards against 1 resolve. In a
+    # 74-profile fleet the failing profile/job set drifts on almost every 30m
+    # tick, so a content-derived key is a new key nearly every tick: the audit
+    # log shows dedup hits stopping entirely on 2026-08-22 while creates ran on
+    # to 08-27. A detector that opens cards faster than it can close them is a
+    # ratchet, and the board is the delivery pipe -- flooding it breaks the thing
+    # this feeds.
+    #
+    # The KIND set is a small closed vocabulary, so the same class of problem now
+    # maps to one long-lived owner packet that updates in place and resolves when
+    # clean. Which profiles/jobs are currently failing is volatile detail and
+    # belongs in the body and the recurrence comments, where it already is --
+    # nothing is lost, it just stops minting cards.
+    # CONSTANT key. One current-owner packet, exactly as card t_e9ae306e asked.
+    #
+    # This is the third keying scheme and the first that actually holds. The
+    # (kind, profile, job) triple minted 232 cards against 1 resolve. Narrowing it
+    # to the KIND SET on 2026-08-27 looked right in unit tests -- same kinds gave
+    # the same key -- but LIVE it produced 2 creates and 0 dedupes in 90 minutes,
+    # because in a 74-profile fleet the set of failing KINDS moves per tick too.
+    #
+    # The lesson generalises: ANY content-derived key churns when the content is a
+    # live fault set. Identity must come from the JOB, not from what the job found.
+    # What is currently failing is volatile detail and belongs in the body and the
+    # recurrence comments -- where append_comment() already puts it -- not in the
+    # key. Nothing is lost; it just stops minting cards.
+    #
+    # Exception (t_ed054723 / t_b2d79d73 splice): if the block contains ERROR
+    # jarvis/kanban-classify-failure-cron, return NAMED_JOB_KEY so that job is
+    # not recurrence_suppressed against closed t_a3055cd5 / cronhealth_current.
+    # Fleet-wide noise still uses the LIVE constant key. Do not restore
+    # content-hash keys here.
     if named_job_issues(issues):
         return NAMED_JOB_KEY
-    sig_parts = sorted({f"{i['kind']}|{i['profile']}|{i['job']}" for i in issues})
-    h = hashlib.md5("\n".join(sig_parts).encode("utf-8")).hexdigest()[:12]
-    return f"cronhealth_{h}"
+    return "cronhealth_current"
 
 
 # ---------------------------------------------------------------------------
@@ -867,6 +901,8 @@ def _selftest() -> int:
     k3 = derive_key("  • OVERDUE devops/job-y: old\n  • ERROR jarvis/job-x: boom")
     if k1 != k3:
         failures.append(f"key not order-invariant: {k1} != {k3}")
+    if k1 != "cronhealth_current":
+        failures.append(f"fleet key must stay cronhealth_current after splice, got {k1}")
     named_report = (
         "  • UNPINNED other/job [x]: drift\n"
         "  • ERROR jarvis/kanban-classify-failure-cron: stage failure diag rc=1 reaper rc=0\n"

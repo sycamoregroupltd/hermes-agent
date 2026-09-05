@@ -59,6 +59,10 @@ the failure evidence retained by the cron execution record.
      **only** the named-job lines. That key is **not**
      `cronhealth_current` and is therefore **not** recurrence_suppressed
      against closed `t_a3055cd5` (14d window).
+     **Splice-not-replace (t_b2d79d73):** this named key is spliced into
+     the LIVE constant-key router. Non-named fleet noise still returns
+     `cronhealth_current`. Do not wholesale-replace live with a
+     content-hash `cronhealth_<md5>` router (that re-ratchets cards).
 
 - **Canary exit code (do not contradict)**: the canary Python process
   currently **returns 0** even when it prints ERROR lines. That is

@@ -128,7 +128,9 @@ class NamedJobRouterKeyTest(unittest.TestCase):
         key = router.derive_key(fleet)
         self.assertIsNotNone(key)
         self.assertNotEqual(key, router.NAMED_JOB_KEY)
-        self.assertTrue(key.startswith("cronhealth_"))
+        # Splice-not-replace: fleet noise must keep the LIVE constant key.
+        # A wholesale PR-61 copy would return cronhealth_<md5> and re-ratchet.
+        self.assertEqual(key, "cronhealth_current")
 
     def test_process_tick_creates_named_job_card_not_suppressed(self):
         import subprocess as sp

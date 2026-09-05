@@ -72,6 +72,30 @@ Non-consumers (unchanged):
 Re-run `bash verify_wrapper.sh` on this branch. Wrapper file is not
 modified this round.
 
+## Splice-not-replace (t_b2d79d73)
+
+Do **not** wholesale-replace the live executed router with the PR 61
+repo copy. That copy still used content-hash `cronhealth_<md5>` for
+non-named issues and would re-ratchet cards.
+
+This packet copies the LIVE constant-key router (`return
+"cronhealth_current"`, `ACTIVE_STATUSES` includes `blocked`, sqlite
+`mode=ro` without `immutable=1`) and splices only:
+
+- `NAMED_JOB_KEY = cronhealth_jarvis_kanban_classify_failure`
+- `named_job_issues` / `named_job_alert_text`
+- `derive_key` exception for the named ERROR
+- `process_tick` job-only body when that ERROR is present
+
+Fleet noise without the named job still keys `cronhealth_current`.
+Unittest `test_fleet_noise_without_named_job_does_not_use_named_key`
+now asserts that constant, not a hash prefix.
+
+Executed canary after Frank-GO:
+`profiles/jarvis/scripts/dgx_cron_health_canary.py` (paused_at skip
+kept). `scripts/dgx_cron_health_canary.py` reconverged with the same
+paused_at skip so a scripts-path land cannot drop it.
+
 ## Isolation Holds
 
 - No live cron invocation of `fe49f09f4e53`
