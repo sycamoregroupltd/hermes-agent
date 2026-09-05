@@ -129,6 +129,7 @@ def main() -> int:
     state_file = os.environ.get("RTB_STATE_FILE", "").strip()
 
     runner = ["bash", script] if script.endswith((".sh", ".bash")) else [sys.executable, script]
+    echo = os.environ.get("RTB_ECHO_STDOUT", "").strip().lower() in ("1", "true", "yes")
     try:
         # BUG FIX (2026-08-31, t_8cdc9260): RTB_TIMEOUT was computed above but
         # never actually applied here — this call hardcoded timeout=600
@@ -138,6 +139,18 @@ def main() -> int:
         # 600s (unchanged) for every job that does not set RTB_TIMEOUT.
         r = subprocess.run(runner, capture_output=True, text=True, timeout=RTB_TIMEOUT)
         out, rc = (r.stdout or "").strip(), r.returncode
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, (bytes, bytearray)) else (e.stdout or "")
+        stderr = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or "")
+        partial = (stdout + (("\n" + stderr) if stderr else "")).strip()
+        out = (
+            (partial + "\n\n" if partial else "")
+            + f"## ABORTED @ RTB_TIMEOUT {RTB_TIMEOUT}s\n"
+            + "Producer did not finish before RTB_TIMEOUT. This run is a "
+            + "measurement failure, not a clear verdict. Prior clear/full "
+            + "report is no longer authoritative for this cycle.\n"
+        ).strip()
+        rc = 124
     except Exception as e:
         print(json.dumps({"status": "error", "error": str(e)}), file=sys.stderr)
         return 1
@@ -146,6 +159,12 @@ def main() -> int:
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
     rec = state.get(key, {})
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    # Optional echo so Hermes cron output files are non-silent for jobs
+    # whose primary consumer is a file artifact (fusion-calibration-report).
+    # Default off preserves silent-when-clean for other RTB jobs.
+    if echo and out:
+        print(out)
 
     # --- clean: close and archive untouched report cards -------------------
     if not out:
