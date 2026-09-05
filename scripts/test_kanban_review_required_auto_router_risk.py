@@ -73,6 +73,38 @@ class RiskRoutingIntegrationTests(unittest.TestCase):
             self.assertIn("unknown_input", classification.matched_reasons)
             self.assertEqual(candidates[0].reviewer, "trading-risk-reviewer")
 
+    def test_unknown_manifest_key_fails_closed(self):
+        """Regression for trading-risk-reviewer finding on PR #53: an extra,
+        unrecognised manifest key (schema drift or an injected override) must
+        not be silently ignored — the whole manifest becomes untrusted."""
+        body = (
+            'change_manifest: {"changed_paths": ["docs/review.md"], '
+            '"change_flags": {"docs": true, "paper_only": true}, "unexpected": true}'
+        )
+        candidates = self.discover(body)
+        self.assertEqual(len(candidates), 1)
+        classification = candidates[0].risk_classification
+        self.assertTrue(classification.fail_closed)
+        self.assertIn("unknown_input", classification.matched_reasons)
+        self.assertEqual(candidates[0].reviewer, "trading-risk-reviewer")
+
+    def test_duplicate_conflicting_manifest_lines_fail_closed(self):
+        """Regression for trading-risk-reviewer finding on PR #53: two
+        change_manifest: lines in one body (one paper-only, one high-risk) must
+        not silently pick either one — an ambiguous manifest is untrusted."""
+        body = (
+            'change_manifest: {"changed_paths": ["docs/review.md"], '
+            '"change_flags": {"docs": true, "paper_only": true}}\n'
+            'change_manifest: {"changed_paths": ["server/orders/close.ts"], '
+            '"change_flags": {}}\n'
+        )
+        candidates = self.discover(body)
+        self.assertEqual(len(candidates), 1)
+        classification = candidates[0].risk_classification
+        self.assertTrue(classification.fail_closed)
+        self.assertIn("unknown_input", classification.matched_reasons)
+        self.assertEqual(candidates[0].reviewer, "trading-risk-reviewer")
+
     def test_title_only_negation_cannot_override_risky_manifest(self):
         tmp, db = self.make_board('change_manifest: {"changed_paths":["server/positions/close.ts"],"change_flags":{"paper_only":true}}')
         self.addCleanup(tmp.cleanup)

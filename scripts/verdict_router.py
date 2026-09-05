@@ -101,6 +101,7 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
         stripped = raw_path.strip()
         raw_slash = stripped.replace("\\", "/")
         if raw_slash.startswith("/") or ".." in raw_slash.split("/"):
+            reasons.add("unknown_input")
             fail_closed = True
             continue
         # Strip only a leading "./" prefix (not arbitrary dots/slashes)
@@ -109,6 +110,7 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
             path = path[2:]
         path = path.casefold()
         if not path or path.startswith("/") or ".." in path.split("/"):
+            reasons.add("unknown_input")
             fail_closed = True
             continue
         normalised_paths.append(path)

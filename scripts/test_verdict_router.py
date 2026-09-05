@@ -944,6 +944,19 @@ class RiskTierClassifierTests(unittest.TestCase):
                 self.assertTrue(result.fail_closed)
                 self.assertIn("unknown_input", result.matched_reasons)
 
+    def test_traversal_and_absolute_paths_fail_closed_even_with_safe_flag(self) -> None:
+        """Regression for trading-risk-reviewer finding on PR #53 (verdict_router.py:95-99):
+        a raw traversal or absolute path must fail closed even when paired with an
+        otherwise-safe structured flag (docs/paper_only=True). Stripping only a
+        leading './' before validating let '../x', '/x', and '..\\x' normalize to a
+        benign-looking relative path and clear unknown_input — independently
+        reproduced by the reviewer with exactly these three inputs."""
+        for path in ("../docs/review.md", "/docs/review.md", "..\\docs\\review.md"):
+            with self.subTest(path=path):
+                result = vr.classify_risk([path], {"docs": True, "paper_only": True})
+                self.assertTrue(result.fail_closed)
+                self.assertIn("unknown_input", result.matched_reasons)
+
     def test_conflicting_paper_only_and_risky_flag_fails_closed(self) -> None:
         result = vr.classify_risk(["docs/summary.md"], {"paper_only": True, "live_execution": True})
         self.assertTrue(result.requires_standalone_risk_review)
