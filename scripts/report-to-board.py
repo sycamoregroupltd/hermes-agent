@@ -17,10 +17,34 @@ SHAPE — the error-digest pattern generalised, and the constraints are the poin
   cron records, so it is passed through untouched.
 
 CONFIG (env, set per job by its shim):
-  RTB_SCRIPT  canonical script to run (required)
-  RTB_KEY     stable job identity for the idempotency key (required)
-  RTB_TITLE   card title (defaults to RTB_KEY)
-  RTB_BOARD   target board (default jarvis-os)
+  RTB_SCRIPT     canonical script to run (required)
+  RTB_KEY        stable job identity for the idempotency key (required)
+  RTB_TITLE      card title (defaults to RTB_KEY)
+  RTB_BOARD      target board (default jarvis-os)
+  RTB_STATE_FILE optional path to the wrapped job's OWN state file, for
+                  falling-edge jobs (t_06b884a5). See still_active() below.
+
+FALLING-EDGE FALSE-CLEAR (t_06b884a5, live incident 2026-09-05T16:25:01Z):
+  A falling-edge job (e.g. nous_balance_watchdog.py) alerts once when a
+  condition crosses a threshold, then goes SILENT while the condition
+  persists (dedup re-remind, default 24h). Empty stdout from such a job is
+  ambiguous — it means EITHER "genuinely healthy" OR "still bad, just
+  deduped" — but the close path below historically treated ALL empty stdout
+  as "condition cleared" and completed+archived the card, including blocked
+  cards. That auto-closed a card while the wrapped job's own state file still
+  recorded the bad condition (usable=0.0 < threshold=5.0), silently dropping
+  a live spend-gate.
+  Fix: an opt-in RTB_STATE_FILE hook. A job's shim points RTB_STATE_FILE at
+  the same state path the wrapped script itself owns. That script's contract
+  (already true for nous_balance_watchdog.py, and the general falling-edge
+  shape used by position_age_watchdog.py / dgx_data_freshness_probe.py) is:
+  state file PRESENT == still tracking an active/bad condition (including a
+  JWT/transient-read hiccup that intentionally preserves prior state); state
+  file ABSENT == the job called clear_state() on genuine recovery. When
+  RTB_STATE_FILE is set, empty stdout + a present state file means STILL
+  ACTIVE, not a clear: RTB comments instead of completing/archiving. Jobs
+  that don't set RTB_STATE_FILE keep the original close-on-silence behavior
+  unchanged.
 """
 from __future__ import annotations
 import hashlib, json, os, re, subprocess, sys, time
@@ -75,6 +99,24 @@ def persist_state(state: dict) -> None:
     STATE.write_text(json.dumps(state, indent=1, sort_keys=True))
 
 
+def still_active(state_file: str) -> bool:
+    """True when a falling-edge job's OWN state file says the condition is
+    still live, so empty stdout must NOT be read as "cleared" (t_06b884a5).
+
+    Contract shared by every first_seen.json-style falling-edge script in
+    this fleet (nous_balance_watchdog.py, position_age_watchdog.py,
+    dgx_data_freshness_probe.py): the script writes this file while the bad
+    condition persists — including on a transient read hiccup, where it
+    deliberately leaves prior state untouched rather than clearing it — and
+    calls clear_state() (unlink) only on genuine recovery. So file PRESENT
+    means still-bad-just-deduped; file ABSENT means genuinely recovered.
+    An unreadable/corrupt file fails closed (treated as still-active) rather
+    than risking a second false-clear on top of a read error.
+    """
+    p = Path(state_file)
+    return p.exists()
+
+
 def main() -> int:
     script = os.environ.get("RTB_SCRIPT", "").strip()
     key = os.environ.get("RTB_KEY", "").strip()
@@ -84,6 +126,7 @@ def main() -> int:
         return 2
     board = os.environ.get("RTB_BOARD", "jarvis-os").strip()
     title = os.environ.get("RTB_TITLE", key).strip()
+    state_file = os.environ.get("RTB_STATE_FILE", "").strip()
 
     runner = ["bash", script] if script.endswith((".sh", ".bash")) else [sys.executable, script]
     try:
@@ -106,10 +149,27 @@ def main() -> int:
 
     # --- clean: close and archive untouched report cards -------------------
     if not out:
+        # t_06b884a5: a falling-edge job's empty stdout is ambiguous — it
+        # means EITHER genuine recovery OR still-bad-but-deduped (default
+        # 24h re-remind). When the job's own state file says the condition
+        # is still live, do NOT treat this run as a clear: skip straight to
+        # the "owner comment" path below so a blocked/owned card is never
+        # silently completed+archived while the underlying condition is
+        # unresolved. Jobs without RTB_STATE_FILE are unaffected.
+        job_still_active = bool(state_file) and still_active(state_file)
         if rec.get("card_id"):
             card_id = rec["card_id"]
             card_board = rec.get("board", board)
             status = card_status(card_id, card_board)
+            if job_still_active:
+                if status not in {None, "done", "completed", "cancelled", "archived"}:
+                    hermes("kanban", "--board", card_board, "comment", "--author",
+                           "report-to-board", card_id,
+                           f"STILL ACTIVE {stamp}: '{title}' reported nothing this run "
+                           "(falling-edge dedup window), but its own state file still "
+                           "shows the condition live. NOT auto-closing — see "
+                           f"{state_file}.")
+                return rc
             if status in {"done", "completed", "cancelled"}:
                 arc, _ = hermes("kanban", "--board", card_board, "archive", card_id)
                 if arc == 0:
@@ -118,7 +178,15 @@ def main() -> int:
             elif status == "archived":
                 state.pop(key, None)
                 persist_state(state)
-            elif status in {"ready", "todo", "triage", "scheduled"}:
+            # OPS: RTB-owned cards (keyed in report-to-board.json) may land in
+            # blocked while the condition is live; include blocked in the
+            # close-set so a clean RESOLVED run can complete+archive. Scoped to
+            # this RTB key path only — do not mass-close unrelated blocked cards.
+            # NOTE: job_still_active (checked above) already intercepts and
+            # returns before this branch when the wrapped job's own state file
+            # says the condition persists, so a blocked card backed by a live
+            # falling-edge state file never reaches this close path (t_06b884a5).
+            elif status in {"ready", "todo", "triage", "scheduled", "blocked"}:
                 crc, _ = hermes("kanban", "--board", card_board, "complete", card_id,
                                 "--summary",
                                 f"Auto-closed {stamp}: '{title}' reported nothing this run, so the "
