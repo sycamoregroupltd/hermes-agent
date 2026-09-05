@@ -20,7 +20,9 @@ t_bce90116 (2026-09-05): every fingerprint SQL is a nested-loop join from
 signal_journeys.triggered_at (indexed) to signal_fingerprints.correlation_id.
 Unbounded count(*)/max(created_at) on signal_fingerprints is a parallel seq
 scan (5.4M rows, no created_at index) and is forbidden. statement_timeout
-default 20s, process wall 30s, shared flock with the DB-latency collector.
+default 20s, per-query psql backstop 25s, process probe budget 55s, shim wall
+60s (still << 60m cadence). Shared flock with the DB-latency collector.
+Stmt/wall timeout is a watchdog exit-3 probe failure, never silent healthy.
 
 THRESHOLDS (from WS01 I-3 / F1.4 / root-cause doc 2026-08-06)
 -------------------------------------------------------------
@@ -53,6 +55,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -91,10 +94,12 @@ PSQL = ["psql", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres", "-d", "postgr
 # t_bce90116: 5.4M-row signal_fingerprints has NO created_at index; unbounded
 # count(*)/max(created_at) was a parallel seq scan (EXPLAIN, 2026-09-05). Bound
 # every probe through signal_journeys.triggered_at (idx_signal_journeys_triggered_corr)
-# nested-loop join to idx_signal_fingerprints_correlation_id. Wall/statement
-# timeouts stay well under 30s so a 15m/60m cron cannot overlap a full-table scan.
+# nested-loop join to idx_signal_fingerprints_correlation_id. 20s statement
+# timeout is the SQL bound; 25s psql backstop; 55s remaining-time budget so
+# four serial queries cannot overrun the 60s shim wall (still << 60m cadence).
 STMT_TIMEOUT = os.getenv("GQT_FP_STMT_TIMEOUT", "20s")
-PSQL_TIMEOUT_S = int(os.getenv("GQT_FP_PSQL_TIMEOUT_S", "30"))
+PSQL_TIMEOUT_S = int(os.getenv("GQT_FP_PSQL_TIMEOUT_S", "25"))
+PROBE_BUDGET_S = float(os.getenv("GQT_FP_PROBE_BUDGET_S", "55"))
 LOCK_PATH = os.getenv(
     "GQT_FP_LOCK",
     "/home/frank/.hermes/profiles/trading-devops/cron/state/sycode-oltp-probe.lock",
@@ -172,14 +177,35 @@ def num(v):
         return None
 
 
+def _is_timeout_err(err: str | None) -> bool:
+    if not err:
+        return False
+    u = err.lower()
+    return any(s in u for s in (
+        "harness timeout",
+        "probe budget exhausted",
+        "canceling statement",
+        "statement timeout",
+        "query_canceled",
+    ))
+
+
 def measure():
     """Returns a dict of the G-F1 fingerprint lag measurement (or error dict)."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    deadline = time.monotonic() + PROBE_BUDGET_S
+
+    def run_budgeted(sql):
+        remaining = deadline - time.monotonic()
+        if remaining <= 1:
+            return None, "harness timeout: probe budget exhausted"
+        timeout = max(1, min(PSQL_TIMEOUT_S, int(remaining)))
+        return run_psql(sql, timeout=timeout)
 
     # Core: producer liveness lag + 24h inserts. Bound through journeys.triggered_at
     # (indexed) + fingerprint correlation_id join. NEVER scan signal_fingerprints
     # without a triggered_at window — there is no created_at index.
-    raw, err = run_psql("""
+    raw, err = run_budgeted("""
     SELECT count(*) AS inserts_24h,
            max(fp.created_at) AS max_created,
            round(extract(epoch FROM (now()-max(fp.created_at)))/3600.0, 3) AS lag_h
@@ -199,12 +225,14 @@ def measure():
     lag_h = num(lag_h_raw) if lag_h_raw not in (None, "", "None") else None
 
     # Per-day insert buckets (last 7d) - liveness history, journeys-windowed.
-    raw2, err2 = run_psql("""
+    raw2, err2 = run_budgeted("""
     SELECT to_char(date_trunc('day', fp.created_at), 'YYYY-MM-DD') AS d, count(*)
     FROM signal_journeys sj
     JOIN signal_fingerprints fp ON fp.correlation_id = sj.correlation_id
     WHERE sj.triggered_at >= now()-interval '7 days'
     GROUP BY 1 ORDER BY 1;""")
+    if _is_timeout_err(err2):
+        return {"error": err2, "idempotency_key": KEY, "measured_at": stamp}
     daily = {}
     if err2:
         daily = {"error": err2}
@@ -216,7 +244,7 @@ def measure():
 
     # Lag distribution: fingerprint write time minus journey trigger time (minutes)
     # over the trailing 7d of journeys (indexed), not a 7d seq scan of fingerprints.
-    raw3, err3 = run_psql("""
+    raw3, err3 = run_budgeted("""
     WITH fp AS (
       SELECT extract(epoch FROM (fp.created_at - sj.triggered_at))/60.0 AS lag_min
       FROM signal_journeys sj
@@ -231,6 +259,8 @@ def measure():
            round(max(lag_min)::numeric, 2),
            count(*)
     FROM fp;""")
+    if _is_timeout_err(err3):
+        return {"error": err3, "idempotency_key": KEY, "measured_at": stamp}
     if err3:
         lag_dist = {"error": err3}
     else:
@@ -245,13 +275,15 @@ def measure():
 
     # 7d journey:fingerprint ratio. Journeys via triggered_at index; fingerprints
     # via the same nested-loop join. Never count(*) the whole fingerprints table.
-    raw4, err4 = run_psql("""
+    raw4, err4 = run_budgeted("""
     SELECT (SELECT count(*)
             FROM signal_journeys sj
             JOIN signal_fingerprints fp ON fp.correlation_id = sj.correlation_id
             WHERE sj.triggered_at >= now()-interval '7 days') AS n_fp_7d,
            (SELECT count(*) FROM signal_journeys
             WHERE triggered_at >= now()-interval '7 days') AS n_journeys_7d;""")
+    if _is_timeout_err(err4):
+        return {"error": err4, "idempotency_key": KEY, "measured_at": stamp}
     if err4:
         ratio7 = {"error": err4}
     else:
