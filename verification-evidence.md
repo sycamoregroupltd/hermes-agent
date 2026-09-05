@@ -1,196 +1,107 @@
-# Verification Evidence: Consumer Fix for kanban_classify_failure_and_reaper.sh
+# Verification Evidence: job-only named consumer for kanban-classify-failure-cron
 
-**Task**: jarvis-os/t_a45e23da — Propagate isolated stage failures from reaper wrapper
-**Prior PR**: https://github.com/sycamoregroupltd/hermes-agent/pull/47 (MERGED at
-`c79356d5520fc6a23da85c755eec977a7346d42a` from head
-`9353fbc3f754cdbcb134e70b1a0a56a9f4197c04`; Isolation HOLD was draft-only —
-this follow-up does not merge)
-**Status**: consumer-path fix complete, tests added, PR remains draft
+**Task**: jarvis-os/t_ed054723 — NEEDS-FIX r7 named-consumer proof
+**Parent**: jarvis-os/t_a45e23da (wrapper OR-propagation already landed)
+**Isolation HOLD**: draft PR only; no merge; no live `~/.hermes` mutate;
+no new cron/loop; no credentials/deploy.
 
-## Summary
+## Round-7 blockers addressed
 
-The wrapper OR-propagation from PR #47 was correct but insufficient. The named
-consumer (cron-health canary → kanban router → jarvis-os/jarvis-os-pm board)
-never received alerts because the guard-bundle runner discarded output when
-checks exited 0. Three fixes were required:
+1. **P1 — Do not treat blanket canary `sys.exit(1)` as job-only proof.**
+   Round-6 `sys.exit(1)` on any `if bad` dumps every existing canary ERROR
+   into guard-bundle-tick-15m. Live MAX_ALERTS=25 already truncates; this
+   job's ERROR sorts after UNPINNED/DRIFT and would be `… N more`.
+   **Fix:** revert that as the consumer proof. Canary still prints ERROR
+   lines and **exits 0**. Wrapper already routes non-empty stdout to
+   `cron_health_kanban_router.py` regardless of canary rc. Canary
+   `select_shown_alerts` reserves a MAX_ALERTS slot so
+   `ERROR jarvis/kanban-classify-failure-cron` is always in
+   consumer-visible output.
 
-1. **Canary exit code** (`profiles/jarvis/scripts/dgx_cron_health_canary.py`):
-   Added `sys.exit(1)` after printing ERROR findings so the canary process
-   exits with failure rc when it detects issues.
+2. **P1 — Router constant `cronhealth_current` recurrence-suppresses
+   against closed t_a3055cd5 (14d window).** Even a printed ERROR does not
+   create a new jarvis-os-pm card today.
+   **Fix:** amend the already-configured router (no new cron) so this
+   job's ERROR uses dedicated key `cronhealth_jarvis_kanban_classify_failure`
+   and a job-only alert body. That key is not the closed fleet card.
 
-2. **Wrapper comment clarity** (`scripts/cron_health_canary_wrapper.sh`):
-   Added comment explaining that wrapper must preserve canary's failure rc
-   for guard-bundle propagation (wrapper already exits with `$rc`; no code
-   change needed, clarified intent).
+3. **P2 — verification-matrix.md contradiction.** Matrix must not claim
+   the canary currently returns 0 while also treating `sys.exit(1)` as
+   the consumer, or claim exit 0 after a PR that exits 1. Round-7 matrix
+   states the canary **returns 0** when it prints ERROR lines, and that
+   this is intentional.
 
-3. **Tests** (`tests/test_cron_health_consumer_path.py`):
-   Added comprehensive unit tests covering the three-hop chain:
-   - Canary exit codes (healthy=0, unhealthy=1)
-   - Wrapper rc propagation
-   - Guard-bundle output suppression rules
+## Producer / store / deliver (LIVE, read-only)
 
-## Root Cause Analysis (from os-reviewer findings)
-
-### Finding 1: Guard-bundle runner discards stdout/stderr when check rc == 0
-
-In `profiles/jarvis/scripts/cron_guard_bundle_runner.py` lines 256-257:
-```python
-if proc.returncode != 0:
-    # collect output...
-return 0, ""  # healthy -> suppress
-```
-
-This is by design: a watchdog bundle stays silent (empty stdout) when all
-checks pass. Only failures produce output. The canary printed ERROR lines
-but still exited 0, so runner suppressed them.
-
-### Finding 2: Canary printed ERROR but exited 0
-
-`dgx_cron_health_canary.py` lines 309-320 (before fix):
-```python
-if bad:
-    # ... print findings ...
-    print("\n".join(lines))
-    # NO explicit sys.exit(1) here
-
-if __name__ == "__main__":
-    main()  # implicit exit 0
-```
-
-The canary printed the 🔴 CRON HEALTH block with ERROR entries but never
-set a failure exit code, so Python exited 0.
-
-### Finding 3: Router is invoked but upstream suppression prevents board filing
-
-The wrapper (`cron_health_canary_wrapper.sh`) routes non-empty canary output
-to `cron_health_kanban_router.py` and exits with the canary's rc (line 39).
-But since the canary exited 0, the wrapper also exited 0, and the
-guard-bundle runner saw rc=0 and returned `(0, "")` — suppressing the entire
-output chain before it reached the aggregate failure report.
-
-The router WAS invoked during the wrapper's execution, but the board filing
-was never reflected in the bundle's collected failures list because the
-bundle only aggregates output from checks that exit nonzero.
-
-## Changes Made
-
-### 1. Canary Exit Code Fix
-
-```diff
---- a/profiles/jarvis/scripts/dgx_cron_health_canary.py
-+++ b/profiles/jarvis/scripts/dgx_cron_health_canary.py
-@@ -317,6 +317,11 @@ def main():
-         if len(bad) > len(shown):
-             lines.append(f"  • … {len(bad) - len(shown)} more")
-         lines.append(f"Source: direct {PROFILES_DIR}/*/cron/jobs.json scan; silent when healthy.")
-         print("\n".join(lines))
-+        # Exit 1 when findings exist so guard-bundle runner propagates the output
-+        # to the kanban router (t_a45e23da). The wrapper routes non-empty stdout
-+        # to cron_health_kanban_router.py, but the bundle runner only preserves
-+        # output when the wrapper's rc != 0. Previously this always exited 0,
-+        # so ERROR lines were suppressed before reaching the consumer.
-+        sys.exit(1)
-```
-
-### 2. Wrapper Comment Clarity
-
-```diff
---- a/scripts/cron_health_canary_wrapper.sh
-+++ b/scripts/cron_health_canary_wrapper.sh
-@@ -33,6 +33,9 @@ if [ -z "$OUT" ]; then
- fi
- 
- # UNHEALTHY: route the alert block to the board, then re-emit for delivery.
-+# Exit with the canary's failure rc (t_a45e23da) so guard-bundle runner
-+# preserves the output. Previously the wrapper always exited 0 on non-empty
-+# stdout, suppressing propagation to the kanban consumer.
- CRON_HEALTH_HEALTHY=0 "$ROUTER" <<< "$OUT" >>"$LOG" 2>&1 \
-     || echo "CRON_HEALTH_ROUTER_FAILED rc=$? on unhealthy route $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG"
-```
-
-### 3. Comprehensive Tests
-
-Created `tests/test_cron_health_consumer_path.py` with 8 test cases covering:
-
-- **CronHealthCanaryExitCodeTest** (3 tests):
-  - Healthy canary exits 0 with no output
-  - Canary with ERROR findings exits 1
-  - Canary with failed job exits 1
-
-- **CronHealthWrapperPropagationTest** (3 tests):
-  - Wrapper exits 0 when canary is healthy
-  - Wrapper exits 1 when canary finds issues
-  - Wrapper preserves canary failure rc even when router succeeds
-
-- **GuardBundleRunnerOutputPropagationTest** (2 tests):
-  - Runner suppresses output when check exits 0 (verifies design)
-  - Runner preserves output when check exits nonzero (verifies design)
-
-All tests pass:
-```
-Ran 8 tests in 0.133s
-OK
-```
-
-## Consumer Path Verification (LIVE config, read-only)
-
-### Producer
 Live job `fe49f09f4e53` (`kanban-classify-failure-cron`) in
 `/home/frank/.hermes/profiles/jarvis/cron/jobs.json`:
-- `enabled: true`
-- `schedule: every 30m`
-- `no_agent: true`
+- `enabled: true`, `every 30m`, `no_agent: true`
 - `script: kanban_classify_failure_and_reaper.sh`
-- `deliver: local` (execution record only, no chat delivery)
+- `deliver: local` — **local execution record only**, not Discord
 
-### Store
-Jarvis profile cron store (`jobs.json`, `executions.db`):
-- Nonzero wrapper exit → `last_status=error`
-- `last_error` captures stage return codes
-- `failure_streak` increments
+Exact executed wrapper SHA256 (must remain):
+`73ba7aa272433f293cf27e9912fe480dbfb8acda487709a9ba08a24c507f1cdd`
 
-### Consumer (LIVE, already configured)
-1. **Guard-bundle tick** (`guard-bundle-tick-15m`, job `83cf8659dc32`):
-   Enabled, every 15m, `deliver=local`
-2. **Absorbed check** (`cron-health-canary`, 30m interval):
-   Runs `cron_health_canary_wrapper.sh` → `dgx_cron_health_canary.py`
-3. **Canary scans** live `profiles/*/cron/jobs.json`:
-   Emits `ERROR jarvis/kanban-classify-failure-cron: <last_error>` when
-   `last_status` is `error` or `failed`
-4. **Wrapper routes** non-empty canary stdout to
-   `cron_health_kanban_router.py` with `CRON_HEALTH_HEALTHY=0`
-5. **Router files/updates** jarvis-os board card assigned to `jarvis-os-pm`
+## Named consumer (already-configured path)
 
-With the fix:
-- Canary exits 1 when it prints ERROR lines
-- Wrapper preserves rc=1
-- Guard-bundle runner sees rc=1, includes output in aggregate report
-- Bundle exits 1, triggering `last_status=error` for the 15m bundle job
-- Next canary scan detects the bundle job's error and routes it
-- Consumer loop: isolated stage failures → cron error → canary detection →
-  kanban board alert
+```
+fe49f09f4e53 last_status=error
+  -> dgx_cron_health_canary.py prints ERROR jarvis/kanban-classify-failure-cron
+     (reserved in shown[:MAX_ALERTS]; canary rc=0)
+  -> cron_health_canary_wrapper.sh pipes non-empty stdout to
+     cron_health_kanban_router.py (CRON_HEALTH_HEALTHY=0)
+  -> router key cronhealth_jarvis_kanban_classify_failure
+  -> jarvis-os card assigned jarvis-os-pm (job-only body)
+```
 
-## Behavioral Matrix (unchanged from PR #47)
+Non-consumers (unchanged):
+- `hermes_cron_failure_monitor.py` crontab → `/tmp` log
+- `cron_liveness_wrapper.sh` missed-occurrence only
+- loop-registry / cron-snapshots discord deliver (stale)
+- guard-bundle RTB card (requires bundled check rc != 0)
 
-From `profiles/jarvis/scripts/kanban_classify_failure_and_reaper.sh`:
+## Behavioral matrix (unchanged wrapper)
 
 | diag rc | reaper rc | wrapper rc | behavior |
 |---------|-----------|------------|----------|
-| 0       | 0         | 0          | Clean no-op, silent success |
-| 1       | 0         | 1          | Isolated diag failure reaches consumer |
-| 0       | 1         | 1          | Isolated reaper failure reaches consumer |
-| 1       | 1         | 1          | Both failures visible in stderr |
+| 0       | 0         | 0          | Clean no-op |
+| 1       | 0         | 1          | Isolated diag failure |
+| 0       | 1         | 1          | Isolated reaper failure |
+| 1       | 1         | 1          | Both failures visible |
 
-All four cases emit both stage return codes in the `stage failure` stderr
-marker when either stage is nonzero. This is the failure evidence retained
-by the cron execution record and surfaced by the canary.
+Re-run `bash verify_wrapper.sh` on this branch. Wrapper file is not
+modified this round.
+
+## Splice-not-replace (t_b2d79d73)
+
+Do **not** wholesale-replace the live executed router with the PR 61
+repo copy. That copy still used content-hash `cronhealth_<md5>` for
+non-named issues and would re-ratchet cards.
+
+This packet copies the LIVE constant-key router (`return
+"cronhealth_current"`, `ACTIVE_STATUSES` includes `blocked`, sqlite
+`mode=ro` without `immutable=1`) and splices only:
+
+- `NAMED_JOB_KEY = cronhealth_jarvis_kanban_classify_failure`
+- `named_job_issues` / `named_job_alert_text`
+- `derive_key` exception for the named ERROR
+- `process_tick` job-only body when that ERROR is present
+
+Fleet noise without the named job still keys `cronhealth_current`.
+Unittest `test_fleet_noise_without_named_job_does_not_use_named_key`
+now asserts that constant, not a hash prefix.
+
+Executed canary after Frank-GO:
+`profiles/jarvis/scripts/dgx_cron_health_canary.py` (paused_at skip
+kept). `scripts/dgx_cron_health_canary.py` reconverged with the same
+paused_at skip so a scripts-path land cannot drop it.
 
 ## Isolation Holds
 
 - No live cron invocation of `fe49f09f4e53`
 - No jobs.json or crontab edit
 - No new cron/loop
+- No live `~/.hermes` mutate
 - No vault write
-- No merge (PR remains draft)
+- No merge
 - No credential/deploy/runtime/DB/trading/board mutation
-- Tests are pure unit tests with temp directories
