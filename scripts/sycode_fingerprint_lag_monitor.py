@@ -16,6 +16,12 @@ The JSONL file is the queryable store AND the anomaly log: any record whose
 `alerts` list is non-empty is an anomaly (criterion breached). A vault note is
 generated from the latest record (see --emit-vault).
 
+t_bce90116 (2026-09-05): every fingerprint SQL is a nested-loop join from
+signal_journeys.triggered_at (indexed) to signal_fingerprints.correlation_id.
+Unbounded count(*)/max(created_at) on signal_fingerprints is a parallel seq
+scan (5.4M rows, no created_at index) and is forbidden. statement_timeout
+default 20s, process wall 30s, shared flock with the DB-latency collector.
+
 THRESHOLDS (from WS01 I-3 / F1.4 / root-cause doc 2026-08-06)
 -------------------------------------------------------------
   I-3 A  producer liveness lag_h < 1h          (alert if lag >1h per F1.4)
@@ -41,6 +47,7 @@ EXIT CODES
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -81,7 +88,17 @@ KANBAN_ENV_OVERRIDES = ("HERMES_KANBAN_DB", "HERMES_KANBAN_BOARD",
 
 PSQL = ["psql", "-h", "127.0.0.1", "-p", "5432", "-U", "postgres", "-d", "postgres",
         "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1"]
-STMT_TIMEOUT = "120s"
+# t_bce90116: 5.4M-row signal_fingerprints has NO created_at index; unbounded
+# count(*)/max(created_at) was a parallel seq scan (EXPLAIN, 2026-09-05). Bound
+# every probe through signal_journeys.triggered_at (idx_signal_journeys_triggered_corr)
+# nested-loop join to idx_signal_fingerprints_correlation_id. Wall/statement
+# timeouts stay well under 30s so a 15m/60m cron cannot overlap a full-table scan.
+STMT_TIMEOUT = os.getenv("GQT_FP_STMT_TIMEOUT", "20s")
+PSQL_TIMEOUT_S = int(os.getenv("GQT_FP_PSQL_TIMEOUT_S", "30"))
+LOCK_PATH = os.getenv(
+    "GQT_FP_LOCK",
+    "/home/frank/.hermes/profiles/trading-devops/cron/state/sycode-oltp-probe.lock",
+)
 
 # Precise read-only guard: match whole SQL statement keywords with surrounding spaces.
 _FORBIDDEN = (" INSERT ", " UPDATE ", " DELETE ", " DROP ", " ALTER ",
@@ -108,8 +125,26 @@ def read_mutation_lock():
         return {"raw": f"lock unreadable: {e}"}
 
 
-def run_psql(sql, timeout=180):
+def acquire_oltp_lock():
+    """Non-blocking exclusive flock shared with the DB-latency collector shim.
+
+    Returns an open fd that MUST stay open for the process lifetime, or None
+    if another OLTP probe already holds the lock (caller should skip).
+    """
+    os.makedirs(os.path.dirname(LOCK_PATH), exist_ok=True)
+    fd = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def run_psql(sql, timeout=None):
     """Host-local psql (SOUL convention). Returns (stdout_lines, error). Never raises."""
+    if timeout is None:
+        timeout = PSQL_TIMEOUT_S
     up = sql.upper()
     for w in _FORBIDDEN:
         if w in up:
@@ -141,29 +176,34 @@ def measure():
     """Returns a dict of the G-F1 fingerprint lag measurement (or error dict)."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Core: total, max created_at, producer liveness lag, 24h inserts
+    # Core: producer liveness lag + 24h inserts. Bound through journeys.triggered_at
+    # (indexed) + fingerprint correlation_id join. NEVER scan signal_fingerprints
+    # without a triggered_at window — there is no created_at index.
     raw, err = run_psql("""
-    SELECT count(*) AS total,
-           max(created_at) AS max_created,
-           round(extract(epoch FROM (now()-max(created_at)))/3600.0, 3) AS lag_h,
-           count(*) FILTER (WHERE created_at >= now()-interval '24 hours') AS inserts_24h
-    FROM signal_fingerprints;""")
+    SELECT count(*) AS inserts_24h,
+           max(fp.created_at) AS max_created,
+           round(extract(epoch FROM (now()-max(fp.created_at)))/3600.0, 3) AS lag_h
+    FROM signal_journeys sj
+    JOIN signal_fingerprints fp ON fp.correlation_id = sj.correlation_id
+    WHERE sj.triggered_at >= now()-interval '24 hours';""")
     if err:
         return {"error": err, "idempotency_key": KEY, "measured_at": stamp}
     parts = (raw[0] if raw else "").split("|")
-    total = parts[0] if len(parts) > 0 else "0"
+    inserts_24h = parts[0] if len(parts) > 0 else "0"
     max_created = parts[1] if len(parts) > 1 else None
     lag_h_raw = parts[2] if len(parts) > 2 else None
-    inserts_24h = parts[3] if len(parts) > 3 else "0"
+    # Unbounded COUNT(*) on signal_fingerprints was the 5.4M seq-scan; drop it.
+    total = "bounded_24h"
     if not max_created or max_created in ("", "None"):
         max_created = None
     lag_h = num(lag_h_raw) if lag_h_raw not in (None, "", "None") else None
 
-    # Per-day insert buckets (last 7d) - liveness history
+    # Per-day insert buckets (last 7d) - liveness history, journeys-windowed.
     raw2, err2 = run_psql("""
-    SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS d, count(*)
-    FROM signal_fingerprints
-    WHERE created_at >= now()-interval '7 days'
+    SELECT to_char(date_trunc('day', fp.created_at), 'YYYY-MM-DD') AS d, count(*)
+    FROM signal_journeys sj
+    JOIN signal_fingerprints fp ON fp.correlation_id = sj.correlation_id
+    WHERE sj.triggered_at >= now()-interval '7 days'
     GROUP BY 1 ORDER BY 1;""")
     daily = {}
     if err2:
@@ -175,13 +215,15 @@ def measure():
                 daily[f[0]] = f[1]
 
     # Lag distribution: fingerprint write time minus journey trigger time (minutes)
-    # over the trailing 7d of fingerprints.
+    # over the trailing 7d of journeys (indexed), not a 7d seq scan of fingerprints.
     raw3, err3 = run_psql("""
     WITH fp AS (
-      SELECT extract(epoch FROM (created_at - triggered_at))/60.0 AS lag_min
-      FROM signal_fingerprints
-      WHERE created_at >= now()-interval '7 days'
-        AND triggered_at IS NOT NULL
+      SELECT extract(epoch FROM (fp.created_at - sj.triggered_at))/60.0 AS lag_min
+      FROM signal_journeys sj
+      JOIN signal_fingerprints fp ON fp.correlation_id = sj.correlation_id
+      WHERE sj.triggered_at >= now()-interval '7 days'
+        AND fp.created_at IS NOT NULL
+        AND sj.triggered_at IS NOT NULL
     )
     SELECT round(percentile_cont(0.50) WITHIN GROUP (ORDER BY lag_min)::numeric, 2),
            round(percentile_cont(0.95) WITHIN GROUP (ORDER BY lag_min)::numeric, 2),
@@ -201,10 +243,13 @@ def measure():
             "n": f[4] if len(f) > 4 else "0",
         }
 
-    # 7d journey:fingerprint ratio
+    # 7d journey:fingerprint ratio. Journeys via triggered_at index; fingerprints
+    # via the same nested-loop join. Never count(*) the whole fingerprints table.
     raw4, err4 = run_psql("""
-    SELECT (SELECT count(*) FROM signal_fingerprints
-            WHERE created_at >= now()-interval '7 days') AS n_fp_7d,
+    SELECT (SELECT count(*)
+            FROM signal_journeys sj
+            JOIN signal_fingerprints fp ON fp.correlation_id = sj.correlation_id
+            WHERE sj.triggered_at >= now()-interval '7 days') AS n_fp_7d,
            (SELECT count(*) FROM signal_journeys
             WHERE triggered_at >= now()-interval '7 days') AS n_journeys_7d;""")
     if err4:
@@ -656,6 +701,16 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="watchdog: print alert but do NOT notify")
     args = ap.parse_args()
+
+    skip_lock = os.getenv("GQT_FP_SKIP_LOCK", "") in ("1", "true", "yes")
+    lock_fd = None
+    if not skip_lock:
+        lock_fd = acquire_oltp_lock()
+        if lock_fd is None:
+            if args.watchdog:
+                return 0  # overlapping tick: silent skip, do not stack scans
+            print("OLTP_PROBE_SKIP locked", file=sys.stderr)
+            return 0
 
     rec = measure()
     if "error" in rec:
