@@ -1,0 +1,4 @@
+{"total_count":2,"runners":[
+{"id":22,"name":"dgx-ci-1","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"ci"}]},
+{"id":23,"name":"dgx-ci-2","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"ci"}]}
+]}

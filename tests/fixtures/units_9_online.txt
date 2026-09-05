@@ -1,0 +1,10 @@
+gha-runner-ci-1.service active
+gha-runner-ci-2.service active
+gha-runner-ci-3.service active
+actions.runner.sycamoregroupltd-sycode-trading.dgx-ci-4.service active
+actions.runner.sycamoregroupltd-sycode-trading.dgx-ci-5.service active
+actions.runner.sycamoregroupltd-sycode-trading.dgx-ci-6.service active
+actions.runner.sycamoregroupltd-sycode-trading.dgx-ci-7.service active
+actions.runner.sycamoregroupltd-sycode-trading.dgx-ci-8.service active
+actions.runner.sycamoregroupltd-sycode-trading.dgx-ci-9.service active
+actions.runner.sycamoregroupltd-sycode-trading.sycodetrading-deployer.service inactive

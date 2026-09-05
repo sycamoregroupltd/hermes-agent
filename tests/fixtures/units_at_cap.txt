@@ -1,0 +1,2 @@
+gha-runner-ci-1.service active
+gha-runner-ci-2.service active

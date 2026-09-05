@@ -1,0 +1,12 @@
+{"total_count":10,"runners":[
+{"id":22,"name":"dgx-ci-1","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":23,"name":"dgx-ci-2","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":24,"name":"dgx-ci-3","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":25,"name":"dgx-ci-4","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":26,"name":"dgx-ci-5","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":27,"name":"dgx-ci-6","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":28,"name":"dgx-ci-7","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":29,"name":"dgx-ci-8","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":30,"name":"dgx-ci-9","os":"Linux","status":"online","busy":true,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"ci"}]},
+{"id":21,"name":"sycodetrading-deployer","os":"Linux","status":"offline","busy":false,"version":"2.337.0","labels":[{"name":"self-hosted"},{"name":"Linux"},{"name":"ARM64"},{"name":"deployer"}]}
+]}
