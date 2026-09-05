@@ -92,8 +92,19 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
         if not isinstance(raw_path, str) or not raw_path.strip():
             fail_closed = True
             continue
+        # Validate the RAW path for absolute/traversal forms BEFORE any
+        # stripping. Checking only after ".lstrip"-style normalization let an
+        # absolute path (leading "/") or a traversal segment ("..") slip
+        # through once the leading "./" (or, on a naive strip, "/"/".." too)
+        # was removed — a fail-open bypass a reviewer reproduced independently
+        # (classify_risk(['../docs/x'], ...), ['/docs/x'], ['..\\docs\\x']).
+        stripped = raw_path.strip()
+        raw_slash = stripped.replace("\\", "/")
+        if raw_slash.startswith("/") or ".." in raw_slash.split("/"):
+            fail_closed = True
+            continue
         # Strip only a leading "./" prefix (not arbitrary dots/slashes)
-        path = raw_path.strip().replace("\\", "/")
+        path = raw_slash
         if path.startswith("./"):
             path = path[2:]
         path = path.casefold()

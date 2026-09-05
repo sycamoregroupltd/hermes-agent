@@ -399,18 +399,31 @@ def comment_excerpt(comments: Iterable[sqlite3.Row], max_len: int = 700) -> str:
 # ── Risk manifest and discovery ─────────────────────────────────────────────
 
 CHANGE_MANIFEST_RE = re.compile(r"^\s*change_manifest\s*:\s*(\{.*\})\s*$", re.I | re.M)
+_MANIFEST_ALLOWED_KEYS = frozenset({"changed_paths", "change_flags"})
 
 
 def risk_classification_from_body(body: str | None) -> RiskClassification:
-    """Classify only an explicit JSON manifest in the source task body."""
-    match = CHANGE_MANIFEST_RE.search(body or "")
-    if not match:
+    """Classify only an explicit JSON manifest in the source task body.
+
+    Fails closed (unknown_input) when: no manifest line is present, more than
+    one ``change_manifest:`` line is present (duplicate/ambiguous — we cannot
+    tell which is authoritative), the JSON does not parse, the parsed value is
+    not an object, or the object carries any key outside the fixed
+    ``changed_paths``/``change_flags`` schema. A single unexpected key is
+    enough to distrust the whole manifest rather than silently ignoring it.
+    """
+    matches = CHANGE_MANIFEST_RE.findall(body or "")
+    if not matches:
         return classify_risk([], {})
+    if len(matches) > 1:
+        return classify_risk(None, None)
     try:
-        manifest = json.loads(match.group(1))
+        manifest = json.loads(matches[0])
     except (json.JSONDecodeError, TypeError):
         return classify_risk(None, None)
     if not isinstance(manifest, dict):
+        return classify_risk(None, None)
+    if set(manifest) - _MANIFEST_ALLOWED_KEYS:
         return classify_risk(None, None)
     return classify_risk(manifest.get("changed_paths"), manifest.get("change_flags"))
 
