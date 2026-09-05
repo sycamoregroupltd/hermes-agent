@@ -957,6 +957,27 @@ class RiskTierClassifierTests(unittest.TestCase):
                 self.assertTrue(result.fail_closed)
                 self.assertIn("unknown_input", result.matched_reasons)
 
+    def test_windows_drive_letter_and_unc_paths_fail_closed_even_with_safe_flag(self) -> None:
+        """Regression for GitHub Copilot review finding on PR #63 head ba738612ee:
+        a Windows drive-letter absolute path (e.g. "C:\\x", "C:/x") is absolute but
+        does not start with "/" or contain "..", so it slipped past both the raw
+        POSIX-only absolute check AND the later safe-kind waiver's own
+        startswith(("/", "\\\\")) test, clearing unknown_input for what is really an
+        absolute path outside the repo. UNC-style paths ("\\\\server\\share\\x",
+        "//server/share/x") must also fail closed."""
+        for path in (
+            "C:\\docs\\review.md",
+            "C:/docs/review.md",
+            "c:/docs/review.md",
+            "Z:\\src\\orders\\submit.ts",
+            "\\\\server\\share\\docs\\review.md",
+            "//server/share/docs/review.md",
+        ):
+            with self.subTest(path=path):
+                result = vr.classify_risk([path], {"docs": True, "paper_only": True})
+                self.assertTrue(result.fail_closed)
+                self.assertIn("unknown_input", result.matched_reasons)
+
     def test_conflicting_paper_only_and_risky_flag_fails_closed(self) -> None:
         result = vr.classify_risk(["docs/summary.md"], {"paper_only": True, "live_execution": True})
         self.assertTrue(result.requires_standalone_risk_review)

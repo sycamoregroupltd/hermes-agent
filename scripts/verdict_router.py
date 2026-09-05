@@ -75,6 +75,29 @@ class RiskClassification:
     fail_closed: bool
 
 
+_DRIVE_LETTER_RE = re.compile(r"^[A-Za-z]:[/\\]")
+
+
+def _is_malformed_raw_path(raw_path: str) -> bool:
+    """True if a RAW (unstripped-of-prefix) path is absolute/traversal/drive-letter.
+
+    Single source of truth for the "is this path bad" check so the initial
+    rejection and the later safe-kind waiver can never disagree — a reviewer
+    (Copilot, PR #63 head ba738612ee) found that a Windows drive-letter form
+    (e.g. "C:\\x", "C:/x") slipped past the initial POSIX-only "/" check *and*
+    separately re-qualified for the safe-kind waiver below, because that
+    waiver's own startswith(("/", "\\\\")) test also does not recognise a
+    drive letter as absolute.
+    """
+    stripped = raw_path.strip()
+    raw_slash = stripped.replace("\\", "/")
+    return bool(
+        raw_slash.startswith("/")
+        or ".." in raw_slash.split("/")
+        or _DRIVE_LETTER_RE.match(stripped)
+    )
+
+
 def classify_risk(changed_paths: object, change_flags: object) -> RiskClassification:
     """Classify a change using paths and structured flags, never title prose.
 
@@ -92,20 +115,19 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
         if not isinstance(raw_path, str) or not raw_path.strip():
             fail_closed = True
             continue
-        # Validate the RAW path for absolute/traversal forms BEFORE any
-        # stripping. Checking only after ".lstrip"-style normalization let an
-        # absolute path (leading "/") or a traversal segment ("..") slip
-        # through once the leading "./" (or, on a naive strip, "/"/".." too)
-        # was removed — a fail-open bypass a reviewer reproduced independently
-        # (classify_risk(['../docs/x'], ...), ['/docs/x'], ['..\\docs\\x']).
-        stripped = raw_path.strip()
-        raw_slash = stripped.replace("\\", "/")
-        if raw_slash.startswith("/") or ".." in raw_slash.split("/"):
+        # Validate the RAW path for absolute/traversal/drive-letter forms
+        # BEFORE any stripping. Checking only after ".lstrip"-style
+        # normalization let an absolute path (leading "/"), a traversal
+        # segment (".."), or a Windows drive-letter path ("C:\x", "C:/x")
+        # slip through — fail-open bypasses reviewers reproduced
+        # independently (classify_risk(['../docs/x'], ...), ['/docs/x'],
+        # ['..\\docs\\x'], ['C:\\docs\\x']).
+        if _is_malformed_raw_path(raw_path):
             reasons.add("unknown_input")
             fail_closed = True
             continue
         # Strip only a leading "./" prefix (not arbitrary dots/slashes)
-        path = raw_slash
+        path = raw_path.strip().replace("\\", "/")
         if path.startswith("./"):
             path = path[2:]
         path = path.casefold()
@@ -136,7 +158,7 @@ def classify_risk(changed_paths: object, change_flags: object) -> RiskClassifica
     # matched high-risk path, and malformed/absolute/traversal paths remain bad.
     safe_kind = any(change_flags.get(flag) is True for flag in ("refactor", "research", "tests", "docs"))
     if safe_kind and not unknown_flags and "unknown_input" in reasons and all(
-        isinstance(path, str) and not path.strip().startswith(("/", "\\")) and ".." not in path.replace("\\", "/").split("/")
+        isinstance(path, str) and not _is_malformed_raw_path(path)
         for path in changed_paths
     ):
         reasons.discard("unknown_input")
