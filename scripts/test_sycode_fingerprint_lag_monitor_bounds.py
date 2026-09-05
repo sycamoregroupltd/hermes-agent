@@ -88,6 +88,9 @@ def test_timeouts_are_bounded_under_shim_wall():
     assert "SYCODE_DB_SLO_WALL_S:-75" in col
     assert "collector_success 0" in col
     assert "write_fail_closed" in col
+    assert "keep SLO series" in col
+    assert "sycode_db_signal_journeys_30m" in col
+    assert "sycode_db_oltp_p95_ms" in col
     assert "timeout --kill-after=5s 30s" not in fp_shim
     assert "timeout --kill-after=5s 30s" not in col
 
@@ -120,6 +123,46 @@ def test_collector_shim_fail_closed_prom_on_timeout(tmp_path):
     hang = tmp_path / "hang.py"
     hang.write_text("import time; time.sleep(30)\n")
     prom = tmp_path / "sycode_db_latency_slo.prom"
+    # Seed the named Prom-rule series. Overlay must keep them; a 2-series
+    # stub wipe fail-opens db-slo-alerts.yml (keys journeys/oltp/cache, not
+    # collector_success).
+    prom.write_text(
+        "sycode_db_signal_journeys_30m 175\n"
+        "sycode_db_oltp_p95_ms 100.625\n"
+        "sycode_db_cache_hit_ratio 0.56\n"
+        "sycode_db_collector_success 1\n"
+        "sycode_db_collector_last_run_timestamp 111\n"
+    )
+    env = {
+        **dict(os.environ),
+        "SYCODE_DB_SLO_COLLECTOR_PY": str(hang),
+        "SYCODE_DB_SLO_PROM": str(prom),
+        "SYCODE_DB_SLO_WALL_S": "1",
+        "SYCODE_OLTP_LOCK_DIR": str(tmp_path),
+    }
+    r = subprocess.run(
+        ["bash", str(COLLECTOR_SHIM)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=15,
+    )
+    assert r.returncode == 124, r.stdout + r.stderr
+    text = prom.read_text()
+    assert re.search(r"^sycode_db_signal_journeys_30m 175$", text, re.M)
+    assert re.search(r"^sycode_db_oltp_p95_ms 100.625$", text, re.M)
+    assert re.search(r"^sycode_db_cache_hit_ratio 0.56$", text, re.M)
+    assert re.search(r"^sycode_db_collector_success 0$", text, re.M)
+    assert not re.search(r"^sycode_db_collector_success 1$", text, re.M)
+    assert not re.search(r"^sycode_db_collector_last_run_timestamp 111$", text, re.M)
+    assert re.search(r"^sycode_db_collector_last_run_timestamp \d+$", text, re.M)
+    assert "OLTP_PROBE_FAIL" in (r.stdout + r.stderr)
+
+
+def test_collector_shim_missing_prom_emits_full_failure_shape(tmp_path):
+    hang = tmp_path / "hang.py"
+    hang.write_text("import time; time.sleep(30)\n")
+    prom = tmp_path / "sycode_db_latency_slo.prom"
     env = {
         **dict(os.environ),
         "SYCODE_DB_SLO_COLLECTOR_PY": str(hang),
@@ -137,5 +180,11 @@ def test_collector_shim_fail_closed_prom_on_timeout(tmp_path):
     assert r.returncode == 124, r.stdout + r.stderr
     text = prom.read_text()
     assert "sycode_db_collector_success 0" in text
-    assert "sycode_db_collector_last_run_timestamp" in text
+    for name in (
+        "sycode_db_signal_journeys_30m",
+        "sycode_db_oltp_p95_ms",
+        "sycode_db_cache_hit_ratio",
+        "sycode_db_candle_staleness_seconds",
+    ):
+        assert name in text, name
     assert "OLTP_PROBE_FAIL" in (r.stdout + r.stderr)
