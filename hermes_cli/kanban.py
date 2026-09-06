@@ -623,7 +623,8 @@ def _cmd_diagnostics(args: argparse.Namespace) -> int:
     from hermes_cli import kanban_diagnostics as kd
     # Honour kanban.default_assignee as the fallback for unassigned ready tasks (#27145),
     # kanban.max_in_progress as the global concurrency cap (#33488), kanban.max_in_progress_per_profile as
-    # the per-profile cap (#21582), and kanban.max_spawn as the per-tick spawn limit (#28805). Same
+    # the per-profile cap (#21582), and kanban.max_spawn as the live per-board concurrency cap
+    # (running + this pass/tick; #28805). Same
     # semantics as the gateway dispatch path so behavior matches whether the user runs the CLI directly or
     # relies on the gateway-embedded dispatcher.
     from hermes_cli.config import load_config
