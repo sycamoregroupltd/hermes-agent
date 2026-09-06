@@ -1,0 +1,45 @@
+{
+  "active_profiles": [
+    "builder"
+  ],
+  "fixture_id": "primary-success-and-inactive-isolation",
+  "observations": [
+    {
+      "probe": "authenticated_inference",
+      "profile": "builder",
+      "provider": "openrouter",
+      "result": "success"
+    },
+    {
+      "probe": "authenticated_inference",
+      "profile": "builder",
+      "provider": "unused-provider",
+      "result": "failure"
+    },
+    {
+      "probe": "authenticated_inference",
+      "profile": "reviewer",
+      "provider": "anthropic",
+      "result": "failure"
+    }
+  ],
+  "profiles": {
+    "builder": {
+      "config": {
+        "fallback_providers": [],
+        "model": {
+          "provider": "openrouter"
+        }
+      }
+    },
+    "reviewer": {
+      "config": {
+        "fallback_providers": [],
+        "model": {
+          "provider": "anthropic"
+        }
+      }
+    }
+  },
+  "schema_version": 1
+}

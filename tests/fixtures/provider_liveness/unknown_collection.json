@@ -1,0 +1,31 @@
+{
+  "active_profiles": [
+    "research"
+  ],
+  "fixture_id": "non-auth-signals-are-not-proof",
+  "observations": [
+    {
+      "probe": "credential_presence",
+      "profile": "research",
+      "provider": "anthropic",
+      "result": "present"
+    },
+    {
+      "probe": "http_model_listing",
+      "profile": "research",
+      "provider": "anthropic",
+      "result": "success"
+    }
+  ],
+  "profiles": {
+    "research": {
+      "config": {
+        "fallback_providers": [],
+        "model": {
+          "provider": "anthropic"
+        }
+      }
+    }
+  },
+  "schema_version": 1
+}

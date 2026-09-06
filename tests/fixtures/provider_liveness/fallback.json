@@ -1,0 +1,36 @@
+{
+  "active_profiles": [
+    "builder"
+  ],
+  "fixture_id": "fallback-after-primary-failure",
+  "observations": [
+    {
+      "probe": "authenticated_inference",
+      "profile": "builder",
+      "provider": "nous",
+      "result": "failure"
+    },
+    {
+      "probe": "authenticated_inference",
+      "profile": "builder",
+      "provider": "openrouter",
+      "result": "success"
+    }
+  ],
+  "profiles": {
+    "builder": {
+      "config": {
+        "fallback_providers": [
+          {
+            "model": "fallback-model",
+            "provider": "openrouter"
+          }
+        ],
+        "model": {
+          "provider": "nous"
+        }
+      }
+    }
+  },
+  "schema_version": 1
+}
