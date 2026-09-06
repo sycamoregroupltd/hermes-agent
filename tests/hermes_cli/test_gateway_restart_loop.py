@@ -2114,3 +2114,156 @@ class TestLifecycleGuardNeverRaises:
         if os.name != "nt":
             with pytest.raises(GatewayLifecycleBlocked):
                 check_gateway_lifecycle("clean prompt", "/dev/null")
+
+
+class TestHeredocReferencedScriptWalkParity:
+    """Regression for t_7b127c8b / t_bcfd7d27: an inert heredoc body's
+    referenced-script walk falsely blocked read-only, non-lifecycle commands.
+
+    Semantic port of the approved 7aae373795 tests onto live pin 77adb80d52.
+    """
+
+    def test_large_json_file_opened_inside_inert_heredoc_not_blocked(self, tmp_path):
+        """The exact bug class: an oversized (>1MB) but wholly innocent data
+        file opened only inside an inert `python3 <<'EOF'` heredoc body must
+        not trip the gateway-lifecycle guard."""
+        import json
+
+        from cron.lifecycle_guard import (
+            contains_gateway_lifecycle_command_or_referenced_script,
+        )
+
+        big = tmp_path / "kb_all.json"
+        big.write_text(json.dumps({"body": "x" * (2 * 1024 * 1024)}))
+        cmd = (
+            "python3 - <<'EOF'\n"
+            "import json\n"
+            f"with open('{big}') as f:\n"
+            "    outer = json.load(f)\n"
+            "raw = outer.get('output','')\n"
+            "print(raw[:10])\n"
+            "EOF"
+        )
+        assert (
+            contains_gateway_lifecycle_command_or_referenced_script(cmd, cwd=str(tmp_path))
+            is False
+        )
+
+    def test_live_repro_kanban_dump_heredoc_shape_not_blocked(self, tmp_path):
+        """Reproduces the exact live-session command shape (paths only
+        adapted to a temp dir): a heredoc that filters a large kanban board
+        JSON dump by keyword, containing zero gateway-lifecycle syntax."""
+        import json
+
+        from cron.lifecycle_guard import (
+            contains_gateway_lifecycle_command_or_referenced_script,
+        )
+
+        all_json = tmp_path / "all.json"
+        all_json.write_text(
+            json.dumps({"output": json.dumps([{"id": "t_1", "status": "todo", "title": "x", "assignee": "a"} for _ in range(50000)])})
+        )
+        cmd = (
+            "python3 - <<'EOF'\n"
+            "import json\n"
+            f"with open('{all_json}') as f:\n"
+            "    outer = json.load(f)\n"
+            "raw = outer.get('output','')\n"
+            "try:\n"
+            "    tasks = json.loads(raw)\n"
+            "except Exception as e:\n"
+            "    print('ERR', e)\n"
+            "    tasks = []\n"
+            "keywords = ['router', 'jobs-context']\n"
+            "for t in tasks:\n"
+            "    title = t.get('title','')\n"
+            "    if any(k.lower() in title.lower() for k in keywords):\n"
+            "        print(t.get('id'), t.get('status'), '|', title, '|', t.get('assignee'))\n"
+            "EOF"
+        )
+        assert (
+            contains_gateway_lifecycle_command_or_referenced_script(cmd, cwd=str(tmp_path))
+            is False
+        )
+
+    def test_governor_comment_dedupe_invocation_forms_not_blocked(self):
+        """Every verbatim `governor_comment_dedupe.py` command quoted across
+        the governor/jarvis evidence comments on t_7b127c8b must be allowed
+        — none of them contain gateway-lifecycle syntax."""
+        from cron.lifecycle_guard import (
+            contains_gateway_lifecycle_command_or_referenced_script,
+        )
+
+        commands = [
+            "/home/frank/.hermes/scripts/governor_comment_dedupe.py --board jarvis-os "
+            "--task-id t_870fde20 --target-comment-id 30457 --action APPROVE --ttl-hours 24",
+            "python3 /home/frank/.hermes/scripts/governor_comment_dedupe.py --board jarvis-os "
+            "--task-id t_870fde20 --target-comment-id 30457 --action APPROVE --ttl-hours 24",
+            "/home/frank/.hermes/scripts/governor_comment_dedupe.py --board sycode-trading "
+            "--task-id t_0cd0e8e5 --classification active-crash-wave-update "
+            "--owner-packet sycode-trading/t_0cd0e8e5 --ttl-hours 2",
+            "/home/frank/.hermes/scripts/governor_comment_dedupe.py --board jarvis-os "
+            "--task-id t_86cc4345 --classification outage-expiry-protocol-gaveup-requeue-repeat "
+            "--owner-packet jarvis-os/t_86cc4345 --ttl-hours 2",
+        ]
+        for cmd in commands:
+            assert (
+                contains_gateway_lifecycle_command_or_referenced_script(cmd) is False
+            ), f"should be allowed: {cmd!r}"
+
+    def test_real_lifecycle_command_still_blocked_after_heredoc_masking(self, tmp_path):
+        """Positive control: masking inert heredoc bodies must never hide a
+        REAL gateway lifecycle command sitting outside the heredoc, or one
+        that is genuinely executable (unquoted delimiter / shell consumer)."""
+        from cron.lifecycle_guard import (
+            contains_gateway_lifecycle_command_or_referenced_script,
+        )
+
+        cmd = (
+            "python3 - <<'EOF'\n"
+            "print('hello')\n"
+            "EOF\n"
+            "hermes gateway restart"
+        )
+        assert (
+            contains_gateway_lifecycle_command_or_referenced_script(cmd) is True
+        )
+
+        script = tmp_path / "restart.sh"
+        script.write_text("#!/bin/bash\nhermes gateway restart\n")
+        cmd_unquoted = f"bash <<EOF\nsource {script}\nEOF"
+        assert (
+            contains_gateway_lifecycle_command_or_referenced_script(
+                cmd_unquoted, cwd=str(tmp_path)
+            )
+            is True
+        )
+
+    def test_referenced_script_walk_still_finds_real_reference_inside_heredoc_shell_consumer(
+        self, tmp_path
+    ):
+        """A heredoc fed to an actual shell consumer (bash/sh) is NOT inert —
+        `strip_inert_heredoc_bodies` must leave it untouched, and a real
+        lifecycle command inside it must still be caught."""
+        from cron.lifecycle_guard import (
+            contains_gateway_lifecycle_command_or_referenced_script,
+        )
+
+        cmd = "bash <<'EOF'\nhermes gateway restart\nEOF"
+        assert (
+            contains_gateway_lifecycle_command_or_referenced_script(cmd) is True
+        )
+
+    def test_sudo_wrapped_lifecycle_command_still_blocked(self):
+        """Positive control: the wrapper-peel fix must remain intact after
+        this change — `sudo hermes gateway restart` still blocks."""
+        from cron.lifecycle_guard import (
+            contains_gateway_lifecycle_command_or_referenced_script,
+        )
+
+        assert (
+            contains_gateway_lifecycle_command_or_referenced_script(
+                "sudo hermes gateway restart"
+            )
+            is True
+        )

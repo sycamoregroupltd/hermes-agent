@@ -1164,7 +1164,32 @@ def _contains_unsafe_gateway_action(
     if depth >= _MAX_REFERENCED_SCRIPT_DEPTH:
         return True
 
-    for payload in _iter_shell_command_payloads(command):
+    # Mask inert heredoc bodies (t_7b127c8b / t_bcfd7d27) before the
+    # referenced-script and `sh -c` payload walks below, mirroring what
+    # `_direct_lifecycle_scan` (via `contains_gateway_lifecycle_command`)
+    # already does for the regex pass. Without this, a quoted
+    # `python3 - <<'EOF' ... EOF` heredoc body — pure Python source fed as
+    # inert stdin data to a non-shell interpreter — was still shell-tokenized
+    # here: `_iter_command_segments` treats `(`/`)` as shell subshell
+    # punctuation, so an ordinary `open('/tmp/kb/x.json')` call inside the
+    # body got split into its own one-token segment, and `_references_at`'s
+    # bare-path fallback (any standalone token containing "/") misread that
+    # string literal as a directly-executed script reference. When the
+    # "referenced" file was large (kanban board JSON dumps routinely exceed
+    # the 1MB cap), `_read_referenced_script`'s oversized-file fail-closed
+    # path (#76762) then hard-blocked the whole command as a forbidden
+    # gateway-lifecycle command even though it contained none. Masking here
+    # brings the referenced-script and payload walks into parity with the
+    # regex pass; a heredoc that is NOT provably inert (unquoted delimiter,
+    # shell consumer, unterminated body) is returned unchanged by the
+    # stripper, so real lifecycle commands hidden in an executable heredoc
+    # stay fully scanned. Semantic port of approved 7aae373795 onto live pin
+    # 77adb80d52; budget charging is left on the original command.
+    from tools.shell_heredoc import strip_inert_heredoc_bodies
+
+    scan_command = strip_inert_heredoc_bodies(command)
+
+    for payload in _iter_shell_command_payloads(scan_command):
         if _contains_unsafe_gateway_action(
             payload,
             cwd=cwd,
@@ -1175,7 +1200,7 @@ def _contains_unsafe_gateway_action(
         ):
             return True
 
-    for script_path in _iter_referenced_shell_scripts(command, cwd=cwd):
+    for script_path in _iter_referenced_shell_scripts(scan_command, cwd=cwd):
         # Do not touch a FileProvider path even to discover whether the file
         # is hydrated. The lexical check covers direct cloud paths; the
         # resolved check below covers local launchers that are symlinks into
