@@ -140,8 +140,9 @@ env -u HERMES_KANBAN_TASK -u HERMES_KANBAN_BOARD \
 
 # One real next-tick proof, only after os-reviewer approval and operator activation
 systemctl --user status hermes-gateway-jarvis.service --no-pager -l
+journalctl --user -u hermes-gateway-jarvis.service --since "-2 min" --no-pager -l
 # expected: Active: active (running), stable MainPID, and no dispatcher error
-# in the relevant recent log window; the operator must also verify the board
+# in the recent journal window; the operator must also verify the board
 # event/worker record for the exercised card before declaring liveness
 ```
 
