@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "fixture_id": "malformed-unknown-event",
+  "observed_at": 1000,
+  "freshness": {"recipient_seconds": 30, "request_seconds": 15},
+  "recipients": [
+    {
+      "recipient_id": "builder-a",
+      "session_id": "session-builder-a",
+      "state": "open",
+      "last_seen_at": 995,
+      "process": {"pid": 4242, "started_at": 800, "state": "running", "observed_at": 996},
+      "lease": {"lease_id": "lease-builder-a", "owner_recipient_id": "builder-a", "owner_pid": 4242, "owner_started_at": 800, "acquired_at": 900, "expires_at": 1030, "released": false}
+    }
+  ],
+  "probes": [
+    {"request_id": "request-current", "message_id": "canary-current", "sender_id": "orchestrator", "recipient_id": "builder-a", "sent_at": 992, "deadline_at": 999}
+  ],
+  "events": [
+    {"event_id": "unknown-event", "kind": "delivered-ish", "request_id": "request-current", "message_id": "canary-current", "from_id": "orchestrator", "to_id": "builder-a", "at": 993}
+  ]
+}

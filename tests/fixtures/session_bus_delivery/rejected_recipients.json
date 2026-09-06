@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "fixture_id": "closed-and-unowned-recipients",
+  "observed_at": 1000,
+  "freshness": {"recipient_seconds": 30, "request_seconds": 15},
+  "recipients": [
+    {
+      "recipient_id": "builder-closed",
+      "session_id": "session-builder-closed",
+      "state": "closed",
+      "last_seen_at": 995,
+      "process": {"pid": 5001, "started_at": 800, "state": "running", "observed_at": 996},
+      "lease": {"lease_id": "lease-closed", "owner_recipient_id": "builder-closed", "owner_pid": 5001, "owner_started_at": 800, "acquired_at": 900, "expires_at": 1030, "released": false}
+    },
+    {
+      "recipient_id": "builder-unowned",
+      "session_id": "session-builder-unowned",
+      "state": "open",
+      "last_seen_at": 995,
+      "process": {"pid": 5002, "started_at": 800, "state": "running", "observed_at": 996},
+      "lease": {"lease_id": "lease-other", "owner_recipient_id": "other-worker", "owner_pid": 9999, "owner_started_at": 700, "acquired_at": 900, "expires_at": 1030, "released": false}
+    }
+  ],
+  "probes": [
+    {"request_id": "request-closed", "message_id": "canary-closed", "sender_id": "orchestrator", "recipient_id": "builder-closed", "sent_at": 992, "deadline_at": 999},
+    {"request_id": "request-unowned", "message_id": "canary-unowned", "sender_id": "orchestrator", "recipient_id": "builder-unowned", "sent_at": 992, "deadline_at": 999}
+  ],
+  "events": []
+}

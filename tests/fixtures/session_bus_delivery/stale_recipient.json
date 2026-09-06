@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "fixture_id": "stale-recipient",
+  "observed_at": 1000,
+  "freshness": {"recipient_seconds": 30, "request_seconds": 15},
+  "recipients": [
+    {
+      "recipient_id": "builder-stale",
+      "session_id": "session-builder-stale",
+      "state": "open",
+      "last_seen_at": 900,
+      "process": {"pid": 4243, "started_at": 800, "state": "running", "observed_at": 900},
+      "lease": {"lease_id": "lease-stale", "owner_recipient_id": "builder-stale", "owner_pid": 4243, "owner_started_at": 800, "acquired_at": 850, "expires_at": 1030, "released": false}
+    }
+  ],
+  "probes": [
+    {"request_id": "request-stale", "message_id": "canary-stale", "sender_id": "orchestrator", "recipient_id": "builder-stale", "sent_at": 992, "deadline_at": 999}
+  ],
+  "events": [
+    {"event_id": "stale-sent", "kind": "sent", "request_id": "request-stale", "message_id": "canary-stale", "from_id": "orchestrator", "to_id": "builder-stale", "at": 992},
+    {"event_id": "stale-received", "kind": "received", "request_id": "request-stale", "message_id": "canary-stale", "from_id": "orchestrator", "to_id": "builder-stale", "at": 993, "process": {"pid": 4243, "started_at": 800, "state": "running", "observed_at": 993}},
+    {"event_id": "stale-owned", "kind": "owned", "request_id": "request-stale", "message_id": "canary-stale", "from_id": "orchestrator", "to_id": "builder-stale", "at": 994, "process": {"pid": 4243, "started_at": 800, "state": "running", "observed_at": 994}, "lease_id": "lease-stale"},
+    {"event_id": "stale-ack", "kind": "ack", "request_id": "request-stale", "message_id": "ack-stale", "from_id": "builder-stale", "to_id": "orchestrator", "at": 995, "process": {"pid": 4243, "started_at": 800, "state": "running", "observed_at": 995}, "lease_id": "lease-stale", "correlates_to": "canary-stale"}
+  ]
+}
