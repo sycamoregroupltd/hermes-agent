@@ -17,9 +17,11 @@ DOCTRINE (same as seat-live-state): this is a FALSIFIABLE PRIOR, not an oracle. 
 fact is anchored to its immutable source (git SHA / kanban row / deploy label). A fresh
 point-of-use probe always wins; if it disagrees, THIS reconciler is the suspect.
 
-HARD RULES: strictly read-only (only write is the vault-tracked STATE.md/headline; the
-only network call is one bounded `git fetch`). NO psql (classifier-gated). Every external
-call is timeout-wrapped; a failed probe renders `PROBE FAILED`, never blank/0. Always
+HARD RULES: strictly read-only (only write is the vault-tracked STATE.md/headline).
+The only network git call is one bounded `git fetch` with NO --depth (shared object
+store; --depth writes .git/shallow — t_f31e18f8). Fetch ONLY when
+is-shallow-repository is exactly "false" (fail-closed). NO psql.
+Every external call is timeout-wrapped; a failed probe renders `PROBE FAILED`, never blank/0. Always
 exits 0. Self-dated + content-hashed so staleness is visible.
 """
 import subprocess, sqlite3, hashlib, os, re, time, datetime
@@ -68,10 +70,15 @@ def q(sql):
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 deployed = probe("deployed-sha",
     f'docker inspect {CONTAINER} --format \'{{{{index .Config.Labels "com.sycodetrading.git.sha"}}}}\'', 4)
-fetch_ok = sh(f'timeout 3 git -C {REPO} fetch -q --depth=50 origin main', 5) is not None or True
-# bounded fetch already ran above via sh(); recompute ref regardless
-sh(f'timeout 3 git -C {REPO} fetch -q --depth=50 origin main', 5)
-main = probe("origin-main", f'git -C {REPO} rev-parse origin/main', 3)
+# Never --depth. Fail-closed: fetch only when the probe is exactly "false".
+# A timed-out/failed/non-false probe must not fetch (fetch-without-depth on a
+# shallow repo can still rewrite .git/shallow).
+_shallow = sh(f'git -C {REPO} rev-parse --is-shallow-repository', 3)
+if _shallow == "false":
+    sh(f'timeout 3 git -C {REPO} fetch -q origin main', 5)
+else:
+    FAILS.append(f"git-fetch(skipped: is-shallow-repository={_shallow or 'probe-failed'})")
+main = probe("origin-main", f'git -C {REPO} rev-parse refs/remotes/origin/main', 3)
 head_branch = probe("head-branch", f'git -C {REPO} rev-parse --abbrev-ref HEAD', 3)
 
 behind = "unknown"
