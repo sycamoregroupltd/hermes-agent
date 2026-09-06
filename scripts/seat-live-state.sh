@@ -23,10 +23,10 @@
 #   - The only git write is `git fetch` of remote-tracking refs (never checkout).
 #     NEVER pass --depth/--unshallow: this is the shared object store for 350+
 #     worktrees; --depth writes .git/shallow and orphans merge-bases (t_f31e18f8).
-#     Bounded by timeout. Fetch ONLY when is-shallow-repository is exactly
-#     "false" (fail-closed: timeout/empty/non-false skips; a failed probe
-#     must not fetch, because fetch-without-depth on a shallow repo can
-#     still rewrite .git/shallow).
+#     Bounded by timeout. Fetch ONLY when the probe exits 0 AND stdout is
+#     exactly "false" (fail-closed: timeout/empty/non-false/nonzero skips;
+#     a failed probe must not fetch, because fetch-without-depth on a
+#     shallow repo can still rewrite .git/shallow).
 set -uo pipefail
 
 REPO="/home/frank/sycode-trading"
@@ -45,15 +45,19 @@ DEPLOYED="$(timeout 3 docker inspect "$CONTAINER" \
 # ---- origin/main tip + deploy gap (the merged!=deployed trap) --------------------
 # Only-network call, hard-bounded. Falls back to the cached ref if the fetch times out.
 FETCH_NOTE="cached"
-_SHALLOW="$(timeout 2 git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null || true)"
-if [ "$_SHALLOW" = "false" ]; then
+# Fail-closed: require exit 0 AND stdout exactly "false" (no trailing junk).
+# timeout can print "false" then exit 124; `|| true` would still fetch.
+_SHALLOW=""
+_SHALLOW_RC=1
+_SHALLOW="$(timeout 2 git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" && _SHALLOW_RC=0 || _SHALLOW_RC=$?
+if [ "$_SHALLOW_RC" -eq 0 ] && [ "$_SHALLOW" = "false" ]; then
   if timeout 3 git -C "$REPO" fetch -q origin main 2>/dev/null; then
     FETCH_NOTE="fetched"
   else
     note_fail "git-fetch(fell back to cached origin/main)"
   fi
 else
-  note_fail "git-fetch(skipped: is-shallow-repository=${_SHALLOW:-probe-failed}; fetch only when exactly false)"
+  note_fail "git-fetch(skipped: is-shallow-repository=${_SHALLOW:-probe-failed} rc=${_SHALLOW_RC}; fetch only when exit 0 and exactly false)"
 fi
 MAIN="$(timeout 2 git -C "$REPO" rev-parse refs/remotes/origin/main 2>/dev/null)"
 if [ -z "$MAIN" ]; then MAIN="PROBE FAILED"; note_fail "origin-main"; fi

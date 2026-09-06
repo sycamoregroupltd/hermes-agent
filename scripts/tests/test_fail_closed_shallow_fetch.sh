@@ -9,26 +9,36 @@ SEAT="$SCRIPT_DIR/seat-live-state.sh"
 REC="$SCRIPT_DIR/reconcile-state.py"
 fail=0
 
-# Source-level: no --depth=50 in producers.
-if grep -n -- '--depth=50' "$SEAT" "$REC"; then
-  echo "FAIL: --depth=50 still present"
+if [ ! -f "$SEAT" ] || [ ! -f "$REC" ]; then
+  echo "FAIL: missing producer file(s): SEAT=$SEAT REC=$REC"
   fail=1
 else
-  echo "PASS: no --depth=50 in producers"
-fi
+  # Source-level: no --depth=50 in producers.
+  if grep -n -- '--depth=50' "$SEAT" "$REC"; then
+    echo "FAIL: --depth=50 still present"
+    fail=1
+  else
+    echo "PASS: no --depth=50 in producers"
+  fi
 
-# Source-level: fail-closed predicate.
-if grep -q '\[ "$_SHALLOW" = "false" \]' "$SEAT" && grep -q '_shallow == "false"' "$REC"; then
-  echo "PASS: both producers require exactly false"
-else
-  echo "FAIL: fail-closed predicate missing"
-  fail=1
+  # Source-level: fail-closed predicate (space-tolerant; still exactly-false).
+  # Codex P1: both producers must also require a zero exit from the probe.
+  if grep -Eq '\[\s+"\$_SHALLOW"\s+=\s+"false"\s+\]' "$SEAT" \
+     && grep -Eq '_SHALLOW_RC"\s+-eq\s+0' "$SEAT" \
+     && grep -Eq '_shallow\s*==\s*"false"' "$REC" \
+     && grep -Eq '_shallow_rc\s*==\s*0' "$REC"; then
+    echo "PASS: both producers require exit 0 and exactly false"
+  else
+    echo "FAIL: fail-closed predicate missing"
+    fail=1
+  fi
 fi
 
 run_case() {
   local label="$1"
   local probe="$2"
   local expect_fetch="$3"
+  local probe_rc="${4:-0}"
   local tmp
   tmp="$(mktemp -d)"
   mkdir -p "$tmp/bin"
@@ -43,7 +53,7 @@ fi
 case " $* " in
   *" --is-shallow-repository "*)
     printf '%s\n' "${FIXTURE_SHALLOW-}"
-    exit 0
+    exit "${FIXTURE_SHALLOW_RC:-0}"
     ;;
   *" fetch "*)
     echo FETCH >> "$log.fetches"
@@ -70,7 +80,8 @@ EOF
   chmod +x "$tmp/bin/git"
   : > "$tmp/calls"
   rm -f "$tmp/calls.fetches"
-  FIXTURE_SHALLOW="$probe" GIT_CALL_LOG="$tmp/calls" PATH="$tmp/bin:$PATH" \
+  FIXTURE_SHALLOW="$probe" FIXTURE_SHALLOW_RC="$probe_rc" \
+    GIT_CALL_LOG="$tmp/calls" PATH="$tmp/bin:$PATH" \
     timeout 20 bash "$SEAT" >/dev/null 2>&1 || true
   got_fetch=0
   [ -f "$tmp/calls.fetches" ] && got_fetch=1
@@ -90,6 +101,8 @@ run_case false_allows_fetch "false" yes
 run_case true_skips "true" no
 run_case empty_skips "" no
 run_case garbage_skips "yes" no
+run_case false_timeout_rc_skips "false" no 124
+run_case false_trailing_junk_skips "false extra" no
 
 if [ "$fail" -ne 0 ]; then
   echo "RESULT: FAIL"

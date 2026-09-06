@@ -19,8 +19,9 @@ point-of-use probe always wins; if it disagrees, THIS reconciler is the suspect.
 
 HARD RULES: strictly read-only (only write is the vault-tracked STATE.md/headline).
 The only network git call is one bounded `git fetch` with NO --depth (shared object
-store; --depth writes .git/shallow — t_f31e18f8). Fetch ONLY when
-is-shallow-repository is exactly "false" (fail-closed). NO psql.
+store; --depth writes .git/shallow — t_f31e18f8). Fetch ONLY when the probe
+exits 0 AND stdout is exactly "false" (fail-closed; ignore-returncode would
+fetch after a timeout that printed a partial "false"). NO psql.
 Every external call is timeout-wrapped; a failed probe renders `PROBE FAILED`, never blank/0. Always
 exits 0. Self-dated + content-hashed so staleness is visible.
 """
@@ -47,6 +48,21 @@ def sh(cmd, timeout=8):
     except Exception:
         return None
 
+def sh_status(cmd, timeout=8):
+    """Return (returncode, stdout) with only a trailing newline stripped. Never raises.
+
+    Unlike sh(), this preserves a nonzero exit and does not .strip() inner
+    whitespace, so a timeout that printed 'false' then died cannot look like
+    a successful not-shallow probe.
+    """
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        raw = r.stdout or ""
+        raw = raw.removesuffix("\n").removesuffix("\r")
+        return r.returncode, raw
+    except Exception:
+        return None, ""
+
 def probe(label, cmd, timeout=8):
     v = sh(cmd, timeout)
     if v is None:
@@ -70,14 +86,17 @@ def q(sql):
 now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 deployed = probe("deployed-sha",
     f'docker inspect {CONTAINER} --format \'{{{{index .Config.Labels "com.sycodetrading.git.sha"}}}}\'', 4)
-# Never --depth. Fail-closed: fetch only when the probe is exactly "false".
-# A timed-out/failed/non-false probe must not fetch (fetch-without-depth on a
-# shallow repo can still rewrite .git/shallow).
-_shallow = sh(f'git -C {REPO} rev-parse --is-shallow-repository', 3)
-if _shallow == "false":
+# Never --depth. Fail-closed: fetch only when the probe exits 0 AND stdout
+# is exactly "false" (no trailing junk). A timed-out/failed/non-false probe
+# must not fetch (fetch-without-depth on a shallow repo can still rewrite
+# .git/shallow). sh() ignores returncode — do not use it for this gate.
+_shallow_rc, _shallow = sh_status(f'git -C {REPO} rev-parse --is-shallow-repository', 3)
+if _shallow_rc == 0 and _shallow == "false":
     sh(f'timeout 3 git -C {REPO} fetch -q origin main', 5)
 else:
-    FAILS.append(f"git-fetch(skipped: is-shallow-repository={_shallow or 'probe-failed'})")
+    FAILS.append(
+        f"git-fetch(skipped: is-shallow-repository={_shallow or 'probe-failed'} rc={_shallow_rc})"
+    )
 main = probe("origin-main", f'git -C {REPO} rev-parse refs/remotes/origin/main', 3)
 head_branch = probe("head-branch", f'git -C {REPO} rev-parse --abbrev-ref HEAD', 3)
 
