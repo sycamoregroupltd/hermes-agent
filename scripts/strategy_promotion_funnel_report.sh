@@ -32,15 +32,15 @@ SERVER_OK=${SERVER_OK:-000}
 num_or_null() { [[ "${1:-}" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] && printf '%s' "$1" || printf 'null'; }
 
 # ---- 2. Signal pipeline (24h) ----
-PG_QUERY="docker exec sycodetrading-supabase-db psql -h localhost -U postgres -d postgres -t -A -F'|'"
+PG_QUERY=(docker exec -e "PGPASSWORD=${PGPASSWORD}" sycodetrading-supabase-db psql -h localhost -U postgres -d postgres -t -A '-F|')
 
-NEW_JOURNEYS=$($PG_QUERY -c "SELECT count(*) FROM signal_journeys WHERE created_at > now() - interval '24h'" 2>/dev/null || echo "N/A")
-OPEN_POSITIONS=$($PG_QUERY -c "SELECT count(*) FROM managed_positions WHERE status='open'" 2>/dev/null || echo "N/A")
-CLEAN_CLOSES=$($PG_QUERY -c "SELECT count(*) FROM managed_positions WHERE status='closed' AND close_reason NOT IN ('stop_loss','kill_switch') AND updated_at > now() - interval '24h'" 2>/dev/null || echo "N/A")
-PNL_24H=$($PG_QUERY -c "SELECT COALESCE(SUM(realized_pnl), 0) FROM managed_positions WHERE status='closed' AND updated_at > now() - interval '24h'" 2>/dev/null || echo "N/A")
+NEW_JOURNEYS=$("${PG_QUERY[@]}" -c "SELECT count(*) FROM signal_journeys WHERE created_at > now() - interval '24h'" 2>/dev/null || echo "N/A")
+OPEN_POSITIONS=$("${PG_QUERY[@]}" -c "SELECT count(*) FROM managed_positions WHERE status='open'" 2>/dev/null || echo "N/A")
+CLEAN_CLOSES=$("${PG_QUERY[@]}" -c "SELECT count(*) FROM managed_positions WHERE status='closed' AND close_reason NOT IN ('stop_loss','kill_switch') AND updated_at > now() - interval '24h'" 2>/dev/null || echo "N/A")
+PNL_24H=$("${PG_QUERY[@]}" -c "SELECT COALESCE(SUM(realized_pnl), 0) FROM managed_positions WHERE status='closed' AND updated_at > now() - interval '24h'" 2>/dev/null || echo "N/A")
 
 # ---- 3. Strategy performance (7d) ----
-STRAT_PERF=$($PG_QUERY -c "
+STRAT_PERF=$("${PG_QUERY[@]}" -c "
 SELECT COALESCE(NULLIF(sp.name, ''), 'no-strategy') AS name,
        COUNT(mp.id) AS trades,
        SUM(CASE WHEN mp.status='closed' AND mp.close_reason NOT IN ('stop_loss','kill_switch') THEN 1 ELSE 0 END) AS wins,
@@ -57,7 +57,7 @@ LIMIT 20" 2>/dev/null || echo "N/A")
 CLEAN_COHORT_TARGET=300
 # SQL supplies raw cohort counts and strategy state only. The Python helper is
 # the single classifier so the cron report and unit tests cannot drift.
-CLEAN_COHORT_INPUT=$($PG_QUERY -c "
+CLEAN_COHORT_INPUT=$("${PG_QUERY[@]}" -c "
 WITH clean AS (
   SELECT
     COALESCE(
@@ -131,7 +131,11 @@ fi
 DOCKER_FLEET_JSON=$(FLEET="$FLEET" DOCKER_FLEET_STATUS="$DOCKER_FLEET_STATUS" python3 -c 'import json, os; print(json.dumps({"status": os.environ["DOCKER_FLEET_STATUS"], "report": os.environ["FLEET"]}))')
 
 # ---- Generate JSON report ----
-cat > "$JSON_REPORT" << JSONEOF
+# Stage in the report directory; the approved writer replaces latest.json only
+# after the complete payload has parsed successfully.
+JSON_TMP=$(mktemp "$REPORT_DIR/.latest.json.XXXXXX")
+trap 'rm -f -- "$JSON_TMP"' EXIT
+cat > "$JSON_TMP" << JSONEOF
 {
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "server_ready": "$SERVER_OK",
@@ -149,6 +153,14 @@ cat > "$JSON_REPORT" << JSONEOF
   "promotion_quality_statement": "$PROMOTION_QUALITY_STATEMENT"
 }
 JSONEOF
+
+PYTHONPATH=/home/frank/.hermes/scripts /usr/bin/python3 -c '
+import json, sys
+from second_brain_writer import write_json_atomic
+with open(sys.argv[1], encoding="utf-8") as source:
+    payload = json.load(source)
+write_json_atomic(sys.argv[2], payload)
+' "$JSON_TMP" "$JSON_REPORT"
 
 # ---- Generate Markdown report ----
 cat > "$REPORT" << MDEOF
