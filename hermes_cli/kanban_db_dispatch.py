@@ -106,6 +106,10 @@ class DispatchResult:
     Code terminal like ``orion-cc``), not a Hermes profile. Expected steady-state
     on multi-lane setups, NOT operator-actionable; tracked apart so health
     telemetry can tell "stuck" from "correctly idle"."""
+    capability_blocked: list[tuple[str, str]] = field(default_factory=list)
+    """Ready task ids blocked before claim because the assigned profile lacks
+    terminal/file capability required by the task body; each tuple is
+    ``(task_id, reroute_reason)``."""
     skipped_per_profile_capped: list[tuple[str, str, int]] = field(default_factory=list)
     """``(task_id, assignee, current_running_count)`` deferred because the
     assignee is at ``kanban.max_in_progress_per_profile``. Picked up on a later
@@ -1226,6 +1230,81 @@ def _profile_exists_fn() -> Optional[Callable[[str], bool]]:
     return profile_exists
 
 
+_TERMINAL_WORK_RE = re.compile(
+    r"\b(?:terminal|shell|command(?:[- ]line)?|pytest|git|run\s+(?:the\s+)?tests?|"
+    r"execute\s+(?:the\s+)?(?:command|script|tests?))\b",
+    re.IGNORECASE,
+)
+_FILE_WORK_RE = re.compile(
+    r"\b(?:file(?:system)?|source\s+code|repository|repo|path|edit(?:ing)?|"
+    r"modify|patch|write\s+(?:to|the)|read\s+(?:from|the)|implement)\b",
+    re.IGNORECASE,
+)
+
+
+def _task_capability_requirements(body: object) -> tuple[str, ...]:
+    """Return terminal/file capabilities explicitly requested by a card body."""
+    if not isinstance(body, str):
+        return ()
+    required: list[str] = []
+    if _TERMINAL_WORK_RE.search(body):
+        required.append("terminal")
+    if _FILE_WORK_RE.search(body):
+        required.append("file")
+    return tuple(required)
+
+
+def _profile_cli_toolsets(assignee: str) -> Optional[set[str]]:
+    """Resolve a profile's effective CLI toolsets without mutating its config."""
+    try:
+        from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
+        profile_home = resolve_profile_env(normalize_profile_name(assignee))
+        resolved = _resolve_worker_cli_toolsets(profile_home)
+    except Exception:
+        return None
+    return set(resolved or ())
+
+
+def _capability_reroute_profile(board: Optional[str]) -> str:
+    """Return the configured implementation fallback for a reroute hint."""
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config() or {}
+        mapping = (cfg.get("kanban") or {}).get("decompose_default_assignee_by_board", {})
+        candidate = mapping.get(board) if isinstance(mapping, dict) else None
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    except Exception:
+        pass
+    return "a terminal/file-capable implementer"
+
+
+def _capability_guard_reason(
+    conn: sqlite3.Connection, task_id: str, assignee: str, *, board: Optional[str], lane: str,
+) -> Optional[str]:
+    """Explain why a ready implementation card cannot run on this profile."""
+    if lane != "ready":
+        return None
+    row = conn.execute("SELECT body FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    requirements = _task_capability_requirements(row["body"] if row else None)
+    if not requirements:
+        return None
+    toolsets = _profile_cli_toolsets(assignee)
+    # An unavailable resolver is not proof of missing capability; preserve the
+    # existing fail-open behavior and let normal spawn diagnostics handle it.
+    if toolsets is None:
+        return None
+    missing = [name for name in requirements if name not in toolsets]
+    if not missing:
+        return None
+    reroute = _capability_reroute_profile(board)
+    return (
+        f"dispatcher capability guard: task requires {', '.join(requirements)} work, "
+        f"but profile {assignee!r} lacks {', '.join(missing)} toolset(s); "
+        f"reroute to {reroute!r} and retry"
+    )
+
+
 def _has_spawnable(conn: sqlite3.Connection, status: str) -> bool:
     rows = conn.execute(
         "SELECT DISTINCT assignee FROM tasks "
@@ -1514,6 +1593,14 @@ def _dispatch_lane_task(
     profile_exists = _profile_exists_fn()
     if profile_exists is not None and not profile_exists(assignee):
         result.skipped_nonspawnable.append(task_id)
+        return False
+    capability_reason = _capability_guard_reason(
+        conn, task_id, assignee, board=board, lane=lane,
+    )
+    if capability_reason is not None:
+        result.capability_blocked.append((task_id, capability_reason))
+        if not dry_run:
+            _kb.block_task(conn, task_id, reason=capability_reason, kind="capability")
         return False
     # Per-profile cap: one profile's local model / API quota / browser pool
     # must not be overwhelmed by a fan-out even with global headroom.
