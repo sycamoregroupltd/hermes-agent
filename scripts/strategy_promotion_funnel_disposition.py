@@ -28,6 +28,16 @@ def _retired(state: dict[str, Any]) -> bool:
     )
 
 
+def _control_only(state: dict[str, Any]) -> bool:
+    meta = state.get("meta") or {}
+    for key in ("name", "engine"):
+        value = state.get(key) or meta.get(key) or ""
+        normalized = re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_")
+        if normalized in {"random_entry", "random_entry_control"}:
+            return True
+    return False
+
+
 def _pace_note(arm: dict[str, Any], n: int, target: int, remaining: int) -> str:
     if n >= target:
         return ""
@@ -70,6 +80,8 @@ def classify_arm(arm: dict[str, Any], states: dict[str, dict[str, Any]] | None, 
         state = (states or {}).get(arm_id)
         if state is None:
             result.update(disposition="UNKNOWN_BLOCKED", status="UNKNOWN_BLOCKED")
+        elif _control_only(state):
+            result.update(disposition="CONTROL_ONLY_NON_PROMOTABLE", status="CONTROL_ONLY_NON_PROMOTABLE")
         elif _retired(state):
             result.update(disposition="RETIRED_NON_PROMOTABLE", status="RETIRED_NON_PROMOTABLE")
         else:

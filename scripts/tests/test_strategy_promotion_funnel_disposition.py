@@ -42,6 +42,20 @@ class StrategyPromotionFunnelDispositionTests(unittest.TestCase):
         row = classify_arm({"arm_id": "44444444-4444-4444-8444-444444444444", "n": 999}, self.states)
         self.assertEqual(row["status"], "UNKNOWN_BLOCKED")
 
+    def test_random_entry_engine_is_control_only(self):
+        row = classify_arm(
+            {"arm_id": "55555555-5555-4555-8555-555555555555", "n": 999},
+            {
+                "55555555-5555-4555-8555-555555555555": {
+                    "enabled": True,
+                    "trading_mode": "paper",
+                    "engine": "random_entry_control",
+                }
+            },
+        )
+        self.assertEqual(row["disposition"], "CONTROL_ONLY_NON_PROMOTABLE")
+        self.assertEqual(row["status"], "CONTROL_ONLY_NON_PROMOTABLE")
+
     def test_quality_statement_is_explicit(self):
         statement = quality_statement()
         for term in ("net-of-fee", "leak-free signal-time", "OOS/temporal-stability", "independent risk review"):

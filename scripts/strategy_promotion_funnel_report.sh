@@ -2,6 +2,8 @@
 # CANONICAL SOURCE — do not edit profile-local copies. See the goal-orchestrator-operating-runbook for the canonical-copy rule.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 # Fix: ensure bun + PG are in PATH
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
@@ -60,7 +62,7 @@ WITH clean AS (
   SELECT
     COALESCE(
       NULLIF(ti.source_signal->'meta'->'canonical_outcomes_v2_lineage'->>'arm_id', ''),
-      NULLIF(ti.source_signal->'meta'->'arm_id', ''),
+      NULLIF(ti.source_signal->'meta'->>'arm_id', ''),
       NULLIF(ti.strategy_name, ''),
       NULLIF(c.signal_time_features->>'model_version', ''),
       concat_ws('_', c.direction, c.timeframe),
@@ -87,6 +89,8 @@ SELECT json_build_object(
   ),
   'strategies', COALESCE((
     SELECT json_object_agg(s.id::text, json_build_object(
+      'name', s.name,
+      'engine', s.engine,
       'enabled', s.enabled,
       'trading_mode', s.trading_mode,
       'meta', COALESCE(s.meta, '{}'::jsonb)
@@ -105,7 +109,7 @@ FROM clean" 2>/dev/null || true)
 if [[ -z "$CLEAN_COHORT_INPUT" ]]; then
   CLEAN_COHORT_INPUT='{"arms":[{"arm_id":"unknown","n":0}],"strategies":{},"lookup_error":true}'
 fi
-CLEAN_COHORT_RESULT=$(printf '%s\n' "$CLEAN_COHORT_INPUT" | python3 "$REPO/scripts/strategy_promotion_funnel_disposition.py" --target "$CLEAN_COHORT_TARGET")
+CLEAN_COHORT_RESULT=$(printf '%s\n' "$CLEAN_COHORT_INPUT" | python3 "$SCRIPT_DIR/strategy_promotion_funnel_disposition.py" --target "$CLEAN_COHORT_TARGET")
 CLEAN_COHORT_PROGRESS=$(printf '%s\n' "$CLEAN_COHORT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')
 
 PROMOTION_QUALITY_STATEMENT="Sample threshold alone does not satisfy promotionQuality; any candidate still requires net-of-fee, leak-free signal-time, OOS/temporal-stability, and independent risk review."
