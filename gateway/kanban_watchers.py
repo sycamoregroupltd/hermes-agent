@@ -1271,6 +1271,87 @@ class GatewayKanbanWatchersMixin:
                     path, exc,
                 )
 
+    def _kanban_board_metadata(self):
+        """Return every non-archived board or fail closed."""
+        from hermes_cli import kanban_db as _kb
+
+        try:
+            boards = _kb.list_boards(include_archived=False)
+        except Exception as exc:
+            raise _kb.KanbanWorkerScanError(
+                "kanban restart drain: board enumeration failed"
+            ) from exc
+        if not isinstance(boards, list):
+            raise _kb.KanbanWorkerScanError(
+                "kanban restart drain: board enumeration returned a non-list"
+            )
+        return _kb, boards
+
+    def _kanban_running_workers(self, *, include_wedged: bool = False) -> list[dict]:
+        """Read live Kanban workers across every non-archived board.
+
+        The dispatcher is embedded in this gateway, but its workers are child
+        processes with durable PIDs in each board DB.  Keep the cross-board
+        enumeration here so a Jarvis-profile restart cannot drain only the
+        currently-selected board.  Any enumeration or per-board DB failure is
+        fatal to this scan: proceeding with a partial list could still leave a
+        worker for systemd's KillMode to SIGKILL.
+        """
+        _kb, boards = self._kanban_board_metadata()
+        workers: list[dict] = []
+        for board_meta in boards:
+            slug = board_meta.get("slug") or _kb.DEFAULT_BOARD
+            conn = None
+            try:
+                conn = _kb.connect(board=slug)
+                workers.extend(
+                    _kb.list_running_workers(conn, include_wedged=include_wedged)
+                )
+            except Exception as exc:
+                raise _kb.KanbanWorkerScanError(
+                    f"kanban restart drain: worker scan failed on board {slug}"
+                ) from exc
+            finally:
+                if conn is not None:
+                    conn.close()
+        return workers
+
+    def _active_kanban_worker_count(self) -> int:
+        """Count non-wedged live Kanban workers for the gateway drain."""
+        return len(self._kanban_running_workers())
+
+    def _interrupt_kanban_workers_for_restart(self) -> int:
+        """Durably block and SIGTERM every worker still live at the deadline."""
+        # Preflight all boards before changing any task. If any board cannot be
+        # inspected, propagate the scan error and keep the gateway draining.
+        self._kanban_running_workers(include_wedged=True)
+        _kb, boards = self._kanban_board_metadata()
+
+        interrupted = 0
+        for board_meta in boards:
+            slug = board_meta.get("slug") or _kb.DEFAULT_BOARD
+            conn = None
+            try:
+                conn = _kb.connect(board=slug)
+                prepared = _kb.prepare_workers_for_gateway_restart(
+                    conn, reason="gateway restart"
+                )
+                interrupted += len(prepared)
+                if prepared:
+                    logger.warning(
+                        "kanban restart drain: blocked and SIGTERM'd %d worker(s) on board %s",
+                        len(prepared),
+                        slug,
+                    )
+            except Exception as exc:
+                raise _kb.KanbanWorkerScanError(
+                    f"kanban restart drain: force-interrupt failed on board {slug}"
+                ) from exc
+            finally:
+                if conn is not None:
+                    conn.close()
+        return interrupted
+
     async def _kanban_dispatcher_watcher(self) -> None:
         """Embedded kanban dispatcher — one tick every `dispatch_interval_seconds`.
 
@@ -1784,10 +1865,11 @@ class GatewayKanbanWatchersMixin:
                 logger.exception("kanban dispatcher: zombie reaper failed")
 
             try:
-                # Global emergency stop (`hermes pause`): skip auto-decompose
-                # and dispatch entirely — no new workers while paused. Running
-                # workers finish naturally; zombie reaping above still runs.
-                if not _kanban_dispatch_allowed():
+                # A gateway restart is a stronger local dispatch pause than
+                # the global emergency stop: the restart drain must first see
+                # the workers that already exist, and no tick may claim/spawn
+                # another one while that drain is in progress.
+                if self._draining or not _kanban_dispatch_allowed():
                     ready_pending = False
                     bad_ticks = 0
                 else:

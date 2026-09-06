@@ -8380,6 +8380,132 @@ def _defer_reclaim_for_live_worker(
         _append_event(conn, task_id, "reclaim_deferred", payload, run_id=run_id)
 
 
+class KanbanWorkerScanError(RuntimeError):
+    """A gateway restart cannot prove that every board was inspected."""
+
+
+def list_running_workers(
+    conn: sqlite3.Connection,
+    *,
+    include_wedged: bool = False,
+    now: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """Return live host-local Kanban workers for gateway lifecycle drains.
+
+    The embedded dispatcher is a child of the gateway, but its workers are
+    separate OS processes and therefore are invisible to
+    ``GatewayRunner._running_agents``.  Keep this query deliberately read-only:
+    the restart path uses it to wait, then calls
+    :func:`prepare_workers_for_gateway_restart` for the bounded force path.
+
+    Workers with no heartbeat for the same one-hour threshold used by stale
+    detection are marked ``wedged`` and excluded by default.  A wedged worker
+    is still returned when ``include_wedged`` is true so shutdown can terminate
+    it rather than leaving a child behind for systemd to SIGKILL.
+    """
+    current = int(time.time()) if now is None else int(now)
+    host_prefix = f"{_claimer_id().split(':', 1)[0]}:"
+    rows = conn.execute(
+        "SELECT t.id, t.worker_pid, t.claim_lock, t.current_run_id, "
+        "       COALESCE(r.started_at, t.started_at) AS active_started_at, "
+        "       COALESCE(r.last_heartbeat_at, t.last_heartbeat_at) AS last_heartbeat_at "
+        "FROM tasks t "
+        "LEFT JOIN task_runs r ON r.id = t.current_run_id "
+        "WHERE t.status = 'running' AND t.worker_pid IS NOT NULL"
+    ).fetchall()
+    workers: list[dict[str, Any]] = []
+    for row in rows:
+        claim_lock = row["claim_lock"] or ""
+        if not claim_lock.startswith(host_prefix):
+            continue
+        pid = int(row["worker_pid"])
+        if not _pid_alive(pid):
+            continue
+        last_activity = row["last_heartbeat_at"] or row["active_started_at"]
+        wedged = bool(
+            last_activity is not None
+            and current - int(last_activity) >= _STALE_HEARTBEAT_GAP_SECONDS
+        )
+        if wedged and not include_wedged:
+            continue
+        workers.append(
+            {
+                "task_id": row["id"],
+                "worker_pid": pid,
+                "claim_lock": claim_lock,
+                "run_id": (
+                    int(row["current_run_id"])
+                    if row["current_run_id"] is not None
+                    else None
+                ),
+                "started_at": row["active_started_at"],
+                "last_heartbeat_at": row["last_heartbeat_at"],
+                "wedged": wedged,
+            }
+        )
+    return workers
+
+
+def prepare_workers_for_gateway_restart(
+    conn: sqlite3.Connection,
+    *,
+    reason: str = "gateway restart",
+    signal_fn=None,
+) -> list[dict[str, Any]]:
+    """Block and SIGTERM live workers before a gateway restart force path.
+
+    The task transition is committed before the signal is sent.  This is
+    important: if systemd subsequently escalates to SIGKILL for the worker,
+    the dispatcher sees a deliberate ``blocked`` task rather than a crash and
+    does not charge a retry.  ``current_run_id`` is used as a CAS guard, so a
+    worker that completed while the snapshot was being collected is left
+    alone.
+
+    Returns one result per worker successfully transitioned, including whether
+    SIGTERM was delivered.  The caller may log this evidence without treating
+    an already-exited process as a new failure.
+    """
+    import signal
+
+    prepared: list[dict[str, Any]] = []
+    for worker in list_running_workers(conn, include_wedged=True):
+        task_id = worker["task_id"]
+        run_id = worker["run_id"]
+        if run_id is None:
+            continue
+        if not block_task(
+            conn,
+            task_id,
+            reason=reason,
+            kind="transient",
+            expected_run_id=run_id,
+        ):
+            continue
+
+        payload = {
+            "worker_pid": worker["worker_pid"],
+            "run_id": run_id,
+            "reason": reason,
+            "wedged": worker["wedged"],
+            "signal": "SIGTERM",
+        }
+        with write_txn(conn):
+            _append_event(conn, task_id, "gateway_restart_worker", payload, run_id=run_id)
+
+        kill = signal_fn if signal_fn is not None else getattr(os, "kill", None)
+        signaled = False
+        if kill is not None:
+            try:
+                kill(worker["worker_pid"], signal.SIGTERM)
+                signaled = True
+            except (ProcessLookupError, OSError):
+                # The durable block already won the race; an exited worker
+                # needs no further signal and must not be reported as a crash.
+                pass
+        prepared.append({**payload, "signaled": signaled})
+    return prepared
+
+
 def heartbeat_worker(
     conn: sqlite3.Connection,
     task_id: str,
