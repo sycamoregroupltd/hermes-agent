@@ -50,6 +50,7 @@ LOG_FILE="${CI_RECONCILER_LOG:-/home/frank/logs/ci-runner-cap-reconciler.log}"
 # `systemctl --user list-units` calls entirely — no network or systemd
 # access happens when a fixture is provided.
 RUNNERS_JSON_FIXTURE="${CI_RECONCILER_RUNNERS_JSON:-}"     # path to a `gh api .../actions/runners` JSON body
+REVALIDATE_RUNNERS_JSON_FIXTURE="${CI_RECONCILER_REVALIDATE_RUNNERS_JSON:-}" # optional fresh-state fixture for apply tests
 UNITS_FIXTURE="${CI_RECONCILER_UNITS_FIXTURE:-}"           # path; lines "<unit> <active|inactive>"
 
 # Second independent safety gate for real mutation (see header). Must match
@@ -105,15 +106,53 @@ read_cap() {
 # unit is not proof of a connected runner. Filter to POOL_LABEL, exclude
 # EXCLUDE_LABEL (the deployer) by label, not by name-guessing.
 fetch_runners_json() {
-    if [ -n "$RUNNERS_JSON_FIXTURE" ]; then
-        if [ ! -f "$RUNNERS_JSON_FIXTURE" ]; then
-            log "FATAL: fixture not found: $RUNNERS_JSON_FIXTURE"
+    local fixture="$RUNNERS_JSON_FIXTURE"
+    if [ "${1:-plan}" = "revalidate" ] && [ -n "$REVALIDATE_RUNNERS_JSON_FIXTURE" ]; then
+        fixture="$REVALIDATE_RUNNERS_JSON_FIXTURE"
+    fi
+    if [ -n "$fixture" ]; then
+        if [ ! -f "$fixture" ]; then
+            log "FATAL: fixture not found: $fixture"
             return 1
         fi
-        cat "$RUNNERS_JSON_FIXTURE"
+        cat "$fixture"
         return 0
     fi
     gh api "repos/$REPO/actions/runners" 2>/dev/null
+}
+
+# Re-fetch the authoritative runner state immediately before every STOP.
+# Missing, duplicate, relabelled, offline, malformed, or newly-busy runners
+# all fail closed: no drain action is issued from a stale plan.
+runner_still_idle() {
+    local name="$1" json state rc
+    json=$(fetch_runners_json revalidate)
+    rc=$?
+    if [ "$rc" -ne 0 ] || [ -z "$json" ]; then
+        log "SAFETY: could not revalidate runner $name (rc=$rc); refusing planned STOP"
+        return 1
+    fi
+    state=$(printf '%s' "$json" | jq -er \
+        --arg name "$name" --arg pool "$POOL_LABEL" --arg excl "$EXCLUDE_LABEL" '
+        [.runners[]
+         | select(.name == $name)
+         | select([.labels[].name] | index($excl) | not)
+         | select([.labels[].name] | index($pool))] as $matches
+        | if ($matches | length) == 1
+          then $matches[0] | [.status, (.busy | tostring)] | @tsv
+          else error("runner scope changed")
+          end
+    ' 2>/dev/null)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log "SAFETY: runner $name was not uniquely present in the in-scope pool during revalidation; refusing planned STOP"
+        return 1
+    fi
+    if [ "$state" != $'online\tfalse' ]; then
+        log "SAFETY: runner $name is no longer idle ($state); refusing planned STOP"
+        return 1
+    fi
+    return 0
 }
 
 # Emits TSV: name<TAB>status<TAB>busy   for the in-scope pool only.
@@ -310,12 +349,18 @@ apply_plan() {
         log "SAFETY: --apply given but CI_RECONCILER_APPLY_CONFIRM does not match the required token. Refusing to mutate anything (dry-run only)."
         return 0
     fi
-    local name unit
+    local name unit rc
     if [ -n "$PLAN_STOP" ]; then
         while IFS=$'\t' read -r name unit; do
             [ -z "$name" ] && continue
-            log "APPLY: systemctl --user stop $unit (runner $name, idle, over cap)"
+            runner_still_idle "$name" || return 1
             systemctl --user stop "$unit"
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+                log "ERROR: systemctl stop failed for $unit (rc=$rc)"
+                return 1
+            fi
+            log "APPLY: stopped $unit (runner $name, revalidated idle, over cap)"
         done < <(printf '%b' "$PLAN_STOP" | grep -v '^$')
     fi
     if [ -n "$PLAN_START" ]; then
@@ -323,8 +368,14 @@ apply_plan() {
             [ -z "$name" ] && continue
             log "APPLY: systemctl --user start $unit (runner $name, dead, under cap)"
             systemctl --user start "$unit"
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+                log "ERROR: systemctl start failed for $unit (rc=$rc)"
+                return 1
+            fi
         done < <(printf '%b' "$PLAN_START" | grep -v '^$')
     fi
+    return 0
 }
 
 main() {
@@ -336,8 +387,11 @@ main() {
     local at
     at=$(alert_text)
     [ -n "$at" ] && [ "$VERBOSE" -eq 1 ] && echo "ALERT-TEXT (not sent): $at"
-    apply_plan
-    exit 0
+    if ! apply_plan; then
+        echo "reconciler: FAILED to apply plan (see log: $LOG_FILE)" >&2
+        return 1
+    fi
+    return 0
 }
 
 main
