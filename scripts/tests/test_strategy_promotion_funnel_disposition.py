@@ -15,11 +15,13 @@ from strategy_promotion_funnel_disposition import classify_arm, quality_statemen
 class StrategyPromotionFunnelDispositionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.payload = json.loads(FIXTURE.read_text())
+        cls.payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
         cls.states = cls.payload["strategies"]
 
     def test_fixture_producer_covers_all_required_dispositions(self):
-        output = subprocess.check_output([sys.executable, str(HELPER), "--fixture", str(FIXTURE)], text=True)
+        output = subprocess.check_output(
+            [sys.executable, str(HELPER), "--fixture", str(FIXTURE)],
+        ).decode("utf-8")
         result = json.loads(output)
         statuses = {row["arm_id"]: row["status"] for row in result["arms"]}
         self.assertEqual(statuses["fa8d1b58-4f82-434f-9b3f-ebb2b75965f8"], "RETIRED_NON_PROMOTABLE")

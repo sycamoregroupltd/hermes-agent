@@ -53,12 +53,14 @@ LIMIT 20" 2>/dev/null || echo "N/A")
 
 # ---- 3b. Clean canonical cohort progress by strategy/arm ----
 CLEAN_COHORT_TARGET=300
-CLEAN_COHORT_PROGRESS=$($PG_QUERY -c "
+# SQL supplies raw cohort counts and strategy state only. The Python helper is
+# the single classifier so the cron report and unit tests cannot drift.
+CLEAN_COHORT_INPUT=$($PG_QUERY -c "
 WITH clean AS (
   SELECT
     COALESCE(
       NULLIF(ti.source_signal->'meta'->'canonical_outcomes_v2_lineage'->>'arm_id', ''),
-      NULLIF(ti.source_signal->'meta'->>'arm_id', ''),
+      NULLIF(ti.source_signal->'meta'->'arm_id', ''),
       NULLIF(ti.strategy_name, ''),
       NULLIF(c.signal_time_features->>'model_version', ''),
       concat_ws('_', c.direction, c.timeframe),
@@ -72,57 +74,39 @@ WITH clean AS (
   WHERE c.has_signal_features = true
     AND c.is_win_net IS NOT NULL
   GROUP BY 1
-), paced AS (
-  SELECT
-    arm_id,
-    n,
-    first_signal_time,
-    last_signal_time,
-    GREATEST(${CLEAN_COHORT_TARGET} - n, 0) AS remaining,
-    EXTRACT(EPOCH FROM (last_signal_time - first_signal_time)) / 86400.0 AS observed_days
-  FROM clean
 )
-SELECT
-  '- ' || arm_id || ': ' || n || ' / ${CLEAN_COHORT_TARGET}' ||
-  ' clean outcomes; remaining=' || remaining ||
-  CASE
-    WHEN n >= ${CLEAN_COHORT_TARGET} THEN ''
-    WHEN n < 2 THEN '; ETA unavailable: need at least 2 resolved clean outcomes to estimate pace'
-    WHEN observed_days <= 0 THEN '; ETA unavailable: clean outcomes share the same signal_time'
-    ELSE '; ETA ' || to_char(
-      now() + ((remaining / NULLIF(n / observed_days, 0)) * interval '1 day'),
-      'YYYY-MM-DD'
-    ) || ' at ' || round((n / observed_days)::numeric, 2) || '/day observed pace'
-  END || '; ' ||
-  CASE
-    WHEN arm_id = 'random_entry_control' THEN 'disposition=CONTROL_ONLY_NON_PROMOTABLE; status=CONTROL_ONLY_NON_PROMOTABLE'
-    WHEN arm_id ~* '^(LONG|SHORT)_[0-9]+[mhd]$' THEN 'disposition=COHORT_ONLY; status=' || CASE WHEN n >= ${CLEAN_COHORT_TARGET} THEN 'READY_FOR_EVALUATION' ELSE 'COLLECT_MORE' END
-    WHEN arm_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN
-      CASE
-        WHEN NOT EXISTS (SELECT 1 FROM strategies s WHERE s.id::text = arm_id) THEN 'disposition=UNKNOWN_BLOCKED; status=UNKNOWN_BLOCKED'
-        WHEN EXISTS (
-          SELECT 1 FROM strategies s
-          WHERE s.id::text = arm_id
-            AND (s.enabled IS NOT TRUE OR s.trading_mode IS DISTINCT FROM 'paper'
-              OR NULLIF(s.meta->>'paperDisabledAt', '') IS NOT NULL
-              OR NULLIF(s.meta->>'quarantined_at', '') IS NOT NULL
-              OR NULLIF(s.meta->>'retired_at', '') IS NOT NULL
-              OR lower(COALESCE(s.meta->>'disposition', '')) IN ('retired', 'quarantined'))
-        ) THEN 'disposition=RETIRED_NON_PROMOTABLE; status=RETIRED_NON_PROMOTABLE'
-        ELSE 'disposition=ACTIVE_CANDIDATE; status=' || CASE WHEN n >= ${CLEAN_COHORT_TARGET} THEN 'READY_FOR_EVALUATION' ELSE 'COLLECT_MORE' END
-      END
-    ELSE 'disposition=UNKNOWN_BLOCKED; status=UNKNOWN_BLOCKED'
-  END AS clean_cohort_progress
-FROM paced
-ORDER BY n DESC, arm_id ASC
-LIMIT 25" 2>/dev/null || echo "N/A")
+SELECT json_build_object(
+  'arms', COALESCE(
+    json_agg(json_build_object(
+      'arm_id', arm_id,
+      'n', n,
+      'first_signal_time', first_signal_time,
+      'last_signal_time', last_signal_time
+    ) ORDER BY n DESC, arm_id ASC),
+    '[]'::json
+  ),
+  'strategies', COALESCE((
+    SELECT json_object_agg(s.id::text, json_build_object(
+      'enabled', s.enabled,
+      'trading_mode', s.trading_mode,
+      'meta', COALESCE(s.meta, '{}'::jsonb)
+    ))
+    FROM strategies s
+    WHERE s.id::text IN (
+      SELECT arm_id FROM clean
+      WHERE arm_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    )
+  ), '{}'::json)
+)::text
+FROM clean" 2>/dev/null || true)
 
-# A failed read must never look eligible. The SQL above deliberately emits
-# UNKNOWN_BLOCKED for missing UUID state; this fallback covers connection/query
-# failure before any report consumer sees a bare readiness label.
-if [[ "$CLEAN_COHORT_PROGRESS" == "N/A" || -z "$CLEAN_COHORT_PROGRESS" ]]; then
-  CLEAN_COHORT_PROGRESS="- unknown: disposition=UNKNOWN_BLOCKED; status=UNKNOWN_BLOCKED (live strategy lookup unavailable)"
+# A failed read must never look eligible. Feed an explicit lookup failure to
+# the same classifier instead of fabricating an empty/ready result.
+if [[ -z "$CLEAN_COHORT_INPUT" ]]; then
+  CLEAN_COHORT_INPUT='{"arms":[{"arm_id":"unknown","n":0}],"strategies":{},"lookup_error":true}'
 fi
+CLEAN_COHORT_RESULT=$(printf '%s\n' "$CLEAN_COHORT_INPUT" | python3 "$REPO/scripts/strategy_promotion_funnel_disposition.py" --target "$CLEAN_COHORT_TARGET")
+CLEAN_COHORT_PROGRESS=$(printf '%s\n' "$CLEAN_COHORT_RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')
 
 PROMOTION_QUALITY_STATEMENT="Sample threshold alone does not satisfy promotionQuality; any candidate still requires net-of-fee, leak-free signal-time, OOS/temporal-stability, and independent risk review."
 
@@ -133,7 +117,14 @@ OPENCLAW_STATUS=$(curl -s -H "X-Sycode-Token: ${SYCODE_READ_TOKEN:-}" http://loc
 AUTO_TRADER=$(curl -s http://localhost:3001/api/auto-trader/status 2>/dev/null || echo '{"error":"unreachable"}')
 
 # ---- 6. Docker fleet health ----
-FLEET=$(docker ps --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null)
+# Docker is diagnostic context, not a prerequisite for report generation.
+if FLEET=$(docker ps --format 'table {{.Names}}\t{{.Status}}' 2>&1); then
+  DOCKER_FLEET_STATUS="ok"
+else
+  DOCKER_FLEET_STATUS="blocked"
+  FLEET="BLOCKED: docker ps unavailable: ${FLEET:-unknown error}"
+fi
+DOCKER_FLEET_JSON=$(FLEET="$FLEET" DOCKER_FLEET_STATUS="$DOCKER_FLEET_STATUS" python3 -c 'import json, os; print(json.dumps({"status": os.environ["DOCKER_FLEET_STATUS"], "report": os.environ["FLEET"]}))')
 
 # ---- Generate JSON report ----
 cat > "$JSON_REPORT" << JSONEOF
@@ -146,6 +137,8 @@ cat > "$JSON_REPORT" << JSONEOF
     "clean_closes_24h": $(num_or_null "${CLEAN_CLOSES:-}"),
     "pnl_24h": $(num_or_null "${PNL_24H:-}")
   },
+  "clean_cohort": $CLEAN_COHORT_RESULT,
+  "docker_fleet": $DOCKER_FLEET_JSON,
   "openclaw_status": $(echo "$OPENCLAW_STATUS" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)))" 2>/dev/null || echo '"unreachable"'),
   "auto_trader": $(echo "$AUTO_TRADER" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)))" 2>/dev/null || echo '"unreachable"'),
   "named_consumer": "elon-governor-sweep gate evidence: read latest.json as paper-only strategy-promotion funnel status before claiming readiness.",
@@ -205,7 +198,9 @@ DATED_JSON="$PERFORMANCE_DIR/strategy-promotion-funnel-$(date -u +%Y-%m-%d).json
 PYTHONPATH=/home/frank/.hermes/scripts /usr/bin/python3 -c '
 import json, sys
 from second_brain_writer import write_json_atomic
-write_json_atomic(sys.argv[2], json.load(open(sys.argv[1], encoding="utf-8")))
+with open(sys.argv[1], encoding="utf-8") as source:
+    payload = json.load(source)
+write_json_atomic(sys.argv[2], payload)
 ' "$JSON_REPORT" "$DATED_JSON"
 
 # Final output for cron delivery
