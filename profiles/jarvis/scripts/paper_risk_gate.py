@@ -9,12 +9,16 @@ not depend on an LLM interpreting prose.
 t_7fdd0ed1: apply canonical FUSION_GATE_* seam defaults (same as
 run_signal_fusion.py) before load_calibration_gate(). Unset seams made the
 consumer report missing/unparseable instead of the real fail-closed verdict.
+
+t_c6f247b4: close-cursor is persisted only after output succeeds; empty-close
+cursor is normalized to a single sentinel; db() missing-table match is narrow.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from typing import Any, MutableMapping, Optional
@@ -23,11 +27,9 @@ SOURCE_ROOT = os.environ.get("SIGNAL_FUSION_SOURCE_ROOT", "/home/frank/sycode-tr
 if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
-# Re-exported seam from fusion_calibration_gate — the canonical fail-closed gate.
-# No separate calibration_verdict module exists; use the actual implementation.
-from execution.fusion_calibration_gate import (
+# Canonical fail-closed gate. No separate calibration_verdict module exists.
+from execution.fusion_calibration_gate import (  # noqa: E402
     load_calibration_gate as _load_gate,
-    DEFAULT_HIGH_CONVICTION_MIN as HIGH_CONVICTION_FLOOR,
 )
 
 PGPASSWORD = os.environ.get("POSTGRES_PASSWORD") or os.environ.get("PGPASSWORD") or ""
@@ -40,6 +42,11 @@ STATE_FILE = os.environ.get(
     "PAPER_RISK_STATE_FILE",
     "/home/frank/.hermes/profiles/jarvis/cron/state/paper_risk_last.txt",
 )
+
+# Empty MAX(closed_at) comes back as "" from psql -t -A; the state file used
+# to store "none". Keep one representation so VALIDATED + no closes does not
+# wake forever.
+EMPTY_CLOSE_SENTINEL = "none"
 
 # Canonical FUSION_GATE_* seams. MUST match run_signal_fusion.py and the
 # documented constants in execution/fusion_calibration_gate.py.
@@ -56,6 +63,15 @@ CANONICAL_FUSION_GATE_SEAMS = {
     "FUSION_GATE_F052_MAX_AGE_MINUTES": "720",
 }
 
+# Narrow missing-table match. Do NOT match bare "relation" — that swallows
+# "permission denied for relation ..." and other safety-critical errors.
+_MISSING_TABLE_RE = re.compile(
+    r"(?:undefined_table|"
+    r"relation\s+[\"'][^\"']+[\"']\s+does not exist|"
+    r"table\s+[\"'][^\"']+[\"']\s+does not exist)",
+    re.IGNORECASE,
+)
+
 
 def apply_fusion_gate_seam_defaults(
     env: Optional[MutableMapping[str, str]] = None,
@@ -67,16 +83,41 @@ def apply_fusion_gate_seam_defaults(
     return src
 
 
+def normalize_close_cursor(value: str | None) -> str:
+    """Map empty/whitespace close timestamps onto EMPTY_CLOSE_SENTINEL."""
+    text = (value or "").strip()
+    if not text or text.lower() == EMPTY_CLOSE_SENTINEL:
+        return EMPTY_CLOSE_SENTINEL
+    return text
+
+
+def is_missing_table_error(stderr: str) -> bool:
+    """True only for undefined-table / relation-does-not-exist failures."""
+    return bool(_MISSING_TABLE_RE.search(stderr or ""))
+
+
+def persist_close_cursor(
+    latest_close: str,
+    *,
+    dry_run: bool,
+    state_file: str | None = None,
+) -> None:
+    """Write the close cursor. Call only after risk context has been emitted."""
+    if dry_run:
+        return
+    path = state_file if state_file is not None else STATE_FILE
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(normalize_close_cursor(latest_close))
+
+
 def db(sql: str) -> str:
     result = subprocess.run(DB + ["-c", sql], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
-        # Table/view not found — treat as empty (0 results) for safety.
-        stderr_lower = result.stderr.strip().lower()
-        if any(tok in stderr_lower for tok in (
-            "undefined_table",
-            "does not exist",
-            "relation",  # catches PostgreSQL "relation X does not exist"
-        )):
+        # Missing table/view — treat as empty (0 results) for that metric only.
+        if is_missing_table_error(result.stderr):
             return ""
         raise RuntimeError(f"DB query failed: {result.stderr.strip()}")
     return result.stdout.strip()
@@ -108,7 +149,8 @@ def should_wake(
     gate_decision,
 ) -> bool:
     gate = build_calibration_gate_context(gate_decision)
-    return latest_close != last_seen or gate["blocks_high_conviction_paper_opens"]
+    new_close = normalize_close_cursor(latest_close) != normalize_close_cursor(last_seen)
+    return new_close or gate["blocks_high_conviction_paper_opens"]
 
 
 def main() -> int:
@@ -127,11 +169,6 @@ def main() -> int:
             last_seen = handle.read().strip()
     if not should_wake(last_seen, latest_close, gate_decision):
         return 0
-
-    if not dry_run:
-        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-        with open(STATE_FILE, "w", encoding="utf-8") as handle:
-            handle.write(latest_close or "none")
 
     # Individual queries so a missing table only zeroes its metric instead of
     # swallowing every other data point.
@@ -174,6 +211,8 @@ def main() -> int:
     risk_context["calibration_gate"] = build_calibration_gate_context(gate_decision)
     print("=== WAKEAGENT: Paper Risk Context ===")
     print(json.dumps(risk_context, sort_keys=True))
+    # P1: persist only after output succeeds so a later raise retries the close.
+    persist_close_cursor(latest_close, dry_run=dry_run)
     return 0
 
 
