@@ -44,6 +44,9 @@ OBSERVATION_MARKERS = {
     "GUARD_BUNDLE_OBSERVATION_V1 NO_DUE_CHECKS": "no_due",
     "GUARD_BUNDLE_OBSERVATION_V1 DEFERRED": "deferred",
 }
+KNOWN_TERMINAL_STATUSES = {"done", "completed", "cancelled", "archived"}
+KNOWN_CLOSEABLE_STATUSES = {"ready", "todo", "triage", "scheduled", "blocked"}
+KNOWN_OWNER_STATUSES = {"running", "review", "in_progress"}
 
 
 def _protocol_enabled() -> bool:
@@ -227,19 +230,36 @@ def main() -> int:
                 card_id = rec["card_id"]
                 card_board = rec.get("board", board)
                 status = card_status(card_id, card_board)
-                if status not in {None, "done", "completed", "cancelled", "archived"}:
-                    hermes("kanban", "--board", card_board, "comment", "--author",
-                           "report-to-board", card_id,
-                           f"STILL ACTIVE {stamp}: '{title}' reported nothing this run "
-                           "but its own state file still shows the condition live. "
-                           f"NOT auto-closing — see {state_file}.")
+                if status is None:
+                    print(json.dumps({"status": "error", "error":
+                                      "could not read active RTB card status"}),
+                          file=sys.stderr)
+                    return 1
+                if status not in KNOWN_TERMINAL_STATUSES:
+                    crc, cout = hermes("kanban", "--board", card_board, "comment", "--author",
+                                       "report-to-board", card_id,
+                                       f"STILL ACTIVE {stamp}: '{title}' reported nothing this run "
+                                       "but its own state file still shows the condition live. "
+                                       f"NOT auto-closing — see {state_file}.")
+                    if crc != 0:
+                        print(json.dumps({"status": "error", "out": cout[:200]}),
+                              file=sys.stderr)
+                        return 1
             return rc
         if rec.get("card_id"):
             card_id = rec["card_id"]
             card_board = rec.get("board", board)
             status = card_status(card_id, card_board)
+            if status is None:
+                print(json.dumps({"status": "error", "error":
+                                  "could not read RTB card status"}), file=sys.stderr)
+                return 1
             if status in {"done", "completed", "cancelled"}:
-                arc, _ = hermes("kanban", "--board", card_board, "archive", card_id)
+                arc, aout = hermes("kanban", "--board", card_board, "archive", card_id)
+                if arc != 0:
+                    print(json.dumps({"status": "error", "out": aout[:200]}),
+                          file=sys.stderr)
+                    return 1
                 if arc == 0:
                     state.pop(key, None)
                     persist_state(state)
@@ -250,27 +270,40 @@ def main() -> int:
             # blocked while the condition is live; include blocked in the
             # close-set so a clean RESOLVED run can complete+archive. Scoped to
             # this RTB key path only — do not mass-close unrelated blocked cards.
-            elif status in {"ready", "todo", "triage", "scheduled", "blocked"}:
-                crc, _ = hermes("kanban", "--board", card_board, "complete", card_id,
+            elif status in KNOWN_CLOSEABLE_STATUSES:
+                crc, cout = hermes("kanban", "--board", card_board, "complete", card_id,
                                 "--summary",
                                 f"Auto-closed {stamp}: '{title}' completed due checks passed and "
                                 "pending rechecks cleared. Closed by the same job that opened it.")
-                arc, _ = ((1, "") if crc != 0 else
-                          hermes("kanban", "--board", card_board, "archive", card_id))
-                if crc == 0 and arc == 0:
-                    state.pop(key, None)
-                    persist_state(state)
-                    print(json.dumps({"status": "ok", "closed": card_id}), file=sys.stderr)
-            elif status is not None:
+                if crc != 0:
+                    print(json.dumps({"status": "error", "out": cout[:200]}), file=sys.stderr)
+                    return 1
+                arc, aout = hermes("kanban", "--board", card_board, "archive", card_id)
+                if arc != 0:
+                    print(json.dumps({"status": "error", "out": aout[:200]}), file=sys.stderr)
+                    return 1
+                state.pop(key, None)
+                persist_state(state)
+                print(json.dumps({"status": "ok", "closed": card_id}), file=sys.stderr)
+            elif status in KNOWN_OWNER_STATUSES:
                 # A worker/reviewer owns the card. Do not stomp its lifecycle;
                 # attach the recovery evidence and let that owner close it.
-                hermes("kanban", "--board", card_board, "comment", "--author",
-                       "report-to-board", card_id,
-                       (f"RESOLVED {stamp}: '{title}' completed due checks passed and pending "
-                        "rechecks cleared."
-                        if protocol else
-                        f"RESOLVED {stamp}: '{title}' reported nothing this run; "
-                        "the underlying condition has cleared."))
+                crc, cout = hermes("kanban", "--board", card_board, "comment", "--author",
+                                   "report-to-board", card_id,
+                                   (f"RESOLVED {stamp}: '{title}' completed due checks passed and pending "
+                                    "rechecks cleared."
+                                    if protocol else
+                                    f"RESOLVED {stamp}: '{title}' reported nothing this run; "
+                                    "the underlying condition has cleared."))
+                if crc != 0:
+                    print(json.dumps({"status": "error", "out": cout[:200]}),
+                          file=sys.stderr)
+                    return 1
+            else:
+                print(json.dumps({"status": "error", "error":
+                                  f"unknown RTB card status: {status!r}"}),
+                      file=sys.stderr)
+                return 1
         return rc
 
     # --- reporting: one durable card per active incident -------------------
@@ -279,7 +312,11 @@ def main() -> int:
         card_id = rec["card_id"]
         card_board = rec.get("board", board)
         status = card_status(card_id, card_board)
-        if status not in {None, "done", "completed", "cancelled", "archived"}:
+        if status is None:
+            print(json.dumps({"status": "error", "error":
+                              "could not read RTB card status"}), file=sys.stderr)
+            return 1
+        if status in (KNOWN_CLOSEABLE_STATUSES | KNOWN_OWNER_STATUSES):
             if rec.get("digest") == digest:
                 print(json.dumps({"status": "ok", "unchanged": card_id}), file=sys.stderr)
                 return rc
@@ -297,7 +334,17 @@ def main() -> int:
         if status in {"done", "completed", "cancelled"}:
             # Retire the terminal incident so the stable idempotency key can be
             # reused if the condition genuinely recurs.
-            hermes("kanban", "--board", card_board, "archive", card_id)
+            arc, aout = hermes("kanban", "--board", card_board, "archive", card_id)
+            if arc != 0:
+                print(json.dumps({"status": "error", "out": aout[:200]}), file=sys.stderr)
+                return 1
+        elif status == "archived":
+            pass
+        else:
+            print(json.dumps({"status": "error", "error":
+                              f"unknown RTB card status: {status!r}"}),
+                  file=sys.stderr)
+            return 1
         state.pop(key, None)
         persist_state(state)
 

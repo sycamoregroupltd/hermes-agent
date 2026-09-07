@@ -417,31 +417,35 @@ def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str, bool]:
         return 2, f"[{name}] execution error: {e}", True
 
 
-def acquire_single_instance(bundle: str) -> bool:
+def acquire_single_instance(bundle: str) -> bool | None:
     """Non-blocking flock guard: one runner per bundle at a time.
 
     Returns True if this process holds the lock (it should run), False if
-    another instance is already running (the caller should exit silently).
+    another instance is already running (the caller should exit silently), and
+    None if the lock could not be established (the caller must fail visibly).
     The lock is released automatically when this process exits or is killed.
     """
     if fcntl is None:
         return True  # no fcntl -> degrade to no guard rather than break the job
+    lock_dir = STATE_FILE.parent
     try:
-        lock_dir = STATE_FILE.parent
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_path = lock_dir / f"guard_bundle_{bundle}.lock"
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # Keep the fd open for the lifetime of the process (do not close it
-            # here — closing would release the lock). Store on a module attr.
-            _held_locks.append(fd)
-            return True
-        except (BlockingIOError, OSError):
-            os.close(fd)
-            return False
-    except Exception:
-        return True  # lock failure should not break the bundle; degrade safely
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Keep the fd open for the lifetime of the process (do not close it
+        # here — closing would release the lock). Store on a module attr.
+        _held_locks.append(fd)
+        return True
+    except BlockingIOError:
+        os.close(fd)
+        return False
+    except OSError:
+        os.close(fd)
+        return None
 
 
 _held_locks: list[int] = []
@@ -451,10 +455,11 @@ def _observation_requested(bundle: str) -> bool:
     if os.environ.get("RTB_OBSERVATION_PROTOCOL", "") != OBSERVATION_PROTOCOL:
         return False
     if bundle == "15m":
+        root = os.environ.get("GUARD_BUNDLE_ROOT", "/home/frank/.hermes")
         expected = {
             "GUARD_TICK": "15m",
             "RTB_KEY": "guard-bundle-15m",
-            "RTB_SCRIPT": "/home/frank/.hermes/scripts/guard_bundle_run.sh",
+            "RTB_SCRIPT": str(Path(root) / "scripts/guard_bundle_run.sh"),
         }
         mismatches = [f"{key}={os.environ.get(key)!r} (expected {value!r})"
                       for key, value in expected.items()
@@ -480,7 +485,11 @@ def main() -> int:
         return 2
     budget = BUDGETS.get(bundle, DEFAULT_TIMEOUT)
 
-    if not acquire_single_instance(bundle):
+    acquired = acquire_single_instance(bundle)
+    if acquired is None:
+        print(f"GUARD BUNDLE [{bundle}] — lock setup failure", file=sys.stderr)
+        return 1
+    if not acquired:
         return 0
 
     now = int(time.time())
@@ -510,7 +519,9 @@ def main() -> int:
             return 1
         raise
     if protocol and not due_names:
-        return _emit_observation("DEFERRED" if observation["pending_recheck"] else "NO_DUE_CHECKS")
+        return _emit_observation("NO_DUE_CHECKS")
+    if protocol:
+        assert observation is not None
 
     for name in due_names:
         elapsed = time.monotonic() - started
@@ -526,6 +537,9 @@ def main() -> int:
         check_timeout = max(30, min(int(spec.get("timeout", DEFAULT_TIMEOUT)), int(remaining)))
 
         if protocol:
+            observation["pending_recheck"] = sorted(
+                set(observation["pending_recheck"]) | {name}
+            )
             observation["in_flight"] = name
             try:
                 save_observation_state(bundle, observation)
