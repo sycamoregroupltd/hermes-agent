@@ -41,9 +41,10 @@ def _pull_request_range(event_path: Path | None) -> tuple[str, str]:
         raise ValueError(f"could not read pull-request base/head from {path}: {exc}") from exc
 
 
-def _commit_rows(base: str, head: str) -> Iterable[tuple[str, str, str]]:
+def _commit_rows(base: str, head: str) -> Iterable[tuple[str, str, str, str, str]]:
+    """Yield ``(sha, author_name, author_email, committer_name, committer_email)``."""
     result = subprocess.run(
-        ["git", "log", "--format=%H%x00%an%x00%ae", f"{base}..{head}"],
+        ["git", "log", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce", f"{base}..{head}"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -55,18 +56,30 @@ def _commit_rows(base: str, head: str) -> Iterable[tuple[str, str, str]]:
         raise RuntimeError(f"git log failed for {base}..{head}: {detail}")
     for line in result.stdout.splitlines():
         fields = line.split("\x00")
-        if len(fields) == 3:
-            yield fields[0], fields[1], fields[2]
+        if len(fields) == 5:
+            yield fields[0], fields[1], fields[2], fields[3], fields[4]
 
 
-def leaked_authors(base: str, head: str) -> list[tuple[str, str, str]]:
-    """Return commits authored with the inherited global Claude identity."""
-    return [
-        (sha, name, email)
-        for sha, name, email in _commit_rows(base, head)
-        if name.strip().casefold() == _LEAKED_NAME
+def _is_leaked(name: str, email: str) -> bool:
+    return (
+        name.strip().casefold() == _LEAKED_NAME
         and email.strip().casefold() == _LEAKED_EMAIL
-    ]
+    )
+
+
+def leaked_authors(base: str, head: str) -> list[tuple[str, str, str, str]]:
+    """Return commits whose author or committer leaks the global Claude identity.
+
+    Each tuple is ``(sha, role, name, email)`` where *role* is ``author`` or
+    ``committer``.
+    """
+    offenders: list[tuple[str, str, str, str]] = []
+    for sha, an, ae, cn, ce in _commit_rows(base, head):
+        if _is_leaked(an, ae):
+            offenders.append((sha, "author", an, ae))
+        if _is_leaked(cn, ce):
+            offenders.append((sha, "committer", cn, ce))
+    return offenders
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -89,13 +102,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if offenders:
         print(
-            "git-author-provenance: FAIL — commit author "
+            "git-author-provenance: FAIL — commit author/committer "
             "Claude <claude@anthropic.com> is the known global identity "
             "and cannot identify a Hermes worker or vendor.",
             file=sys.stderr,
         )
-        for sha, name, email in offenders:
-            print(f"  {sha[:12]} {name} <{email}>", file=sys.stderr)
+        for sha, role, name, email in offenders:
+            print(f"  {sha[:12]} {role} {name} <{email}>", file=sys.stderr)
         print(
             "Set the repo/worktree-local identity to <profile>@fleet.local and "
             "bind vendor from the execution receipt instead.",

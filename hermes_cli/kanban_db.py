@@ -6391,6 +6391,7 @@ def _cleanup_workspace(conn: sqlite3.Connection, task_id: str) -> None:
             # and silently delete the user's source data.
             if _is_managed_scratch_path(wp):
                 shutil.rmtree(wp, ignore_errors=True)
+                _cleanup_git_identity_wrapper(wp)
                 _log.debug("Removed scratch workspace: %s", wp)
             else:
                 _log.warning(
@@ -6445,6 +6446,7 @@ def _try_cleanup_parent_workspaces(conn: sqlite3.Connection, task_id: str) -> No
             wp = Path(row["workspace_path"])
             if wp.is_dir() and _is_managed_scratch_path(wp):
                 shutil.rmtree(wp, ignore_errors=True)
+                _cleanup_git_identity_wrapper(wp)
                 _log.debug("Deferred cleanup: removed parent %s scratch workspace: %s", parent_id, wp)
     except Exception:
         pass  # best-effort
@@ -7587,7 +7589,7 @@ def _git_command_context(args: list[str]) -> tuple[Path, int]:
     """Return the effective ``-C`` directory and subcommand index.
 
     Git accepts global options before the subcommand. In particular, ``-C``
-    changes the base directory used by relative clone/worktree destinations;
+    changes the base directory used by relative clone/worktree/init destinations;
     looking only at ``args[0]`` both misses those commands and resolves their
     output path against the wrong directory.
     """
@@ -7646,58 +7648,91 @@ def _command_positionals(
         if arg in value_options:
             index += 2
             continue
+        if any(arg.startswith(f"{option}=") for option in value_options):
+            index += 1
+            continue
         if not arg.startswith("-"):
             positional.append(arg)
         index += 1
     return positional
 
 
+_CLONE_VALUE_OPTIONS = {
+    "--branch",
+    "--bundle-uri",
+    "--config",
+    "--depth",
+    "--filter",
+    "--jobs",
+    "--origin",
+    "--reference",
+    "--reference-if-able",
+    "--revision",
+    "--separate-git-dir",
+    "--shallow-exclude",
+    "--shallow-since",
+    "--template",
+    "--upload-pack",
+    "-b",
+    "-c",
+    "-j",
+    "-o",
+    "-u",
+}
+
+_INIT_VALUE_OPTIONS = {
+    "--initial-branch",
+    "--object-format",
+    "--ref-format",
+    "--separate-git-dir",
+    "--shared",
+    "--template",
+    "-b",
+}
+
+_WORKTREE_ADD_VALUE_OPTIONS = {"--reason", "-B", "-b"}
+
+
 def _candidate_paths(args: list[str]) -> list[Path]:
-    cwd = Path.cwd()
+    """Return destinations of repository-creating commands only.
+
+    Identity must be written only after a successful ``init``, ``clone``, or
+    ``worktree add``. Read-only commands such as ``git -C otherrepo status``
+    must not touch an unrelated checkout's local identity.
+    """
     base, command_index = _git_command_context(args)
-    candidates = [cwd]
-    if base != cwd:
-        candidates.insert(0, base)
     if command_index >= len(args):
-        return candidates
+        return []
 
     command = args[command_index]
-    if command == "clone":
+    if command == "init":
         positional = _command_positionals(
-            args,
-            command_index + 1,
-            {
-                "--branch",
-                "--config",
-                "--depth",
-                "--filter",
-                "--jobs",
-                "--reference",
-                "--separate-git-dir",
-                "--shallow-since",
-                "--upload-pack",
-                "--origin",
-                "-b",
-                "-c",
-                "-j",
-                "-o",
-                "-u",
-            },
-        )
-        if len(positional) >= 2:
-            candidates.insert(0, base / positional[-1])
-        elif positional:
-            source = positional[0].rstrip("/")
-            candidates.insert(0, base / source.rsplit("/", 1)[-1].removesuffix(".git"))
-    elif command == "worktree" and command_index + 1 < len(args) and args[command_index + 1] == "add":
-        positional = _command_positionals(
-            args,
-            command_index + 2,
-            {"--reason", "-B", "-b"},
+            args, command_index + 1, _INIT_VALUE_OPTIONS,
         )
         if positional:
-            candidates.insert(0, base / positional[0])
-    return candidates
+            dest = Path(positional[0]).expanduser()
+            return [dest if dest.is_absolute() else base / dest]
+        return [base]
+    if command == "clone":
+        positional = _command_positionals(
+            args, command_index + 1, _CLONE_VALUE_OPTIONS,
+        )
+        if len(positional) >= 2:
+            dest = Path(positional[-1]).expanduser()
+            return [dest if dest.is_absolute() else base / dest]
+        if positional:
+            source = positional[0].rstrip("/")
+            name = source.rsplit("/", 1)[-1].removesuffix(".git")
+            return [base / name]
+        return []
+    if command == "worktree" and command_index + 1 < len(args) and args[command_index + 1] == "add":
+        positional = _command_positionals(
+            args, command_index + 2, _WORKTREE_ADD_VALUE_OPTIONS,
+        )
+        if positional:
+            dest = Path(positional[0]).expanduser()
+            return [dest if dest.is_absolute() else base / dest]
+    return []
 
 
 def _configure(real: str, candidate: Path) -> None:
@@ -7749,8 +7784,31 @@ def _valid_git_identity(profile: Optional[str]) -> tuple[str, str] | None:
     return profile_name, f"{profile_name}@fleet.local"
 
 
-def _provision_git_identity_wrapper(workspace: Path, identity: tuple[str, str]) -> None:
-    wrapper_dir = workspace / ".hermes-git-bin"
+def _git_identity_wrapper_dir(workspace: Path) -> Path:
+    """Return the runtime wrapper directory for *workspace*.
+
+    Kept outside the user workspace so ``git add .`` cannot stage the wrapper
+    or identity files into a deliverable repository. Prefer ``HERMES_HOME``
+    when set; otherwise use the process temp root.
+    """
+    import tempfile
+
+    workspace = Path(workspace).expanduser()
+    try:
+        key = str(workspace.resolve())
+    except OSError:
+        key = str(workspace)
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if hermes_home:
+        root = Path(hermes_home).expanduser() / "runtime" / "git-wrappers"
+    else:
+        root = Path(tempfile.gettempdir()) / "hermes-git-wrappers"
+    return root / digest
+
+
+def _provision_git_identity_wrapper(workspace: Path, identity: tuple[str, str]) -> Path:
+    wrapper_dir = _git_identity_wrapper_dir(workspace)
     wrapper_dir.mkdir(parents=True, exist_ok=True)
     wrapper = wrapper_dir / "git"
     wrapper.write_text(_GIT_IDENTITY_WRAPPER, encoding="utf-8")
@@ -7758,6 +7816,15 @@ def _provision_git_identity_wrapper(workspace: Path, identity: tuple[str, str]) 
     (wrapper_dir / "identity").write_text(
         f"user.name={identity[0]}\nuser.email={identity[1]}\n", encoding="utf-8"
     )
+    (wrapper_dir / "workspace").write_text(str(Path(workspace).expanduser()), encoding="utf-8")
+    return wrapper_dir
+
+
+def _cleanup_git_identity_wrapper(workspace: Path) -> None:
+    """Best-effort removal of the runtime wrapper for a cleaned workspace."""
+    wrapper_dir = _git_identity_wrapper_dir(workspace)
+    if wrapper_dir.is_dir():
+        shutil.rmtree(wrapper_dir, ignore_errors=True)
 
 
 def _configure_workspace_git_identity(workspace: Path, profile: Optional[str]) -> bool:
@@ -11180,11 +11247,12 @@ def _default_spawn(
     prompt = f"work kanban task {task.id}"
     env = dict(os.environ)
     # Scratch workspaces are not Git repositories yet. The dispatcher has
-    # provisioned a workspace-local wrapper that configures any later clone,
-    # init, or worktree before the worker can commit. Keep the real executable
-    # absolute so the wrapper cannot recurse after PATH is prefixed.
-    git_wrapper_dir = Path(workspace) / ".hermes-git-bin"
-    if git_wrapper_dir.is_dir():
+    # provisioned a runtime git wrapper outside the workspace that configures
+    # any later clone, init, or worktree before the worker can commit. Keep the
+    # real executable absolute so the wrapper cannot recurse after PATH is
+    # prefixed.
+    git_wrapper_dir = _git_identity_wrapper_dir(Path(workspace))
+    if git_wrapper_dir.is_dir() and (git_wrapper_dir / "git").is_file():
         env["HERMES_GIT_REAL"] = shutil.which("git") or "/usr/bin/git"
         env["HERMES_GIT_IDENTITY_NAME"] = profile_arg
         env["HERMES_GIT_IDENTITY_EMAIL"] = f"{profile_arg}@fleet.local"

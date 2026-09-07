@@ -16,16 +16,21 @@ The global Git identity is never changed by Hermes.
 
 A `scratch` workspace is intentionally created as a directory rather than a
 repository because many tasks do not use Git. To cover the case where a worker
-creates a checkout later, dispatcher provisioning writes
-`<workspace>/.hermes-git-bin/git`, an enforced worker-local wrapper, and prepends
-that directory to the spawned worker's `PATH`. Successful `git init`, `git
-clone`, and `git worktree add` commands through that wrapper configure the
-resulting repository immediately. The wrapper is removed with the managed
-scratch workspace. This is the explicit scratch-created-clone boundary: only
-the dispatcher-spawned worker receives the wrapper; an unrelated process that
-clones outside the workspace is out of scope and must configure its own repo.
-The fable, codex, and grok seats use the same assignee-derived identity path
-(`fable@fleet.local`, `codex@fleet.local`, and `grok@fleet.local`).
+creates a checkout later, dispatcher provisioning writes an enforced
+worker-local `git` wrapper **outside** the workspace (under
+`$HERMES_HOME/runtime/git-wrappers/<hash>/`, or the process temp root when
+`HERMES_HOME` is unset) and prepends that directory to the spawned worker's
+`PATH`. Successful `git init` (including `git init <dir>`), `git clone`
+(including option-bearing forms such as `--reference-if-able` / `--template`),
+and `git worktree add` commands through that wrapper configure only the created
+destination repository. Read-only commands such as `git -C otherrepo status`
+do not rewrite an unrelated checkout's identity. The runtime wrapper is removed
+when the managed scratch workspace is cleaned up, so it cannot be staged by
+`git add .` into a deliverable. This is the explicit scratch-created-clone
+boundary: only the dispatcher-spawned worker receives the wrapper; an unrelated
+process that clones outside the workspace is out of scope and must configure its
+own repo. The fable, codex, and grok seats use the same assignee-derived
+identity path (`fable@fleet.local`, `codex@fleet.local`, and `grok@fleet.local`).
 
 The CI `git-author-provenance` check rejects the known leaked global identity
 `Claude <claude@anthropic.com>` in pull-request commits. This is a hygiene
@@ -81,9 +86,11 @@ is the repository-local consumer used by Git at commit time.
 |---|---|---|
 | Dispatcher plain + linked worktree | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py` | PASS: local and worktree scopes isolated; global config untouched |
 | Leading global Git options | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py::test_wrapper_parses_leading_global_options_for_clone_and_worktree` | PASS: `git -C <parent> clone` and `git -C <repo> worktree add` configure their relative outputs |
-| Scratch clone/init enforcement | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py::test_scratch_workspace_provisions_enforced_clone_identity` | PASS: wrapper-created repo has profile-local name/email |
+| Explicit init + option-bearing clone | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py -k 'explicit_init or option_bearing'` | PASS: `git init <dir>` and `--reference-if-able`/`--template` clones configure destinations |
+| No identity corruption on `-C status` | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py::test_wrapper_does_not_configure_unrelated_minus_c_repo` | PASS: read-only `-C` commands leave external repo identity untouched |
+| Scratch clone/init enforcement | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py::test_scratch_workspace_provisions_enforced_clone_identity` | PASS: wrapper-created repo has profile-local name/email; wrapper lives outside workspace |
 | fable/codex/grok seat coverage | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py -k external_seats` | PASS: all three identity seeds are profile-scoped |
-| CI checker behavior | `python -m pytest -q tests/scripts/test_git_author_provenance.py` | PASS: Claude identity fails; repo-local identity passes |
+| CI checker behavior | `python -m pytest -q tests/scripts/test_git_author_provenance.py` | PASS: Claude author or committer fails; repo-local identity passes |
 | Exact executed CI copy | `python3 scripts/ci/check_git_author_provenance.py --base <base> --head <head>` | PASS/FAIL is emitted from the same committed copy; CI invokes it without alternate wrapper |
 | Workflow wiring/liveness | `.github/workflows/ci.yml`: `git-author-provenance` runs `python3 scripts/ci/check_git_author_provenance.py`; `all-checks-pass.needs` includes the job | PASS: static wiring inspected in candidate diff; live PR-run status remains an external GitHub check |
 
