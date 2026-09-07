@@ -61,6 +61,27 @@ jobs:
           github-token: ${{ github.token }}
 
   # ─────────────────────────────────────────────────────────────────────
+  # Git authorship is not vendor provenance. Reject the known global Claude
+  # identity when it leaks into a PR commit from a Hermes workspace; the
+  # review contract binds maker/reviewer vendor from execution receipts.
+  # ─────────────────────────────────────────────────────────────────────
+  git-author-provenance:
+    name: Git author provenance
+    needs: detect
+    if: needs.detect.outputs.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject leaked global Claude identity
+        run: python3 scripts/ci/check_git_author_provenance.py
+
+  # ─────────────────────────────────────────────────────────────────────
   # Lane-gated sub-workflows. Each runs in parallel after detect finishes.
   # Skipped workflows (if condition is false) don't spin up runners.
   # ─────────────────────────────────────────────────────────────────────
@@ -257,6 +278,7 @@ jobs:
     name: All required checks pass
     needs:
       - detect
+      - git-author-provenance
       - tests
       - lint
       - js-tests

@@ -7562,6 +7562,56 @@ def _ensure_git_worktree(repo_root: Path, target: Path, branch_name: str) -> Non
         )
 
 
+def _configure_workspace_git_identity(workspace: Path, profile: Optional[str]) -> bool:
+    """Set a worker's Git identity in the workspace, never in global config.
+
+    Linked worktrees need Git's ``worktreeConfig`` extension so their identity
+    lives in ``config.worktree`` instead of the shared repository config. Plain
+    repositories use ``--local``. Non-Git scratch directories are a valid
+    workspace kind and return ``False``; a later clone/worktree step is covered
+    by the worker's provenance guidance and must configure the clone itself.
+    """
+    if not profile:
+        return False
+    workspace = Path(workspace).expanduser()
+    repo_root = _git_toplevel(workspace)
+    if repo_root is None:
+        return False
+
+    profile_name = str(profile).strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile_name):
+        raise ValueError(f"invalid worker profile for Git identity: {profile!r}")
+    identity = (profile_name, f"{profile_name}@fleet.local")
+    is_linked = _is_linked_worktree_checkout(workspace)
+    if is_linked:
+        enable = subprocess.run(
+            ["git", "-C", str(workspace), "config", "extensions.worktreeConfig", "true"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, check=False,
+        )
+        if enable.returncode != 0:
+            detail = (enable.stderr or enable.stdout or "").strip()
+            raise RuntimeError(
+                f"could not enable worktree-local Git config for {workspace}: {detail}"
+            )
+        scope = "--worktree"
+    else:
+        scope = "--local"
+
+    for key, value in zip(("user.name", "user.email"), identity):
+        result = subprocess.run(
+            ["git", "-C", str(workspace), "config", scope, key, value],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(
+                f"could not set workspace-local Git {key} for {workspace}: {detail}"
+            )
+    return True
+
+
 def _resolve_worktree_workspace(
     task: Task, *, board: Optional[str] = None
 ) -> tuple[Path, str]:
@@ -10474,6 +10524,16 @@ def _dispatch_once_locked(
             if auto:
                 result.auto_blocked.append(claimed.id)
             continue
+        try:
+            _configure_workspace_git_identity(workspace, claimed.assignee)
+        except Exception as exc:
+            auto = _record_spawn_failure(
+                conn, claimed.id, f"workspace Git identity: {exc}",
+                failure_limit=failure_limit,
+            )
+            if auto:
+                result.auto_blocked.append(claimed.id)
+            continue
         # Persist the resolved workspace path so the worker can cd there.
         set_workspace_path(conn, claimed.id, str(workspace))
         if claimed.workspace_kind == "worktree":
@@ -10581,6 +10641,16 @@ def _dispatch_once_locked(
         except Exception as exc:
             auto = _record_spawn_failure(
                 conn, claimed.id, f"workspace: {exc}",
+                failure_limit=failure_limit,
+            )
+            if auto:
+                result.auto_blocked.append(claimed.id)
+            continue
+        try:
+            _configure_workspace_git_identity(workspace, claimed.assignee)
+        except Exception as exc:
+            auto = _record_spawn_failure(
+                conn, claimed.id, f"workspace Git identity: {exc}",
                 failure_limit=failure_limit,
             )
             if auto:
