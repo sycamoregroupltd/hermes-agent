@@ -101,17 +101,32 @@ def _dispatcher_tick_log(slug: str, res: Any) -> "tuple[bool, str, tuple]":
     )
 
 
-def _dispatcher_tick_considered(results: Any) -> bool:
-    """Return whether the dispatcher deliberately considered guarded work.
+def _dispatcher_tick_considered(
+    results: Any,
+    pending: Any = None,
+) -> bool:
+    """Return whether all pending work was deliberately considered.
 
     A respawn guard is a successful dispatch decision, not an unexamined
-    ready task.  Count it as tick activity so a queue containing only guarded
-    tasks does not trip the stuck-worker warning.
+    ready task. Count it as tick activity so a queue containing only guarded
+    tasks does not trip the stuck-worker warning, but do not hide an unguarded
+    ready task on another board in the same tick.
+
+    ``pending`` is the set of ``(board, task_id)`` pairs that remain
+    spawnable after the dispatch pass. It is optional for backwards-compatible
+    callers that only need to know whether any guard fired.
     """
-    return any(
-        bool(getattr(res, "respawn_guarded", ()))
-        for _, res in (results or [])
-    )
+    guarded = {
+        (slug, pair[0])
+        for slug, res in (results or [])
+        for pair in (getattr(res, "respawn_guarded", ()) or ())
+        if isinstance(pair, (tuple, list)) and pair
+    }
+    if not guarded:
+        return False
+    if pending is None:
+        return True
+    return not any(task_key not in guarded for task_key in pending)
 
 
 def _acquire_singleton_lock(lock_path) -> "tuple[Optional[object], str]":
@@ -1337,10 +1352,8 @@ class GatewayKanbanWatchersMixin:
                 out.append((slug, _tick_once_for_board(slug)))
             return out
 
-        def _ready_nonempty() -> bool:
-            """Cheap probe: is there at least one ready+assigned+unclaimed
-            task on ANY board whose assignee maps to a real Hermes profile
-            (i.e. one the dispatcher would actually spawn for)?
+        def _ready_nonempty() -> set[tuple[str, str]]:
+            """Return pending spawnable ``(board, task_id)`` pairs.
 
             Tasks assigned to control-plane lanes (e.g. ``orion-cc``,
             ``orion-research``) are pulled by terminals via
@@ -1348,20 +1361,36 @@ class GatewayKanbanWatchersMixin:
             of those is "correctly idle", not "stuck". Filtering them out
             here keeps the stuck-warn fire only on real failures (broken
             PATH, missing venv, credential loss for a real Hermes profile).
+
+            The task ids are retained so the health check can exclude only
+            the cards deliberately respawn-guarded in this tick. A plain
+            boolean would let a guard on one board hide unspawned work on a
+            different board.
             """
             try:
                 boards = _kb.list_boards(include_archived=False)
             except Exception:
                 boards = [_kb.read_board_metadata(_kb.DEFAULT_BOARD)]
+            pending: set[tuple[str, str]] = set()
             for b in boards:
                 slug = b.get("slug") or _kb.DEFAULT_BOARD
                 conn = None
                 try:
                     conn = _kb.connect(board=slug)
-                    if _kb.has_spawnable_ready(conn):
-                        return True
-                    if _kb.has_spawnable_review(conn):
-                        return True
+                    try:
+                        from hermes_cli.profiles import profile_exists
+                    except Exception:
+                        profile_exists = None
+                    for status in ("ready", "review"):
+                        rows = conn.execute(
+                            "SELECT id, assignee FROM tasks "
+                            "WHERE status = ? AND assignee IS NOT NULL "
+                            "AND claim_lock IS NULL",
+                            (status,),
+                        ).fetchall()
+                        for row in rows:
+                            if profile_exists is None or profile_exists(row["assignee"]):
+                                pending.add((slug, row["id"]))
                 except Exception:
                     continue
                 finally:
@@ -1370,7 +1399,7 @@ class GatewayKanbanWatchersMixin:
                             conn.close()
                         except Exception:
                             pass
-            return False
+            return pending
 
         # Auto-decompose: turn fresh triage tasks into ready workgraphs
         # before the dispatcher fans out workers. Gated by
@@ -1505,7 +1534,9 @@ class GatewayKanbanWatchersMixin:
                     logger.info(message, *args)
                 # Health telemetry (aggregate across boards)
                 ready_pending = await asyncio.to_thread(_ready_nonempty)
-                if ready_pending and not any_spawned and not _dispatcher_tick_considered(results):
+                if ready_pending and not any_spawned and not _dispatcher_tick_considered(
+                    results, ready_pending
+                ):
                     bad_ticks += 1
                 else:
                     bad_ticks = 0

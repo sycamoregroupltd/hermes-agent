@@ -184,3 +184,17 @@ def test_loop_respawn_guarded_tick_counts_as_considered():
     assert any_spawned is False
     assert records == []
     assert _dispatcher_tick_considered(results) is True
+
+
+def test_loop_mixed_guarded_and_unguarded_ready_stays_unconsidered():
+    """A guard on one board must not hide unspawned spawnable work elsewhere."""
+    results = [
+        ("jarvis-os", _result(respawn_guarded=[("t_pr", "active_pr")])),
+        ("sycode", _result()),
+    ]
+    pending = {
+        ("jarvis-os", "t_pr"),
+        ("sycode", "t_unspawned"),
+    }
+    assert _dispatcher_tick_considered(results, pending) is False
+    assert _dispatcher_tick_considered(results, {("jarvis-os", "t_pr")}) is True
