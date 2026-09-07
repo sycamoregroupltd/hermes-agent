@@ -1316,8 +1316,9 @@ def create_task(
                         max_runtime_seconds,
                         skills, max_retries, model_override, provider_override,
                         reasoning_effort,
-                        goal_mode, goal_max_turns, session_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        goal_mode, goal_max_turns, session_id,
+                        block_kind, block_recurrences
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id, title.strip(), body, assignee, task_status, priority,
@@ -1327,6 +1328,9 @@ def create_task(
                         json.dumps(skills_list) if skills_list is not None else None,
                         _opt_int(max_retries), model_override, provider_override, reasoning_effort,
                         1 if goal_mode else 0, _opt_int(goal_max_turns), session_id,
+                        "needs_input" if initial_status == "blocked" else None,
+                        # Creation parks the task but is not a post-unblock recurrence.
+                        0,
                     ),
                 )
                 for pid in parents:
@@ -1350,6 +1354,20 @@ def create_task(
                         "provider_override": provider_override,
                     },
                 )
+                if initial_status == "blocked":
+                    _append_event(
+                        conn,
+                        task_id,
+                        "blocked",
+                        {
+                            "reason": "initial_status=blocked",
+                            "kind": "needs_input",
+                            "recurrences": 0,
+                            "source_status": "created",
+                            "origin": "initial_creation",
+                            "gate": "human",
+                        },
+                    )
                 # ACK-edge: the originating channel hears a child BLOCK, not just the fan-in.
                 _inherit_notify_subs(conn, task_id, parents, created_at=now)
             return task_id
