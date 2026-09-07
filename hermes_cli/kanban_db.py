@@ -7562,26 +7562,150 @@ def _ensure_git_worktree(repo_root: Path, target: Path, branch_name: str) -> Non
         )
 
 
-def _configure_workspace_git_identity(workspace: Path, profile: Optional[str]) -> bool:
-    """Set a worker's Git identity in the workspace, never in global config.
+_GIT_IDENTITY_WRAPPER = r'''#!/usr/bin/env python3
+"""Hermes worker-local git wrapper; configure repos after init/clone/worktree."""
+from __future__ import annotations
 
-    Linked worktrees need Git's ``worktreeConfig`` extension so their identity
-    lives in ``config.worktree`` instead of the shared repository config. Plain
-    repositories use ``--local``. Non-Git scratch directories are a valid
-    workspace kind and return ``False``; a later clone/worktree step is covered
-    by the worker's provenance guidance and must configure the clone itself.
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _run(
+    real: str, args: list[str], *, cwd: Path | None = None,
+    capture_output: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [real, *args], cwd=str(cwd) if cwd else None,
+        text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=capture_output,
+    )
+
+
+def _candidate_paths(args: list[str]) -> list[Path]:
+    cwd = Path.cwd()
+    candidates = [cwd]
+    if "-C" in args:
+        i = args.index("-C")
+        if i + 1 < len(args):
+            candidates.insert(0, Path(args[i + 1]).expanduser())
+    if args and args[0] == "clone":
+        positional: list[str] = []
+        skip_next = False
+        for index, arg in enumerate(args[1:], start=1):
+            if skip_next:
+                skip_next = False
+                continue
+            if arg in {"-o", "--origin", "-c", "--config"}:
+                skip_next = True
+                continue
+            if arg == "--":
+                positional.extend(args[index + 1:])
+                break
+            if not arg.startswith("-"):
+                positional.append(arg)
+        if len(positional) >= 2:
+            candidates.insert(0, cwd / positional[-1])
+        elif positional:
+            source = positional[0].rstrip("/")
+            candidates.insert(0, cwd / source.rsplit("/", 1)[-1].removesuffix(".git"))
+    if args[:2] == ["worktree", "add"]:
+        positional = []
+        skip_next = False
+        for arg in args[2:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if arg in {"-b", "-B"}:
+                skip_next = True
+                continue
+            if not arg.startswith("-"):
+                positional.append(arg)
+        if positional:
+            candidates.insert(0, cwd / positional[0])
+    return candidates
+
+
+def _configure(real: str, candidate: Path) -> None:
+    probe = _run(
+        real, ["-C", str(candidate), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+    )
+    if probe.returncode:
+        return
+    top = Path(probe.stdout.strip())
+    if not top.is_absolute():
+        top = (candidate / top).resolve()
+    name = os.environ.get("HERMES_GIT_IDENTITY_NAME", "").strip()
+    email = os.environ.get("HERMES_GIT_IDENTITY_EMAIL", "").strip()
+    if not name or not email:
+        return
+    worktree_config = _run(
+        real, ["-C", str(top), "config", "--get", "extensions.worktreeConfig"],
+        capture_output=True,
+    )
+    scope = "--worktree" if worktree_config.returncode == 0 and worktree_config.stdout.strip().lower() == "true" else "--local"
+    for key, value in (("user.name", name), ("user.email", email)):
+        result = _run(real, ["-C", str(top), "config", scope, key, value])
+        if result.returncode:
+            raise SystemExit(result.returncode)
+
+
+def main() -> int:
+    real = os.environ.get("HERMES_GIT_REAL", "/usr/bin/git")
+    args = sys.argv[1:]
+    result = _run(real, args)
+    if result.returncode:
+        return result.returncode
+    for candidate in _candidate_paths(args):
+        _configure(real, candidate)
+    return 0
+
+
+raise SystemExit(main())
+'''
+
+
+def _valid_git_identity(profile: Optional[str]) -> tuple[str, str] | None:
+    if not profile:
+        return None
+    profile_name = str(profile).strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile_name):
+        raise ValueError(f"invalid worker profile for Git identity: {profile!r}")
+    return profile_name, f"{profile_name}@fleet.local"
+
+
+def _provision_git_identity_wrapper(workspace: Path, identity: tuple[str, str]) -> None:
+    wrapper_dir = workspace / ".hermes-git-bin"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    wrapper = wrapper_dir / "git"
+    wrapper.write_text(_GIT_IDENTITY_WRAPPER, encoding="utf-8")
+    wrapper.chmod(0o755)
+    (wrapper_dir / "identity").write_text(
+        f"user.name={identity[0]}\nuser.email={identity[1]}\n", encoding="utf-8"
+    )
+
+
+def _configure_workspace_git_identity(workspace: Path, profile: Optional[str]) -> bool:
+    """Set a worker's Git identity in every checkout it can create.
+
+    Existing plain repos use ``--local``; linked worktrees use Git's
+    ``config.worktree`` scope. For a non-Git scratch workspace, provision a
+    worker-local ``git`` wrapper so later ``git init``, ``git clone``, and
+    ``git worktree add`` operations configure the resulting repo immediately.
+    The global Git config is never changed.
     """
     if not profile:
         return False
     workspace = Path(workspace).expanduser()
+    identity = _valid_git_identity(profile)
+    assert identity is not None
     repo_root = _git_toplevel(workspace)
     if repo_root is None:
-        return False
+        _provision_git_identity_wrapper(workspace, identity)
+        return True
 
-    profile_name = str(profile).strip().lower()
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile_name):
-        raise ValueError(f"invalid worker profile for Git identity: {profile!r}")
-    identity = (profile_name, f"{profile_name}@fleet.local")
     is_linked = _is_linked_worktree_checkout(workspace)
     if is_linked:
         enable = subprocess.run(
@@ -10982,6 +11106,16 @@ def _default_spawn(
 
     prompt = f"work kanban task {task.id}"
     env = dict(os.environ)
+    # Scratch workspaces are not Git repositories yet. The dispatcher has
+    # provisioned a workspace-local wrapper that configures any later clone,
+    # init, or worktree before the worker can commit. Keep the real executable
+    # absolute so the wrapper cannot recurse after PATH is prefixed.
+    git_wrapper_dir = Path(workspace) / ".hermes-git-bin"
+    if git_wrapper_dir.is_dir():
+        env["HERMES_GIT_REAL"] = shutil.which("git") or "/usr/bin/git"
+        env["HERMES_GIT_IDENTITY_NAME"] = profile_arg
+        env["HERMES_GIT_IDENTITY_EMAIL"] = f"{profile_arg}@fleet.local"
+        env["PATH"] = str(git_wrapper_dir) + os.pathsep + env.get("PATH", "")
     # The dispatcher is detached from every conversation. Its worker must never
     # inherit routing mirrored by a previous gateway turn, even before the first
     # session binds ContextVars in this process.

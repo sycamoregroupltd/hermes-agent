@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from hermes_cli import kanban_db as kb
 
@@ -65,8 +69,47 @@ def test_linked_worktree_identity_does_not_touch_common_repo(
     assert _git(worktree, "config", "--worktree", "user.name") == "grok"
 
 
-def test_non_git_scratch_is_not_misreported_as_configured(tmp_path: Path) -> None:
+def test_scratch_workspace_provisions_enforced_clone_identity(tmp_path: Path) -> None:
     scratch = tmp_path / "scratch"
     scratch.mkdir()
 
-    assert kb._configure_workspace_git_identity(scratch, "fleet-engineer") is False
+    assert kb._configure_workspace_git_identity(scratch, "fleet-engineer") is True
+    wrapper = scratch / ".hermes-git-bin" / "git"
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "HERMES_GIT_REAL": shutil.which("git") or "/usr/bin/git",
+        "HERMES_GIT_IDENTITY_NAME": "fleet-engineer",
+        "HERMES_GIT_IDENTITY_EMAIL": "fleet-engineer@fleet.local",
+    }
+    subprocess.run([str(wrapper), "init", "-b", "main"], cwd=scratch, env=env, check=True)
+    (scratch / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run([str(wrapper), "add", "README.md"], cwd=scratch, env=env, check=True)
+    subprocess.run(
+        [str(wrapper), "-c", "user.name=fallback", "commit", "-m", "seed"],
+        cwd=scratch, env=env, check=True,
+    )
+
+    clone = tmp_path / "clone"
+    subprocess.run(
+        [str(wrapper), "clone", str(scratch), str(clone)],
+        cwd=tmp_path, env=env, check=True,
+    )
+    assert _git(clone, "config", "--local", "user.name") == "fleet-engineer"
+    assert _git(clone, "config", "--local", "user.email") == "fleet-engineer@fleet.local"
+
+    assert _git(scratch, "config", "--local", "user.name") == "fleet-engineer"
+    assert _git(scratch, "config", "--local", "user.email") == "fleet-engineer@fleet.local"
+
+
+@pytest.mark.parametrize("seat", ["fable", "codex", "grok"])
+def test_external_seats_receive_profile_scoped_identity_seed(
+    tmp_path: Path, seat: str
+) -> None:
+    scratch = tmp_path / seat
+    scratch.mkdir()
+
+    assert kb._configure_workspace_git_identity(scratch, seat) is True
+    assert (scratch / ".hermes-git-bin" / "identity").read_text(encoding="utf-8") == (
+        f"user.name={seat}\nuser.email={seat}@fleet.local\n"
+    )
