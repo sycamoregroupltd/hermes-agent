@@ -22,7 +22,7 @@ import logging
 from typing import Any
 
 from gateway import kanban_watchers
-from gateway.kanban_watchers import _dispatcher_tick_log
+from gateway.kanban_watchers import _dispatcher_tick_considered, _dispatcher_tick_log
 from hermes_cli.kanban_db import DispatchResult
 
 
@@ -172,3 +172,15 @@ def test_loop_all_idle_tick_stays_quiet():
     )
     assert any_spawned is False
     assert records == []
+
+
+def test_loop_respawn_guarded_tick_counts_as_considered():
+    """A deliberately guarded ready task is considered work, not a stuck
+    dispatcher with zero activity (regression for active_pr guards)."""
+    results = [
+        ("jarvis-os", _result(respawn_guarded=[("t_pr", "active_pr")])),
+    ]
+    any_spawned, records = _tick_log_records(results)
+    assert any_spawned is False
+    assert records == []
+    assert _dispatcher_tick_considered(results) is True

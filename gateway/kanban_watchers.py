@@ -101,6 +101,19 @@ def _dispatcher_tick_log(slug: str, res: Any) -> "tuple[bool, str, tuple]":
     )
 
 
+def _dispatcher_tick_considered(results: Any) -> bool:
+    """Return whether the dispatcher deliberately considered guarded work.
+
+    A respawn guard is a successful dispatch decision, not an unexamined
+    ready task.  Count it as tick activity so a queue containing only guarded
+    tasks does not trip the stuck-worker warning.
+    """
+    return any(
+        bool(getattr(res, "respawn_guarded", ()))
+        for _, res in (results or [])
+    )
+
+
 def _acquire_singleton_lock(lock_path) -> "tuple[Optional[object], str]":
     """Take an exclusive, non-blocking advisory lock for the sole dispatcher.
 
@@ -1492,7 +1505,7 @@ class GatewayKanbanWatchersMixin:
                     logger.info(message, *args)
                 # Health telemetry (aggregate across boards)
                 ready_pending = await asyncio.to_thread(_ready_nonempty)
-                if ready_pending and not any_spawned:
+                if ready_pending and not any_spawned and not _dispatcher_tick_considered(results):
                     bad_ticks += 1
                 else:
                     bad_ticks = 0
