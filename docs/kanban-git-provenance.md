@@ -80,6 +80,7 @@ is the repository-local consumer used by Git at commit time.
 | Row | Exact command / evidence | Result |
 |---|---|---|
 | Dispatcher plain + linked worktree | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py` | PASS: local and worktree scopes isolated; global config untouched |
+| Leading global Git options | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py::test_wrapper_parses_leading_global_options_for_clone_and_worktree` | PASS: `git -C <parent> clone` and `git -C <repo> worktree add` configure their relative outputs |
 | Scratch clone/init enforcement | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py::test_scratch_workspace_provisions_enforced_clone_identity` | PASS: wrapper-created repo has profile-local name/email |
 | fable/codex/grok seat coverage | `python -m pytest -q tests/hermes_cli/test_kanban_git_identity.py -k external_seats` | PASS: all three identity seeds are profile-scoped |
 | CI checker behavior | `python -m pytest -q tests/scripts/test_git_author_provenance.py` | PASS: Claude identity fails; repo-local identity passes |

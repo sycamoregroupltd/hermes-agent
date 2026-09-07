@@ -7583,47 +7583,120 @@ def _run(
     )
 
 
+def _git_command_context(args: list[str]) -> tuple[Path, int]:
+    """Return the effective ``-C`` directory and subcommand index.
+
+    Git accepts global options before the subcommand. In particular, ``-C``
+    changes the base directory used by relative clone/worktree destinations;
+    looking only at ``args[0]`` both misses those commands and resolves their
+    output path against the wrong directory.
+    """
+    base = Path.cwd()
+    index = 0
+    value_options = {
+        "--config-env",
+        "--exec-path",
+        "--git-dir",
+        "--namespace",
+        "--super-prefix",
+        "--work-tree",
+        "-c",
+    }
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            return base, index + 1
+        if arg == "-C":
+            if index + 1 >= len(args):
+                return base, len(args)
+            path = Path(args[index + 1]).expanduser()
+            base = path if path.is_absolute() else base / path
+            base = base.resolve(strict=False)
+            index += 2
+            continue
+        if arg.startswith("-C") and len(arg) > 2:
+            path = Path(arg[2:]).expanduser()
+            base = path if path.is_absolute() else base / path
+            base = base.resolve(strict=False)
+            index += 1
+            continue
+        if arg in value_options:
+            index += 2
+            continue
+        if any(arg.startswith(f"{option}=") for option in value_options if option != "-c"):
+            index += 1
+            continue
+        if arg.startswith("-"):
+            index += 1
+            continue
+        return base, index
+    return base, index
+
+
+def _command_positionals(
+    args: list[str], start: int, value_options: set[str]
+) -> list[str]:
+    positional: list[str] = []
+    index = start
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            positional.extend(args[index + 1:])
+            break
+        if arg in value_options:
+            index += 2
+            continue
+        if not arg.startswith("-"):
+            positional.append(arg)
+        index += 1
+    return positional
+
+
 def _candidate_paths(args: list[str]) -> list[Path]:
     cwd = Path.cwd()
+    base, command_index = _git_command_context(args)
     candidates = [cwd]
-    if "-C" in args:
-        i = args.index("-C")
-        if i + 1 < len(args):
-            candidates.insert(0, Path(args[i + 1]).expanduser())
-    if args and args[0] == "clone":
-        positional: list[str] = []
-        skip_next = False
-        for index, arg in enumerate(args[1:], start=1):
-            if skip_next:
-                skip_next = False
-                continue
-            if arg in {"-o", "--origin", "-c", "--config"}:
-                skip_next = True
-                continue
-            if arg == "--":
-                positional.extend(args[index + 1:])
-                break
-            if not arg.startswith("-"):
-                positional.append(arg)
+    if base != cwd:
+        candidates.insert(0, base)
+    if command_index >= len(args):
+        return candidates
+
+    command = args[command_index]
+    if command == "clone":
+        positional = _command_positionals(
+            args,
+            command_index + 1,
+            {
+                "--branch",
+                "--config",
+                "--depth",
+                "--filter",
+                "--jobs",
+                "--reference",
+                "--separate-git-dir",
+                "--shallow-since",
+                "--upload-pack",
+                "--origin",
+                "-b",
+                "-c",
+                "-j",
+                "-o",
+                "-u",
+            },
+        )
         if len(positional) >= 2:
-            candidates.insert(0, cwd / positional[-1])
+            candidates.insert(0, base / positional[-1])
         elif positional:
             source = positional[0].rstrip("/")
-            candidates.insert(0, cwd / source.rsplit("/", 1)[-1].removesuffix(".git"))
-    if args[:2] == ["worktree", "add"]:
-        positional = []
-        skip_next = False
-        for arg in args[2:]:
-            if skip_next:
-                skip_next = False
-                continue
-            if arg in {"-b", "-B"}:
-                skip_next = True
-                continue
-            if not arg.startswith("-"):
-                positional.append(arg)
+            candidates.insert(0, base / source.rsplit("/", 1)[-1].removesuffix(".git"))
+    elif command == "worktree" and command_index + 1 < len(args) and args[command_index + 1] == "add":
+        positional = _command_positionals(
+            args,
+            command_index + 2,
+            {"--reason", "-B", "-b"},
+        )
         if positional:
-            candidates.insert(0, cwd / positional[0])
+            candidates.insert(0, base / positional[0])
     return candidates
 
 

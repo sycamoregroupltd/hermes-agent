@@ -113,3 +113,70 @@ def test_external_seats_receive_profile_scoped_identity_seed(
     assert (scratch / ".hermes-git-bin" / "identity").read_text(encoding="utf-8") == (
         f"user.name={seat}\nuser.email={seat}@fleet.local\n"
     )
+
+
+def test_wrapper_parses_leading_global_options_for_clone_and_worktree(
+    tmp_path: Path,
+) -> None:
+    scratch = tmp_path / "source"
+    scratch.mkdir()
+    assert kb._configure_workspace_git_identity(scratch, "fleet-engineer") is True
+    wrapper = scratch / ".hermes-git-bin" / "git"
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "HERMES_GIT_REAL": shutil.which("git") or "/usr/bin/git",
+        "HERMES_GIT_IDENTITY_NAME": "fleet-engineer",
+        "HERMES_GIT_IDENTITY_EMAIL": "fleet-engineer@fleet.local",
+    }
+    subprocess.run(
+        [str(wrapper), "init", "-b", "main"],
+        cwd=scratch,
+        env=env,
+        check=True,
+    )
+    (scratch / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run([str(wrapper), "add", "README.md"], cwd=scratch, env=env, check=True)
+    subprocess.run(
+        [str(wrapper), "-c", "user.name=fallback", "commit", "-m", "seed"],
+        cwd=scratch,
+        env=env,
+        check=True,
+    )
+
+    clone_parent = tmp_path / "clone-parent"
+    clone_parent.mkdir()
+    subprocess.run(
+        [str(wrapper), "-C", str(clone_parent), "clone", str(scratch), "relative-clone"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    clone = clone_parent / "relative-clone"
+    assert _git(clone, "config", "--local", "user.name") == "fleet-engineer"
+    assert _git(clone, "config", "--local", "user.email") == "fleet-engineer@fleet.local"
+
+    subprocess.run(
+        [str(wrapper), "-C", str(scratch), "config", "extensions.worktreeConfig", "true"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    subprocess.run(
+        [
+            str(wrapper),
+            "-C",
+            str(scratch),
+            "worktree",
+            "add",
+            "-b",
+            "wt/leading-options",
+            "relative-worktree",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
+    worktree = scratch / "relative-worktree"
+    assert _git(worktree, "config", "--worktree", "user.name") == "fleet-engineer"
+    assert _git(worktree, "config", "--worktree", "user.email") == "fleet-engineer@fleet.local"
