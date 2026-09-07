@@ -7,7 +7,15 @@
 # nothing in the pipe. report-to-board gives one self-closing card per job
 # (key rtb-guard-bundle-15m), silent when clean, exit code preserved.
 set -uo pipefail
+# Pin the profile root: kanban workers and manual probes may export another
+# HERMES_HOME, which would make the shared runner resolve scripts/state there.
+export HERMES_HOME=/home/frank/.hermes/profiles/jarvis
 export GUARD_TICK=15m
+export RTB_OBSERVATION_PROTOCOL=guard-bundle-v1
+# t_8cdc9260 (2026-08-31): runner's own wall-clock budget for this cadence is
+# 240s (see BUDGETS in cron_guard_bundle_runner.py) + startup slack. Stays
+# well under the scheduler job cap (3600s default).
+export RTB_TIMEOUT=300
 export RTB_SCRIPT=/home/frank/.hermes/scripts/guard_bundle_run.sh
 export RTB_KEY=guard-bundle-15m
 export RTB_TITLE="Guard bundle (15m): a fleet guard/watchdog check is failing"
