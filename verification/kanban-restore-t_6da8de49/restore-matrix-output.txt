@@ -1,0 +1,73 @@
+candidate=/home/frank/.hermes-worktrees/t_6da8de49/profiles/jarvis/scripts/jarvis_os_kanban_integrity_backup.py
+  [PASS] exact candidate sha256 and line count: sha=8e110743a6b8be02d042990c7f7e57f392f4a95a0c1f4fa78e03b25736b9fb48 lines=1118
+  [PASS] py_compile candidate
+  [PASS] production snapshot captured read-only: 10 DBs
+  [PASS] production auto-restore remains OFF: cron store has no enabling flag
+throwaway_root=/tmp/t_6da8de49_matrix_ci_6vmj4
+  [PASS] ten-board throwaway fixture created and integrity-ok
+  [PASS] newer corrupt backup rejected
+  [PASS] physical page corruption fails and classifies as page: sqlite error: file is not a database
+  [PASS] newest integrity-ok backup selected: /tmp/t_6da8de49_matrix_ci_6vmj4/jarvis-os/backups/integrity-check/kanban.db.backup.20260908T010000Z.sqlite3
+  [PASS] pre-restore lost task is readable
+Kanban integrity backup — 20260908T070728Z
+Protected boards: 10 (ai-restaurant, ecohome, jarvis-os, legacy-yss, orchestrator-sync, quicknote, sycode-ai, sycode-trading, upero, yorkstone-supplies)
+Restore-eligible: 5 (jarvis-os, sycode-ai, sycode-trading, upero, yorkstone-supplies) — deliberately a SUBSET of the backup set
+Auto-restore: ENABLED
+Previous verified run: none (no LATEST marker yet)
+
+  [FAIL] jarvis-os: database disk image is malformed
+  !! CORRUPT BOARD jarvis-os: database disk image is malformed | snapshot -> /tmp/t_6da8de49_matrix_ci_6vmj4/jarvis-os/kanban.db.corrupt.ed4fce6fb2b2087f.bak
+       corruption class: page
+  [DRY-RUN] dispatcher quiesce skipped (would pause a9def8c365df)
+  swapped jarvis-os <- /tmp/t_6da8de49_matrix_ci_6vmj4/jarvis-os/backups/integrity-check/kanban.db.backup.20260908T010000Z.sqlite3
+  [DRY-RUN] dispatcher resume skipped (would resume a9def8c365df)
+[TEST-DOUBLE ALERT] FLEET_KANBAN_DB_RESTORED | jarvis-os restored at 20260908T070728Z from /tmp/t_6da8de49_matrix_ci_6vmj4/jarvis-os/backups/integrity-check/kanban.db.backup.20260908T010000Z.sqlite3; lost-task delta: ['t_lost_delta_probe_6da8de49']
+  [RESTORED] jarvis-os from /tmp/t_6da8de49_matrix_ci_6vmj4/jarvis-os/backups/integrity-check/kanban.db.backup.20260908T010000Z.sqlite3; lost-task delta: ['t_lost_delta_probe_6da8de49']
+  [PASS] sycode-trading: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/sycode-trading.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] sycode-ai: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/sycode-ai.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] upero: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/upero.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] yorkstone-supplies: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/yorkstone-supplies.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] ai-restaurant: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/ai-restaurant.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] ecohome: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/ecohome.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] legacy-yss: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/legacy-yss.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] orchestrator-sync: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/orchestrator-sync.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+  [PASS] quicknote: ok
+           VERIFIED -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/quicknote.kanban.db (100352B sha=6d6091be7f774096 tasks=3 live=[3,3] integrity=ok)
+
+Manifest -> /tmp/t_6da8de49_matrix_ci_6vmj4/backups/integrity-check/20260908T070728Z/MANIFEST.json
+LATEST NOT updated — verification did not pass for every protected board.
+Global store: 1 run dirs, newest run 1 MiB (retention DISABLED — operator decision)
+
+Verified 9/10 protected boards.
+
+=== FLEET KANBAN DB INTEGRITY ALERT ===
+  CORRUPT BOARD jarvis-os: database disk image is malformed | snapshot -> /tmp/t_6da8de49_matrix_ci_6vmj4/jarvis-os/kanban.db.corrupt.ed4fce6fb2b2087f.bak
+FLEET_KANBAN_DB_INTEGRITY_FAIL: a board failed integrity_check or its backup failed verification
+  [PASS] main restore matrix returns expected failure signal: rc=2
+  [PASS] dispatcher quiesce and resume traces emitted
+  [PASS] atomic restore replaced live throwaway DB
+  [PASS] FLEET_KANBAN_DB_RESTORED alert carries lost-task delta
+  [PASS] restored throwaway DB integrity-ok
+  [PASS] no restore temp residue; manifest/LATEST fail-closed
+  [DRY-RUN] dispatcher quiesce skipped (would pause a9def8c365df)
+  swapped probe <- /tmp/t_6da8de49_matrix_ci_6vmj4/probe/backups/integrity-check/kanban.db.backup.20260908T030000Z.sqlite3
+  [DRY-RUN] dispatcher resume skipped (would resume a9def8c365df)
+  [PASS] wal_checkpoint(TRUNCATE) restore hook fired
+  [PASS] restore_board post-check passed: restored from /tmp/t_6da8de49_matrix_ci_6vmj4/probe/backups/integrity-check/kanban.db.backup.20260908T030000Z.sqlite3
+  !! restore-loop guard: prior restore at now still failing; operator intervention required (no re-restore)
+  [PASS] reentrancy guard rejects second restore: restore-loop guard: prior restore at now still failing; operator intervention required (no re-restore)
+  [PASS] reentrancy guard files flag and leaves DB unchanged
+  [PASS] production DB hashes and sizes unchanged: before=10 after=10
+ALERT-FAILED target=discord:#critical-alerts rc=1 stderr=controlled test-double
+ALERT-FAILOVER-OK target=whatsapp:Frank subject=FLEET_KANBAN_DB_RESTORED
+  [PASS] named consumer primary and fallback attempts recorded
+  [PASS] named consumer receipt written: /home/frank/.hermes-worktrees/t_6da8de49/verification/kanban-restore-t_6da8de49/named-consumer-receipt.json
+TOTAL 22/22 passed

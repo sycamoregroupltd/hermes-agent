@@ -1,0 +1,45 @@
+{
+  "auto_restore_enabled": false,
+  "candidate_lines": 1118,
+  "candidate_sha256": "8e110743a6b8be02d042990c7f7e57f392f4a95a0c1f4fa78e03b25736b9fb48",
+  "fallback_attempt": {
+    "command": [
+      "/home/frank/.local/bin/hermes",
+      "send",
+      "-q",
+      "-t",
+      "whatsapp:Frank",
+      "-s"
+    ],
+    "status": "fallback-succeeded",
+    "target": "whatsapp:Frank"
+  },
+  "gateway_liveness": {
+    "probe": "named consumer command runner; no outbound network",
+    "status": "ok"
+  },
+  "live_db_mutated": false,
+  "lost_task_delta": [
+    "t_lost_delta_probe_6da8de49"
+  ],
+  "matrix_row": "restore dry-run against throwaway board DB: 22/22 PASS",
+  "named_consumer": "cron 93ced04b18bf / fleet-kanban-integrity-backup-5boards",
+  "primary_attempt": {
+    "command": [
+      "/home/frank/.local/bin/hermes",
+      "send",
+      "-q",
+      "-t",
+      "discord:#critical-alerts",
+      "-s"
+    ],
+    "status": "primary-failed",
+    "target": "discord:#critical-alerts"
+  },
+  "receipt_type": "controlled-test-double",
+  "store_liveness": {
+    "probe": "throwaway SQLite fixture + read-only production snapshot",
+    "status": "ok"
+  },
+  "target": "discord:#critical-alerts"
+}

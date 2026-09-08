@@ -1,0 +1,87 @@
+{
+  "after": {
+    "ai-restaurant": [
+      "53182504eff3391c009edea08db2eb12960706dcfa5d70213efadb5fccea94f8",
+      2375680
+    ],
+    "ecohome": [
+      "80fc140702694d78cdf484a5ebd1ccdb001e663b3c96f8643766d65d8d0ae171",
+      667648
+    ],
+    "jarvis-os": [
+      "39cf564b12bb0a2ea3a86c2062e426264f4c194855e528046fc4e01751e0dc9d",
+      123281408
+    ],
+    "legacy-yss": [
+      "bb7aae7847195e4d8f4cab04440cf8c336b3f0302e1489b15c2baffda5ed416c",
+      651264
+    ],
+    "orchestrator-sync": [
+      "73751cb07e60bdd4f7a8eb1963bbdb08378ec531ff0d168bfe3aa4a34461324d",
+      10326016
+    ],
+    "quicknote": [
+      "abc927aab5244133e7a254dbda0b9167ac68a5049863890365b2a912d98ef649",
+      270336
+    ],
+    "sycode-ai": [
+      "6553966993ca18701b3d8dfdf2ed3a39082129e35f19be2d061c26a1728442f3",
+      2949120
+    ],
+    "sycode-trading": [
+      "baa6cac5e4edf9ff4a53a4e50db0999a44765399a4396ee6a544e0759aedcd18",
+      173125632
+    ],
+    "upero": [
+      "551292d50e5602f3f9acda6a88bef2e10f20a47509eb72c38e81fbefaa125521",
+      5226496
+    ],
+    "yorkstone-supplies": [
+      "32cb1b13fc8c538043e2217818d10f2c88fabe05aff8ecaf43f8d5f1110bed4f",
+      3014656
+    ]
+  },
+  "before": {
+    "ai-restaurant": [
+      "53182504eff3391c009edea08db2eb12960706dcfa5d70213efadb5fccea94f8",
+      2375680
+    ],
+    "ecohome": [
+      "80fc140702694d78cdf484a5ebd1ccdb001e663b3c96f8643766d65d8d0ae171",
+      667648
+    ],
+    "jarvis-os": [
+      "39cf564b12bb0a2ea3a86c2062e426264f4c194855e528046fc4e01751e0dc9d",
+      123281408
+    ],
+    "legacy-yss": [
+      "bb7aae7847195e4d8f4cab04440cf8c336b3f0302e1489b15c2baffda5ed416c",
+      651264
+    ],
+    "orchestrator-sync": [
+      "73751cb07e60bdd4f7a8eb1963bbdb08378ec531ff0d168bfe3aa4a34461324d",
+      10326016
+    ],
+    "quicknote": [
+      "abc927aab5244133e7a254dbda0b9167ac68a5049863890365b2a912d98ef649",
+      270336
+    ],
+    "sycode-ai": [
+      "6553966993ca18701b3d8dfdf2ed3a39082129e35f19be2d061c26a1728442f3",
+      2949120
+    ],
+    "sycode-trading": [
+      "baa6cac5e4edf9ff4a53a4e50db0999a44765399a4396ee6a544e0759aedcd18",
+      173125632
+    ],
+    "upero": [
+      "551292d50e5602f3f9acda6a88bef2e10f20a47509eb72c38e81fbefaa125521",
+      5226496
+    ],
+    "yorkstone-supplies": [
+      "32cb1b13fc8c538043e2217818d10f2c88fabe05aff8ecaf43f8d5f1110bed4f",
+      3014656
+    ]
+  },
+  "unchanged": true
+}
