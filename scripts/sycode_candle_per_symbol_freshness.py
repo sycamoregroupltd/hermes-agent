@@ -151,7 +151,13 @@ def fetch_symbol_ages(timeframe, eligible_symbols=None):
         "-X", "-q", "-t", "-A", "-F", "\t", "-v", "ON_ERROR_STOP=1",
         "-c", sql,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
     if proc.returncode != 0:
         raise RuntimeError("psql failed tf=%s rc=%d: %s" % (
             timeframe, proc.returncode, proc.stderr.strip()[:200]))
@@ -220,7 +226,10 @@ def read_state():
 def write_state(payload):
     STATE.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATE.with_name(".%s.tmp-%d" % (STATE.name, os.getpid()))
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    tmp.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     os.replace(tmp, STATE)
 
 
