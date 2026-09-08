@@ -8,7 +8,8 @@
       "probe": "authenticated_inference",
       "profile": "operator",
       "provider": "openai-codex",
-      "result": "success"
+      "result": "success",
+      "served_provider": "openai-codex"
     },
     {
       "probe": "authenticated_inference",

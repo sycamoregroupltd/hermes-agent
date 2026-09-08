@@ -8,7 +8,8 @@
       "probe": "authenticated_inference",
       "profile": "builder",
       "provider": "openrouter",
-      "result": "success"
+      "result": "success",
+      "served_provider": "openrouter"
     },
     {
       "probe": "authenticated_inference",

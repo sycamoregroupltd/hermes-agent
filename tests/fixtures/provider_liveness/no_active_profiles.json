@@ -1,0 +1,16 @@
+{
+  "active_profiles": [],
+  "fixture_id": "no-active-profiles-fails-closed",
+  "observations": [],
+  "profiles": {
+    "dormant": {
+      "config": {
+        "fallback_providers": [],
+        "model": {
+          "provider": "anthropic"
+        }
+      }
+    }
+  },
+  "schema_version": 1
+}

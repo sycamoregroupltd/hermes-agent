@@ -73,11 +73,14 @@ def _configured_routes(profile: str, raw_profile: Any) -> tuple[str, list[str]]:
 
 def _observations(
     raw: Any, profiles: set[str]
-) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], list[dict[str, str]]]]:
+) -> tuple[
+    dict[tuple[str, str], dict[str, str]],
+    dict[tuple[str, str], list[dict[str, str]]],
+]:
     if not isinstance(raw, list):
         raise FixtureError("observations must be an array")
 
-    authenticated: dict[tuple[str, str], str] = {}
+    authenticated: dict[tuple[str, str], dict[str, str]] = {}
     supporting: dict[tuple[str, str], list[dict[str, str]]] = {}
     for index, raw_observation in enumerate(raw):
         path = f"observations[{index}]"
@@ -101,7 +104,12 @@ def _observations(
                 raise FixtureError(
                     f"duplicate {AUTH_PROBE} observation for {profile}/{provider}"
                 )
-            authenticated[route] = result
+            authenticated_observation = {"result": result}
+            if "served_provider" in observation:
+                authenticated_observation["served_provider"] = _name(
+                    observation["served_provider"], f"{path}.served_provider"
+                )
+            authenticated[route] = authenticated_observation
         else:
             supporting.setdefault(route, []).append(
                 {"probe": probe, "result": result}
@@ -148,6 +156,8 @@ def check_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
 
     reports: list[dict[str, Any]] = []
     all_alarms: list[dict[str, str]] = []
+    if not active_profiles:
+        all_alarms.append({"code": "no_active_profiles"})
     for profile in sorted(normalized_profiles):
         primary, fallbacks = routes[profile]
         configured = [primary, *fallbacks]
@@ -166,18 +176,56 @@ def check_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
             classification = "inactive"
             authenticated_provider = None
         else:
-            primary_result = authenticated.get((profile, primary))
+            primary_observation = authenticated.get((profile, primary))
+            primary_result = (
+                primary_observation.get("result") if primary_observation else None
+            )
+            primary_served_provider = (
+                primary_observation.get("served_provider")
+                if primary_observation
+                else None
+            )
             fallback_successes: list[str] = []
             for provider in configured:
                 role = "primary" if provider == primary else "fallback"
-                result = authenticated.get((profile, provider))
+                authenticated_observation = authenticated.get((profile, provider))
+                result = (
+                    authenticated_observation.get("result")
+                    if authenticated_observation
+                    else None
+                )
+                served_provider = (
+                    authenticated_observation.get("served_provider")
+                    if authenticated_observation
+                    else None
+                )
                 non_auth = supporting.get((profile, provider), [])
                 if result == "success":
-                    route_classification = (
-                        "primary_success" if role == "primary" else "fallback"
-                    )
-                    if role == "fallback":
-                        fallback_successes.append(provider)
+                    if served_provider is None:
+                        route_classification = "unknown_collection"
+                        profile_alarms.append(
+                            {
+                                "code": "collection_unknown",
+                                "profile": profile,
+                                "provider": provider,
+                            }
+                        )
+                    elif served_provider != provider:
+                        route_classification = "silent_downgrade"
+                        profile_alarms.append(
+                            {
+                                "code": "route_served_by_other_provider",
+                                "profile": profile,
+                                "provider": provider,
+                                "served_provider": served_provider,
+                            }
+                        )
+                    else:
+                        route_classification = (
+                            "primary_success" if role == "primary" else "fallback"
+                        )
+                        if role == "fallback":
+                            fallback_successes.append(provider)
                 elif result == "failure":
                     route_classification = "configured_dead"
                     profile_alarms.append(
@@ -202,17 +250,29 @@ def check_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
                     "role": role,
                     "classification": route_classification,
                 }
+                if served_provider is not None:
+                    provider_report["served_provider"] = served_provider
                 if non_auth:
                     provider_report["non_auth_evidence"] = non_auth
                 provider_reports.append(provider_report)
 
-            if primary_result == "success":
+            if (
+                primary_result == "success"
+                and primary_served_provider is not None
+                and primary_served_provider != primary
+            ):
+                classification = "silent_downgrade"
+                authenticated_provider = primary_served_provider
+            elif primary_result == "success" and primary_served_provider == primary:
                 classification = "primary_success"
                 authenticated_provider = primary
             elif fallback_successes:
                 classification = "fallback"
                 authenticated_provider = fallback_successes[0]
-            elif all(authenticated.get((profile, provider)) == "failure" for provider in configured):
+            elif all(
+                authenticated.get((profile, provider), {}).get("result") == "failure"
+                for provider in configured
+            ):
                 classification = "configured_dead"
                 authenticated_provider = None
             else:

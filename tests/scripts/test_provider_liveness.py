@@ -39,6 +39,20 @@ def _profile(report, name):
             "primary_success",
             "openai-codex",
         ),
+        (
+            "silent_downgrade.json",
+            "non_green",
+            "operator",
+            "silent_downgrade",
+            "openai-codex",
+        ),
+        (
+            "no_active_profiles.json",
+            "non_green",
+            "dormant",
+            "inactive",
+            "anthropic",
+        ),
     ],
 )
 def test_fixture_contract(fixture, status, profile, classification, expected_primary):
@@ -107,6 +121,87 @@ def test_model_listing_and_credential_presence_never_prove_authentication():
     assert report["alarms"][0]["code"] == "collection_unknown"
 
 
+def test_empty_active_profiles_is_valid_and_fails_closed():
+    report = load_fixture(FIXTURES / "no_active_profiles.json")
+
+    assert report["status"] == "non_green"
+    assert report["alarms"] == [{"code": "no_active_profiles"}]
+
+
+def test_silent_downgrade_identifies_the_served_provider_and_alarms():
+    report = load_fixture(FIXTURES / "silent_downgrade.json")
+    operator = _profile(report, "operator")
+
+    assert operator["classification"] == "silent_downgrade"
+    assert operator["authenticated_provider"] == "openrouter"
+    assert operator["providers"] == [
+        {
+            "provider": "openai-codex",
+            "role": "primary",
+            "classification": "silent_downgrade",
+            "served_provider": "openrouter",
+        }
+    ]
+    assert report["alarms"] == [
+        {
+            "code": "route_served_by_other_provider",
+            "profile": "operator",
+            "provider": "openai-codex",
+            "served_provider": "openrouter",
+        }
+    ]
+
+
+def test_success_without_served_provider_fails_closed_as_unknown_collection():
+    fixture = json.loads(
+        (FIXTURES / "primary_success.json").read_text(encoding="utf-8")
+    )
+    fixture["observations"][0].pop("served_provider")
+
+    report = check_fixture(fixture)
+    builder = _profile(report, "builder")
+
+    assert report["status"] == "non_green"
+    assert builder["classification"] == "unknown_collection"
+    assert builder["authenticated_provider"] is None
+    assert builder["providers"][0]["classification"] == "unknown_collection"
+    assert report["alarms"] == [
+        {
+            "code": "collection_unknown",
+            "profile": "builder",
+            "provider": "openrouter",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("result", "classification", "alarm"),
+    [
+        ("failure", "configured_dead", "configured_route_dead"),
+        ("unknown", "unknown_collection", "collection_unknown"),
+    ],
+)
+def test_non_success_observations_do_not_require_a_served_provider(
+    result, classification, alarm
+):
+    fixture = json.loads(
+        (FIXTURES / "primary_success.json").read_text(encoding="utf-8")
+    )
+    fixture["observations"][0] = {
+        "probe": "authenticated_inference",
+        "profile": "builder",
+        "provider": "openrouter",
+        "result": result,
+    }
+
+    report = check_fixture(fixture)
+    builder = _profile(report, "builder")
+
+    assert builder["classification"] == classification
+    assert "served_provider" not in builder["providers"][0]
+    assert report["alarms"][0]["code"] == alarm
+
+
 def test_missing_active_profile_config_is_rejected():
     fixture = {
         "schema_version": 1,
@@ -127,6 +222,8 @@ def test_missing_active_profile_config_is_rejected():
         ("fallback.json", 1),
         ("unknown_collection.json", 1),
         ("configured_dead.json", 1),
+        ("silent_downgrade.json", 1),
+        ("no_active_profiles.json", 1),
     ],
 )
 def test_module_cli_executes_fixture_evidence(fixture, expected_code):

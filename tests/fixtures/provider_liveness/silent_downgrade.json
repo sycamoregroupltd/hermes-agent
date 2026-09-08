@@ -1,0 +1,26 @@
+{
+  "active_profiles": [
+    "operator"
+  ],
+  "fixture_id": "requested-route-served-by-other-provider",
+  "observations": [
+    {
+      "probe": "authenticated_inference",
+      "profile": "operator",
+      "provider": "openai-codex",
+      "result": "success",
+      "served_provider": "openrouter"
+    }
+  ],
+  "profiles": {
+    "operator": {
+      "config": {
+        "fallback_providers": [],
+        "model": {
+          "provider": "openai-codex"
+        }
+      }
+    }
+  },
+  "schema_version": 1
+}
