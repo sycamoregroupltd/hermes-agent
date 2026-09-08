@@ -20,6 +20,9 @@ from __future__ import annotations
 import json, os, re, subprocess, sys, time
 from pathlib import Path
 
+sys.path.insert(0, "/home/frank/.hermes/scripts")
+from fleet_boards import owner_for  # type: ignore
+
 CANON = "/home/frank/.hermes/scripts/fleet-daily-digest.sh"
 BOARD = os.environ.get("FLEET_DIGEST_BOARD", "jarvis-os")
 STATE = Path("/home/frank/.hermes/state/fleet-daily-digest-card.json")
@@ -69,6 +72,14 @@ def hermes(*args, timeout=90):
         return 1, f"{type(e).__name__}: {e}"
 
 
+def _board_owner(board: str) -> str:
+    """Return the manifest owner required for board card creation."""
+    owner = owner_for(board)
+    if not owner:
+        raise RuntimeError(f"boards manifest has no owner for board {board!r}")
+    return owner
+
+
 def main() -> int:
     try:
         r = subprocess.run(["bash", CANON], capture_output=True, text=True, timeout=300)
@@ -102,6 +113,7 @@ def main() -> int:
     rc, out = hermes("kanban", "--board", BOARD, "create",
                      f"[fleet-daily] {today} — fleet digest",
                      "--body", body,
+                     "--assignee", _board_owner(BOARD),
                      "--idempotency-key", f"fleet-daily-{today}")
     m = re.search(r"\b(t_[0-9a-f]{8})\b", out)
     if rc != 0 or not m:

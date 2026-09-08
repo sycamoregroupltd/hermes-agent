@@ -59,6 +59,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, "/home/frank/.hermes/scripts")
+from fleet_boards import owner_for  # type: ignore
+
 HERMES = os.environ.get("AUTH_RAIL_HERMES", "/home/frank/.local/bin/hermes")
 BOARD = os.environ.get("AUTH_RAIL_BOARD", "jarvis-os")
 # A fresh idempotency key per 6h window so a recovered+re-broken episode opens a
@@ -365,6 +368,14 @@ def _card_is_open(card_id: str) -> bool:
     return closed is None
 
 
+def _board_owner(board: str) -> str:
+    """Return the manifest owner required for board card creation."""
+    owner = owner_for(board)
+    if not owner:
+        raise RuntimeError(f"boards manifest has no owner for board {board!r}")
+    return owner
+
+
 def frank_gate_card(report: str) -> str | None:
     """Ensure exactly ONE frank_gate card exists (idempotency-keyed). Returns card id."""
     st = _load(STATE_FILE)
@@ -385,7 +396,8 @@ def frank_gate_card(report: str) -> str | None:
         " One card per episode."
     )
     rc, out = run([HERMES, "kanban", "--board", BOARD, "create", title,
-                   "--body", body, "--idempotency-key", _idem_key(),
+                   "--body", body, "--assignee", _board_owner(BOARD),
+                   "--idempotency-key", _idem_key(),
                    "--initial-status", "blocked", "--created-by", "trading-devops-auth-rail"])
     m = re.search(r"\b(t_[0-9a-f]{8})\b", out)
     if rc == 0 and m:
