@@ -98,7 +98,7 @@ def test_ack_requires_exact_request_and_message_correlation() -> None:
 
     assert recipient["acknowledged"] is False
     assert recipient["ignored_ack_count"] == 1
-    assert recipient["reasons"] == ["ack_deadline_missed"]
+    assert recipient["reasons"] == ["ack_uncorrelated"]
 
 
 def test_exact_ack_after_request_deadline_is_rejected() -> None:
@@ -109,7 +109,20 @@ def test_exact_ack_after_request_deadline_is_rejected() -> None:
     recipient = _only_recipient(resolve_fixture(fixture))
 
     assert recipient["acknowledged"] is False
-    assert "ack_deadline_missed" in recipient["reasons"]
+    assert recipient["reasons"] == ["ack_deadline_missed"]
+
+
+def test_ack_at_request_deadline_is_accepted() -> None:
+    fixture = _raw("valid_fresh_process_bound.json")
+    ack = next(event for event in fixture["events"] if event["kind"] == "ack")
+    ack["at"] = fixture["probes"][0]["deadline_at"]
+    ack["process"]["observed_at"] = ack["at"]
+
+    recipient = _only_recipient(resolve_fixture(fixture))
+
+    assert recipient["acknowledged"] is True
+    assert recipient["available"] is True
+    assert recipient["reasons"] == []
 
 
 @pytest.mark.parametrize(
@@ -138,6 +151,27 @@ def test_ack_must_be_bound_to_exact_lease_and_process_instance(
     assert recipient["owned"] is True
     assert recipient["acknowledged"] is False
     assert recipient["available"] is False
+    assert recipient["reasons"] == ["ack_unbound"]
+
+
+def test_lease_expiry_is_inclusive() -> None:
+    fixture = _raw("valid_fresh_process_bound.json")
+    fixture["recipients"][0]["lease"]["expires_at"] = fixture["observed_at"]
+
+    recipient = _only_recipient(resolve_fixture(fixture))
+
+    assert recipient["available"] is True
+    assert "lease_inactive" not in recipient["reasons"]
+
+
+def test_lease_is_inactive_immediately_after_expiry() -> None:
+    fixture = _raw("valid_fresh_process_bound.json")
+    fixture["recipients"][0]["lease"]["expires_at"] = fixture["observed_at"] - 0.1
+
+    recipient = _only_recipient(resolve_fixture(fixture))
+
+    assert recipient["available"] is False
+    assert recipient["reasons"] == ["lease_inactive"]
 
 
 def test_historical_request_cannot_establish_current_availability() -> None:
@@ -149,6 +183,48 @@ def test_historical_request_cannot_establish_current_availability() -> None:
     assert recipient["acknowledged"] is True
     assert recipient["available"] is False
     assert "request_stale" in recipient["reasons"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("process_not_running", "process_not_running"),
+        ("lease_released", "lease_inactive"),
+        ("lease_not_yet_acquired", "lease_not_yet_acquired"),
+        ("sent_missing", "sent_missing"),
+        ("received_missing", "received_missing"),
+    ],
+)
+def test_remaining_unavailability_reason_codes(
+    mutation: str, expected_reason: str
+) -> None:
+    fixture = _raw("valid_fresh_process_bound.json")
+    if mutation == "process_not_running":
+        fixture["recipients"][0]["process"]["state"] = "stopped"
+    elif mutation == "lease_released":
+        fixture["recipients"][0]["lease"]["released"] = True
+    elif mutation == "lease_not_yet_acquired":
+        fixture["recipients"][0]["lease"]["acquired_at"] = fixture["observed_at"] + 1
+    elif mutation == "sent_missing":
+        fixture["events"] = [
+            event for event in fixture["events"] if event["kind"] != "sent"
+        ]
+    else:
+        fixture["events"] = [
+            event for event in fixture["events"] if event["kind"] != "received"
+        ]
+
+    recipient = _only_recipient(resolve_fixture(fixture))
+
+    assert recipient["available"] is False
+    assert expected_reason in recipient["reasons"]
+
+
+def test_duplicate_lease_claimants_fail_safe() -> None:
+    with pytest.raises(
+        FixtureError, match=r"recipients\[1\]\.lease\.lease_id duplicates"
+    ):
+        load_fixture(FIXTURES / "duplicate_lease_claimants.json")
 
 
 def test_malformed_or_unknown_input_fails_safe() -> None:
@@ -166,6 +242,26 @@ def test_malformed_or_unknown_input_fails_safe() -> None:
         resolve_fixture(fixture)
 
 
+def test_undecodable_utf8_uses_malformed_input_envelope(tmp_path: Path) -> None:
+    fixture_path = tmp_path / "undecodable.json"
+    fixture_path.write_bytes(b'{"fixture_id": "\xff"}')
+
+    with pytest.raises(FixtureError, match="cannot load fixture"):
+        load_fixture(fixture_path)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "scripts.session_bus_delivery", str(fixture_path)],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert json.loads(completed.stderr)["status"] == "invalid"
+
+
 @pytest.mark.parametrize(
     ("fixture", "expected_code", "stream", "status"),
     [
@@ -174,6 +270,7 @@ def test_malformed_or_unknown_input_fails_safe() -> None:
         ("historical_ack_backlog.json", 1, "stdout", "unavailable"),
         ("received_not_owned.json", 1, "stdout", "unavailable"),
         ("malformed_unknown.json", 2, "stderr", "invalid"),
+        ("duplicate_lease_claimants.json", 2, "stderr", "invalid"),
     ],
 )
 def test_module_cli_executes_accounting_fixtures(

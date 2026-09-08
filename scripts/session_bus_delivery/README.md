@@ -23,6 +23,9 @@ durable owner-stamp convention. A current lease must name the recipient and
 that exact process instance. Recipient/process observations and the canary
 request have separate freshness windows. An ACK counts only when its request,
 correlated message, route, lease, process, chronology, and deadline all match.
+A correlated ACK with a wrong lease or process is reported as `ack_unbound`; a
+same-route ACK with wrong request/message correlation is `ack_uncorrelated`.
+Only a correctly bound ACK outside the deadline is `ack_deadline_missed`.
 Unrelated ACKs remain visible as `ignored_ack_count` but never contribute to
 availability.
 

@@ -351,29 +351,41 @@ def _resolve_probe(
     if not owned:
         _add_reason(reasons, "owned_missing")
 
-    exact_acks = [
+    relevant_acks = [
         event
         for event in events
         if event["kind"] == "ack"
-        and event["request_id"] == probe["request_id"]
-        and event["correlates_to"] == probe["message_id"]
         and event["from_id"] == probe["recipient_id"]
         and event["to_id"] == probe["sender_id"]
-        and event["lease_id"] == lease["lease_id"]
+        and probe["sent_at"] <= event["at"] <= observed_at
+    ]
+    correlated_acks = [
+        event
+        for event in relevant_acks
+        if event["request_id"] == probe["request_id"]
+        and event["correlates_to"] == probe["message_id"]
+    ]
+    bound_acks = [
+        event
+        for event in correlated_acks
+        if event["lease_id"] == lease["lease_id"]
         and _event_process_matches(event, process, freshness=recipient_freshness)
         and event["at"] >= lease["acquired_at"]
     ]
     timely_acks = [
         event
-        for event in exact_acks
+        for event in bound_acks
         if received_at is not None
         and received_at <= event["at"] <= probe["deadline_at"]
-        and event["at"] <= observed_at
     ]
     acknowledged = received and bool(timely_acks)
     if not acknowledged:
-        if exact_acks or observed_at > probe["deadline_at"]:
+        if bound_acks or (not relevant_acks and observed_at > probe["deadline_at"]):
             _add_reason(reasons, "ack_deadline_missed")
+        elif correlated_acks:
+            _add_reason(reasons, "ack_unbound")
+        elif relevant_acks:
+            _add_reason(reasons, "ack_uncorrelated")
         else:
             _add_reason(reasons, "ack_missing")
 
@@ -383,7 +395,7 @@ def _resolve_probe(
         if event["kind"] == "ack"
         and event["from_id"] == probe["recipient_id"]
         and event["to_id"] == probe["sender_id"]
-        and event not in exact_acks
+        and event not in bound_acks
     )
     available = not reasons
     return {
@@ -454,6 +466,14 @@ def resolve_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
         raise FixtureError("probes must not be empty")
 
     _unique(recipients, "recipient_id", "recipients")
+    claimed_lease_ids: set[str] = set()
+    for index, recipient in enumerate(recipients):
+        lease_id = recipient["lease"]["lease_id"]
+        if lease_id in claimed_lease_ids:
+            raise FixtureError(
+                f"recipients[{index}].lease.lease_id duplicates {lease_id!r}"
+            )
+        claimed_lease_ids.add(lease_id)
     _unique(probes, "request_id", "probes")
     _unique(probes, "message_id", "probes")
     _unique(probes, "recipient_id", "probes")
@@ -494,7 +514,7 @@ def load_fixture(path: str | Path) -> dict[str, Any]:
     fixture_path = Path(path)
     try:
         raw = json.loads(fixture_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FixtureError(f"cannot load fixture {fixture_path}: {exc}") from exc
     return resolve_fixture(raw)
 
