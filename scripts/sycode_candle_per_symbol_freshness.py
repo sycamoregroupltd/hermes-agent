@@ -90,10 +90,21 @@ TIMEFRAME_SPECS = [
     TimeframeSpec("1D", 27, 340, "broad daily feed; reviewed 340-symbol floor", True),
 ]
 
-STATE = Path(os.getenv(
-    "CANDLE_FRESHNESS_STATE",
-    get_hermes_home() / "profiles" / "jarvis" / "cron" / "state"
-    / "sycode_candle_per_symbol_freshness.json"))
+STATE_FILENAME = "sycode_candle_per_symbol_freshness.json"
+
+
+def default_state_path():
+    """Return state below the Hermes home of the running profile/process."""
+    return get_hermes_home() / "cron" / "state" / STATE_FILENAME
+
+
+def state_path():
+    """Resolve the explicit override or the profile-safe runtime default."""
+    override = os.getenv("CANDLE_FRESHNESS_STATE")
+    return Path(override) if override else default_state_path()
+
+
+STATE = state_path()
 # Soft-drop baseline = max fresh_count observed per tf (ratchet up only).
 SOFT_DROP_PCT = 0.90  # alert if fresh_count < 90% of baseline
 

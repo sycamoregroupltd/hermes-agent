@@ -11,6 +11,17 @@ import sycode_candle_per_symbol_freshness as monitor
 
 
 class TradeableUniverseTests(unittest.TestCase):
+    def test_default_state_path_uses_runtime_hermes_home(self):
+        with mock.patch.object(monitor, "get_hermes_home", return_value=Path("/tmp/hermes/profile")):
+            self.assertEqual(
+                monitor.default_state_path(),
+                Path("/tmp/hermes/profile/cron/state/sycode_candle_per_symbol_freshness.json"),
+            )
+
+    def test_state_override_wins_over_profile_default(self):
+        with mock.patch.dict("os.environ", {"CANDLE_FRESHNESS_STATE": "/tmp/custom-state.json"}):
+            self.assertEqual(monitor.state_path(), Path("/tmp/custom-state.json"))
+
     @staticmethod
     def _ages(active_4h: set[str], stale_4h: set[str] | None = None):
         stale_4h = stale_4h or set()
