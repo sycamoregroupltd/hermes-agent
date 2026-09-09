@@ -20,7 +20,7 @@ def kanban_home(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     home.mkdir()
     (home / "config.yaml").write_text(
-        "kanban:\n  external_assignees:\n    - broken-model\n"
+        "kanban:\n  external_assignees:\n    - broken-model\n    - external-seat\n"
     )
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -133,6 +133,27 @@ def test_board_override_is_isolated_per_concurrent_call(kanban_home, monkeypatch
 # ---------------------------------------------------------------------------
 # reclaim + reassign CLI smoke tests
 # ---------------------------------------------------------------------------
+
+def test_run_slash_external_assignee_and_reviewer_are_admitted(kanban_home):
+    import re
+
+    out = kc.run_slash("create 'external seat task' --assignee external-seat")
+    match = re.search(r"(t_[a-f0-9]+)", out)
+    assert match, out
+    tid = match.group(1)
+
+    review_out = kc.run_slash(
+        f"request-review {tid} --summary 'ready for review' --reviewer external-seat"
+    )
+    assert f"Requested review for {tid}" in review_out
+
+    with kbc.connect_closing() as conn:
+        task = kb.get_task(conn, tid)
+    assert task is not None
+    assert task.status == "review"
+    assert task.assignee == "external-seat"
+
+
 
 def test_run_slash_reclaim_running_task(kanban_home):
     import re
