@@ -9,10 +9,10 @@ dispatched and never alerts — it just sits in ready/review forever.
 
 What: opens every board DB read-only (``?mode=ro`` — NOT immutable=1, so the
 WAL is honoured; see sqlite-immutable-ignores-wal), lists open cards whose
-assignee is neither a directory under ~/.hermes/profiles, nor in a small
-allowlist of known seats, nor prefixed ``external-``. One line per hit on
-stdout. Exit code is ALWAYS 0: signal travels via stdout per the no-agent
-cron doctrine. Named consumer: jarvis-os-pm.
+assignee is neither a directory under the fleet profiles root nor in the
+canonical external-seat registry. One line per hit on stdout. Exit code is
+ALWAYS 0: signal travels via stdout per the no-agent cron doctrine. Named
+consumer: jarvis-os-pm.
 
 Usage:
     phantom_assignee_probe.py            # live probe
