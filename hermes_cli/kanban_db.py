@@ -1092,6 +1092,52 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     return normalize_profile_name(assignee)
 
 
+def external_assignees() -> frozenset[str]:
+    """Return configured names for workers that are not local profiles."""
+    from hermes_cli.config import load_config_readonly
+
+    config = load_config_readonly()
+    section = config.get("kanban", {}) if isinstance(config, dict) else {}
+    raw = section.get("external_assignees", ()) if isinstance(section, dict) else ()
+    if raw is None:
+        return frozenset()
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        raise ValueError("kanban.external_assignees must be a list of profile names")
+    return frozenset(str(name).strip().casefold() for name in raw if str(name).strip())
+
+
+def validate_assignee_name(name: Any, *, kind: str = "assignee") -> str:
+    """Validate a local profile or explicitly configured external seat."""
+    text = str(name) if name is not None else ""
+    if not text.strip():
+        raise ValueError(f"{kind} must not be empty or whitespace-only")
+    if "<" in text or ">" in text:
+        raise ValueError(f"{kind} {text!r} is a placeholder, not a profile name")
+    try:
+        canonical = _canonical_assignee(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid {kind} {text!r}: {exc}") from exc
+    if canonical is None:
+        raise ValueError(f"{kind} must not be empty or whitespace-only")
+    try:
+        from hermes_cli.profiles import profile_exists
+        local = bool(profile_exists(canonical))
+    except Exception:
+        local = False
+    seats = external_assignees()
+    if local or canonical.casefold() in seats:
+        return canonical
+    configured = ", ".join(sorted(seats)) or "(none configured)"
+    try:
+        from hermes_cli.profiles import list_profile_names
+        installed = ", ".join(list_profile_names()) or "(none installed)"
+    except Exception:
+        installed = "(unavailable)"
+    raise ValueError(
+        f"{kind} {canonical!r} is not an installed profile or configured external seat; "
+        f"installed profiles: {installed}; configured external seats: {configured}")
+
+
 def _resolve_project_link(
     conn: sqlite3.Connection, project_id: Optional[str], project_source_task_id: Optional[str],
     workspace_kind: str, workspace_path: Optional[str],
