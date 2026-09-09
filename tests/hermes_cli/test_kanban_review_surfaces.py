@@ -127,6 +127,8 @@ def test_review_cli_round_trip_preserves_handoff(
 ) -> None:
     home = tmp_path / ".hermes"
     home.mkdir()
+    # Reviewer validation resolves installed profiles from the mocked home.
+    (home / "profiles" / "reviewer").mkdir(parents=True)
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     kb._INITIALIZED_PATHS.clear()
