@@ -78,7 +78,12 @@ def assert_owned_catalog_tree(output: Path = OUTPUT) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         generated = re.search(r"(?m)^(?:generated|generated_at):\s*['\"]?true['\"]?\s*$", text)
         generator = re.search(r"(?m)^generator:\s*['\"]?([^'\"\n]+)", text)
-        if not generated or not generator or generator.group(1).strip() != GENERATOR_ID:
+        owned = bool(generator and generator.group(1).strip() == GENERATOR_ID)
+        if path == manifest:
+            owned = owned and bool(re.search(r"(?m)^generated_at:\s*\d{4}-\d{2}-\d{2}", text))
+        else:
+            owned = owned and bool(generated)
+        if not owned:
             unowned.append(str(path))
     if unowned:
         listed = ", ".join(unowned)
