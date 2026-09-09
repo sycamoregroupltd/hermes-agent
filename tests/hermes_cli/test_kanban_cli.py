@@ -19,6 +19,9 @@ from hermes_cli import kanban_db_connect as kbc
 def kanban_home(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     home.mkdir()
+    (home / "config.yaml").write_text(
+        "kanban:\n  external_assignees:\n    - broken-model\n"
+    )
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     kb.init_db()
