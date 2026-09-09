@@ -210,6 +210,70 @@ class VerdictVocabDetectorTests(unittest.TestCase):
             self.assertEqual(len(findings), 1)
             self.assertEqual(findings[0].verdict_value, "APPROVE_WITH_NOTES")
 
+    # --- Negation-scope regression fixtures (t_225705fd) -------------------
+    # These three cases were CHANGES_REQUESTED across 9 review cycles because
+    # the detector inherited the router's negation-aware matcher, which
+    # suppressed a genuine out-of-contract verdict token whenever ANY negation
+    # cue appeared later in the SAME SENTENCE, even in an unrelated clause.
+    # All three MUST be flagged.
+
+    def test_negation_scope_approve_with_notes_but_could_not_be_performed(self) -> None:
+        """Negation cue ('could not') in a later, unrelated clause must not suppress detection."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_neg_notes", "blocked")
+            self.add_comment(
+                board, "t_neg_notes", "os-reviewer",
+                "REVIEW_VERDICT=APPROVE_WITH_NOTES — implementation passed, but live apply could not be performed.",
+            )
+            findings = self.scan(board)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].verdict_value, "APPROVE_WITH_NOTES")
+
+    def test_negation_scope_technical_request_changes_not_a_runner_flake(self) -> None:
+        """Negation cue ('not a runner flake') must not suppress detection.
+
+        Note: VERDICT_RE captures [A-Z0-9_]+ (no hyphen), matching the
+        router's own tokenizer, so the hyphenated verdict is captured up to
+        its first hyphen ("TECHNICAL"). That's still correctly flagged as
+        malformed (not in VALID_VERDICTS) — this test's job is only to prove
+        the negation cue does not suppress the flag entirely.
+        """
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_neg_technical", "review")
+            self.add_comment(
+                board, "t_neg_technical", "os-reviewer",
+                "REVIEW_VERDICT=TECHNICAL-REQUEST-CHANGES @ target; this is not a runner flake.",
+            )
+            findings = self.scan(board)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].verdict_value, "TECHNICAL")
+
+    def test_negation_scope_restore_scoped_backup_no_broad_cleanup(self) -> None:
+        """Negation cue ('no broad cleanup') must not suppress detection."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_neg_restore", "blocked")
+            self.add_comment(
+                board, "t_neg_restore", "os-reviewer",
+                "REVIEW_VERDICT=CHANGES_REQUIRED_RESTORE_SCOPED_BACKUP — no broad cleanup.",
+            )
+            findings = self.scan(board)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].verdict_value, "CHANGES_REQUIRED_RESTORE_SCOPED_BACKUP")
+
+    def test_negation_scope_valid_verdict_not_flagged(self) -> None:
+        """Control: a genuinely valid verdict alongside negation prose is still not flagged."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_neg_valid", "blocked")
+            self.add_comment(
+                board, "t_neg_valid", "os-reviewer",
+                "REVIEW_VERDICT=APPROVED — valid review result, no further action needed.",
+            )
+            self.assertEqual(self.scan(board), [])
+
 
 class VerdictVocabDetectorReplayTests(unittest.TestCase):
     """Live-state replay acceptance: a fixture board seeded with the two known

@@ -85,15 +85,30 @@ ESCALATION_TIERS = ((0, "NEW"), (24 * 3600, "ESCALATION-24H"), (72 * 3600, "ESCA
 #     to self-contained copies so this module never hard-fails to import. The
 #     router module itself imports second_brain_writer at top level, which may
 #     be absent in some environments; we must not let that break the detector.
+#
+# t_225705fd (fix for the 9-cycle CHANGES_REQUESTED defect on t_2c7926f7):
+# We still borrow BOARD_ALLOWLIST/EXCLUDED_BOARDS from the router when it
+# imports cleanly (keeps scan scope in lockstep), but we deliberately do NOT
+# borrow vr.verdict_declarations (the router's negation-aware matcher) for
+# detection. That matcher is correct FOR THE ROUTER: a false-positive there
+# would auto-route on denial prose the router must not act on. But it is
+# WRONG for this detector: it suppresses a genuine out-of-contract verdict
+# token whenever ANY negation cue ("not", "no", "could not", "absent", ...)
+# appears anywhere later in the SAME SENTENCE, even in an unrelated clause —
+# e.g. "REVIEW_VERDICT=APPROVE_WITH_NOTES ... but live apply could not be
+# performed ..." was silently swallowed. The router and detector have opposite
+# failure-safety directions: the router must not act on a false positive
+# (fail closed to no-route), while the detector's whole purpose is to catch
+# vocabulary the router will fail closed on — a false negative here IS the
+# review-black-hole bug. So the detector always uses the bare lexical
+# VERDICT_RE matcher, independent of router availability.
 try:  # pragma: no cover - import path depends on environment
     import verdict_router as vr  # type: ignore
 
-    _affirmative_matches = vr.verdict_declarations  # negation-aware (C4 fix)
     BOARD_ALLOWLIST = vr.BOARD_ALLOWLIST
     EXCLUDED_BOARDS = vr.EXCLUDED_BOARDS
     _HAVE_ROUTER = True
 except Exception:  # pragma: no cover
-    _affirmative_matches = lambda text: list(VERDICT_RE.finditer(text or ""))
     BOARD_ALLOWLIST = {
         "ai-restaurant",
         "jarvis-os",
@@ -108,6 +123,10 @@ except Exception:  # pragma: no cover
     }
     EXCLUDED_BOARDS = {"orchestrator-sync"}
     _HAVE_ROUTER = False
+
+# Always the plain lexical matcher — see rationale above. Never the router's
+# negation-aware vr.verdict_declarations.
+_affirmative_matches = lambda text: list(VERDICT_RE.finditer(text or ""))
 
 
 def table_exists(con: sqlite3.Connection, name: str) -> bool:
