@@ -42,9 +42,32 @@ def run(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run([PY, *map(str, args)], capture_output=True, text=True, timeout=300)
 
 
+def _assert_real_catalog_roots(output: Path, roots: tuple[Path, ...]) -> None:
+    """Reject symlinked roots or ancestors before any generator filesystem walk."""
+    if output.is_symlink():
+        raise RuntimeError(f"refusing catalog regeneration; output is a symlink: {output}")
+    output_real = output.resolve(strict=False)
+    for root in roots:
+        current = root
+        while current != output:
+            if current.is_symlink():
+                raise RuntimeError(
+                    f"refusing catalog regeneration; catalog root or ancestor is a symlink: {current}"
+                )
+            current = current.parent
+        root_real = root.resolve(strict=False)
+        try:
+            root_real.relative_to(output_real)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"refusing catalog regeneration; catalog root resolves outside output: {root}"
+            ) from exc
+
+
 def assert_owned_catalog_tree(output: Path = OUTPUT) -> None:
     """Fail closed before the generator can delete or overwrite curated pages."""
     roots = (output / "Agents" / "Catalog", output / "Skills" / "Catalog")
+    _assert_real_catalog_roots(output, roots)
     paths = [path for root in roots if root.is_dir() for path in root.glob("*.md")]
     paths.extend(
         path
