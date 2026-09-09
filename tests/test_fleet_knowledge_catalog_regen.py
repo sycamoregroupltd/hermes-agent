@@ -13,7 +13,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-@pytest.mark.parametrize("catalog_root", ["Agents/Catalog", "Skills/Catalog"])
+@pytest.mark.parametrize("catalog_root", ["Agents/Catalog", "Skills/Catalog", "System/Catalogs"])
 def test_rejects_symlinked_catalog_root(tmp_path: Path, catalog_root: str) -> None:
     real_root = tmp_path / "outside" / Path(catalog_root)
     real_root.mkdir(parents=True)
@@ -25,9 +25,10 @@ def test_rejects_symlinked_catalog_root(tmp_path: Path, catalog_root: str) -> No
         MODULE.assert_owned_catalog_tree(tmp_path)
 
 
-@pytest.mark.parametrize("ancestor", ["Agents", "Skills"])
+@pytest.mark.parametrize("ancestor", ["Agents", "Skills", "System"])
 def test_rejects_symlinked_catalog_ancestor(tmp_path: Path, ancestor: str) -> None:
-    real_root = tmp_path / "outside" / ancestor / "Catalog"
+    catalog_name = "Catalog" if ancestor != "System" else "Catalogs"
+    real_root = tmp_path / "outside" / ancestor / catalog_name
     real_root.mkdir(parents=True)
     link = tmp_path / ancestor
     link.symlink_to(tmp_path / "outside" / ancestor, target_is_directory=True)

@@ -66,7 +66,11 @@ def _assert_real_catalog_roots(output: Path, roots: tuple[Path, ...]) -> None:
 
 def assert_owned_catalog_tree(output: Path = OUTPUT) -> None:
     """Fail closed before the generator can delete or overwrite curated pages."""
-    roots = (output / "Agents" / "Catalog", output / "Skills" / "Catalog")
+    roots = (
+        output / "Agents" / "Catalog",
+        output / "Skills" / "Catalog",
+        output / "System" / "Catalogs",
+    )
     _assert_real_catalog_roots(output, roots)
     paths = [path for root in roots if root.is_dir() for path in root.glob("*.md")]
     paths.extend(
