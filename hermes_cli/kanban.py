@@ -359,9 +359,15 @@ def _cmd_create(args: argparse.Namespace) -> int:
     if max_retries is not None and max_retries < 1:
         return _err(f"kanban: --max-retries must be >= 1 (got {max_retries}); "
                     "use 1 to trip on the first failure.", 2)
+    assignee = args.assignee
+    if assignee:
+        try:
+            assignee = kb.validate_assignee_name(assignee)
+        except ValueError as exc:
+            return _err(f"kanban: {exc}", 2)
     with kbc.connect_closing() as conn:
         task_id = kb.create_task(
-            conn, title=args.title, body=args.body, assignee=args.assignee,
+            conn, title=args.title, body=args.body, assignee=assignee,
             created_by=args.created_by or _profile_author(),
             workspace_kind=ws_kind, workspace_path=ws_path, branch_name=branch_name,
             project_id=getattr(args, "project", None), tenant=args.tenant, priority=args.priority,
@@ -959,6 +965,12 @@ def _cmd_request_review(args: argparse.Namespace) -> int:
     metadata, rc = _parse_metadata_flag(getattr(args, "metadata", None))
     if rc:
         return rc
+    reviewer = getattr(args, "reviewer", None)
+    if reviewer:
+        try:
+            reviewer = kb.validate_assignee_name(reviewer, kind="reviewer")
+        except ValueError as exc:
+            return _err(f"kanban: {exc}", 2)
     with kbc.connect_closing() as conn:
         gate_err = _goal_gate_error(
             conn, tid, summary or "", "review handoff",
@@ -967,7 +979,7 @@ def _cmd_request_review(args: argparse.Namespace) -> int:
         if gate_err:
             return _err(gate_err)
         ok, reason = kb.request_review(
-            conn, tid, summary=summary, metadata=metadata, reviewer=getattr(args, "reviewer", None),
+            conn, tid, summary=summary, metadata=metadata, reviewer=reviewer,
             expected_run_id=_worker_run_id_for(tid), force=bool(getattr(args, "force", False)), with_reason=True)
         if not ok:
             return _err(f"cannot request review for {tid}: {reason or 'not running/ready?'}")
