@@ -52,6 +52,7 @@ CLOSED_STATUSES = ("done", "archived", "cancelled")
 def _canonical_external_assignees() -> frozenset[str]:
     """Read the admission chokepoint; an unavailable registry admits nothing."""
     source_roots = (
+        Path(__file__).resolve().parents[1],
         Path(__file__).resolve().parents[1] / "hermes-agent",
         Path(__file__).resolve().parents[2] / "hermes-agent",
         Path(__file__).resolve().parents[3] / "hermes-agent",
