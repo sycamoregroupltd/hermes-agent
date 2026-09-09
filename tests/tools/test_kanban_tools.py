@@ -50,6 +50,9 @@ def worker_env(monkeypatch, tmp_path):
     after we've created the task."""
     home = tmp_path / ".hermes"
     home.mkdir()
+    (home / "config.yaml").write_text(
+        "kanban:\n  external_assignees:\n    - peer\n    - qa\n"
+    )
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("HERMES_PROFILE", "test-worker")
     monkeypatch.delenv("HERMES_SESSION_ID", raising=False)
@@ -1025,7 +1028,7 @@ def test_create_respects_auto_subscribe_on_create_false(monkeypatch, worker_env,
     home = tmp_path / "gate-home" / ".hermes"
     home.mkdir(parents=True)
     (home / "config.yaml").write_text(
-        "kanban:\n  auto_subscribe_on_create: false\n"
+        "kanban:\n  auto_subscribe_on_create: false\n  external_assignees:\n    - peer\n"
     )
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("HERMES_SESSION_PLATFORM", "discord")
