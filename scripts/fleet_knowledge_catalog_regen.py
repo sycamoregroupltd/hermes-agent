@@ -36,17 +36,6 @@ REGISTRY = Path("/home/frank/obsidian-fleet-vault/Projects/Portfolio/registry.ya
 LOG = Path("/home/frank/.hermes/var/fleet-knowledge-catalog-regen.log")
 PY = sys.executable or "python3"
 GENERATOR_ID = "control-spine/scripts/generate_knowledge_catalogs.py"
-OWNED_CATALOG_ROOTS = (
-    OUTPUT / "Agents" / "Catalog",
-    OUTPUT / "Skills" / "Catalog",
-    OUTPUT / "System" / "Catalogs",
-)
-OWNED_CATALOG_FILES = (
-    OUTPUT / "Agents" / "Agents-Home.md",
-    OUTPUT / "Agents" / "Inactive-Agents.md",
-    OUTPUT / "Skills" / "Skills-Home.md",
-    OUTPUT / "Skills" / "Inactive-Skills.md",
-)
 
 
 def run(args: list[str]) -> subprocess.CompletedProcess[str]:
