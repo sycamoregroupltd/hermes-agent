@@ -87,6 +87,9 @@ Rules:
   - Pick assignees from the roster by matching the task to the profile's
     DESCRIPTION (not just the name). When nothing matches well, use null
     and the system will route to the default_assignee.
+  - The default_assignee is an implementation profile for this board. PM
+    profiles coordinate work and must not receive implementation children
+    unless the original card contains the exact line `PM_ONLY: true`.
   - Each child task body is what a fresh worker will read with no other
     context — be specific about goal, approach, and acceptance criteria.
 
@@ -122,6 +125,7 @@ Default assignee (used when no profile fits a task): {default_assignee}
 
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+_PM_ONLY_RE = re.compile(r"^\s*PM[_ -]?ONLY\s*:\s*true\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass
@@ -134,6 +138,11 @@ class DecomposeOutcome:
     fanout: bool = False
     child_ids: list[str] | None = None
     new_title: Optional[str] = None
+
+
+def _is_pm_only(body: object) -> bool:
+    """Return true only for the explicit, line-oriented PM-only marker."""
+    return isinstance(body, str) and bool(_PM_ONLY_RE.search(body))
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -254,18 +263,65 @@ def _normalize_assignee_choice(
     *,
     default_assignee: str,
     valid_names: set[str],
+    pm_profiles: set[str],
+    allow_pm: bool,
 ) -> str:
-    """Return a valid assignee, falling back to ``default_assignee``.
+    """Choose a real worker profile, keeping PMs out of implementation work.
 
-    Fan-out children and the single-task fallback should share the same
-    routing guarantee: promoted work must not be left unassigned.
+    Fan-out children and the single-task fallback share the same routing
+    guarantee: promoted work must not be left unassigned. The explicit
+    ``PM_ONLY: true`` marker is the only way a decomposed card can retain a
+    PM assignee; unknown, omitted, or PM choices otherwise fall back to the
+    board's implementation profile.
     """
     if not isinstance(assignee, str) or not assignee.strip():
         return default_assignee
     chosen = assignee.strip()
     if chosen not in valid_names:
         return default_assignee
+    if chosen in pm_profiles and not allow_pm:
+        return default_assignee
     return chosen
+
+
+def _resolve_pm_profiles(cfg: dict, valid_names: set[str]) -> set[str]:
+    """Resolve the configured PM-profile set, falling back to name suffix.
+
+    ``kanban.decompose_pm_profiles`` lets an operator declare exactly which
+    profiles coordinate rather than implement. When unset/empty, profiles
+    ending in the conventional ``-pm`` suffix are treated as PM profiles so
+    existing boards get the guard without any config change.
+    """
+    kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
+    configured = kanban_cfg.get("decompose_pm_profiles", [])
+    pm_profiles = {
+        name.strip() for name in configured
+        if isinstance(name, str) and name.strip() in valid_names
+    } if isinstance(configured, list) else set()
+    if not pm_profiles:
+        pm_profiles = {name for name in valid_names if name.endswith("-pm")}
+    return pm_profiles
+
+
+def _resolve_board_default_assignee(cfg: dict, *, fallback: str) -> str:
+    """Resolve the board-specific implementation fallback (t_fe11580c).
+
+    ``kanban.decompose_default_assignee_by_board`` lets an operator pin a
+    per-board implementation profile distinct from the global
+    ``default_assignee`` (which also routes unassigned ready rows).
+    """
+    kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
+    board_defaults = kanban_cfg.get("decompose_default_assignee_by_board", {})
+    if not isinstance(board_defaults, dict):
+        return fallback
+    try:
+        board = kb.get_current_board()
+    except Exception:
+        return fallback
+    candidate = board_defaults.get(board)
+    if isinstance(candidate, str) and candidate.strip():
+        return candidate.strip()
+    return fallback
 
 
 def decompose_task(
@@ -296,6 +352,17 @@ def decompose_task(
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
     auto_promote = bool(kanban_cfg.get("auto_promote_children", True))
     roster, valid_names = _build_roster()
+    pm_only = _is_pm_only(task.body)
+    pm_profiles = _resolve_pm_profiles(cfg, valid_names)
+    if pm_only:
+        # A card explicitly marked PM_ONLY should route to the
+        # orchestrator profile, not an implementation fallback — mirrors
+        # the pre-existing root-task routing convention.
+        default_assignee = orchestrator
+    else:
+        default_assignee = _resolve_board_default_assignee(
+            cfg, fallback=default_assignee,
+        )
 
     try:
         from agent.auxiliary_client import call_llm  # type: ignore
@@ -356,6 +423,8 @@ def decompose_task(
                 parsed.get("assignee"),
                 default_assignee=default_assignee,
                 valid_names=valid_names,
+                pm_profiles=pm_profiles,
+                allow_pm=pm_only,
             )
         if title_val is None and body_val is None:
             return DecomposeOutcome(
@@ -406,6 +475,8 @@ def decompose_task(
             assignee,
             default_assignee=default_assignee,
             valid_names=valid_names,
+            pm_profiles=pm_profiles,
+            allow_pm=pm_only,
         )
         if (
             isinstance(assignee, str)

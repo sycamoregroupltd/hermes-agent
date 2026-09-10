@@ -2554,6 +2554,10 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             ],
             "skipped_unassigned": res.skipped_unassigned,
             "skipped_nonspawnable": res.skipped_nonspawnable,
+            "capability_blocked": [
+                {"task_id": tid, "reason": reason}
+                for tid, reason in res.capability_blocked
+            ],
             "skipped_per_profile_capped": [
                 {"task_id": tid, "assignee": who, "current": current}
                 for (tid, who, current) in res.skipped_per_profile_capped
@@ -2599,6 +2603,8 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             f"Skipped (non-spawnable assignee — terminal lane, OK): "
             f"{', '.join(res.skipped_nonspawnable)}"
         )
+    for tid, reason in res.capability_blocked:
+        print(f"Blocked (capability — reroute required): {tid}: {reason}")
     return 0
 
 
