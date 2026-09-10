@@ -35,9 +35,11 @@ if [ "${ALLOW_LIVE_TREE_WRITE:-}" = "1" ]; then
   echo '{}'; exit 0
 fi
 
-# Cheap path: allow instantly unless the payload mentions git or the
-# protected tree path at all.
-if ! printf '%s' "$payload" | grep -qiE 'git|hermes-agent'; then
+# Cheap path: allow instantly unless the payload mentions git, the
+# protected tree path, or a completion-tool name (kanban_complete /
+# kanban_request_review — always routed to the Python classifier since the
+# completion-gate check needs to run regardless of command text).
+if ! printf '%s' "$payload" | grep -qiE 'git|hermes-agent|kanban_complete|kanban_request_review'; then
   echo '{}'; exit 0
 fi
 

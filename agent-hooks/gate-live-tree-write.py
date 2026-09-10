@@ -217,6 +217,69 @@ def classify_file_write(tool: str, ti: dict) -> str:
     return ""
 
 
+COMPLETION_TOOLS = {"kanban_complete", "kanban_request_review"}
+# Baseline file recording the last known-good live-tree HEAD SHA (per
+# protected root, one "root=sha" line each). Seeded/updated only by an
+# operator-run reconciliation (never by this hook, never by a worker).
+# Overridable via env for tests only.
+KNOWN_GOOD_FILE = os.environ.get(
+    "HERMES_LIVE_TREE_KNOWN_GOOD_FILE",
+    "/home/frank/.hermes/cron/state/live-tree-known-good.sha",
+)
+
+
+def _read_known_good() -> dict:
+    out = {}
+    try:
+        with open(KNOWN_GOOD_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+                root, sha = line.split("=", 1)
+                out[root.strip()] = sha.strip()
+    except Exception:
+        pass
+    return out
+
+
+def classify_completion() -> str:
+    """At kanban_complete/kanban_request_review time, independently verify no
+    protected root has silently diverged from its known-good HEAD (belt and
+    braces if a live-tree write ever slips past classify_terminal /
+    classify_file_write — e.g. via a tool this hook doesn't yet recognise).
+    Fail-open: any git/subprocess error, or no baseline recorded yet, allows."""
+    known_good = _read_known_good()
+    if not known_good:
+        return ""
+    import subprocess
+    for root in PROTECTED_ROOTS:
+        baseline = known_good.get(root)
+        if not baseline:
+            continue
+        try:
+            cur = subprocess.run(
+                ["git", "-C", root, "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if cur.returncode != 0:
+                continue
+            cur_sha = cur.stdout.strip()
+        except Exception:
+            continue
+        if cur_sha and cur_sha != baseline:
+            return (
+                f"completion refused: live Hermes source tree ({root}) HEAD "
+                f"is {cur_sha[:10]} but known-good is {baseline[:10]} — it "
+                f"has diverged since this run started (possibly this worker, "
+                f"possibly a sibling). Do not complete/request-review until "
+                f"an operator reconciles the live tree "
+                f"(see live-tree-mutation-guard skill). Operator-only "
+                f"override: ALLOW_LIVE_TREE_WRITE=1."
+            )
+    return ""
+
+
 def main() -> int:
     raw = sys.stdin.read()
     # Only a KANBAN WORKER run (dispatcher-spawned, unattended) is gated —
@@ -241,7 +304,13 @@ def main() -> int:
         ti = {}
 
     reason = ""
-    if tool == "terminal" or "command" in ti or "cmd" in ti or "script" in ti:
+    if tool in COMPLETION_TOOLS:
+        try:
+            reason = classify_completion()
+        except Exception:
+            reason = ""
+
+    if not reason and (tool == "terminal" or "command" in ti or "cmd" in ti or "script" in ti):
         cmd = ti.get("command") or ti.get("cmd") or ti.get("script") or ""
         if isinstance(cmd, list):
             cmd = " ".join(map(str, cmd))

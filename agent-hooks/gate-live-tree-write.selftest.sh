@@ -65,6 +65,32 @@ check_allow "ALLOW_LIVE_TREE_WRITE=1 bypass" \
   '{"tool_name":"terminal","tool_input":{"command":"cd /home/frank/.hermes/hermes-agent && git commit -am x"}}' \
   HERMES_KANBAN_TASK=t_test123 ALLOW_LIVE_TREE_WRITE=1
 
+# 8. Completion gate: no baseline file -> allow (fail-open, nothing configured yet).
+check_allow "kanban_complete with no known-good baseline configured" \
+  '{"tool_name":"kanban_complete","tool_input":{"summary":"done"}}' \
+  HERMES_KANBAN_TASK=t_test123 HERMES_LIVE_TREE_GUARD_ROOTS=/tmp/nonexistent-root-xyz
+
+# 9. Completion gate: baseline present and MATCHES current HEAD -> allow.
+BASELINE_ROOT="/tmp/gate-live-tree-selftest-repo-$$"
+rm -rf "$BASELINE_ROOT" 2>/dev/null || true
+mkdir -p "$BASELINE_ROOT"
+(cd "$BASELINE_ROOT" && git init -q && git config user.email t@t && git config user.name t && touch f && git add f && git commit -qm init)
+SHA=$(cd "$BASELINE_ROOT" && git rev-parse HEAD)
+BASELINE_FILE="/tmp/gate-live-tree-selftest-known-good-$$.sha"
+echo "$BASELINE_ROOT=$SHA" > "$BASELINE_FILE"
+check_allow "kanban_complete with matching known-good baseline" \
+  '{"tool_name":"kanban_complete","tool_input":{"summary":"done"}}' \
+  HERMES_KANBAN_TASK=t_test123 "HERMES_LIVE_TREE_GUARD_ROOTS=$BASELINE_ROOT" \
+  "HERMES_LIVE_TREE_KNOWN_GOOD_FILE=$BASELINE_FILE"
+
+# 10. Completion gate: baseline present and DIVERGED -> block.
+(cd "$BASELINE_ROOT" && git commit -q --allow-empty -m second)
+check_block "kanban_complete with diverged known-good baseline" \
+  '{"tool_name":"kanban_complete","tool_input":{"summary":"done"}}' \
+  HERMES_KANBAN_TASK=t_test123 "HERMES_LIVE_TREE_GUARD_ROOTS=$BASELINE_ROOT" \
+  "HERMES_LIVE_TREE_KNOWN_GOOD_FILE=$BASELINE_FILE"
+rm -rf "$BASELINE_ROOT" "$BASELINE_FILE" 2>/dev/null || true
+
 if [ "$FAIL" = "1" ]; then
   echo "SELFTEST: FAILURES PRESENT"
   exit 1
