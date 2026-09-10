@@ -21,6 +21,18 @@ Method (from quant-pattern-mining / quant-research-operations doctrine):
   -> chronological OOS gate (70/30 tail) -> verdict
 
 DB route: host psql at 127.0.0.1:5432 (direct TCP). Data pulled as CSV, polars in-memory.
+
+Startup guard (t_d61d0164, 2026-09-10): the sys.path/second_brain_writer
+fragility described on t_d61d0164 belongs to the RETIRED quant_researcher_6h.py
+(job 13c1f9279025 -- absent from every live cron store as of 2026-09-08 per
+Jarvis's retirement ruling; superseded by THIS job, 5e020636007c). This script
+has no duckdb/second_brain_writer dependency at all: only stdlib + polars +
+a host `psql` binary invoked via subprocess. Its actual fragile external
+dependency is `psql` resolution (psql_bin() above already has a fallback
+glob). startup_guard() below makes a missing/unresolvable psql binary fail
+loud and fast -- a single greppable STARTUP_GUARD_FAILED line and a distinct
+exit code -- instead of surfacing 900s later as a generic RuntimeError
+wrapped inside the broad except in main().
 """
 from __future__ import annotations
 import io
@@ -244,9 +256,35 @@ def persist_note(run_ts: dt.datetime, run_sec: str) -> str:
     return path
 
 
+def startup_guard() -> str | None:
+    """Fail-RED preflight (t_d61d0164, 2026-09-10).
+
+    Returns None when the runtime is sane, else a short reason string. Checked
+    FIRST in main() so a broken interpreter/env surfaces as one greppable
+    STARTUP_GUARD_FAILED line + a distinct exit code (3), instead of a bare
+    ImportError traceback or a 900s psql timeout mis-attributed to "no data".
+    Only checks deps THIS script actually uses (stdlib + polars + a
+    resolvable `psql` binary) -- it deliberately does not check
+    second_brain_writer/duckdb, which belong to the unrelated, retired
+    quant_researcher_6h.py job (13c1f9279025).
+    """
+    try:
+        import polars  # noqa: F401  (already imported at module scope; re-check defensively)
+    except ImportError as e:
+        return f"polars not importable under {sys.executable}: {e}"
+    p = psql_bin()
+    if not p or not (shutil.which(p) or os.path.isfile(p)):
+        return f"psql binary not resolvable (psql_bin()={p!r})"
+    return None
+
+
 def main() -> int:
     run_ts = dt.datetime.now(dt.UTC)
     print(f"quant-pattern-mining-loop (read-only, no_agent) - start {run_ts.isoformat()}", flush=True)
+    _guard_reason = startup_guard()
+    if _guard_reason:
+        print(f"STARTUP_GUARD_FAILED: {_guard_reason}", flush=True)
+        return 3
     verdict = "NO_CURRENT_ENABLED_PROFITABLE_STRATEGY_PROVEN"
     run_lines = []
     try:
