@@ -274,6 +274,79 @@ class VerdictVocabDetectorTests(unittest.TestCase):
             )
             self.assertEqual(self.scan(board), [])
 
+    # --- Citation-aware exclusion (t_78137279) ------------------------------
+    # t_225705fd removed negation-scope suppression, but that regressed a
+    # different case: remediation/triage comments that CITE a historical
+    # non-contract verdict to explain/dismiss it (not declare a new one) were
+    # re-flagged every cycle — a self-perpetuating noise loop. These fixtures
+    # are the exact false-positive comments from the report (t_20f0ef3d
+    # comment 48401, t_eda793bd comment 60573, t_e728509f comment 60572) plus
+    # the task's own citation example, and must NOT be flagged. The three
+    # negation-scope MUST-FLAG fixtures above prove no regression: a citation
+    # cue is a narrower, additive condition than a bare negation word and
+    # those fixtures contain no citation cue phrase.
+
+    def test_citation_backtick_wrapped_historical_value_not_flagged(self) -> None:
+        """t_20f0ef3d comment 48401: backtick-wrapped historical citation, not a declaration."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_cite_blocked", "blocked")
+            self.add_comment(
+                board, "t_cite_blocked", "fleet-engineer",
+                "Fleet-engineer verdict-blackhole remediation (2026-09-10): this card's legacy "
+                "comment-only `REVIEW_VERDICT: BLOCKED` values are historical artifacts of "
+                "os-reviewer using a non-contract verdict string. The card ALREADY carries a "
+                "proper native kanban_block(kind=needs_input) from the 2026-09-03 re-verification, "
+                "which is the authoritative state. The BLOCKED verdict values are false positives "
+                "from the detector's negation-scope bug. That bug is tracked as jarvis-os/t_225705fd. "
+                "No status/assignee/block_kind mutation from this comment.",
+            )
+            self.assertEqual(self.scan(board), [])
+
+    def test_citation_one_character_off_contract_not_flagged_but_reissue_is_kept(self) -> None:
+        """t_eda793bd comment 60573 / t_e728509f comment 60572 pattern.
+
+        The comment cites the bad historical CHANGES_REQUIRED token (excluded as a
+        citation) AND reissues the valid CHANGES_REQUESTED verdict (kept, in-contract
+        so never subject to the citation check) — net result: not flagged.
+        """
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_cite_reissue", "blocked")
+            self.add_comment(
+                board, "t_cite_reissue", "fleet-engineer",
+                "Fleet-engineer verdict-blackhole remediation (2026-09-10): the trading-risk-reviewer "
+                "issued REVIEW_VERDICT: CHANGES_REQUIRED which is one character off the router contract "
+                "value CHANGES_REQUESTED. Reissuing in contract terms: REVIEW_VERDICT: CHANGES_REQUESTED. "
+                "Card remains blocked; no status/assignee/block_kind mutation.",
+            )
+            self.assertEqual(self.scan(board), [])
+
+    def test_citation_task_description_example_not_flagged(self) -> None:
+        """The task body's own MUST-NOT-flag example (backtick citation + cue words)."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_cite_taskbody", "blocked")
+            self.add_comment(
+                board, "t_cite_taskbody", "fleet-engineer",
+                "Fleet-engineer remediation: the legacy `REVIEW_VERDICT: BLOCKED` comment is a "
+                "historical non-contract value; card is authoritatively kanban_block(needs_input).",
+            )
+            self.assertEqual(self.scan(board), [])
+
+    def test_citation_exclusion_does_not_suppress_fresh_declaration(self) -> None:
+        """Control: an out-of-contract token with NO citation framing is still flagged."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_fresh_bad", "blocked")
+            self.add_comment(
+                board, "t_fresh_bad", "os-reviewer",
+                "REVIEW_VERDICT=APPROVE_WITH_NOTES\nLooks good, minor notes.",
+            )
+            findings = self.scan(board)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].verdict_value, "APPROVE_WITH_NOTES")
+
 
 class VerdictVocabDetectorReplayTests(unittest.TestCase):
     """Live-state replay acceptance: a fixture board seeded with the two known

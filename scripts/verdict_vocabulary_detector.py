@@ -128,6 +128,48 @@ except Exception:  # pragma: no cover
 # negation-aware vr.verdict_declarations.
 _affirmative_matches = lambda text: list(VERDICT_RE.finditer(text or ""))
 
+# t_78137279 (citation-aware exclusion, narrow and additive on top of t_225705fd):
+# t_225705fd correctly removed broad negation-scope suppression, but that left
+# the detector unable to distinguish "a reviewer is declaring REVIEW_VERDICT=X
+# right now" from "a remediation/triage comment is CITING a previously-recorded
+# REVIEW_VERDICT=X to explain or dismiss it" — the latter is the standard,
+# encouraged fleet-engineer/jarvis-os-pm pattern for documenting a producer-side
+# vocabulary-drift false positive (see t_3f09931b). Without this exclusion, every
+# such remediation comment becomes a NEW flagged instance on the next cron
+# cycle — a self-perpetuating noise loop (fixing the noise generates more noise).
+#
+# This exclusion is intentionally narrow: it only suppresses a match that is
+# (a) backtick-wrapped (inline-code citation), or (b) has an explicit citation
+# cue phrase within a short window around the match. It does NOT touch
+# negation words ("not", "no", "could not") anywhere in the sentence — that
+# broad suppression is the exact defect t_225705fd fixed and must not regress.
+# A malformed verdict with no citation framing is still flagged, full stop.
+CITATION_CUE_RE = re.compile(
+    r"historical|legacy|non-contract|non contract|false positive"
+    r"|quoting|quoted|citing|cited|cites|citation"
+    r"|character off|off the .{0,30}contract|off contract"
+    r"|contract value|contract terms|reissu(?:e|ing|ed)",
+    re.I,
+)
+CITATION_WINDOW = 160  # chars of context on each side of the match to scan for a cue
+
+
+def _is_citation(body: str, match: "re.Match[str]") -> bool:
+    """True if a VERDICT_RE match looks like a citation, not a declaration.
+
+    A citation is backtick-wrapped (inline-code quoting of a historical
+    value) or framed by an explicit citation cue phrase nearby. Only called
+    for tokens already determined to be out-of-contract (VALID_VERDICTS are
+    never checked here) — see t_78137279.
+    """
+    start, end = match.start(), match.end()
+    before = body[max(0, start - 1):start]
+    after = body[end:end + 1]
+    if before == "`" and after == "`":
+        return True
+    window = body[max(0, start - CITATION_WINDOW):min(len(body), end + CITATION_WINDOW)]
+    return bool(CITATION_CUE_RE.search(window))
+
 
 def table_exists(con: sqlite3.Connection, name: str) -> bool:
     return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
@@ -238,6 +280,15 @@ def verdict_instances(con: sqlite3.Connection, task_id: str) -> list[tuple[int, 
         for m in _affirmative_matches(body):
             value = normalize_verdict(m.group(1))
             if not value:
+                continue
+            # t_78137279: an out-of-contract token that is clearly CITED
+            # (backtick-wrapped or near a citation cue phrase) rather than
+            # freshly DECLARED is not a new instance — skip it. Valid
+            # (in-contract) tokens are never subject to this check: a
+            # reviewer re-issuing REVIEW_VERDICT=CHANGES_REQUESTED right
+            # next to a citation of the old bad value must still register
+            # as a genuine valid declaration.
+            if value not in VALID_VERDICTS and _is_citation(body, m):
                 continue
             out.append((created, value, cid, author))
     return out
