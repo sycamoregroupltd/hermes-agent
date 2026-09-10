@@ -1718,6 +1718,15 @@ DEFAULT_CONFIG = {
         # Assignee when the orchestrator can't match one to an installed profile; "" = default
         # profile. A task never ends up with assignee=None.
         "default_assignee": "",
+        # Optional board-specific fallback for decomposed implementation
+        # children. This is separate from default_assignee, which also routes
+        # unassigned ready rows. Empty preserves the historical fallback.
+        "decompose_default_assignee_by_board": {},
+        # Profiles that coordinate work rather than implementing it. When a
+        # decomposed card is not explicitly PM_ONLY, a PM choice falls back to
+        # the board's implementation profile. Empty also recognizes the
+        # conventional ``-pm`` suffix.
+        "decompose_pm_profiles": [],
         # Global cap: positive int = the HOST never has more than N tasks 'running' across all
         # boards and both dispatch lanes. None = ~MemTotal / 512 MiB clamped to [2, 8]; where
         # MemTotal is unreadable (macOS/Windows) None means no cap.

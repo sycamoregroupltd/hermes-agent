@@ -72,6 +72,9 @@ Rules:
   - Pick assignees from the roster by matching the task to the profile's
     DESCRIPTION (not just the name). When nothing matches well, use null
     and the system will route to the default_assignee.
+  - The default_assignee is an implementation profile for this board. PM
+    profiles coordinate work and must not receive implementation children
+    unless the original card contains the exact line `PM_ONLY: true`.
   - Each child task body is what a fresh worker will read with no other
     context — be specific about goal, approach, and acceptance criteria.
 
@@ -107,6 +110,7 @@ Default assignee (used when no profile fits a task): {default_assignee}
 
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+_PM_ONLY_RE = re.compile(r"^\s*PM[_ -]?ONLY\s*:\s*true\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass
@@ -119,6 +123,11 @@ class DecomposeOutcome:
     fanout: bool = False
     child_ids: list[str] | None = None
     new_title: Optional[str] = None
+
+
+def _is_pm_only(body: object) -> bool:
+    """Return true only for the explicit, line-oriented PM-only marker."""
+    return isinstance(body, str) and bool(_PM_ONLY_RE.search(body))
 
 
 def _profile_author() -> str:
@@ -181,13 +190,28 @@ def _format_roster(roster: list[dict]) -> str:
     )
 
 
-def _normalize_assignee_choice(assignee: object, *, default_assignee: str, valid_names: set[str]) -> str:
-    """A valid assignee, else ``default_assignee`` — promoted work is never
-    left unassigned."""
+def _normalize_assignee_choice(
+    assignee: object,
+    *,
+    default_assignee: str,
+    valid_names: set[str],
+    pm_profiles: set[str],
+    allow_pm: bool,
+) -> str:
+    """Choose a real worker profile, keeping PMs out of implementation work.
+
+    The explicit ``PM_ONLY: true`` marker is the only way a decomposed card can
+    retain a PM assignee; unknown and omitted choices always use the board's
+    implementation fallback.
+    """
     if not isinstance(assignee, str) or not assignee.strip():
         return default_assignee
     chosen = assignee.strip()
-    return chosen if chosen in valid_names else default_assignee
+    if chosen not in valid_names:
+        return default_assignee
+    if chosen in pm_profiles and not allow_pm:
+        return default_assignee
+    return chosen
 
 
 @dataclass
@@ -199,18 +223,40 @@ class _Routing:
     auto_promote: bool
     roster: list[dict]
     valid_names: set[str]
+    pm_profiles: set[str]
+    pm_only: bool
 
 
-def _load_routing() -> _Routing:
+def _load_routing(task: kb.Task) -> _Routing:
     cfg = _load_config()
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
     roster, valid_names = _build_roster()
+    pm_profiles_cfg = kanban_cfg.get("decompose_pm_profiles", [])
+    pm_profiles = {
+        name.strip() for name in pm_profiles_cfg
+        if isinstance(name, str) and name.strip() in valid_names
+    } if isinstance(pm_profiles_cfg, list) else set()
+    if not pm_profiles:
+        pm_profiles = {name for name in valid_names if name.endswith("-pm")}
+    pm_only = _is_pm_only(task.body)
+    orchestrator = _resolve_profile_from_cfg(cfg, "orchestrator_profile")
+    board = kb.get_current_board()
+    board_defaults = kanban_cfg.get("decompose_default_assignee_by_board", {})
+    board_default = board_defaults.get(board) if isinstance(board_defaults, dict) else None
+    if isinstance(board_default, str) and board_default.strip() in valid_names and not pm_only:
+        default_assignee = board_default.strip()
+    elif pm_only:
+        default_assignee = orchestrator
+    else:
+        default_assignee = _resolve_profile_from_cfg(cfg, "default_assignee")
     return _Routing(
-        orchestrator=_resolve_profile_from_cfg(cfg, "orchestrator_profile"),
-        default_assignee=_resolve_profile_from_cfg(cfg, "default_assignee"),
+        orchestrator=orchestrator,
+        default_assignee=default_assignee,
         auto_promote=bool(kanban_cfg.get("auto_promote_children", True)),
         roster=roster,
         valid_names=valid_names,
+        pm_profiles=pm_profiles,
+        pm_only=pm_only,
     )
 
 
@@ -220,7 +266,9 @@ def _apply_single(task: kb.Task, parsed: dict, routing: _Routing, author: str) -
     assignee_val = None
     if not task.assignee:
         assignee_val = _normalize_assignee_choice(
-            parsed.get("assignee"), default_assignee=routing.default_assignee, valid_names=routing.valid_names,
+            parsed.get("assignee"), default_assignee=routing.default_assignee,
+            valid_names=routing.valid_names, pm_profiles=routing.pm_profiles,
+            allow_pm=routing.pm_only,
         )
     if title_val is None and body_val is None:
         return DecomposeOutcome(task.id, False, "decomposer returned fanout=false with no title/body")
@@ -246,7 +294,9 @@ def _clean_children(task_id: str, raw_tasks: list, routing: _Routing) -> tuple[l
         body = entry.get("body")
         assignee = entry.get("assignee")
         chosen = _normalize_assignee_choice(
-            assignee, default_assignee=routing.default_assignee, valid_names=routing.valid_names,
+            assignee, default_assignee=routing.default_assignee,
+            valid_names=routing.valid_names, pm_profiles=routing.pm_profiles,
+            allow_pm=routing.pm_only,
         )
         if isinstance(assignee, str) and assignee.strip() and assignee.strip() not in routing.valid_names:
             logger.info(
@@ -309,7 +359,7 @@ def decompose_task(
     if task is None:
         return DecomposeOutcome(task_id, False, reason)
 
-    routing = _load_routing()
+    routing = _load_routing(task)
     raw, reason = _call_aux(
         "decompose", task_id, aux_task="kanban_decomposer", system=_SYSTEM_PROMPT,
         user=_USER_TEMPLATE.format(
