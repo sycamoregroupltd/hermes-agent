@@ -7968,6 +7968,15 @@ class DispatchResult:
     skipped_nonspawnable (assignee is not a Hermes profile at all) and from
     skipped_unassigned (no assignee). Operator-actionable ONLY as a routing
     signal: reassign the card to a terminal-capable reviewer (t_a2ef2ea2)."""
+    capability_blocked: "list[tuple[str, str]]" = field(default_factory=list)
+    """Ready task ids blocked before claim (kind=capability) because the
+    assigned profile's CLI toolset lacks a capability the card body
+    explicitly requires (terminal/file work). Each tuple is
+    ``(task_id, reroute_reason)``. Distinct from skipped_reviewer_incapable
+    (review lane only, terminal-only check) — this guards the ready/
+    implementation lane against crash-loop-and-requeue on ANY missing
+    terminal/file capability, blocking with a human-actionable reroute
+    hint instead (t_fe11580c)."""
     skipped_per_profile_capped: list[tuple[str, str, int]] = field(default_factory=list)
     """Tasks deferred this tick because their assignee is already at
     ``kanban.max_in_progress_per_profile`` (#21582). Each entry is
@@ -10412,6 +10421,20 @@ def _dispatch_once_locked(
             # of human-pulled work.
             result.skipped_nonspawnable.append(row["id"])
             continue
+        # Capability guard (t_fe11580c): a card that explicitly asks for
+        # terminal/file work but whose assignee's CLI toolset lacks that
+        # capability would spawn, crash immediately, and bounce back to
+        # 'ready' next tick — burning CPU forever on an unfixable
+        # assignment. Block it now (kind=capability) with a human-
+        # actionable reroute hint instead of crash-looping it.
+        capability_reason = _capability_guard_reason(
+            conn, row["id"], row_assignee, board=board,
+        )
+        if capability_reason is not None:
+            result.capability_blocked.append((row["id"], capability_reason))
+            if not dry_run:
+                block_task(conn, row["id"], reason=capability_reason, kind="capability")
+            continue
         # Per-profile concurrency cap (#21582): even if there's global
         # headroom, refuse to spawn for an assignee that's already at
         # its in-flight cap. Prevents one profile's local model / API
@@ -10882,6 +10905,91 @@ def _resolve_worker_cli_toolsets(hermes_home: Optional[str]) -> Optional[list[st
             exc,
         )
         return None
+
+
+# ---- capability guard (t_fe11580c) -----------------------------------
+#
+# Skip-and-requeue on a missing capability just crash-loops: the worker
+# spawns, fails immediately on the missing tool, gets reaped, and the task
+# bounces back to 'ready' for the next tick to spawn again. These regexes
+# are a conservative, explicit-language detector for cards that plainly
+# require terminal or filesystem work, so the dispatcher can block (not
+# spawn) BEFORE the crash instead of after it.
+_TERMINAL_WORK_RE = re.compile(
+    r"\b(?:terminal|shell|command(?:[- ]line)?|pytest|git|run\s+(?:the\s+)?tests?|"
+    r"execute\s+(?:the\s+)?(?:command|script|tests?))\b",
+    re.IGNORECASE,
+)
+_FILE_WORK_RE = re.compile(
+    r"\b(?:file(?:system)?|source\s+code|repository|repo|path|edit(?:ing)?|"
+    r"modify|patch|write\s+(?:to|the)|read\s+(?:from|the)|implement)\b",
+    re.IGNORECASE,
+)
+
+
+def _task_capability_requirements(body: object) -> "tuple[str, ...]":
+    """Return terminal/file capabilities explicitly requested by a card body."""
+    if not isinstance(body, str):
+        return ()
+    required: list[str] = []
+    if _TERMINAL_WORK_RE.search(body):
+        required.append("terminal")
+    if _FILE_WORK_RE.search(body):
+        required.append("file")
+    return tuple(required)
+
+
+def _profile_cli_toolsets(assignee: str) -> "Optional[set[str]]":
+    """Resolve a profile's effective CLI toolsets without mutating its config."""
+    try:
+        from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
+        profile_home = resolve_profile_env(normalize_profile_name(assignee))
+        resolved = _resolve_worker_cli_toolsets(profile_home)
+    except Exception:
+        return None
+    return set(resolved or ())
+
+
+def _capability_reroute_profile(board: Optional[str]) -> str:
+    """Return the configured implementation fallback for a reroute hint."""
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config() or {}
+        mapping = (cfg.get("kanban") or {}).get("decompose_default_assignee_by_board", {})
+        candidate = mapping.get(board) if isinstance(mapping, dict) else None
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    except Exception:
+        pass
+    return "a terminal/file-capable implementer"
+
+
+def _capability_guard_reason(
+    conn: sqlite3.Connection, task_id: str, assignee: str, *, board: Optional[str],
+) -> Optional[str]:
+    """Explain why a ready implementation card cannot run on this profile.
+
+    Returns ``None`` (no guard) when the card body doesn't explicitly ask
+    for terminal/file work, or when the toolset resolver itself fails —
+    fail-open preserves the existing spawn-then-diagnose behavior rather
+    than blocking on an inconclusive signal.
+    """
+    row = conn.execute("SELECT body FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    requirements = _task_capability_requirements(row["body"] if row else None)
+    if not requirements:
+        return None
+    toolsets = _profile_cli_toolsets(assignee)
+    if toolsets is None:
+        return None
+    missing = [name for name in requirements if name not in toolsets]
+    if not missing:
+        return None
+    reroute = _capability_reroute_profile(board)
+    return (
+        f"dispatcher capability guard: task requires {', '.join(requirements)} work, "
+        f"but profile {assignee!r} lacks {', '.join(missing)} toolset(s); "
+        f"reroute to {reroute!r} and retry"
+    )
 
 
 def _default_spawn(

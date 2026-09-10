@@ -3055,6 +3055,15 @@ DEFAULT_CONFIG = {
         # assignee to any installed profile. When unset, falls back to the
         # default profile. A task never ends up with assignee=None.
         "default_assignee": "",
+        # Optional board-specific fallback for decomposed implementation
+        # children. Separate from default_assignee, which also routes
+        # unassigned ready rows. Empty preserves the historical fallback.
+        "decompose_default_assignee_by_board": {},
+        # Profiles that coordinate work rather than implementing it. When a
+        # decomposed card is not explicitly PM_ONLY, a PM choice falls back
+        # to the board's implementation profile. Empty also recognizes the
+        # conventional "-pm" suffix.
+        "decompose_pm_profiles": [],
         # Per-profile concurrency cap (#21582). When set to a positive int,
         # no single profile can have more than N workers running at once,
         # even if the global max_in_progress / max_spawn caps would allow
