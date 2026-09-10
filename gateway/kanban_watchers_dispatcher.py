@@ -8,6 +8,8 @@ the singleton lock and the health telemetry; everything that only needs the
 from __future__ import annotations
 
 import contextlib
+import functools
+import importlib.util
 import os
 import sqlite3
 import time
@@ -27,6 +29,69 @@ def _kbd():
     return kanban_db_dispatch
 
 _CORRUPT_DB_MARKERS = ("file is not a database", "database disk image is malformed")
+
+# boards-manifest.json states that must NEVER be dispatched, regardless of
+# task status (denied = permanent, dormant = deliberately not worked).
+_MANIFEST_HARD_SKIP_STATES = frozenset({"denied", "dormant"})
+
+
+@functools.lru_cache(maxsize=1)
+def _fleet_boards_module():
+    """Best-effort, cached dynamic import of ``scripts/fleet_boards.py``.
+
+    ``fleet_boards.py`` is a fleet-operations script under
+    ``HERMES_HOME/scripts`` — it is NOT part of this repo/package, so it
+    can't be a normal import; load it by file path (same pattern as
+    ``gateway/hooks.py`` and ``gateway/platforms/webhook_filters.py``). A
+    base Hermes install without this script (or any load failure) returns
+    ``None`` — callers MUST treat that as "no manifest opinion" and fail
+    open, never as a reason to block dispatch.
+    """
+    try:
+        from hermes_constants import get_hermes_home
+        path = get_hermes_home() / "scripts" / "fleet_boards.py"
+        if not path.is_file():
+            return None
+        spec = importlib.util.spec_from_file_location("hermes_gateway_fleet_boards_reader", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        logger.debug("kanban dispatcher: could not load fleet_boards manifest reader", exc_info=True)
+        return None
+
+
+def _manifest_hard_skip_boards() -> frozenset[str]:
+    """Board slugs whose boards-manifest.json state is denied/dormant.
+
+    Re-read fresh on every call (not cached) so a manifest edit — e.g. a
+    board flipped active→dormant — takes effect on the next dispatcher tick,
+    matching the live-reread pattern already used for auto-decompose
+    settings (#49638).
+
+    Fail-open contract, matching ``fleet_boards.boards_for()``'s own
+    ``ManifestError`` → allow-dispatch fallback exactly: a missing
+    ``fleet_boards.py``, a missing/corrupt manifest, or any parse error
+    returns an EMPTY set (nothing hard-skipped; dispatcher degrades to its
+    prior dispatch-everything behavior). Never returns a result that would
+    itself halt dispatch fleet-wide — that would be its own gateway/
+    channel-availability regression requiring separate approval.
+    """
+    module = _fleet_boards_module()
+    if module is None:
+        return frozenset()
+    try:
+        boards = module.manifest()["boards"]
+    except Exception:
+        return frozenset()
+    if not isinstance(boards, dict):
+        return frozenset()
+    return frozenset(
+        slug for slug, cfg in boards.items()
+        if isinstance(cfg, dict) and cfg.get("state") in _MANIFEST_HARD_SKIP_STATES
+    )
 
 
 @dataclass
@@ -134,7 +199,26 @@ class _KanbanDispatcher:
         self.disabled_corrupt_boards: dict[str, tuple[tuple[str, int | None, int | None], float]] = {}
 
     def _board_slugs(self) -> list:
-        return _board_slugs(self.kb)
+        """Live board slugs minus any hard-skipped by boards-manifest.json.
+
+        This is the single seam every dispatcher board loop goes through
+        (``tick_once``, ``ready_nonempty``, ``auto_decompose_tick``), so a
+        denied/dormant board is excluded from dispatch_once, the stuck-queue
+        health probe, AND triage auto-decomposition — none of them may ever
+        touch it. Applied here (before any per-board work), not filtered
+        out afterward.
+        """
+        slugs = _board_slugs(self.kb)
+        hard_skip = _manifest_hard_skip_boards()
+        if not hard_skip:
+            return slugs
+        skipped = [slug for slug in slugs if slug in hard_skip]
+        if skipped:
+            logger.info(
+                "kanban dispatcher: hard-skipping denied/dormant board(s) per "
+                "boards-manifest.json: %s", skipped,
+            )
+        return [slug for slug in slugs if slug not in hard_skip]
 
     def board_db_fingerprint(self, slug: str) -> tuple[str, int | None, int | None]:
         path = self.kb.kanban_db_path(slug)
