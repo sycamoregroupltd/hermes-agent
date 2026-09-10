@@ -456,6 +456,7 @@ class CLIChatTurnMixin:
         time.sleep(0.15)
         if turn.result:
             self.conversation_history = turn.result.get("messages", self.conversation_history)
+        self._last_turn_result = turn.result
         # Mid-turn auto-compression continues in a child session: sync so /status, /resume,
         # titling and the exit summary target the live child, not the ended parent.
         if (self.agent and getattr(self.agent, "session_id", None)

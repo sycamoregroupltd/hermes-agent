@@ -2810,6 +2810,9 @@ class HermesCLI(CLIProcessNotificationsMixin, CLIAgentSetupMixin, CLICommandsMix
         """Session store + all per-run mutable state (queues, overlays, pet/voice/status-bar fields)."""
         # A signature change across turns (/model, credential rotation) rebuilds the agent.
         self._active_agent_route_signature = None
+        # Kanban exit-code mapping (non-quiet path): the last chat turn's result dict,
+        # kept in sync by _chat_settle_turn so _run_single_query_mode can inspect it.
+        self._last_turn_result: "dict | None" = None
         self.agent: Optional[Any] = None  # initialized on first use
         self._tool_callbacks_installed = self._tirith_security_checked = False
         self._app = None  # prompt_toolkit Application (set in run())
@@ -4104,16 +4107,26 @@ def _run_quiet_single_query(cli, effective_query):
     # Exit code 0/1 for automation wrappers. Kanban workers that failed purely on
     # rate-limit/billing exit with the EX_TEMPFAIL sentinel so the dispatcher releases
     # the task without counting a failure (a quota window must not trip the breaker).
-    _exit_code = 0
-    if isinstance(result, dict) and result.get("failed"):
-        _exit_code = 1
-        if os.environ.get("HERMES_KANBAN_TASK") and result.get("failure_reason") in ("rate_limit", "billing"):
-            try:
-                from hermes_cli.kanban_db import KANBAN_RATE_LIMIT_EXIT_CODE as _RL_CODE
-                _exit_code = _RL_CODE
-            except Exception:
-                _exit_code = 1
-    sys.exit(_exit_code)
+    sys.exit(_kanban_exit_code_for_turn_result(result))
+
+
+def _kanban_exit_code_for_turn_result(result) -> int:
+    """Map a run_conversation() result dict to the automation exit code.
+
+    Kanban workers that failed purely on rate-limit/billing exit with the
+    EX_TEMPFAIL sentinel so the dispatcher releases the task without counting
+    a failure (a quota window must not trip the breaker).
+    """
+    if not (isinstance(result, dict) and result.get("failed")):
+        return 0
+    exit_code = 1
+    if os.environ.get("HERMES_KANBAN_TASK") and result.get("failure_reason") in ("rate_limit", "billing"):
+        try:
+            from hermes_cli.kanban_db import KANBAN_RATE_LIMIT_EXIT_CODE as _RL_CODE
+            exit_code = _RL_CODE
+        except Exception:
+            exit_code = 1
+    return exit_code
 
 
 def _route_single_query_images(cli, query, effective_query, single_query_images, single_query_image_urls):
@@ -4431,6 +4444,10 @@ def _run_single_query_mode(cli, query, image, quiet, oneshot):
         cli._show_security_advisories()
         cli.chat(query, images=single_query_images or None)
         cli._print_exit_summary(clear_screen=False)
+        if os.environ.get("HERMES_KANBAN_TASK"):
+            _exit_code = _kanban_exit_code_for_turn_result(getattr(cli, "_last_turn_result", None))
+            if _exit_code != 0:
+                sys.exit(_exit_code)
     finally:
         _finalize_single_query(cli)
 
