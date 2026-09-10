@@ -377,6 +377,21 @@ check_mode() {
         disable_all_strategies
     else
         log_event "INFO" "Outside NFP window — no action needed"
+        # Self-healing re-enable (t_78febabf, fixes 3rd recurrence of the
+        # bulk-disable-never-recovers defect class: 2026-08-07 NS-P1,
+        # 2026-09-04). Previously, recovery depended on a separate
+        # `nfp-reset` cron that was a one-shot date expression and has
+        # since been retired entirely (t_894ecd7b) — leaving disable-only
+        # coverage. This removes that dependency: any time `check_mode`
+        # runs outside the window and a state file is still present (i.e.
+        # a prior disable was never followed by a reenable), re-enable
+        # immediately. Idempotent: reenable_strategies() archives the
+        # state file to `.bak` after use, so it naturally no-ops on every
+        # subsequent tick once caught up.
+        if [ -f "$NFP_STATE" ]; then
+            log_event "INFO" "Outside NFP window but NFP state file present — self-healing re-enable"
+            reenable_strategies
+        fi
     fi
 }
 
