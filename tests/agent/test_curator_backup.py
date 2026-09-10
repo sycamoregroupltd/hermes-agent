@@ -517,9 +517,16 @@ def test_rollback_skips_jobs_the_user_deleted(backup_env):
     ])
     snap = cb.snapshot_skills(reason="pre-curator-run")
 
-    # User deletes one job after the snapshot
+    # User deletes one job after the snapshot. Use the real deletion API
+    # (remove_job), not a bare save_jobs() with a filtered list: since
+    # cron/jobs.py's lost-update merge-on-write defense (d6b7aa0ccd), a
+    # save_jobs() call that omits loaded_ids/removed_ids treats any job
+    # missing from the incoming list as accidental data loss and merges
+    # it back in from disk — so a bare save_jobs() here is a silent no-op
+    # and never actually deletes anything, regardless of what rollback()
+    # does afterwards.
     cj = _reload_cron_jobs(home)
-    cj.save_jobs([j for j in cj.load_jobs() if j["id"] != "delete-me"])
+    assert cj.remove_job("delete-me")
 
     ok, _, _ = cb.rollback(backup_id=snap.name)
     assert ok
