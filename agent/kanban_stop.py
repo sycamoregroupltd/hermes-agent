@@ -94,7 +94,8 @@ def _run_outcome_from_board() -> Optional[str]:
     except Exception:
         # Unreadable board → cannot prove the run terminal → nudge stays live.
         return None
-    _RUN_OUTCOME_CACHE[cache_key] = outcome
+    if outcome is not None:
+        _RUN_OUTCOME_CACHE[cache_key] = outcome
     return outcome
 
 

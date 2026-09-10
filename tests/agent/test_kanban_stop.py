@@ -231,6 +231,45 @@ def test_unreadable_board_fails_open(clear_kanban_env, tmp_path):
     assert build_kanban_stop_nudge(messages=messages) is not None
 
 
+def test_open_run_cache_does_not_stale_out_closure(clear_kanban_env, tmp_path):
+    """None (open-run) reads must not be cached -- the run may close later.
+
+    Regression for the #98750 defense-in-depth cache-miss staleness defect:
+    a guard fire while the run is still open must not poison the memoized
+    outcome for a later, same-process re-check after the run has closed.
+    """
+    db_path = tmp_path / "kanban.db"
+    run_id = _seed_board_run(db_path, clear_kanban_env, outcome=None)
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_run")
+    clear_kanban_env.setenv("HERMES_KANBAN_RUN_ID", str(run_id))
+    messages = [{"role": "user", "content": "hello"}]
+
+    # Fire #1: run is open -> nudge fires (and must NOT poison the cache
+    # with a stale None keyed to this run).
+    assert build_kanban_stop_nudge(messages=messages) is not None
+
+    # Close the run in the DB, exactly as the dispatcher does after a
+    # native kanban_request_review call.
+    from hermes_cli import kanban_db_connect as kbc
+
+    conn = kbc.connect(db_path=db_path)
+    try:
+        conn.execute(
+            "UPDATE task_runs SET outcome = ?, ended_at = strftime('%s','now') "
+            "WHERE id = ?",
+            ("review_requested", run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Fire #2: same process, run now closed on the board, transcript still
+    # shows no terminal tool call (e.g. compacted out). The run-outcome
+    # suppression must see the fresh non-null outcome, not the cached None
+    # from fire #1.
+    assert build_kanban_stop_nudge(messages=messages) is None
+
+
 # ── Integration: agent nudge + dispatcher bounded retry ──────────────
 # These tests verify the two layers compose correctly: the agent-side
 # nudge fires first (up to 2 attempts), and if the worker still exits
