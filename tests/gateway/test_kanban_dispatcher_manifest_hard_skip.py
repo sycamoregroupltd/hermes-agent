@@ -29,7 +29,6 @@ from unittest.mock import MagicMock
 import pytest
 
 import gateway.kanban_watchers_dispatcher as kwd
-from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
 
 # Minimal stand-in for scripts/fleet_boards.py's manifest()/ManifestError
@@ -69,15 +68,22 @@ _FAKE_FLEET_BOARDS = textwrap.dedent(
 
 @pytest.fixture
 def hermes_home(tmp_path, monkeypatch):
-    """A scratch HERMES_HOME with a fake scripts/fleet_boards.py installed."""
+    """A scratch Hermes root with a fake scripts/fleet_boards.py installed.
+
+    Sets ``HERMES_HOME`` to *tmp_path* directly (as a root, not a
+    profile-scoped path) via ``monkeypatch.setenv``. ``_fleet_boards_module()``
+    resolves via ``get_default_hermes_root()``, which reads ``os.environ``
+    directly (not the context-local override ``set_hermes_home_override()``
+    sets) — tests must exercise the same env-var path production gateway
+    processes actually use.
+    """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     (scripts_dir / "fleet_boards.py").write_text(_FAKE_FLEET_BOARDS, encoding="utf-8")
-    token = set_hermes_home_override(tmp_path)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     kwd._fleet_boards_module.cache_clear()
     monkeypatch.delenv("HERMES_BOARDS_MANIFEST", raising=False)
     yield tmp_path
-    reset_hermes_home_override(token)
     kwd._fleet_boards_module.cache_clear()
 
 
@@ -238,7 +244,7 @@ def test_corrupt_manifest_fails_open_dispatches_everything(hermes_home, monkeypa
 
 def test_missing_fleet_boards_script_fails_open(monkeypatch, tmp_path):
     """No scripts/fleet_boards.py at all (base install) -> also fails open."""
-    token = set_hermes_home_override(tmp_path)  # no scripts/ dir created
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))  # no scripts/ dir created
     kwd._fleet_boards_module.cache_clear()
     try:
         kb = _fake_kb(["orchestrator-sync", "jarvis-os"])
@@ -250,7 +256,59 @@ def test_missing_fleet_boards_script_fails_open(monkeypatch, tmp_path):
 
         assert sorted(slug for slug, _ in results) == ["jarvis-os", "orchestrator-sync"]
     finally:
-        reset_hermes_home_override(token)
+        kwd._fleet_boards_module.cache_clear()
+
+
+# --- (e) profile-scoped HERMES_HOME still finds the shared-root script ----
+#
+# t_30b69b42 review round 2: production resolved fleet_boards.py via
+# get_hermes_home(), which is profile-scoped. Every live gateway runs with
+# HERMES_HOME=<root>/profiles/<name> (e.g. --profile jarvis-os-pm), and
+# scripts/fleet_boards.py only ever exists at <root>/scripts/, never under
+# a profile dir. That mismatch made _fleet_boards_module() return None on
+# every real gateway process, silently defeating the hard-skip fleet-wide
+# while every other test here (which points HERMES_HOME straight at a root
+# containing scripts/) stayed green. This test pins HERMES_HOME to a
+# profile subdirectory and asserts the hard-skip still fires by finding
+# fleet_boards.py at the root two levels up, exactly like
+# hermes_cli/kanban_db.py::kanban_home() (get_default_hermes_root()) already
+# does for the kanban board root itself.
+
+
+def test_denied_board_skipped_with_profile_scoped_hermes_home(monkeypatch, tmp_path):
+    root = tmp_path
+    scripts_dir = root / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (scripts_dir / "fleet_boards.py").write_text(_FAKE_FLEET_BOARDS, encoding="utf-8")
+    # Marker file so get_default_hermes_root() recognizes *root* as a real
+    # Hermes home even though it's a throwaway tmp_path, not ~/.hermes.
+    (root / "config.yaml").write_text("{}", encoding="utf-8")
+
+    profile_home = root / "profiles" / "some-profile"
+    profile_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HERMES_HOME", str(profile_home))  # profile-scoped, like every live gateway
+    monkeypatch.delenv("HERMES_BOARDS_MANIFEST", raising=False)
+    kwd._fleet_boards_module.cache_clear()
+    try:
+        _write_manifest(
+            root,
+            {
+                "orchestrator-sync": {"state": "denied", "dispatch": False, "reason": "permanent deny"},
+                "jarvis-os": {"state": "active", "dispatch": True},
+            },
+            monkeypatch,
+        )
+        kb = _fake_kb(["orchestrator-sync", "jarvis-os"])
+        dispatcher = _dispatcher(kb)
+        dispatch_calls: list[str] = []
+        _wire_fake_dispatch(monkeypatch, dispatch_calls)
+
+        results = dispatcher.tick_once()
+
+        assert [slug for slug, _ in results] == ["jarvis-os"]
+        assert dispatch_calls == ["jarvis-os"]
+        assert "orchestrator-sync" not in dispatch_calls
+    finally:
         kwd._fleet_boards_module.cache_clear()
 
 

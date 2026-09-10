@@ -40,16 +40,28 @@ def _fleet_boards_module():
     """Best-effort, cached dynamic import of ``scripts/fleet_boards.py``.
 
     ``fleet_boards.py`` is a fleet-operations script under
-    ``HERMES_HOME/scripts`` — it is NOT part of this repo/package, so it
+    ``<hermes-root>/scripts`` — it is NOT part of this repo/package, so it
     can't be a normal import; load it by file path (same pattern as
     ``gateway/hooks.py`` and ``gateway/platforms/webhook_filters.py``). A
     base Hermes install without this script (or any load failure) returns
     ``None`` — callers MUST treat that as "no manifest opinion" and fail
     open, never as a reason to block dispatch.
+
+    Resolved via ``get_default_hermes_root()``, NOT ``get_hermes_home()``:
+    every live gateway process runs with a profile-scoped ``HERMES_HOME``
+    (``--profile <name>`` -> ``<root>/profiles/<name>``), and
+    ``scripts/fleet_boards.py`` only ever exists at the shared root, never
+    under a profile dir. Using ``get_hermes_home()`` here would make
+    ``_fleet_boards_module()`` return ``None`` on every real gateway process
+    (t_30b69b42 review round 2) and silently defeat the hard-skip fleet-wide.
+    This matches the established precedent right next to this code:
+    ``hermes_cli/kanban_db.py::kanban_home()`` uses
+    ``get_default_hermes_root()`` for the identical reason — kanban state
+    (and this manifest) is shared across profiles BY DESIGN.
     """
     try:
-        from hermes_constants import get_hermes_home
-        path = get_hermes_home() / "scripts" / "fleet_boards.py"
+        from hermes_constants import get_default_hermes_root
+        path = get_default_hermes_root() / "scripts" / "fleet_boards.py"
         if not path.is_file():
             return None
         spec = importlib.util.spec_from_file_location("hermes_gateway_fleet_boards_reader", path)
