@@ -67,7 +67,13 @@ HERMES_HOME = os.path.dirname(_HERE)          # .../.hermes
 
 def default_dbs():
     dbs = [os.path.join(HERMES_HOME, "state.db")]
-    dbs += sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/state.db")))
+    _seen = set()
+    for _db in sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/state.db"))):
+        _rp = os.path.realpath(_db)
+        if _rp in _seen:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        _seen.add(_rp)
+        dbs.append(_db)
     return dbs
 
 
@@ -91,8 +97,14 @@ def expand_dbs(raw):
 
 
 # Lightweight extractor for the YAML keys that declare a deliberate model pin:
-#   model:\n  default: <model>     (profile/root main model)
-#   delegation:\n  model: <model>  (subagent/delegation model)
+#   model:\n  default: <model>       (profile/root main model)
+#   delegation:\n  model: <model>    (subagent/delegation model)
+#   auxiliary:\n  <task>:\n    model: <model>  (per-task aux route, e.g. jarvis
+#                                     auxiliary.curator pinned to
+#                                     custom:ollama-local/qwen3-coder-30b-tools-64k —
+#                                     t_7179962c 2026-09-10: a deliberate local-serving
+#                                     route, not silent drift, so it belongs in the
+#                                     declared set same as model.default/delegation.model)
 # Deliberate per-profile pins are NOT drift, so we fold them into the expected set.
 _RE_DEFAULT = re.compile(r"^\s*default:\s*(.+?)\s*$")
 _RE_DELEG_MODEL = re.compile(r"^\s*model:\s*(.+?)\s*$")
@@ -102,7 +114,13 @@ def declared_models():
     """Return set of models declared as deliberate pins across root+profile config.yaml."""
     out = set()
     configs = [os.path.join(HERMES_HOME, "config.yaml")]
-    configs += sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/config.yaml")))
+    _seen = set()
+    for _cfg in sorted(glob.glob(os.path.join(HERMES_HOME, "profiles/*/config.yaml"))):
+        _rp = os.path.realpath(_cfg)
+        if _rp in _seen:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        _seen.add(_rp)
+        configs.append(_cfg)
     for cfg in configs:
         if not os.path.isfile(cfg):
             continue
@@ -111,14 +129,16 @@ def declared_models():
                 lines = f.readlines()
         except OSError:
             continue
-        # track top-level block we are inside; only accept model.default and
-        # delegation.model (skip auxiliary.*.model which are aux, handled separately)
+        # track top-level block we are inside; accept model.default,
+        # delegation.model, and auxiliary.<task>.model (t_7179962c: a non-empty
+        # auxiliary.<task>.model is as deliberate a pin as model.default —
+        # e.g. jarvis auxiliary.curator = custom:ollama-local/qwen3-coder-30b-tools-64k)
         block = None
         for raw in lines:
             line = raw.rstrip("\n")
             if line and not line[0].isspace() and not line.startswith("#"):
                 block = line.rstrip(":")
-            if block in ("model", "delegation"):
+            if block in ("model", "delegation", "auxiliary"):
                 m = _RE_DEFAULT.match(line) or _RE_DELEG_MODEL.match(line)
                 if m and line.strip().split(":")[0] in ("default", "model"):
                     val = m.group(1).strip()
