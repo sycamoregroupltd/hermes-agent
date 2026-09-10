@@ -72,6 +72,27 @@ _MECH_LINE_RE = re.compile(
     r"warn=(?P<warn>\S+)\s+keys=(?P<keys>\[.*?\])\s*$", re.M)
 _INFRA_NAME_RE = re.compile(r"^\s*-\s*([A-Za-z0-9_.\-]+):", re.M)
 
+# os-reviewer round-1 fix (t_4ed34e09): the crash/forced-release BLOCK-cause
+# signal used to collapse to a bare boolean (crash=1 / forced=1) -- a
+# DIFFERENT crashed task, or a crash-count escalation, with dead_keys/infra
+# names unchanged, hashed identically and would be silently suppressed for
+# the whole quiet window. These regexes pull the actual count AND the
+# stable identity of each hit (board/task_id for crashes; job name/id for
+# forced releases) straight out of dgx_unified_health_probe.py's own line
+# format (scripts/dgx_unified_health_probe.py ~L959-961, ~L1514-1516) so a
+# genuinely different crash/forced-release set always changes the
+# fingerprint. Deliberately excludes the volatile trailing fields on each
+# line (outcome/status for crashes, `at`/`age_s` for forced releases) so an
+# unchanged set of tasks/jobs still fingerprints identically run-to-run.
+_CRASH_SECTION_RE = re.compile(
+    r"^## Kanban ACTIVE crashes.*?:\s*(?P<count>\d+)\s*<-- BLOCK cause\n"
+    r"(?P<items>(?:  - .+\n?)*)", re.M)
+_CRASH_ITEM_RE = re.compile(r"^\s*-\s*(\S+):", re.M)
+_FORCED_SECTION_RE = re.compile(
+    r"^## Cron forced releases.*?:\s*(?P<count>\d+)\s*<-- BLOCK cause\n"
+    r"(?P<items>(?:  - .+\n?)*)", re.M)
+_FORCED_ITEM_RE = re.compile(r"^\s*-\s*([^:\n]+):", re.M)
+
 
 def dedup_fingerprint(key: str, out: str) -> str:
     """Return the string whose hash is compared run-over-run for de-dup.
@@ -106,10 +127,17 @@ def dedup_fingerprint(key: str, out: str) -> str:
         names = sorted(_INFRA_NAME_RE.findall(infra_section.group(1)))
         if names:
             parts.append("infra=" + ",".join(names))
-    if re.search(r"^## Kanban ACTIVE crashes.*<-- BLOCK cause$", out, re.M):
-        parts.append("crash=1")
-    if re.search(r"^## Cron forced releases.*<-- BLOCK cause$", out, re.M):
-        parts.append("forced=1")
+    crash_m = _CRASH_SECTION_RE.search(out)
+    if crash_m:
+        ids = sorted(_CRASH_ITEM_RE.findall(crash_m.group("items")))
+        # Include the reported count even when item extraction comes up
+        # empty (a future format change to the per-hit lines must not
+        # silently degrade back to a bare boolean -- fail toward "new").
+        parts.append(f"crash={crash_m.group('count')}:{','.join(ids)}")
+    forced_m = _FORCED_SECTION_RE.search(out)
+    if forced_m:
+        names = sorted(n.strip() for n in _FORCED_ITEM_RE.findall(forced_m.group("items")))
+        parts.append(f"forced={forced_m.group('count')}:{','.join(names)}")
     if not parts:
         # Nothing recognizable extracted (non-BLOCK body, or upstream format
         # drift) — fail closed to the raw text so we never fabricate a

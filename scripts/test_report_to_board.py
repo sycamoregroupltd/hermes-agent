@@ -207,6 +207,53 @@ class DedupFingerprintTests(unittest.TestCase):
         fp = self.mod.dedup_fingerprint("dgx-unified-health-probe", out)
         self.assertEqual(fp, out, "unparseable body must never be treated as a known-stable fingerprint")
 
+    # os-reviewer round-1 (t_4ed34e09): dedup_fingerprint() used to collapse
+    # the crash/forced-release BLOCK-cause signal to a bare boolean
+    # (crash=1/forced=1), so a DIFFERENT crashed task or an escalating crash
+    # count -- while dead_keys/infra names happened to stay the same --
+    # hashed identically and would have been silently suppressed for the
+    # whole quiet window. These three tests pin the fix: the fingerprint
+    # must change whenever the crashed-task SET or COUNT changes.
+    def _crash_body(self, crash_count: int, task_ids: list[str]) -> str:
+        lines = "\n".join(
+            f"  - sycode-trading/{t}:crashed (status=ready)" for t in task_ids
+        )
+        return (
+            "BLOCK\n\n"
+            "## Infra checks failed\n  - (none)\n\n"
+            "## Mechanism matrix RED\n  - overall=RED dead=1 warn=0 keys=['leak-guard']\n\n"
+            f"## Kanban ACTIVE crashes (last 60m): {crash_count}  <-- BLOCK cause\n{lines}\n"
+        )
+
+    def test_same_crash_count_same_task_set_suppressed_as_before(self):
+        a = self._crash_body(1, ["t_edf4f31e"])
+        b = self._crash_body(1, ["t_edf4f31e"])
+        fp_a = self.mod.dedup_fingerprint("dgx-unified-health-probe", a)
+        fp_b = self.mod.dedup_fingerprint("dgx-unified-health-probe", b)
+        self.assertEqual(fp_a, fp_b, "identical crash count/task set must still fingerprint identically")
+
+    def test_different_crashed_task_same_count_must_not_suppress(self):
+        a = self._crash_body(1, ["t_edf4f31e"])
+        b = self._crash_body(1, ["t_aaaaaaaa"])
+        fp_a = self.mod.dedup_fingerprint("dgx-unified-health-probe", a)
+        fp_b = self.mod.dedup_fingerprint("dgx-unified-health-probe", b)
+        self.assertNotEqual(
+            fp_a, fp_b,
+            "a different crashed task id at the same count must never fingerprint "
+            "identically -- this was the os-reviewer round-1 bug",
+        )
+
+    def test_crash_count_escalation_must_not_suppress(self):
+        a = self._crash_body(1, ["t_edf4f31e"])
+        b = self._crash_body(5, ["t_edf4f31e", "t_b", "t_c", "t_d", "t_e"])
+        fp_a = self.mod.dedup_fingerprint("dgx-unified-health-probe", a)
+        fp_b = self.mod.dedup_fingerprint("dgx-unified-health-probe", b)
+        self.assertNotEqual(
+            fp_a, fp_b,
+            "an escalating crash count (1 -> 5 active crashes) must never fingerprint "
+            "identically to the single-crash condition",
+        )
+
 
 class QuietWindowSuppressionTests(unittest.TestCase):
     """Layer B: full main() driven twice, hermes()/subprocess.run faked."""
