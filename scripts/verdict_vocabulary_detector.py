@@ -35,7 +35,18 @@ Detection rules (from task t_1d6ed4c0):
 4. Only flag verdicts whose age > 1h (avoid transient in-flight reviews) and
    where no later valid verdict exists on the same card (idempotency / no
    re-flag).
-5. Emit findings via the existing notifier escalation path — never mutate.
+5. (t_d59135ab, additive on top of rule 4) A card already carries an
+   INTENTIONAL native disposition is not a router-invisible black hole and is
+   suppressed regardless of comment content:
+   - status == "blocked" AND block_kind is set (non-empty) — an evidence-based
+     native hold already exists; the stale comment string is not the live
+     gate. status == "blocked" with block_kind NULL/empty is NOT suppressed —
+     that is still the exact black-hole risk this detector exists to catch.
+   - status in {done, archived, cancelled, canceled, completed} — terminal
+     native disposition. (The in-scope SQL query already only selects
+     {blocked, review, running}, so this is enforced structurally; documented
+     here as the explicit second half of the additive suppression rule.)
+6. Emit findings via the existing notifier escalation path — never mutate.
 """
 from __future__ import annotations
 
@@ -175,6 +186,15 @@ def table_exists(con: sqlite3.Connection, name: str) -> bool:
     return con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
 
 
+def column_exists(con: sqlite3.Connection, table: str, column: str) -> bool:
+    """True if `table` has `column`. Used for the block_kind suppression gate
+
+    (t_d59135ab) so a board DB predating the block_kind column degrades
+    gracefully instead of raising sqlite3.OperationalError.
+    """
+    return any(r["name"] == column for r in con.execute(f"PRAGMA table_info({table})"))
+
+
 def open_db_ro(db: Path) -> sqlite3.Connection:
     """Open a board DB read-only (reuses verdict_router.open_db_ro pattern).
 
@@ -310,12 +330,15 @@ def detect_malformed_verdicts(
         try:
             if not table_exists(con, "tasks") or not table_exists(con, "task_comments"):
                 continue
+            has_block_kind = column_exists(con, "tasks", "block_kind")
+            select_cols = "id, title, status, block_kind" if has_block_kind else "id, title, status"
             rows = con.execute(
-                "SELECT id, title, status FROM tasks WHERE status IN ('blocked','review','running')"
+                f"SELECT {select_cols} FROM tasks WHERE status IN ('blocked','review','running')"
             ).fetchall()
             for row in rows:
                 task_id = row["id"]
                 status = row["status"]
+                block_kind = row["block_kind"] if has_block_kind else None
                 instances = verdict_instances(con, task_id)
                 if not instances:
                     continue
@@ -341,6 +364,18 @@ def detect_malformed_verdicts(
                 else:
                     in_scope = False
                 if not in_scope:
+                    continue
+
+                # t_d59135ab: native-disposition suppression (additive on top
+                # of the status gate above). A card already carrying an
+                # intentional, evidence-based native hold is not a
+                # router-invisible black hole -- the stale comment string is
+                # not the live gate. Only blocked+block_kind-set is checked
+                # here; {done, archived, cancelled, canceled, completed} are
+                # already excluded structurally by the SQL status filter
+                # above (rule 5 in the module docstring). status == "blocked"
+                # with block_kind NULL/empty is deliberately NOT suppressed.
+                if status == "blocked" and block_kind:
                     continue
 
                 for ts, val, cid, author in malformed:

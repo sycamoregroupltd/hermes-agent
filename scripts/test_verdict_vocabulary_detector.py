@@ -54,13 +54,14 @@ class VerdictVocabDetectorTests(unittest.TestCase):
         return tmp, ("fixture", db)
 
     def insert_task(self, board: tuple[str, Path], task_id: str, status: str,
-                    title: str = "review-required source patch", body: str = "review-required source") -> None:
+                    title: str = "review-required source patch", body: str = "review-required source",
+                    block_kind: str | None = None) -> None:
         _, db = board
         con = sqlite3.connect(db)
         con.execute(
-            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (task_id, title, body, "devops", status, 10, int(time.time())),
+            "INSERT INTO tasks(id,title,body,assignee,status,priority,created_at,block_kind) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (task_id, title, body, "devops", status, 10, int(time.time()), block_kind),
         )
         con.commit()
         con.close()
@@ -346,6 +347,65 @@ class VerdictVocabDetectorTests(unittest.TestCase):
             findings = self.scan(board)
             self.assertEqual(len(findings), 1)
             self.assertEqual(findings[0].verdict_value, "APPROVE_WITH_NOTES")
+
+    # --- Native-disposition suppression (t_d59135ab) ------------------------
+    # A card that already carries an intentional, evidence-based native
+    # disposition (blocked+block_kind set, or a terminal status) is not a
+    # router-invisible black hole. A stale/superseded REVIEW_VERDICT comment
+    # string on such a card must stop being re-flagged forever. status=blocked
+    # with block_kind NULL is a control: it must still be flagged, proving
+    # this is additive suppression, not a blanket "ignore blocked cards" bug.
+
+    def test_blocked_with_block_kind_set_suppresses_stale_verdict(self) -> None:
+        """status=blocked + block_kind=needs_input suppresses a stale non-contract verdict."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_native_blocked", "blocked", block_kind="needs_input")
+            self.add_comment(
+                board, "t_native_blocked", "os-reviewer",
+                "REVIEW_VERDICT: BLOCKED-needs-Frank",
+            )
+            self.assertEqual(self.scan(board), [])
+
+    def test_blocked_with_block_kind_null_still_flagged(self) -> None:
+        """Regression guard: status=blocked + block_kind=NULL, no later disposition, STILL flags."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_native_blocked_no_kind", "blocked", block_kind=None)
+            self.add_comment(
+                board, "t_native_blocked_no_kind", "os-reviewer",
+                "REVIEW_VERDICT: BLOCKED-needs-Frank",
+            )
+            findings = self.scan(board)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].task_id, "t_native_blocked_no_kind")
+
+    def test_done_status_never_in_scope(self) -> None:
+        """status=done is excluded structurally by the in-scope SQL filter (not just block_kind)."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_native_done", "done", block_kind=None)
+            self.add_comment(
+                board, "t_native_done", "os-reviewer",
+                "REVIEW_VERDICT: BLOCKED-needs-Frank",
+            )
+            self.assertEqual(self.scan(board), [])
+
+    def test_live_replay_three_target_cards_drop_out(self) -> None:
+        """Live-replay acceptance: t_20f0ef3d / t_8a2cecff / t_9530dd4f-style cards
+        (status=blocked, block_kind set, stale non-contract REVIEW_VERDICT comment,
+        no later plain-English disposition token) all drop out of findings."""
+        tmp, board = self.make_board()
+        with tmp:
+            self.insert_task(board, "t_20f0ef3d", "blocked", block_kind="needs_input")
+            self.add_comment(board, "t_20f0ef3d", "some-reviewer", "REVIEW_VERDICT: BLOCKED-needs-Frank")
+            self.insert_task(board, "t_8a2cecff", "blocked", block_kind="needs_input")
+            self.add_comment(board, "t_8a2cecff", "platform-reviewer", "REVIEW_VERDICT=BLOCKED_CAPABILITY")
+            self.add_comment(board, "t_8a2cecff", "platform-reviewer",
+                             "REVIEW_VERDICT=NON_BINDING_APPROVE_ON_ARCHITECTURE")
+            self.insert_task(board, "t_9530dd4f", "blocked", block_kind="needs_input")
+            self.add_comment(board, "t_9530dd4f", "fable-reviewer", "REVIEW_VERDICT=TECHNICAL-REQUEST-CHANGES")
+            self.assertEqual(self.scan(board), [])
 
 
 class VerdictVocabDetectorReplayTests(unittest.TestCase):
