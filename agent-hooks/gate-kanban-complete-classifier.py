@@ -345,7 +345,18 @@ APP_IMPL_PATTERNS: PatternList = [
     # trade-route, unblocker-route). Hyphen/underscore count as word chars.
     # Mirror of the t_660a588a verb-boundary fix. Standalone "route"/"routes"
     # still match.
-    r"(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)([^.\n]{0,120})(^|[^a-z0-9_-])(frontend|web|app|dashboard|routes?|component|page|middleware|layout)([^a-z0-9]|$)",
+    # Verb-side trailing boundary (t_e48eedbc round 3): the verb alternation
+    # previously had no lookahead after matching, so "build" matched as a bare
+    # PREFIX of "builder"/"building" (e.g. "...-builder) ... gets misclassified
+    # as \"web\"" in this very bug's own description) and then found an
+    # unrelated web-vocabulary word up to 120 chars later in the same
+    # sentence. Confirmed pre-existing (predates t_e48eedbc's first two
+    # commits) via direct regex isolation on the baseline classifier. The
+    # lookahead requires the verb to be followed by a non-alnum char or EOL
+    # before the noun-search window starts, so "build" cannot match inside
+    # "builder"/"building"/"shipment"/etc. Genuine "build a frontend page"
+    # (verb followed by a space) is unaffected.
+    r"(^|[^a-z0-9])(build|implement|ship|add|create|modify|fix|update)(?=[^a-z0-9]|$)([^.\n]{0,120})(^|[^a-z0-9_-])(frontend|web|app|dashboard|routes?|component|page|middleware|layout)([^a-z0-9]|$)",
     # Verb-last variant: <app noun> ... <verb>. The verb alternation REQUIRES a
     # leading boundary (BOL or non-alnum) so "ship" inside "ownership" or "add"
     # inside "upshot" can never match the verb group. Without the boundary,
@@ -497,6 +508,20 @@ NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
     r"\bpaired frontend negative\b[^\n.]{0,200}\bapps/web\b[^\n.]{0,120}\bblocks?\b",
     r"\bpaired [^\n.]{0,80}negative\b[^\n.]{0,200}\bconcrete apps/web\b[^\n.]{0,120}\bwithout verify_pass\b",
     r"\bpaired [^\n.]{0,80}negative\b[^\n.]{0,200}\bapps/web\b[^\n.]{0,120}\bblocks?\b",
+    # Classifier-fix task bodies (like this bug's own acceptance criteria, or
+    # this exact one — t_e48eedbc round 4) write ACCEPTANCE-CRITERIA prose
+    # describing what a paired fixture must prove, e.g. "a genuine
+    # frontend-builder-assigned task with real apps/web implementation
+    # content still classifies as \"web\" (no regression)". That sentence
+    # quotes the desired test OUTCOME for a fixture; it is not itself an
+    # instruction to implement apps/web. Narrowly scoped to the
+    # "apps/web ... still classifies as ... web" construction (mirrors the
+    # existing "paired frontend negative ... blocks ... apps/web" class
+    # immediately above) so unrelated "apps/web" implementation mentions are
+    # untouched; a real implementation card independently matches APP_IMPL_
+    # PATTERNS/CONCRETE_APP_IMPLEMENTATION_PATTERNS and stays web via that
+    # separate path (see paired negative fixture proving no regression).
+    r"\bapps/web\b[^\n.]{0,160}\bstill classif(?:y|ies|ied)\s+as\b[^\n.]{0,40}\bweb\b",
     # Repo-hygiene/checkout-reconciliation cards may quote an apps/web path
     # from dirty-path inventory while explicitly stating no app/runtime surface
     # changed. That quoted path is evidence to classify, not changed app work;

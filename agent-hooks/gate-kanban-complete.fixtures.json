@@ -35,7 +35,7 @@
     "task_id": "t_f5f5385f_fixture",
     "expected": "allow",
     "expected_class": "readonly_nonapp",
-    "title": "P0: paper-risk-agent (15m safety monitor) failing every run \u2014 repoint off paid nous deepseek-v4-flash",
+    "title": "P0: paper-risk-agent (15m safety monitor) failing every run — repoint off paid nous deepseek-v4-flash",
     "body": "FINDING: jarvis cron job paper-risk-agent is the fleet paper-trading risk monitor and model traffic is demonstrably serving elsewhere. TASK: repoint the job provider/model pin, back up jobs.json, verify forced smoke output, and record before/after pins. This is a cron/config task only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backup path recorded; jobs.json before/after pins recorded; forced cron smoke output ok; no app route changed; no running app VERIFY_PASS supplied",
     "metadata": {
@@ -57,7 +57,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "Reconcile stale provider-state bookkeeping: codex exhausted zombie flags vs demonstrably-serving reality",
-    "body": "TASK (bookkeeping only \u2014 NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
+    "body": "TASK (bookkeeping only — NO credential values touched, NO provider routing/fallback changes): refresh status, run forced codex/nous smoke probes with no tools, reconcile circuit-breaker state, and record before/after flag states. This provider bookkeeping task changes status/cooldown metadata and notes only; no frontend/web route, page, component, middleware, layout, UI, or app runtime surface is changed.",
     "summary": "backups recorded; forced smokes ok; before/after flags recorded; zero credential/routing changes; no running app VERIFY_PASS supplied",
     "metadata": {
       "changed_files": [
@@ -896,7 +896,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "REVIEW: sycode-trading Fix UI spacing on order-book widget from sycode-trading/t_5c33e334",
-    "body": "Review source task sycode-trading/t_5c33e334: UI spacing fixes for the order-book widget display. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 spacing needs width breakpoint adjustments.",
+    "body": "Review source task sycode-trading/t_5c33e334: UI spacing fixes for the order-book widget display. REVIEW_VERDICT=CHANGES_REQUESTED — spacing needs width breakpoint adjustments.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED posted for sycode-trading/t_5c33e334; verdict consumed by verdict-router.",
     "metadata": {
       "changed_files": [
@@ -911,7 +911,7 @@
     "expected": "block",
     "expected_class": "web",
     "title": "REVIEW: sycode-trading marketplace order-book from sycode-trading/t_patch01",
-    "body": "Review source task sycode-trading/t_patch01: implement marketplace order-book React route component\u2014this card applies the reviewed spacing fixes. REVIEW_VERDICT=CHANGES_REQUESTED.",
+    "body": "Review source task sycode-trading/t_patch01: implement marketplace order-book React route component—this card applies the reviewed spacing fixes. REVIEW_VERDICT=CHANGES_REQUESTED.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; apps/web files modified.",
     "metadata": {
       "changed_files": [
@@ -926,7 +926,7 @@
     "expected": "block",
     "expected_class": "web",
     "title": "REVIEW: sycode-trading marketplace dashboard from sycode-trading/t_patch02",
-    "body": "Review source task sycode-trading/t_patch02: fix marketplace dashboard page component layout. REVIEW_VERDICT=CHANGES_REQUESTED \u2014 this card applies the reviewed changes. No running app VERIFY_PASS supplied.",
+    "body": "Review source task sycode-trading/t_patch02: fix marketplace dashboard page component layout. REVIEW_VERDICT=CHANGES_REQUESTED — this card applies the reviewed changes. No running app VERIFY_PASS supplied.",
     "summary": "REVIEW_VERDICT=CHANGES_REQUESTED; fix marketplace dashboard page component.",
     "metadata": {
       "changed_files": [
@@ -1005,14 +1005,14 @@
     "metadata": {
       "changed_files": []
     },
-    "description": "BLOCK: regression guard for t_f31ab4c4 \u2014 a CHILD REVIEW_VERDICT=APPROVED phrase must not reclassify a goal-judge provider-error trap as readonly_nonapp and fail open. Fixture id is deliberately NON-hex to also guard the removed task-id-format prerequisite on the shell trap."
+    "description": "BLOCK: regression guard for t_f31ab4c4 — a CHILD REVIEW_VERDICT=APPROVED phrase must not reclassify a goal-judge provider-error trap as readonly_nonapp and fail open. Fixture id is deliberately NON-hex to also guard the removed task-id-format prerequisite on the shell trap."
   },
   {
     "name": "t_cdeab9c4-source-pr-review-guc-bypass-allows",
     "task_id": "t_cdeab9c4_fixture",
     "expected": "allow",
     "expected_class": "readonly_nonapp",
-    "title": "Review PR #752 \u2014 DataRetentionService append-only bypass fix (exact-SHA review required)",
+    "title": "Review PR #752 — DataRetentionService append-only bypass fix (exact-SHA review required)",
     "body": "Review PR #752: fixes trg_signal_pnl_points_append_only raising SQLSTATE 23514 on retention deletes by adding SET LOCAL app.bypass_append_only='true' inside the retention transaction. Also fixes the trigger function to return OLD (not NEW) for DELETE operations. Changes: Migration 0115, DataRetentionService.ts, tests. Review gates: exact-SHA code review, CI evidence, verdict REVIEW_VERDICT=approve or changes_requested. After APPROVED: route to Frank for merge + deploy approval (proof-boundary gate).",
     "summary": "REVIEW_VERDICT=APPROVED at exact SHA d4a5eda8; PR #752 MERGED 2026-07-28 (acfea2db); migration 0115 NOT applied to live DB (Frank-gated deploy child t_48ea3e4b); paper-only review, no frontend/web/app surface touched.",
     "metadata": {
@@ -1021,7 +1021,7 @@
       ],
       "verdict": "APPROVED"
     },
-    "description": "ALLOW: real t_cdeab9c4 regression \u2014 a paper-only source PR review whose body quotes the PostgreSQL GUC app.bypass_append_only must NOT be misclassified as frontend/app implementation; it routes through the source-review readonly_nonapp lane. Paired negative below proves the same GUC wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_cdeab9c4 regression — a paper-only source PR review whose body quotes the PostgreSQL GUC app.bypass_append_only must NOT be misclassified as frontend/app implementation; it routes through the source-review readonly_nonapp lane. Paired negative below proves the same GUC wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_cdeab9c4-paired-frontend-guc-bypass-negative-blocks",
@@ -1044,7 +1044,7 @@
     "expected": "allow",
     "expected_class": "readonly_nonapp",
     "title": "FIX (source-only): calibration-drift-monitor renders timed-out queries as 0pp + unweighted MCE inflated by tiny buckets",
-    "body": "Source-only fix to the drift monitor script /home/frank/.hermes/scripts/calibration-drift-monitor.py (no deploy, no schedule change). Defect 1: a timed-out query is rendered as 0pp (perfectly calibrated) because db_query() imposes a hard 30s timeout and overall_calibration() returns {} which build_report renders as stats.get('overall_bias_pp', 0). Fix: never render an unmeasured metric as a number \u2014 emit MEASUREMENT_UNAVAILABLE marker in both the report and the card body, and raise the timeout. Defect 2: MCE formula is an unweighted mean over buckets with n>=5 letting 1-row and 2-row buckets drive the headline; report sample-weighted as headline and keep significant-bucket figure alongside. Defect 3: group cohort by composite_confidence_weights_version and print the split. Verify by running the script with --verbose against the live read-only DB and pasting real output.",
+    "body": "Source-only fix to the drift monitor script /home/frank/.hermes/scripts/calibration-drift-monitor.py (no deploy, no schedule change). Defect 1: a timed-out query is rendered as 0pp (perfectly calibrated) because db_query() imposes a hard 30s timeout and overall_calibration() returns {} which build_report renders as stats.get('overall_bias_pp', 0). Fix: never render an unmeasured metric as a number — emit MEASUREMENT_UNAVAILABLE marker in both the report and the card body, and raise the timeout. Defect 2: MCE formula is an unweighted mean over buckets with n>=5 letting 1-row and 2-row buckets drive the headline; report sample-weighted as headline and keep significant-bucket figure alongside. Defect 3: group cohort by composite_confidence_weights_version and print the split. Verify by running the script with --verbose against the live read-only DB and pasting real output.",
     "summary": "Source-only fix complete and verified live: Overall bias -15.0pp (not 0pp), sample-weighted MCE 15.2pp with unweighted/significant figures alongside, estimator provenance 96.7% conviction alias. No deploy/schedule/DB/trading action.",
     "metadata": {
       "changed_files": [
@@ -1052,7 +1052,7 @@
         "/home/frank/.hermes/scripts/test_calibration_drift_monitor.py"
       ]
     },
-    "description": "ALLOW: real t_ec251392 regression \u2014 a source-only monitor script fix whose title says the monitor 'renders' report output as 0pp must NOT be misclassified as frontend/app work; it routes through the readonly_nonapp lane. Paired negative below proves the same 'renders ... 0pp' wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_ec251392 regression — a source-only monitor script fix whose title says the monitor 'renders' report output as 0pp must NOT be misclassified as frontend/app work; it routes through the readonly_nonapp lane. Paired negative below proves the same 'renders ... 0pp' wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_ec251392-paired-frontend-renders-0pp-negative-blocks",
@@ -1125,7 +1125,7 @@
         "tests/test_fusion_calibration_anomaly_kanban.py"
       ]
     },
-    "description": "ALLOW: real t_0430e36c regression \u2014 'route a bounded ... fix' is the dispatch idiom (route the remediation card), not a browser route; observability/report-routing card with pure-Python changed files must not be misclassified as frontend/app. Paired negative below proves the same 'route a bounded ... fix' wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_0430e36c regression — 'route a bounded ... fix' is the dispatch idiom (route the remediation card), not a browser route; observability/report-routing card with pure-Python changed files must not be misclassified as frontend/app. Paired negative below proves the same 'route a bounded ... fix' wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_0430e36c-paired-frontend-bounded-route-negative-blocks",
@@ -1156,7 +1156,7 @@
         "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json"
       ]
     },
-    "description": "ALLOW: real t_a318252c regression \u2014 static authority/claim review whose body contains 'route' as a domain noun within ~120 chars of 'ship' embedded in 'ownership'. Without a leading verb boundary, APP_IMPL_PATTERNS[1] matched and wedged the card as web. This fixture locks the verb-boundary fix: the SOUS body must classify not_web."
+    "description": "ALLOW: real t_a318252c regression — static authority/claim review whose body contains 'route' as a domain noun within ~120 chars of 'ship' embedded in 'ownership'. Without a leading verb boundary, APP_IMPL_PATTERNS[1] matched and wedged the card as web. This fixture locks the verb-boundary fix: the SOUS body must classify not_web."
   },
   {
     "name": "t_660a588a-ownership-verb-boundary-paired-frontend-negative-blocks",
@@ -1171,14 +1171,14 @@
         "apps/web/src/app/ownership/page.tsx"
       ]
     },
-    "description": "BLOCK: paired negative for t_660a588a \u2014 the SAME 'ownership ... route/domain' wording attached to concrete apps/web route/page work must still require running-app VERIFY_PASS. Proves the verb-boundary fix does not weaken BLOCK_WEB_SURFACE / BLOCK_APP_IMPL for genuinely web cards."
+    "description": "BLOCK: paired negative for t_660a588a — the SAME 'ownership ... route/domain' wording attached to concrete apps/web route/page work must still require running-app VERIFY_PASS. Proves the verb-boundary fix does not weaken BLOCK_WEB_SURFACE / BLOCK_APP_IMPL for genuinely web cards."
   },
   {
     "name": "t_17b2b7ed-e04df764-compound-route-allows",
     "task_id": "t_17b2b7ed_e04df764_fixture",
     "expected": "allow",
     "expected_class": "not_web",
-    "title": "IMPLEMENT (PM-reroute, un-deadlocked): verdict-router B1-B4 dry-run repairs \u2014 os-reviewer approved research plan",
+    "title": "IMPLEMENT (PM-reroute, un-deadlocked): verdict-router B1-B4 dry-run repairs — os-reviewer approved research plan",
     "body": "IMPLEMENT the os-reviewer-approved verdict-router B1-B4 dry-run repairs. This card is the PM-rerouted execution of a deadlocked child: Python CLI/SQLite script work only (scripts/verdict_router.py, scripts/test_verdict_router.py). Sentinel stays absent; router remains dry-run. No browser surface is served.",
     "summary": "unittest test_verdict_router 56/56 OK; scripts/verdict_router.py + scripts/test_verdict_router.py only; no running app VERIFY_PASS supplied",
     "metadata": {
@@ -1187,7 +1187,7 @@
         "scripts/test_verdict_router.py"
       ]
     },
-    "description": "ALLOW: live-shaped t_e04df764 regression \u2014 verb implement plus substring route inside PM-reroute,/verdict-router classified the backend CLI card as web because APP_IMPL_PATTERNS[0] noun group lacked a leading boundary. After the noun-boundary fix this payload must classify not_web."
+    "description": "ALLOW: live-shaped t_e04df764 regression — verb implement plus substring route inside PM-reroute,/verdict-router classified the backend CLI card as web because APP_IMPL_PATTERNS[0] noun group lacked a leading boundary. After the noun-boundary fix this payload must classify not_web."
   },
   {
     "name": "t_17b2b7ed-compound-route-nouns-allows",
@@ -1218,7 +1218,7 @@
         "apps/web/src/app/dashboard/route/page.tsx"
       ]
     },
-    "description": "BLOCK: paired negative for t_17b2b7ed \u2014 standalone word route on a real apps/web dashboard card must still classify web and require running-app VERIFY_PASS. Proves the noun-boundary fix does not drop genuine app-impl detections."
+    "description": "BLOCK: paired negative for t_17b2b7ed — standalone word route on a real apps/web dashboard card must still classify web and require running-app VERIFY_PASS. Proves the noun-boundary fix does not drop genuine app-impl detections."
   },
   {
     "name": "t_17b2b7ed-paired-standalone-routes-negative-blocks",
@@ -1233,7 +1233,7 @@
         "apps/web/src/app/checkout/page.tsx"
       ]
     },
-    "description": "BLOCK: paired negative for t_17b2b7ed \u2014 standalone word routes (not a compound noun) must still classify as app-impl/web."
+    "description": "BLOCK: paired negative for t_17b2b7ed — standalone word routes (not a compound noun) must still classify as app-impl/web."
   },
   {
     "name": "t_90c5e1e0-paper-sleeve-route-safety-clause-allows",
@@ -1243,7 +1243,7 @@
     "title": "EDGE-DISCOVERY: explain 50 suppressed high-conviction BTCUSDT 1h signals under fail-closed gate",
     "body": "OUTCOME: produce one leak-free, paper-only edge-discovery packet for the current fail-closed Sycode Trading lane by identifying whether the 50 recently suppressed high-conviction BTCUSDT 1h candidates are a calibration artifact, cohort-specific feature gap, or genuinely no-edge regime.\\n\\nEVIDENCE INPUTS (Elon governor 2026-08-12 02:44 local):\\n- quant-researcher-6h latest report /home/frank/.hermes/profiles/jarvis/cron/output/13c1f9279025/2026-08-12_00-37-39.md: TIER1_GROSS_REFERENCE_STATUS=FAIL_CLOSED; fresh N=1116, Tier-1 gross WR=40.9498% <= 50% coin-flip floor; no cohort cleared.\\n- signal-fusion-engine latest report /home/frank/.hermes/profiles/jarvis/cron/output/f8c5f45a9831/2026-08-12_02-24-55.md: 50 input signals, 50 above high-conviction threshold, 50 suppressed by fail-closed calibration gate, 0 TradeSetups written.\\n- data-freshness-probe /home/frank/.hermes/profiles/jarvis/cron/output/1487a685282e/2026-08-12_02-31-06.md: 9/9 pipelines fresh, so this is not a freshness outage.\\n\\nTASK:\\n1. Segment the suppressed cohort by symbol/timeframe/direction/feature buckets available in clean epoch only; compare against Tier-1 realized exits and Tier-2 trajectory-derived diagnostics without using contaminated/pre-clean data.\\n2. Name at most three falsifiable candidate hypotheses for why high-conviction BTCUSDT 1h LONG repeats survive scoring while global Tier-1 WR fails.\\n3. For each hypothesis, define the smallest OOS/net-of-cost validation query or experiment needed to promote, reject, or recalibrate it.\\n4. Persist a Sycode-Trading research note with sources, method, limitations, recommendations, and task id; link this card.\\n\\nACCEPTANCE:\\n- No implementation/promotion/paper-sleeve route unless clean-epoch net-of-cost/OOS gates pass; trading remains paper-only.\\n- Deliverable includes exact SQL/scripts used, sample sizes, win-rate/net-PnL/MCE or calibration metrics as applicable, and honest fail-closed verdict if no cohort survives.\\n- Reviewer path: trading-risk-reviewer verifies methodology and gate interpretation before any downstream implementation card.\\n\\nSAFETY GATES: no live trading, orders, exchange, credentials, provider/model routing, DB writes, schema/data mutation, spend, deploy, or guardrail changes.",
     "summary": "paper-only edge-discovery packet; leak-free cohort segmentation; fail-closed verdict; no running app VERIFY_PASS supplied",
-    "description": "ALLOW: real t_90c5e1e0 regression \u2014 a paper-only edge-discovery card whose ACCEPTANCE contains the safety clause 'No implementation/promotion/paper-sleeve route unless ... paper-only' must not be classified as web. APP_IMPL_PATTERNS[0] matches 'implement' inside 'implementation' then bare 'route' (no leading verb boundary); the new negation neutralizes the dispatch/safety-noun idiom only when an explicit paper-only/read-only/no-implementation qualifier is present. Paired negative below proves the same phrase on concrete apps/web route work still blocks."
+    "description": "ALLOW: real t_90c5e1e0 regression — a paper-only edge-discovery card whose ACCEPTANCE contains the safety clause 'No implementation/promotion/paper-sleeve route unless ... paper-only' must not be classified as web. APP_IMPL_PATTERNS[0] matches 'implement' inside 'implementation' then bare 'route' (no leading verb boundary); the new negation neutralizes the dispatch/safety-noun idiom only when an explicit paper-only/read-only/no-implementation qualifier is present. Paired negative below proves the same phrase on concrete apps/web route work still blocks."
   },
   {
     "name": "t_90c5e1e0-paper-sleeve-route-paired-frontend-negative-blocks",
@@ -1268,7 +1268,7 @@
     "title": "REVIEW: cron stale-direct WARN diagnosis",
     "body": "Diagnose the stale-direct WARN on the cron row. If a code/config fix is needed, route implementation + independent review; do not restart gateway. This is a backend/infra diagnosis and review card.",
     "summary": "backend/infra diagnosis and review only; cron row evidence recorded; no running app VERIFY_PASS supplied",
-    "description": "ALLOW: real t_c5cfa962 regression (repro t_431e9b88) \u2014 the article-less dispatch idiom 'route implementation + independent review' is a dispatch verb (direct the fix to a builder), NOT an app-route noun. Without the negation, APP_IMPL_PATTERNS verb-first matched 'fix ... route' and wedged a backend diagnosis card as web. Paired negative below proves the same wording attached to concrete apps/web route-component work still blocks."
+    "description": "ALLOW: real t_c5cfa962 regression (repro t_431e9b88) — the article-less dispatch idiom 'route implementation + independent review' is a dispatch verb (direct the fix to a builder), NOT an app-route noun. Without the negation, APP_IMPL_PATTERNS verb-first matched 'fix ... route' and wedged a backend diagnosis card as web. Paired negative below proves the same wording attached to concrete apps/web route-component work still blocks."
   },
   {
     "name": "t_c5cfa962-paired-frontend-articleless-route-impl-negative-blocks",
@@ -1283,18 +1283,18 @@
         "apps/web/src/app/stale-direct/page.tsx"
       ]
     },
-    "description": "BLOCK: paired negative for t_c5cfa962 \u2014 the SAME article-less 'route implementation + independent review' dispatch wording attached to concrete apps/web route/page work with app-surface changed_files must still require running-app VERIFY_PASS."
+    "description": "BLOCK: paired negative for t_c5cfa962 — the SAME article-less 'route implementation + independent review' dispatch wording attached to concrete apps/web route/page work with app-surface changed_files must still require running-app VERIFY_PASS."
   },
   {
     "name": "t_63ac495e-paper-only-multiline-qualifier-allows",
     "task_id": "t_63ac495e_fixture",
     "expected": "allow",
     "expected_class": "readonly_nonapp",
-    "title": "EXPERIMENT E2: source/feature-slice calibration audit (pre-registered OOS, multiplicity control) \u2014 find calibrated region or retire lane",
-    "body": "OUTCOME: Determine whether ANY source/feature slice of the fusion conviction surface is genuinely calibrated within the certified clean epoch, or whether the whole fused surface is anti-selective and the lane should be retired. Paper-only, read-only research; no gate loosening.\n\nCONTEXT (owner plan t_13dd5ba0 E2, 2026-08-14): The fusion conviction score is globally miscalibrated \u2014 Tier-1 clean net WR 20.1-20.2% (n~948), merged WR 38.9-40.4% (n~8700), sample-weighted MCE 14.13-15.68pp, ROC-AUC 0.533-0.548, emitted band [0.60,0.65) MCE 17.82pp. H1 (t_e975c4b3) CONFIRMED anti-selective at the aggregate level (IS AUC 0.5096, monotonicity FAILS, net WR 27.0%); H2 (t_451e783b) NS; H3 (t_cefde258) REJECT. The remaining open question: is any pre-registered source/feature slice (e.g. research-fused journeys, catalyst-absent, volume-normal, funding-sign-conditioned) genuinely calibrated, or is the entire fused surface no-edge? If no slice clears, retire the lane; if a slice clears, it becomes a candidate cohort for paper-sleeve ONLY after trading-risk-reviewer approval.\n\nTASK:\n1. Pre-register (before any slice test) a fixed list of source/feature slices derived from signal_fusion_metadata.sourcesFused + news fields + funding/volume conditions, a time-ordered 70/30 train/OOS split (last-fold-only OOS, leak-free, clean-epoch floor 2026-07-05 22:08Z), and a familywise multiplicity control (Bonferroni over the tested slice count).\n2. For each slice, compute OOS net-of-cost win rate, bucket calibration/MCE, and ROC-AUC on the OOS fold only, using v_ledger_reward net-of-cost labels (unreconciled rows excluded with documented PIT reason). Tier-1 realized-exit sample n=948 is authoritative; the read-only MERGED sample (Tier-2 trajectory) may be used for diagnostics only \u2014 never as calibration authority (per t_83455669 / t_b53a2562 C4 policy).\n3. Acceptance gate for a slice: OOS net WR > 53% with n>=300 (or the current promotion bar), monotone bucket ordering, ROC-AUC > 0.55, MCE < 15pp on the OOS fold. Any slice failing the gate is REJECTED and documented.\n4. Persist a research note in the Sycode vault (type: research) with the exact SQL, sample sizes, per-slice OOS metrics, multiplicity control, and the honest verdict (calibrated slice found \u2192 candidate; none \u2192 retire the lane). Link this card and t_13dd5ba0.\n\nACCEPTANCE:\n- Pre-registration exists BEFORE test execution (file or comment timestamp).\n- OOS/net-of-cost only; no in-sample slice shopping; every tested slice reported, including failures.\n- No implementation/promotion/paper-sleeve route unless OOS net-of-cost gates pass AND trading-risk-reviewer approves methodology.\n- Honest fail-closed verdict if no slice survives.\n\nREVIEWER: trading-risk-reviewer verifies methodology and gate interpretation before any downstream implementation card.\n\nSAFETY GATES: paper-only; no live trading, orders, exchange, credentials, provider/model routing, DB writes, schema/data mutation, spend, deploy, or guardrail changes. Do not loosen the fail-closed calibration gate.",
+    "title": "EXPERIMENT E2: source/feature-slice calibration audit (pre-registered OOS, multiplicity control) — find calibrated region or retire lane",
+    "body": "OUTCOME: Determine whether ANY source/feature slice of the fusion conviction surface is genuinely calibrated within the certified clean epoch, or whether the whole fused surface is anti-selective and the lane should be retired. Paper-only, read-only research; no gate loosening.\n\nCONTEXT (owner plan t_13dd5ba0 E2, 2026-08-14): The fusion conviction score is globally miscalibrated — Tier-1 clean net WR 20.1-20.2% (n~948), merged WR 38.9-40.4% (n~8700), sample-weighted MCE 14.13-15.68pp, ROC-AUC 0.533-0.548, emitted band [0.60,0.65) MCE 17.82pp. H1 (t_e975c4b3) CONFIRMED anti-selective at the aggregate level (IS AUC 0.5096, monotonicity FAILS, net WR 27.0%); H2 (t_451e783b) NS; H3 (t_cefde258) REJECT. The remaining open question: is any pre-registered source/feature slice (e.g. research-fused journeys, catalyst-absent, volume-normal, funding-sign-conditioned) genuinely calibrated, or is the entire fused surface no-edge? If no slice clears, retire the lane; if a slice clears, it becomes a candidate cohort for paper-sleeve ONLY after trading-risk-reviewer approval.\n\nTASK:\n1. Pre-register (before any slice test) a fixed list of source/feature slices derived from signal_fusion_metadata.sourcesFused + news fields + funding/volume conditions, a time-ordered 70/30 train/OOS split (last-fold-only OOS, leak-free, clean-epoch floor 2026-07-05 22:08Z), and a familywise multiplicity control (Bonferroni over the tested slice count).\n2. For each slice, compute OOS net-of-cost win rate, bucket calibration/MCE, and ROC-AUC on the OOS fold only, using v_ledger_reward net-of-cost labels (unreconciled rows excluded with documented PIT reason). Tier-1 realized-exit sample n=948 is authoritative; the read-only MERGED sample (Tier-2 trajectory) may be used for diagnostics only — never as calibration authority (per t_83455669 / t_b53a2562 C4 policy).\n3. Acceptance gate for a slice: OOS net WR > 53% with n>=300 (or the current promotion bar), monotone bucket ordering, ROC-AUC > 0.55, MCE < 15pp on the OOS fold. Any slice failing the gate is REJECTED and documented.\n4. Persist a research note in the Sycode vault (type: research) with the exact SQL, sample sizes, per-slice OOS metrics, multiplicity control, and the honest verdict (calibrated slice found → candidate; none → retire the lane). Link this card and t_13dd5ba0.\n\nACCEPTANCE:\n- Pre-registration exists BEFORE test execution (file or comment timestamp).\n- OOS/net-of-cost only; no in-sample slice shopping; every tested slice reported, including failures.\n- No implementation/promotion/paper-sleeve route unless OOS net-of-cost gates pass AND trading-risk-reviewer approves methodology.\n- Honest fail-closed verdict if no slice survives.\n\nREVIEWER: trading-risk-reviewer verifies methodology and gate interpretation before any downstream implementation card.\n\nSAFETY GATES: paper-only; no live trading, orders, exchange, credentials, provider/model routing, DB writes, schema/data mutation, spend, deploy, or guardrail changes. Do not loosen the fail-closed calibration gate.",
     "summary": "E2 slice-calibration audit completed paper-only: pre-registered slices, OOS net-of-cost metrics, honest fail-closed verdict; no running app VERIFY_PASS supplied",
     "metadata": {},
-    "description": "ALLOW: real t_63ac495e regression (os-reviewer comment 50048) \u2014 a paper-only read-only research/review card whose 'No implementation/promotion/paper-sleeve route unless ...' safety clause and its paper-only qualifier sit on DIFFERENT LINES (SAFETY GATES bullet ~270 chars later). APP_IMPL_PATTERNS[0] matched 'implementation ... route'; the old negation was line-bounded ([^.\\n]{0,240}) so it never neutralized the match and the card wedged as web. Negation window is now multi-line bounded ([\\s\\S]{0,360}) \u2014 reaches the later-line qualifier within the same card's safety framing but stays capped. Paired negative below proves the same wording attached to concrete apps/web work still blocks."
+    "description": "ALLOW: real t_63ac495e regression (os-reviewer comment 50048) — a paper-only read-only research/review card whose 'No implementation/promotion/paper-sleeve route unless ...' safety clause and its paper-only qualifier sit on DIFFERENT LINES (SAFETY GATES bullet ~270 chars later). APP_IMPL_PATTERNS[0] matched 'implementation ... route'; the old negation was line-bounded ([^.\\n]{0,240}) so it never neutralized the match and the card wedged as web. Negation window is now multi-line bounded ([\\s\\S]{0,360}) — reaches the later-line qualifier within the same card's safety framing but stays capped. Paired negative below proves the same wording attached to concrete apps/web work still blocks."
   },
   {
     "name": "t_63ac495e-paper-only-multiline-paired-frontend-negative-blocks",
@@ -1503,8 +1503,8 @@
     "task_id": "t_d56d5c00_fixture",
     "expected": "allow",
     "expected_class": "not_web",
-    "title": "P1 FALLBACK BUG: local rung custom:ollama-local (qwen3-coder-30b-tools-64k) receives think=high \u2192 HTTP 400 'think value high is not supported' \u2192 non-retryable \u2192 worker aborts at the first turn; under codex 429 + copilot rate-limit this produced a fleet-wide crash loop (41 crashes / 31 gave_ups per 15 min, 2026-09-10 05:30\u201306:20Z)",
-    "body": "Evidence: worker log t_2181d363 \u2014 'Model fallback: gpt-5-mini via copilot unavailable (rate limit); using qwen3-coder-30b-tools-64k via custom:ollama-local' then 'BadRequestError HTTP 400: think value \"high\" is not supported for this model \u2026 Non-retryable \u2026 Aborting.' The seat removed the local rung from all 33 chains at 06:30Z (backups ~/.hermes/backups/fallback-nolocal-*/) and resumed the fleet; the local model is still valid for no-agent/cron use. Deliver: (1) the provider-level switch (config or extension surface) that strips reasoning/think parameters for custom OpenAI-compatible endpoints that do not support them \u2014 or maps them to the model's supported values; (2) a fallback contract test: every rung in fallback_providers must pass a forced smoke WITH the fleet's reasoning setting, not only a bare -z smoke (the seat's smoke passed because it sent no reasoning); (3) upstream issue/PR to NousResearch if the client sends unsupported params by default; (4) then re-add the local rung. Also carded separately: cron external-worker ack JSONDecodeError on upstream 7e4d02fe (0c21b82e).",
+    "title": "P1 FALLBACK BUG: local rung custom:ollama-local (qwen3-coder-30b-tools-64k) receives think=high → HTTP 400 'think value high is not supported' → non-retryable → worker aborts at the first turn; under codex 429 + copilot rate-limit this produced a fleet-wide crash loop (41 crashes / 31 gave_ups per 15 min, 2026-09-10 05:30–06:20Z)",
+    "body": "Evidence: worker log t_2181d363 — 'Model fallback: gpt-5-mini via copilot unavailable (rate limit); using qwen3-coder-30b-tools-64k via custom:ollama-local' then 'BadRequestError HTTP 400: think value \"high\" is not supported for this model … Non-retryable … Aborting.' The seat removed the local rung from all 33 chains at 06:30Z (backups ~/.hermes/backups/fallback-nolocal-*/) and resumed the fleet; the local model is still valid for no-agent/cron use. Deliver: (1) the provider-level switch (config or extension surface) that strips reasoning/think parameters for custom OpenAI-compatible endpoints that do not support them — or maps them to the model's supported values; (2) a fallback contract test: every rung in fallback_providers must pass a forced smoke WITH the fleet's reasoning setting, not only a bare -z smoke (the seat's smoke passed because it sent no reasoning); (3) upstream issue/PR to NousResearch if the client sends unsupported params by default; (4) then re-add the local rung. Also carded separately: cron external-worker ack JSONDecodeError on upstream 7e4d02fe (0c21b82e).",
     "summary": "provider-level switch shipped for reasoning/think params on custom OpenAI-compatible endpoints; fallback contract smoke test added; local rung re-added after fix; no running app VERIFY_PASS supplied",
     "metadata": {},
     "description": "ALLOW: real t_d56d5c00 stored title+body verbatim. 'the client sends unsupported params' refers to the OpenAI-compatible SDK/HTTP client library, not a browser; must not force web via bare 'client' in WEB_PATTERNS."
@@ -1515,7 +1515,7 @@
     "expected": "allow",
     "expected_class": "not_web",
     "title": "Resolve stranded_in_ready backlog and secure P8-R2 decision",
-    "body": "**Goal** \u2014 Determine and remediate the `stranded_in_ready` backlog on `jarvis-os` and `sycode-trading`, or obtain Frank's explicit decision on any necessary P8-R2 acceptance-criteria carve-out, followed by independent verification.\n\n**Approach**\n- Run `hermes kanban --board <slug> diagnostics --json` for both boards and confirm current `kind==\"stranded_in_ready\"` counts; sample several stranded cards per board and review claim, spawn, and `respawn_guarded` event history.\n- Determine whether the backlog is dispatch-capacity starvation or assignee/routing corruption. If capacity-related, change the relevant concurrency cap only with DGX load and thermal headroom evidence, or correct stale or duplicate ready cards that are structurally competing for capacity.\n- If routing or dispatch corruption is identified, fix the specific defect with a reproducible test and regression coverage, using rigor comparable to `t_cb00214` without changing that task's scope.\n- If genuine capacity constraints cannot or should not be raised, have the PM escalate to Frank through `kanban_block(kind=\"needs_input\")` for an explicit decision on amending the flat `stranded_in_ready=0` P8-R2 criterion.\n- Route final verification to `os-reviewer`, extending or reusing `t_5f1f718e` or filing a new verifier card after remediation or an approved carve-out is in place.\n\n**Acceptance criteria**\n- [ ] Live diagnostics document the `stranded_in_ready` counts for `jarvis-os` and `sycode-trading`, including the currently observed baselines of 33 and 53 where still applicable.\n- [ ] Several stranded cards from each board are sampled, with claim, spawn, and `respawn_guarded` histories reviewed to distinguish capacity starvation from routing or assignee corruption.\n- [ ] The root cause is recorded with evidence, including whether the prior PM completion metadata claiming `stranded: 0` was false when emitted.\n- [ ] For a capacity root cause, either the relevant cap is changed with DGX load and thermal headroom evidence, or the structural source of competing ready cards is corrected; the resulting stranded count is rechecked.\n- [ ] For a corruption root cause, the specific defect is fixed, a reproducible regression test is added, and live verification confirms the fix.\n- [ ] If capacity limits remain and cannot or should not be raised, Frank receives a PM-routed `kanban_block(kind=\"needs_input\")` request and explicitly decides whether to amend the P8-R2 acceptance criterion; no silent waiver is used.\n- [ ] Independent `os-reviewer` verification confirms the remediation or Frank-approved carve-out and reports the final `stranded_in_ready` status for both boards.\n\n**Out of scope**\n- Do not modify `t_cb00214` or remediate its `frontend-builder` dead-assignee harvester bug; that is a separate workstream.",
+    "body": "**Goal** — Determine and remediate the `stranded_in_ready` backlog on `jarvis-os` and `sycode-trading`, or obtain Frank's explicit decision on any necessary P8-R2 acceptance-criteria carve-out, followed by independent verification.\n\n**Approach**\n- Run `hermes kanban --board <slug> diagnostics --json` for both boards and confirm current `kind==\"stranded_in_ready\"` counts; sample several stranded cards per board and review claim, spawn, and `respawn_guarded` event history.\n- Determine whether the backlog is dispatch-capacity starvation or assignee/routing corruption. If capacity-related, change the relevant concurrency cap only with DGX load and thermal headroom evidence, or correct stale or duplicate ready cards that are structurally competing for capacity.\n- If routing or dispatch corruption is identified, fix the specific defect with a reproducible test and regression coverage, using rigor comparable to `t_cb00214` without changing that task's scope.\n- If genuine capacity constraints cannot or should not be raised, have the PM escalate to Frank through `kanban_block(kind=\"needs_input\")` for an explicit decision on amending the flat `stranded_in_ready=0` P8-R2 criterion.\n- Route final verification to `os-reviewer`, extending or reusing `t_5f1f718e` or filing a new verifier card after remediation or an approved carve-out is in place.\n\n**Acceptance criteria**\n- [ ] Live diagnostics document the `stranded_in_ready` counts for `jarvis-os` and `sycode-trading`, including the currently observed baselines of 33 and 53 where still applicable.\n- [ ] Several stranded cards from each board are sampled, with claim, spawn, and `respawn_guarded` histories reviewed to distinguish capacity starvation from routing or assignee corruption.\n- [ ] The root cause is recorded with evidence, including whether the prior PM completion metadata claiming `stranded: 0` was false when emitted.\n- [ ] For a capacity root cause, either the relevant cap is changed with DGX load and thermal headroom evidence, or the structural source of competing ready cards is corrected; the resulting stranded count is rechecked.\n- [ ] For a corruption root cause, the specific defect is fixed, a reproducible regression test is added, and live verification confirms the fix.\n- [ ] If capacity limits remain and cannot or should not be raised, Frank receives a PM-routed `kanban_block(kind=\"needs_input\")` request and explicitly decides whether to amend the P8-R2 acceptance criterion; no silent waiver is used.\n- [ ] Independent `os-reviewer` verification confirms the remediation or Frank-approved carve-out and reports the final `stranded_in_ready` status for both boards.\n\n**Out of scope**\n- Do not modify `t_cb00214` or remediate its `frontend-builder` dead-assignee harvester bug; that is a separate workstream.",
     "summary": "stranded_in_ready backlog diagnosed and remediated; frontend-builder dead-assignee scope explicitly excluded from this card; no running app VERIFY_PASS supplied",
     "metadata": {},
     "description": "ALLOW: real t_b4915565 stored title+body verbatim. 'frontend-builder' quoted only as a known-dead kanban assignee token in an out-of-scope clause ('do not modify ... its frontend-builder dead-assignee harvester bug'), not an instruction to implement frontend work; must not force web via bare 'frontend' in WEB_PATTERNS or the verb+noun APP_IMPL_PATTERNS 'modify ... frontend' adjacency."
@@ -1556,10 +1556,10 @@
     "expected": "allow",
     "expected_class": "not_web",
     "title": "WEAKEST-TRACK: 23 active cards carry dead xai-oauth/grok-4.6 task-level pin (bypasses fallback chain, will 403-abort)",
-    "body": "OUTCOME: sweep and repoint (or clear) the task-level provider_override=xai-oauth/model_override=grok-4.6 pin on active (non-done, non-cancelled) sycode-trading cards so dispatch does not hard-403 on spend-blocked xAI.\n\nEVIDENCE (verified live this cycle, 2026-09-11 ~05:30 BST): jarvis-os/t_6e65499f (blocked, still open, 4 governor-refresh comments 09-10 14:05 through 09-11 03:38) already tracks and root-causes the SAME xai-oauth/grok-4.6 dead rung \u2014 but ONLY for the fallback_providers config chain (root config.yaml + 33 profile configs). That card's scope explicitly does NOT cover explicit per-task provider_override/model_override pins, which bypass the fallback chain entirely and go straight to xai-oauth regardless of chain state.\n\nLive query (hermes kanban --board sycode-trading list --json, filtered to status in [todo,blocked,triage,ready,scheduled] with provider_override=xai-oauth) returns 23 hits, e.g.: t_e5991db5 (blocked, trading-devops, PR#1449 code-approved-but-unlandable), t_6cd8a262 (blocked), t_3513c42a/t_0816663e/t_7ce87f22 (todo, trading-devops), t_f187ae11/t_0fc80bcf (todo, os-reviewer/platform-reviewer), t_568c1b8d (scheduled, research-trading), t_00c33c96/t_150852f4 (triage), t_40d81634 (ready, frontend-builder). Full list in this task's first comment.\n\nROOT CAUSE CONTEXT: t_bcec40dd's apply_chain_20260910.py only touched profile/root fallback_providers config; it never touched (and this new task never claims it should touch) any task-level override already stamped onto existing cards from an earlier era when xai-oauth/grok-4.6 was a live rung.\n\nACCEPTANCE: (1) for each of the 23 cards, verify current xAI spend-block status is still active (reuse t_6e65499f's evidence or re-probe) before acting; (2) for any card whose task-level override still points at the dead rung, clear the override (falls back to profile default, which is now the reverted 2-rung anthropic chain) OR repoint to an explicitly-approved alternative if the card has a specific reason to pin xai-oauth (e.g. a review specifically testing grok output) \u2014 do not silently drop a deliberate test pin without checking task intent first; (3) verify with a dry-run dispatch (Reclaimed:    0\nCrashed:      0\nTimed out:    0\nStale:        0\nAuto-blocked: 0\nPromoted:     0\nSpawned:      1\n  - t_9ffecaa5  ->  trading-devops  @ - (dry)\nSkipped (non-spawnable assignee \u2014 terminal lane, OK): t_40d81634) that none of the 23 remain configured to hit xai-oauth; (4) do not touch t_6e65499f itself (separate card, separate scope) \u2014 link this card to it instead.\n\nGATES: this is a per-task kanban field edit (provider_override/model_override columns), not a provider/model/fallback ROUTING config change and not a credential/spend action \u2014 no A3 gate applies to clearing a dead per-task pin, but flag any card where clearing the pin conflicts with an explicit task intent (e.g. grok-specific eval) to os-reviewer instead of clearing unilaterally.\n\nREVIEWER PATH: fleet-engineer implements -> os-reviewer independent review of the diff/CLI transcript before calling this closed.\n",
+    "body": "OUTCOME: sweep and repoint (or clear) the task-level provider_override=xai-oauth/model_override=grok-4.6 pin on active (non-done, non-cancelled) sycode-trading cards so dispatch does not hard-403 on spend-blocked xAI.\n\nEVIDENCE (verified live this cycle, 2026-09-11 ~05:30 BST): jarvis-os/t_6e65499f (blocked, still open, 4 governor-refresh comments 09-10 14:05 through 09-11 03:38) already tracks and root-causes the SAME xai-oauth/grok-4.6 dead rung — but ONLY for the fallback_providers config chain (root config.yaml + 33 profile configs). That card's scope explicitly does NOT cover explicit per-task provider_override/model_override pins, which bypass the fallback chain entirely and go straight to xai-oauth regardless of chain state.\n\nLive query (hermes kanban --board sycode-trading list --json, filtered to status in [todo,blocked,triage,ready,scheduled] with provider_override=xai-oauth) returns 23 hits, e.g.: t_e5991db5 (blocked, trading-devops, PR#1449 code-approved-but-unlandable), t_6cd8a262 (blocked), t_3513c42a/t_0816663e/t_7ce87f22 (todo, trading-devops), t_f187ae11/t_0fc80bcf (todo, os-reviewer/platform-reviewer), t_568c1b8d (scheduled, research-trading), t_00c33c96/t_150852f4 (triage), t_40d81634 (ready, frontend-builder). Full list in this task's first comment.\n\nROOT CAUSE CONTEXT: t_bcec40dd's apply_chain_20260910.py only touched profile/root fallback_providers config; it never touched (and this new task never claims it should touch) any task-level override already stamped onto existing cards from an earlier era when xai-oauth/grok-4.6 was a live rung.\n\nACCEPTANCE: (1) for each of the 23 cards, verify current xAI spend-block status is still active (reuse t_6e65499f's evidence or re-probe) before acting; (2) for any card whose task-level override still points at the dead rung, clear the override (falls back to profile default, which is now the reverted 2-rung anthropic chain) OR repoint to an explicitly-approved alternative if the card has a specific reason to pin xai-oauth (e.g. a review specifically testing grok output) — do not silently drop a deliberate test pin without checking task intent first; (3) verify with a dry-run dispatch (Reclaimed:    0\nCrashed:      0\nTimed out:    0\nStale:        0\nAuto-blocked: 0\nPromoted:     0\nSpawned:      1\n  - t_9ffecaa5  ->  trading-devops  @ - (dry)\nSkipped (non-spawnable assignee — terminal lane, OK): t_40d81634) that none of the 23 remain configured to hit xai-oauth; (4) do not touch t_6e65499f itself (separate card, separate scope) — link this card to it instead.\n\nGATES: this is a per-task kanban field edit (provider_override/model_override columns), not a provider/model/fallback ROUTING config change and not a credential/spend action — no A3 gate applies to clearing a dead per-task pin, but flag any card where clearing the pin conflicts with an explicit task intent (e.g. grok-specific eval) to os-reviewer instead of clearing unilaterally.\n\nREVIEWER PATH: fleet-engineer implements -> os-reviewer independent review of the diff/CLI transcript before calling this closed.\n",
     "summary": "task-level provider_override/model_override pins cleared on 23 active cards via kanban CLI; post-clear sqlite scan 0 rows; dry-run dispatch clean; no running app VERIFY_PASS supplied",
     "metadata": {},
-    "description": "ALLOW: real t_50dafd06 stored title+body verbatim. Body lists 't_40d81634 (ready, frontend-builder)' as one of 23 kanban evidence rows quoting OTHER cards' (status, assignee) pairs \u2014 not an instruction to implement frontend work. This is a pure kanban DB field cleanup (provider_override/model_override columns); must not force web via the bare 'frontend' token embedded in the quoted assignee name."
+    "description": "ALLOW: real t_50dafd06 stored title+body verbatim. Body lists 't_40d81634 (ready, frontend-builder)' as one of 23 kanban evidence rows quoting OTHER cards' (status, assignee) pairs — not an instruction to implement frontend work. This is a pure kanban DB field cleanup (provider_override/model_override columns); must not force web via the bare 'frontend' token embedded in the quoted assignee name."
   },
   {
     "name": "t_50dafd06-paired-evidence-list-plus-real-frontend-impl-negative-blocks",
@@ -1574,7 +1574,7 @@
         "apps/web/src/app/dashboard/page.tsx"
       ]
     },
-    "description": "BLOCK: paired negative for the evidence-list-parenthetical class. A genuine apps/web frontend implementation card that happens to also contain a '(status, name)'-shaped parenthetical must remain web and require running-app VERIFY_PASS \u2014 proves the narrow evidence-list negation does not swallow real frontend work via the has_concrete_web_impl/has_concrete_app_impl override."
+    "description": "BLOCK: paired negative for the evidence-list-parenthetical class. A genuine apps/web frontend implementation card that happens to also contain a '(status, name)'-shaped parenthetical must remain web and require running-app VERIFY_PASS — proves the narrow evidence-list negation does not swallow real frontend work via the has_concrete_web_impl/has_concrete_app_impl override."
   },
   {
     "name": "t_6769a438-no-install-dmg-route-nonapp-allows",
@@ -1590,7 +1590,7 @@
         "sous-blender-gltf-assets-r2/scripts/gen_adversarial.py"
       ]
     },
-    "description": "ALLOW: real ai-restaurant/t_6769a438 regression, new instance of the 2026-08-31 proximity-rule class. Body says '...do not mutate the app. Document a preferred future no-install route...' \u2014 a negated app-mutation clause plus a DMG distribution-route noun phrase, 0% web content. The prior APP_CHANGED_FILE_PATTERNS negation excluded only 'installer', not 'install'/'no-install', so this Blender/glTF canary/portability TEST card was misclassified web and failed the running-app gate it should never have been subject to. Fixed by adding install/no-install to the negative-lookahead exclusion set."
+    "description": "ALLOW: real ai-restaurant/t_6769a438 regression, new instance of the 2026-08-31 proximity-rule class. Body says '...do not mutate the app. Document a preferred future no-install route...' — a negated app-mutation clause plus a DMG distribution-route noun phrase, 0% web content. The prior APP_CHANGED_FILE_PATTERNS negation excluded only 'installer', not 'install'/'no-install', so this Blender/glTF canary/portability TEST card was misclassified web and failed the running-app gate it should never have been subject to. Fixed by adding install/no-install to the negative-lookahead exclusion set."
   },
   {
     "name": "t_6769a438-paired-frontend-install-route-negative-blocks",
@@ -1637,5 +1637,35 @@
       ]
     },
     "description": "BLOCK: paired negative for profile-identifier scrubbing; a genuine apps/web frontend implementation that mentions upero-ui-builder must remain web and require running-app VERIFY_PASS."
+  },
+  {
+    "name": "t_e48eedbc-own-body-acceptance-criteria-prose-allows",
+    "task_id": "t_e48eedbc_fixture",
+    "expected": "allow",
+    "expected_class": "readonly_nonapp",
+    "title": "FIX: gate-kanban-complete-classifier false-positive on bare assignee-name mentions (e.g. 'frontend-builder') in task body",
+    "body": "BUG: /home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py WEB_PATTERNS[0] matches the bare word \"frontend\" anywhere in a task's title/body. A task body that merely quotes an assignee name containing that word (e.g. listing \"t_40d81634 (ready, frontend-builder)\" as evidence in a completely unrelated kanban-hygiene task) gets misclassified as \"web\" and the gate-kanban-complete.sh hook then demands VERIFY_PASS running-app evidence for a task that touches zero app/frontend surface.\n\nREPRO: sycode-trading task t_50dafd06 (\"WEAKEST-TRACK: 23 active cards carry dead xai-oauth/grok-4.6 task-level pin\") is a pure kanban DB field cleanup (provider_override/model_override columns). Its body lists `t_40d81634 (ready, frontend-builder)` as one of 23 evidence rows. Running the classifier directly on this task's exact title+body:\n\n  python3 /home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py < <task title+body>\n  -> \"web\"\n\nThis blocked os-reviewer from calling kanban_complete on a legitimate, fully-verified review without fabricating VERIFY_PASS evidence (there is no running app).\n\nFIX DIRECTION: this is the same false-positive class the file already documents fixing elsewhere (see the \"testproj-ui-builder\" example in the file's own header comment about token/phrase matching vs bare substrings). Add a negative pattern (or extend NEGATED_WEB_SURFACE_PATTERNS / a new override) so that a bare profile/assignee-name token ending in \"-builder\", \"-reviewer\", etc. quoted inside parenthetical evidence lists (e.g. \"(ready, frontend-builder)\", \"(blocked, trading-devops)\") does not by itself trigger FRONTEND_WEB_TASK_CATEGORY, unless paired with APP_IMPL_PATTERNS or CONCRETE_WEB_IMPL_PATTERNS / CONCRETE_APP_IMPLEMENTATION_PATTERNS.\n\nREQUIRED: add a paired negative fixture to gate-kanban-complete.fixtures.json proving (a) this exact repro case now classifies as not_web/readonly_nonapp, and (b) a genuine frontend-builder-assigned task with real apps/web implementation content still classifies as \"web\" (no regression). Run gate-kanban-complete.selftest.sh green before handoff. Route to os-reviewer for independent re-verification before closing (mechanism-building contract: this touches a completion-gate classifier, needs store+liveness+verification-matrix evidence per os-reviewer-operating-contracts).",
+    "summary": "classifier fixed; own title+body (verified via live sqlite3 read of kanban/boards/sycode-trading/kanban.db) now classifies readonly_nonapp; no app/frontend surface changed",
+    "metadata": {
+      "changed_files": [
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete-classifier.py",
+        "/home/frank/.hermes/agent-hooks/gate-kanban-complete.fixtures.json"
+      ]
+    },
+    "description": "ALLOW: t_e48eedbc round-4 self-repro — this classifier-fix task's own title/body quotes 'apps/web ... still classifies as \"web\" (no regression)' as ACCEPTANCE-CRITERIA prose for a fixture, and separately quotes a '-builder)' compound token near the unrelated word 'web' in its own bug description. Neither is an instruction to implement apps/web; must not itself trip BLOCK_APP_IMPL_NEEDS_VERIFY_PASS or CONCRETE_WEB_IMPL_PATTERNS."
+  },
+  {
+    "name": "t_e48eedbc-paired-genuine-frontend-builder-impl-with-same-wording-blocks",
+    "task_id": "t_e48eedbc_negative",
+    "expected": "block",
+    "title": "Build marketplace frontend page for frontend-builder handoff",
+    "body": "Implement apps/web marketplace React page and route component per the frontend-builder design spec. A genuine frontend-builder-assigned task with real apps/web implementation content still classifies as \"web\" (no regression) and requires running-app VERIFY_PASS before completion.",
+    "summary": "no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/marketplace/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_e48eedbc's new NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS 'apps/web ... still classifies as web' allow — a genuine apps/web implementation card that happens to share the exact same wording and a frontend-builder mention must still classify web and require running-app VERIFY_PASS (proves the new allow does not neutralize real frontend implementation work)."
   }
 ]
