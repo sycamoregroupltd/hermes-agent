@@ -45,7 +45,10 @@ WEB_PATTERNS: PatternList = [
     # UI/app implementation nouns. Deliberately exclude bare "route" and "page";
     # infra/report cards say "route this cron" or "source page content" without
     # being browser/app surfaces.
-    r"(^|[^a-z0-9])(marketplace|storefront|frontend|dashboard|render|renders|client|component|middleware|layout|ui)([^a-z0-9]|$)",
+    # "layout" alone is common deliverable/documentation language (for example,
+    # "golden snapshot layout"). Concrete app/layout implementation remains
+    # covered by APP_IMPL_PATTERNS and changed_files-aware checks below.
+    r"(^|[^a-z0-9])(marketplace|storefront|frontend|dashboard|render|renders|client|component|middleware|ui)([^a-z0-9]|$)",
     r"(^|[^a-z0-9])(page\.tsx|web page|app page|route page|page component)([^a-z0-9]|$)",
     r"apps/web",
     r"(^|[^a-z0-9])(trpc)([^a-z0-9]|$)",
@@ -53,24 +56,8 @@ WEB_PATTERNS: PatternList = [
     # Route only counts when it is clearly an app/web/API route surface, not a
     # generic verb like "route an enabled cron".
     r"(^|[^a-z0-9])((app|web|api|frontend) route|route handler|running route|route page|route component)([^a-z0-9]|$)",
-    # 2026-08-31: the two proximity rules below span up to 80 chars, so an
-    # unrelated "app" and "route" in the SAME SENTENCE collide. Real case:
-    # ai-restaurant/t_bde415c4 (a canary/portability TEST card) was classified
-    # `web` off "...the documented future no-install DMG route reference, and
-    # confirmation that the app was not mutated..." — a distribution route and
-    # a negated app mention, 0% web content. It then failed the running-app
-    # gate it should never have been subject to. Exclude the non-web senses of
-    # "route" (distribution/delivery/escalation/network) from the proximity
-    # rules; the explicit surface forms above still match real app routes.
-    r"(^|[^a-z0-9])app([^a-z0-9](?:(?!\b(?:dmg|installer|install|no-install|download|delivery|distribution|escalat|network|traffic|migration|shipping)\b).){0,80})route([^a-z0-9]|$)",
-    r"(^|[^a-z0-9])route((?:(?!\b(?:dmg|installer|install|no-install|download|delivery|distribution|escalat|network|traffic|migration|shipping)\b)[^a-z0-9].){0,80})app([^a-z0-9]|$)",
-    # 2026-09-01: same proximity-rule class as the 2026-08-31 fix, new instance.
-    # Real case: ai-restaurant/t_6769a438 (SOUS Blender/glTF canary/portability
-    # TEST card) says "...do not mutate the app. Document a preferred future
-    # no-install route..." — a negated app-mutation clause and a DMG
-    # distribution-route noun phrase, 0% web content. "no-install" was not
-    # excluded because the prior exclusion list only matched the word
-    # "installer", not "install"/"no-install". Added both forms above.
+    r"(^|[^a-z0-9])app([^a-z0-9].{0,80})route([^a-z0-9]|$)",
+    r"(^|[^a-z0-9])route([^a-z0-9].{0,80})app([^a-z0-9]|$)",
 ]
 
 READONLY_PATTERNS: PatternList = [
@@ -114,24 +101,10 @@ CONCRETE_WEB_IMPL_PATTERNS: PatternList = [
     r"(^|[^a-z0-9])dashboard([^.\n]{0,80})(route|page|component|frontend|react|ui|app)([^a-z0-9]|$)",
 ]
 
-# Profile names are often hyphen/underscore compounds (for example
-# ``upero-ui-builder`` and ``frontend-builder``).  WEB_PATTERNS intentionally
-# recognizes standalone UI vocabulary, so its boundary sees the embedded
-# ``ui``/``frontend`` token in these names.  The guard below only scrubs a
-# web-token compound when the task also has profile/roster administration
-# context; ordinary prose such as ``build a frontend page`` is untouched.
-PROFILE_IDENTIFIER_WEB_TOKEN_RE = re.compile(
-    r"(?<![a-z0-9])(?:[a-z0-9]+[-_])*"
-    r"(?:marketplace|storefront|frontend|dashboard|renders?|client|component|middleware|layout|ui)"
-    r"(?:[-_][a-z0-9]+)+(?![a-z0-9])"
-)
-PROFILE_ADMIN_CONTEXT_PATTERNS: PatternList = [
-    r"\bprofiles?\b",
-    r"\broster\b",
-    r"\bretir(?:e|ed|ement|ing)\b",
-    r"\barchiv(?:e|ed|ing)\b",
-    r"\bclone(?:d|s)?\b",
-    r"\bdirector(?:y|ies)\b",
+# Positive implementation language must also win over the narrow Hermes review
+# exemption, even when it omits apps/web, React, or a framework name.
+CONCRETE_APP_IMPLEMENTATION_PATTERNS: PatternList = [
+    r"\b(?:implement|build|create|develop|ship)\b[^.\n]{0,80}\b(?:frontend|web|app)\b[^.\n]{0,80}\b(?:page|route|component|dashboard|ui)\b",
 ]
 
 APP_CHANGED_FILE_PATTERNS: PatternList = [
@@ -197,8 +170,6 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     r"docs/index",
     r"markdown (index|pointer)",
     r"knowledge vault",
-    r"\b(?:retir(?:e|ed|ement|ing)|archiv(?:e|ed|ing)|clone(?:d|s)?)\b[^.\n]{0,180}\b(?:profiles?|roster|director(?:y|ies))\b",
-    r"\b(?:profiles?|roster|director(?:y|ies))\b[^.\n]{0,180}\b(?:retir(?:e|ed|ement|ing)|archiv(?:e|ed|ing)|clone(?:d|s)?)\b",
     r"cron portability",
     # CLI/script or Python/shell words are not enough by themselves; true web
     # cards often mention helper scripts. Exempt only with non-web/non-UI or
@@ -289,6 +260,19 @@ NONAPP_OVERRIDE_PATTERNS: PatternList = [
     # and is caught by paired negatives; this override only relaxes the false
     # positive on PM planning + paper-only safety wording.
     r"\bcreate one implementation child\b[\s\S]{0,900}\b(paper[- ]?only|no (app|product|frontend|web) code changes|no [\s\S]{0,80}(route|page|component|middleware|layout|ui|trpc|browser)[\s\S]{0,200}(is changed|changed|touched|modified))\b",
+    # Git/repo provenance + PR/CI diagnostic cards classify lineage roles as
+    # "design/component source". WEB_PATTERNS[0] treats standalone "component"
+    # as a UI noun, so a read-only SHA/remote/PR/CI map (t_72f137b1) was
+    # wedged as web and demanded fabricated VERIFY_PASS. This override is
+    # vetoed by APP_IMPL and preempted by BLOCK_APP_CHANGED_FILES, so the
+    # same wording attached to concrete apps/web route/page work still blocks.
+    r"\bdesign/component source\b",
+    r"\b(repository |git )?provenance\b[\s\S]{0,900}\b(read[- ]only|pr/ci|pull request|ci visibility|stale pr)\b",
+    r"\bread[- ]only\b[\s\S]{0,500}\b(git |repository )?provenance\b",
+    r"\b(git |repository )?provenance\b[\s\S]{0,500}\bread[- ]only\b",
+    # Hermes approvals/verify/monitoring adoption review is an architecture
+    # plan, not app implementation. Keep the title and no-live boundary exact.
+    r"^review:\s+hermes approvals/verify/monitoring adoption plan[\s\S]{0,2200}\bno live apply\b[\s\S]{0,500}\bguardrail weakening\b",
 ]
 
 FLEET_SLO_NONAPP_PATTERNS: PatternList = [
@@ -392,6 +376,15 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # by the paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS
     # "apps/web"/"app route").
     r"\broute\s+(implementation|review|independent\s+review|disposition|the\s+fix|a\s+reviewed\s+(?:implementation|card))\b(?!\s+(?:component|page|layout|middleware|handler|ui|frontend|app|dashboard|route)\b)",
+    # Dispatch-verb idiom (t_e46971ad): "route activation through approval",
+    # "route the handoff via review", and similar language directs a fix or
+    # approval packet; it does not describe an application route. Keep the
+    # object vocabulary deliberately narrow so genuine "route component for
+    # dashboard" / app-route implementation remains web.
+    r"\broute\s+(?:(?:the|a|an|this|that)\s+)?(?:activation|approval|handoff|gate|review|fix|card|task)\b[^.\n]{0,80}\b(?:through|via|for)\s+(?:approval|activation|handoff|gate|review|sign[- ]?off)\b",
+    # Follow-up/remediation routing is another dispatch-verb form found in
+    # review instructions (t_d64a01d1), not a browser route implementation.
+    r"\broute\s+(?:(?:the|a|an|this|that)\s+)?(?:follow[- ]up|remediation|corrective|repair)\s+(?:fix|card|task)\b",
     # Companion: "comment disposition back on <owner>" / "post ... disposition"
     # evidence-back-reference phrasing in DIAGNOSE/forensics cards routes the
     # verdict/disposition rather than implementing a browser route.
@@ -417,6 +410,20 @@ NEGATED_APP_IMPL_PATTERNS: PatternList = [
     # matches APP_IMPL_PATTERNS/CONCRETE_WEB_IMPL_PATTERNS and is caught by the
     # paired negative fixture and BLOCK_WEB_SURFACE (WEB_PATTERNS "app route").
     r"\bno\s+(?:implementation|promotion|paper[- ]?sleeve)(?:[/,]\s*(?:implementation|promotion|paper[- ]?sleeve)){0,3}\s*/?\s*\broutes?\b[\s\S]{0,360}\b(?:paper[- ]?only|read[- ]?only|no[ -]implementation)\b",
+    # Classifier-repair / provenance-review cards titled "Fix false web
+    # classification..." trip APP_IMPL_PATTERNS[0] (verb "fix" + standalone
+    # "web" within 120 chars). That title describes the gate false-positive,
+    # not an instruction to implement a web surface. Require the
+    # classification/provenance/read-only context so "fix frontend/web route"
+    # remains app-impl. Concrete apps/web work still matches APP_IMPL via
+    # implement/route/page/component and is caught by paired negatives and
+    # BLOCK_APP_CHANGED_FILES.
+    r"\bfix false web classification\b[\s\S]{0,240}\b(read[- ]only|provenance|classifier)\b",
+    r"\bfalse[ -]web classification\b[\s\S]{0,240}\b(read[- ]only|provenance|classifier)\b",
+    # Documentation/spec deliverables may use "golden snapshot layout" while
+    # explicitly stating that no app runtime surface changes; this is not app
+    # layout implementation. Concrete implementation wording/changed_files still wins.
+    r"\bgolden snapshot layout\b[\s\S]{0,240}\bno app runtime surface\b[\s\S]{0,80}\bchanged\b",
 ]
 
 GATE_SCOPE_NONAPP_PATTERNS: PatternList = [
@@ -444,11 +451,45 @@ NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS: PatternList = [
     r"\bpaired frontend negative\b[^\n.]{0,200}\bblocks?\b[^\n.]{0,120}\bapps/web\b",
     r"\bpaired frontend negative\b[^\n.]{0,200}\bapps/web\b[^\n.]{0,120}\bblocks?\b",
     r"\bpaired [^\n.]{0,80}negative\b[^\n.]{0,200}\bconcrete apps/web\b[^\n.]{0,120}\bwithout verify_pass\b",
+    r"\bpaired [^\n.]{0,80}negative\b[^\n.]{0,200}\bapps/web\b[^\n.]{0,120}\bblocks?\b",
+    # Repo-hygiene/checkout-reconciliation cards may quote an apps/web path
+    # from dirty-path inventory while explicitly stating no app/runtime surface
+    # changed. That quoted path is evidence to classify, not changed app work;
+    # concrete changed_files metadata and implementation wording still win.
+    r"\brepo[- ]hygiene\b[\s\S]{0,700}\bapps/web\b[\s\S]{0,700}\bno app/runtime[^\n.]{0,160}\b(?:modified|changed|touched)\b",
+    # CLI/report cards can quote dashboard/layout nouns while explicitly
+    # disavowing browser and dashboard-app changes.
+    r"\b(?:cli|python|shell|command|cron|report)\b[\s\S]{0,700}\bno browser route\b[\s\S]{0,240}\bdashboard app surface changed\b",
 ]
 
 SOURCE_REVIEW_PATTERNS: PatternList = [
     r"\breview[-_ ]verdict\b",
     r"\b(?:source task|source review|review source task|source[-_ ]?pr[-_ ]?review)\b",
+]
+
+NEGATED_WEB_SURFACE_PATTERNS: PatternList = [
+    # "the client" in an LLM/HTTP/SDK API sense (client LIBRARY, not browser).
+    # Deliberately excludes "web client"/"browser client" so real frontend
+    # surface language is untouched.
+    r"\b(?:the |this |an? )?(?:api|http|https|llm|openai|anthropic|sdk|provider|model)[- ]client\b",
+    r"\bclient (?:sends|receives|library|libraries)\b",
+    # Known-dead/archived kanban assignee token "frontend-builder" quoted as an
+    # out-of-scope/evidence/dead-assignee reference, NOT an implementation verb
+    # context. Narrowly scoped: adjacency to dead-assignee/profile language is
+    # required so genuine frontend work naming this string (e.g. "implement
+    # frontend-builder's new component page") is NOT exempted.
+    r"\bfrontend-builder\b[^\n.]{0,80}\b(?:dead-assignee|dead assignee|archived profile|dead profile|assignee|harvester)\b",
+    r"\b(?:dead-assignee|dead assignee|archived profile|dead profile)\b[^\n.]{0,80}\bfrontend-builder\b",
+    # Kanban evidence-list rows quoting another card's (status, assignee) pair
+    # — for example "t_40d81634 (ready, frontend-builder)" listed as one of N
+    # unrelated cards in an audit/sweep task body (t_50dafd06/t_e48eedbc) — is
+    # metadata describing OTHER cards, not this task's own implementation
+    # surface. Scoped to the literal parenthetical "(status, name)" shape so
+    # real prose such as "implement the frontend component" is untouched, and
+    # still vetoed below by has_concrete_web_impl/has_concrete_app_impl so a
+    # genuine "Build frontend page (ready, frontend-builder)" implementation
+    # card stays web.
+    r"\((?:ready|blocked|todo|done|triage|scheduled|running|review|cancelled)\s*,\s*[a-z][a-z0-9]*(?:-[a-z0-9]+)*\)",
 ]
 
 
@@ -506,13 +547,6 @@ def _split_hook_text(raw: str) -> tuple[str, str]:
     return task_part, lowered
 
 
-def _profile_identifier_signal_text(task_part: str) -> str:
-    """Remove only named profile compounds before implementation matching."""
-    if not _any(PROFILE_ADMIN_CONTEXT_PATTERNS, task_part):
-        return task_part
-    return PROFILE_IDENTIFIER_WEB_TOKEN_RE.sub(" ", task_part)
-
-
 def _has_app_impl(task_part: str) -> bool:
     # Concrete implementation signals must win over contradictory "no app" or
     # "no product" disclaimers. Review proved that an app task can include a
@@ -525,14 +559,38 @@ def _has_app_impl(task_part: str) -> bool:
     # Review cards about completion-gate repair are NOT app implementation.
     # Match both adjacent "completion-gate repair" and non-adjacent patterns
     # where "completion-gate" and "repair" are within 80 chars of each other.
-    signal_task_part = _profile_identifier_signal_text(task_part)
-    raw_app_impl = _any(APP_IMPL_PATTERNS, signal_task_part) and not _any(
-        NEGATED_APP_IMPL_PATTERNS, task_part
-    )
-    has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, signal_task_part) and not _any(
+    has_concrete_web_impl = _any(CONCRETE_WEB_IMPL_PATTERNS, task_part) and not _any(
         NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS,
         task_part,
     )
+    has_concrete_app_impl = _any(CONCRETE_APP_IMPLEMENTATION_PATTERNS, task_part)
+    # NEGATED_WEB_SURFACE_PATTERNS (t_064d0f8a) must also rescue APP_IMPL_PATTERNS
+    # matches, not only WEB_PATTERNS matches consulted by _web_surface(). The
+    # verb+noun form "(^|[^a-z0-9])(...modify...)([^a-z0-9_-])(frontend|...)"
+    # (APP_IMPL_PATTERNS[0]) independently matches "do not modify ... its
+    # `frontend-builder` dead-assignee harvester bug" via the bare "modify" +
+    # "frontend" adjacency, and _app_impl_needs_verify_pass()/BLOCK_APP_IMPL_
+    # NEEDS_VERIFY_PASS fires earlier in CONTRACT_TABLE than BLOCK_WEB_SURFACE_
+    # NEEDS_VERIFY_PASS, so a _web_surface()-only guard never gets reached for
+    # this class (verified live: t_b4915565 stayed classified `web` via this
+    # path even after the NEGATED_WEB_SURFACE_PATTERNS guard was added only to
+    # _web_surface()). Same override guard shape as has_concrete_web_impl.
+    raw_app_impl = (
+        _any(APP_IMPL_PATTERNS, task_part)
+        and not _any(NEGATED_APP_IMPL_PATTERNS, task_part)
+        and not (
+            _any(NEGATED_WEB_SURFACE_PATTERNS, task_part)
+            and not has_concrete_web_impl
+            and not has_concrete_app_impl
+        )
+    )
+    if (
+        _any(NONAPP_OVERRIDE_PATTERNS, task_part)
+        and re.search(r"^\s*review:\s+hermes approvals/verify/monitoring adoption plan", task_part)
+        and not has_concrete_web_impl
+        and not has_concrete_app_impl
+    ):
+        return False
     if (
         _any(NONAPP_OVERRIDE_PATTERNS, task_part)
         and re.search(r"\bcompletion[- ]gate false allow\b|\bcompletion[- ]gate misclassification\b|\bnon[- ]frontend tasks rejected[^\n]{0,160}verify_pass\b|\bnegated running_app_verification (comment|packet)\b", task_part)
@@ -617,7 +675,10 @@ def _has_app_impl(task_part: str) -> bool:
         and not has_concrete_web_impl
     ):
         return False
-    return has_app_impl
+    # Return True if either app implementation patterns match OR concrete web
+    # implementation patterns match. Concrete web impl (apps/web, React
+    # page/route/component) must win even when NONAPP patterns also match.
+    return has_app_impl or has_concrete_web_impl
 
 
 @dataclass(frozen=True)
@@ -782,8 +843,29 @@ def _goal_judge_provider_error(task_part: str, raw: str) -> bool:
 
     Mirrors the shell hook's fail-closed trap detection so classification and
     the hook agree on which cards belong to the quarantine lane.
+
+    Heuristic guard: avoid treating quoted/remediation/checklist mentions of
+    transport/timeout tokens as a provider error unless the payload contains an
+    active exception indicator (stack/trace/Exception name or explicit Gemini
+    provider mention). This prevents quoted "transport_failed" checklist lines
+    from demoting human gate cards.
     """
-    return bool(GOAL_JUDGE_PROVIDER_ERROR_RE.search(f"{task_part}\n{raw}"))
+    text = f"{task_part}\n{raw}"
+    m = GOAL_JUDGE_PROVIDER_ERROR_RE.search(text)
+    if not m:
+        return False
+
+    # If transport/timeout-like tokens appear but only as part of remediation
+    # prose (checklist, steps, workaround, instructions), do not classify as
+    # provider error unless there is an explicit exception/trace or provider
+    # token (GeminiAPIError / judge transport) present.
+    if re.search(r"\b(transport_failed|connection timeout|timeout|connection timed out|ConnectionError|TimeoutError)\b", text, flags=re.I):
+        if re.search(r"\b(remedi|remedy|checklist|steps to|how to|to fix|workaround|fix:|instructions|example\b)\b", text, flags=re.I):
+            # Preserve strong provider/exception signals.
+            if not re.search(r"\b(GeminiAPIError|gemini api|gemini|judge transport|judge exception|provider[-_ ]?error)\b", text, flags=re.I):
+                return False
+
+    return True
 
 
 def _verified_review_with_evidence_override(task_part: str, raw: str) -> bool:
@@ -812,26 +894,21 @@ def _verified_review_with_evidence_override(task_part: str, raw: str) -> bool:
     return True
 
 
-def _profile_identifier_only_web_signal(task_part: str) -> bool:
-    """Ignore WEB_PATTERNS hits embedded in profile names, narrowly.
-
-    A compound profile identifier such as ``upero-ui-builder`` is not an app
-    surface.  Only profile/roster administration context can activate this
-    scrub, and any remaining web vocabulary or app implementation signal keeps
-    the hard web classification.
-    """
-    if not _any(PROFILE_ADMIN_CONTEXT_PATTERNS, task_part):
-        return False
-    scrubbed = _profile_identifier_signal_text(task_part)
-    if scrubbed == task_part:
-        return False
-    return not _matches_category(FRONTEND_WEB_TASK_CATEGORY, scrubbed) and not _has_app_impl(scrubbed)
-
-
 def _web_surface(task_part: str, raw: str) -> bool:
-    return _matches_category(FRONTEND_WEB_TASK_CATEGORY, task_part) and not _profile_identifier_only_web_signal(
-        task_part
-    )
+    if (
+        _any(NONAPP_OVERRIDE_PATTERNS, task_part)
+        and re.search(r"^\s*review:\s+hermes approvals/verify/monitoring adoption plan", task_part)
+        and not _any(CONCRETE_WEB_IMPL_PATTERNS, task_part)
+        and not _any(CONCRETE_APP_IMPLEMENTATION_PATTERNS, task_part)
+    ):
+        return False
+    if (
+        _any(NEGATED_WEB_SURFACE_PATTERNS, task_part)
+        and not _any(CONCRETE_WEB_IMPL_PATTERNS, task_part)
+        and not _any(CONCRETE_APP_IMPLEMENTATION_PATTERNS, task_part)
+    ):
+        return False
+    return _matches_category(FRONTEND_WEB_TASK_CATEGORY, task_part)
 
 
 CONTRACT_TABLE: Sequence[ContractRule] = [
