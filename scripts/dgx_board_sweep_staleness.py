@@ -57,14 +57,27 @@ try:
 except Exception:
     BOARDS = ["jarvis-os", "upero", "sycode-trading", "sycode-ai", "yorkstone-supplies"]
 
+try:
+    from fleet_boards import state_for as _state_for  # type: ignore
+except Exception:
+    def _state_for(board):  # type: ignore
+        return "unknown"
+
 # Where the board DBs live. Override via HERMES_KANBAN_HOME if needed.
 KANBAN_HOME = os.environ.get(
     "HERMES_KANBAN_HOME", "/home/frank/.hermes/kanban/boards"
 )
 
-# DISPATCH GAP threshold (see module docstring). Tunable via env for soak testing.
+# DISPATCH GAP thresholds (see module docstring). Tunable via env for soak testing.
+# Final tuned values after 7-day soak (t_aaa43bb6, 2026-08-11):
+#   STALE_HOURS = 48  — oldest ready task beyond this fires a gap (keep).
+#   BACKLOG     = 10  — depth backstop: ready-running >= this (keep).
+#   BACKLOG_STALE = 24 — NEW: the depth backstop only fires when oldest ready is
+#                        also > 24h, so healthy deep-but-young research bursts do
+#                        not false-positive while real stalls (deep + old) still alert.
 STALE_HOURS_THRESHOLD = float(os.environ.get("DISPATCH_GAP_STALE_HOURS", "48"))
 BACKLOG_GAP_THRESHOLD = int(os.environ.get("DISPATCH_GAP_BACKLOG", "10"))
+BACKLOG_STALE_HOURS = float(os.environ.get("DISPATCH_GAP_BACKLOG_STALE_HOURS", "24"))
 
 DB_ACCESS_ERROR = False  # set True if any board read fails
 
@@ -90,14 +103,32 @@ def probe_board(board: str, now: int) -> dict:
         "error": None,
     }
     if not entry["present"]:
-        entry["error"] = "db_missing"
+        # t_a578e65d: a board declared `dormant` in the boards manifest (e.g.
+        # sycode-ai — permanent alias of upero; legacy-yss — superseded by
+        # yorkstone-supplies) is EXPECTED to have no kanban.db file. That is
+        # not a probe/DB access failure, it is the manifest's designed state,
+        # and must never flip the cron's exit code — otherwise this no_agent
+        # job fails every single run forever regardless of real dispatch
+        # gaps, exactly the failure that produced the recurring
+        # dgx-board-staleness-dispatch-gap cron alert. Only a board that is
+        # supposed to be active (or is unknown/undeclared) treats a missing
+        # DB as a genuine access error.
+        board_state = _state_for(board)
+        if board_state == "dormant":
+            entry["error"] = "db_missing_dormant_expected"
+        else:
+            entry["error"] = "db_missing"
         return entry
 
     # Open READ-ONLY via URI mode=ro. This makes accidental writes impossible:
     # sqlite raises OperationalError on any write against a ro connection.
     uri = "file:%s?mode=ro" % path
     try:
-        # timeout=0 + immutable=1: never blocks on a lock, never waits, pure read.
+        # timeout=0, mode=ro: never blocks on a lock, never waits, pure read.
+        # immutable=1 REMOVED 2026-08-28 (fleet-wide sweep): it makes SQLite ignore
+        # the -wal file, so on this WAL board (3MB uncheckpointed) the scan silently
+        # missed every row written since the last checkpoint. Same defect already
+        # documented for verdict_router.py under t_65a0c080; it was never swept.
         conn = sqlite3.connect(uri, uri=True, timeout=0)
         conn.execute("PRAGMA query_only = ON;")
     except sqlite3.Error as exc:
@@ -144,10 +175,10 @@ def probe_board(board: str, now: int) -> dict:
                 % (entry["oldest_ready_age_h"], STALE_HOURS_THRESHOLD)
             )
         backlog = entry["ready_count"] - entry["running_count"]
-        if backlog >= BACKLOG_GAP_THRESHOLD:
+        if backlog >= BACKLOG_GAP_THRESHOLD and entry["oldest_ready_age_h"] > BACKLOG_STALE_HOURS:
             entry["gap_reasons"].append(
-                "backlog(ready-running)=%d >= %d"
-                % (backlog, BACKLOG_GAP_THRESHOLD)
+                "backlog(ready-running)=%d >= %d AND oldest_ready_age_h=%.2f > %.0f"
+                % (backlog, BACKLOG_GAP_THRESHOLD, entry["oldest_ready_age_h"], BACKLOG_STALE_HOURS)
             )
         entry["dispatch_gap"] = len(entry["gap_reasons"]) > 0
 
@@ -240,7 +271,7 @@ def main() -> int:
         r = probe_board(board, now)
         if r["error"] and r["error"].startswith(
             ("open_failed", "query_failed", "db_missing")
-        ):
+        ) and r["error"] != "db_missing_dormant_expected":
             # DB access error -> signal via exit code, but still report best-effort.
             DB_ACCESS_ERROR = True
         results.append(r)
