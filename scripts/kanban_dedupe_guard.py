@@ -6,7 +6,7 @@ Born from the 2026-07-05 out-of-band production DDL incident
 sycode-trading-pm cloned gate-blocked t_5c25f222 into t_d0fcaddb on a profile
 without the gate, and that profile applied production DDL out-of-band.
 
-Five deterministic rules (no LLM):
+Six deterministic rules (no LLM):
 
   RULE 1 (dupe-of-gate-blocked): an active task (todo/ready/running) whose
   failure signature (referenced t_xxxxxxxx ids, file names, quoted error
@@ -34,6 +34,25 @@ Five deterministic rules (no LLM):
   Single bullet/specification/heading/table/code fragments are blocked at
   kanban_create time; the source task should receive one digest child instead.
 
+  RULE 6 (blocked-reference cooldown, t_69764ac8): an active (todo/ready) task
+  whose most recent park was a dependency-wait, or whose title/body/last
+  comment carries an explicit RESUME_GATE / "blocked on" / "waiting on"
+  reference to another task id, is a phantom-redispatch candidate when (a)
+  that reference is NOT a real graph-link parent, (b) the referenced task is
+  still open, and (c) the referenced task's content signature is unchanged
+  since this rule last acted. recompute_ready promotes todo/blocked tasks
+  whose real graph-link parents are done — with zero visibility into prose
+  references — so a stale dependency-wait park re-enters the promotion path
+  every dispatcher tick and a freshly spawned worker re-derives and
+  re-comments the identical already-diagnosed finding. Live-verified
+  2026-09-10: sycode-trading/t_6177afc8 (9 claim/spawn/dependency_wait/
+  promoted cycles in ~1h) referencing jarvis-os/t_84f1aeda (unchanged).
+  Match -> re-park (kind=dependency) with ONE idempotent comment instead of
+  a fresh worker dispatch. NEVER suppressed: credential/approval/payment/
+  spend/deploy/production markers, a real graph-link parent, a resolved
+  (done/archived) reference, or a changed reference signature. A 4h TTL lets
+  exactly one fresh dispatch through per episode to refresh the hash.
+
 Enforcement honesty: Hermes has no pre-create/pre-dispatch veto hook
 (kanban_task_* hooks are observer-only, fired after commit — verified in
 hermes_cli/plugins.py VALID_HOOKS). This script is the detect-and-block
@@ -60,6 +79,8 @@ State: ~/.hermes/scripts/state/kanban_dedupe_guard_state.json (no repeat actions
 from __future__ import annotations
 
 import argparse
+import calendar
+import hashlib
 import json
 import os
 import re
@@ -162,6 +183,45 @@ CONTRARY_VERDICTS = {"CHANGES_REQUESTED", "REJECT", "BLOCK", "REWORK_REQUIRED"}
 STALE_REF_VERDICT_RE = re.compile(
     r"REVIEW_VERDICT\s*[:=]\s*([A-Z0-9_]+)", re.IGNORECASE
 )
+
+# --- RULE 6: blocked-reference cooldown (t_69764ac8) ------------------------
+# recompute_ready promotes todo/blocked tasks whose real graph-link PARENTS
+# are all done/archived, unconditionally, every dispatcher tick. A prose
+# "RESUME_GATE: waiting on <task>" reference (or a dependency_wait block whose
+# reason cites another task) is NEVER a real graph-link parent, so the
+# promotion sweep has zero visibility into it: a task parked on a still-open
+# reference re-enters the ready pool the very next tick and a freshly spawned
+# worker re-derives and re-comments the identical already-diagnosed finding.
+# Live-verified 2026-09-10: sycode-trading/t_6177afc8 cycled claim/spawn/
+# dependency_wait/promoted 9x in ~1h referencing jarvis-os/t_84f1aeda
+# (content unchanged the entire window).
+#
+# Marker words that introduce an explicit cross-task reference in title/body/
+# last comment. Deliberately narrow (mirrors STALE_REF_LANE_RE's precision
+# bias) — a broad match would misfire on ordinary prose mentioning a task id.
+RULE6_REF_MARKER_RE = re.compile(
+    r"(?i)\b(resume_gate|blocked[\s-]+on|waiting[\s-]+on|depends?\s+on)\b"
+    r".{0,80}?(t_[0-9a-f]{8})"
+)
+# Credential/approval/payment/spend/deploy/production carve-out — NEVER
+# suppressed regardless of hash/TTL state. Mirrors governor_comment_dedupe.py
+# CRITICAL_MARKER_RE (t_3d108e24) so the two dedupe surfaces agree on what
+# "critical" means.
+RULE6_CRITICAL_MARKER_RE = re.compile(
+    r"(?i)\b(credential|credentials|api[- ]?key|secret|password|token|"
+    r"approval[- ]?critical|frank[- ]?approval|needs[- ]?approval|"
+    r"payment|spend|billing|deploy|production)\b"
+)
+RULE6_KEY_PREFIX = "rule6-blocked-ref-cooldown:v1:"
+RULE6_TTL_HOURS = 4.0
+RULE6_ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
+# Cross-board task cache: a dependency reference frequently names a task on a
+# DIFFERENT board (the t_6177afc8 incident references jarvis-os from
+# sycode-trading). task_links (the real graph) is intra-board only per the
+# board-isolation design, so a cross-board reference can never be a real
+# parent link — resolving it is purely for status/signature lookup.
+_BOARD_CACHE: dict[str, dict | None] = {}
 
 
 def title_role(title: str) -> str:
@@ -300,14 +360,14 @@ def load_board(board: str) -> dict | None:
         return None
     db = open_ro(db_path)
     tasks = {}
-    for tid, title, body, assignee, status, created_at in db.execute(
+    for tid, title, body, assignee, status, created_at, block_kind in db.execute(
         "SELECT id, title, COALESCE(body,''), COALESCE(assignee,''), "
-        "status, COALESCE(created_at,0) FROM tasks"
+        "status, COALESCE(created_at,0), block_kind FROM tasks"
     ):
         tasks[tid] = {
             "id": tid, "title": title, "body": body,
             "assignee": assignee, "status": status,
-            "created_at": created_at,
+            "created_at": created_at, "block_kind": block_kind,
         }
     comments = {}
     for tid, body in db.execute(
@@ -371,7 +431,14 @@ def act(board: str, task: dict, rule: str, reason: str,
     if key in state["actions"]:
         return  # already acted this incarnation
     verb = "WOULD-ACT(dry-run)" if dry_run else "ACT"
-    blockable = task["status"] in ("todo", "ready")
+    # Only 'ready' (and 'running', via the kernel's own path) can actually be
+    # blocked: kanban_db.block_task's UPDATE is guarded by
+    # `status IN ('running','ready')` and returns False for anything else. The
+    # guard used to treat 'todo' as blockable, so every todo target logged
+    # "ACT ... -> block" and then failed with "cannot block" — the guard
+    # reported success-shaped output while mutating nothing (2026-08-30).
+    # todo cards get the alarm-comment instead, which is honest and visible.
+    blockable = task["status"] == "ready"
     action = "block" if blockable else "alarm-comment"
     report.append(
         f"{verb} [{rule}] {board}/{task['id']} ({task['status']}, "
@@ -391,9 +458,13 @@ def act(board: str, task: dict, rule: str, reason: str,
          "--author", GUARD_AUTHOR, comment]
     )
     if blockable:
+        # Argument ORDER matters: the reason is a positional with nargs='*', so
+        # it MUST come before --kind. With `--kind X "reason"` the top-level
+        # hermes parser swallows the reason and errors "unrecognized arguments"
+        # — every guard action failed silently this way until 2026-08-30.
         ok &= run_hermes(
             ["kanban", "--board", board, "block", task["id"],
-             "--kind", "needs_input", f"[{GUARD_AUTHOR}] {rule}: {reason}"]
+             f"[{GUARD_AUTHOR}] {rule}: {reason}", "--kind", "needs_input"]
         )
     if ok:
         state["actions"][key] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -506,16 +577,253 @@ def scan_board_stale_refs(board: str, *, state: dict, dry_run: bool,
             )
 
 
+# --- RULE 6: blocked-reference cooldown (t_69764ac8) ------------------------
+
+def canonicalize(text: str) -> str:
+    """Lowercase and keep only alphanumerics (durable residual norm). Mirrors
+    governor_comment_dedupe.py's canonicalize() so the two dedupe surfaces
+    fingerprint content identically — a changing timestamp/punctuation in a
+    status comment must not perturb the fingerprint."""
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def ref_signature_hash(ref_task: dict, ref_comments: list[str], *, n_comments: int = 5) -> str:
+    """sha256[:12] of canonicalize(title+body+last N comments) for the
+    REFERENCED task — the content fingerprint that must stay unchanged for
+    RULE 6 to suppress. Mirrors owner_packet_hash() in
+    governor_comment_dedupe.py (t_3d108e24)."""
+    text = (ref_task.get("title") or "") + (ref_task.get("body") or "")
+    text += "".join(ref_comments[-n_comments:]) if n_comments else ""
+    return hashlib.sha256(canonicalize(text).encode("utf-8")).hexdigest()[:12]
+
+
+def _all_board_names() -> list[str]:
+    try:
+        return sorted(p.name for p in BOARDS_DIR.iterdir() if (p / "kanban.db").is_file())
+    except OSError:
+        return []
+
+
+def _cached_board(board: str) -> dict | None:
+    """Per-process cache: a scan visits many boards; avoid reloading one
+    board's sqlite file repeatedly when several tasks reference it."""
+    if board not in _BOARD_CACHE:
+        try:
+            _BOARD_CACHE[board] = load_board(board)
+        except Exception:
+            _BOARD_CACHE[board] = None
+    return _BOARD_CACHE[board]
+
+
+def resolve_ref_anywhere(ref_id: str, *, home_board: str) -> tuple[str, dict, list[str]] | None:
+    """Find ref_id's task row + comments on any board (home board first).
+
+    A blocked-reference cooldown candidate frequently cites a task on a
+    DIFFERENT board (t_6177afc8 on sycode-trading references t_84f1aeda on
+    jarvis-os) since task_links — the real graph — is intra-board only, so a
+    cross-board mention can never be a real parent link in the first place.
+    Returns None when the id cannot be found on any board (nothing to
+    compare against, so the caller must treat it as a non-match)."""
+    order = [home_board] + [b for b in _all_board_names() if b != home_board]
+    for board in order:
+        data = _cached_board(board)
+        if not data:
+            continue
+        row = data["tasks"].get(ref_id)
+        if row:
+            return board, row, data["comments"].get(ref_id, [])
+    return None
+
+
+def last_dependency_wait_reason(board: str, task_id: str) -> str | None:
+    """Most recent dependency_wait event's reason for task_id, or None.
+
+    Covers a kind=dependency park whose reason text cites the referenced
+    task without matching an explicit RULE6_REF_MARKER_RE marker word (the
+    marker regex is deliberately narrow; the event payload is the ground
+    truth for a real dependency-kind block)."""
+    db_path = BOARDS_DIR / board / "kanban.db"
+    if not db_path.is_file():
+        return None
+    db = open_ro(db_path)
+    try:
+        row = db.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? "
+            "AND kind = 'dependency_wait' ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+    finally:
+        db.close()
+    if not row or not row[0]:
+        return None
+    try:
+        payload = json.loads(row[0])
+    except (ValueError, TypeError):
+        return None
+    reason = payload.get("reason")
+    return reason if isinstance(reason, str) else None
+
+
+def find_rule6_reference(board: str, task: dict, comments: list[str]) -> str | None:
+    """Return the referenced task id for a RULE 6 candidate, or None.
+
+    Preference order: explicit marker in title/body, then in the last
+    comment (cheapest, most precise), then — only for an actual
+    kind=dependency park — the last dependency_wait event's reason (covers
+    parks whose reason text cites the ref without an explicit marker word)."""
+    haystacks = [(task.get("title") or "") + "\n" + (task.get("body") or "")]
+    if comments:
+        haystacks.append(comments[-1])
+    for hay in haystacks:
+        m = RULE6_REF_MARKER_RE.search(hay)
+        if m:
+            return m.group(2)
+    if task.get("block_kind") == "dependency":
+        reason = last_dependency_wait_reason(board, task["id"])
+        if reason:
+            ids = STALE_REF_ID_RE.findall(reason)
+            if ids:
+                return ids[0]
+    return None
+
+
+# Statuses in which a referenced task still counts as "open" for RULE 6 —
+# anything NOT in this set (done/archived, or an id that doesn't resolve at
+# all) means the reference has resolved and the candidate must dispatch
+# normally, never be suppressed.
+RULE6_REF_OPEN_STATUSES = {"todo", "ready", "running", "blocked", "scheduled", "triage"}
+
+
+def rule6_critical(task: dict, ref_task: dict, ref_comments: list[str]) -> bool:
+    """Credential/approval/payment/spend/deploy/production carve-out — NEVER
+    suppressed regardless of hash/TTL state, checked against both sides of
+    the reference."""
+    hay = " ".join([
+        task.get("title") or "", task.get("body") or "",
+        ref_task.get("title") or "", ref_task.get("body") or "",
+        " ".join(ref_comments[-3:]),
+    ])
+    return bool(RULE6_CRITICAL_MARKER_RE.search(hay))
+
+
+def _rule6_parse_ts(value: str) -> float:
+    return calendar.timegm(time.strptime(value, RULE6_ISO_FMT))
+
+
+def scan_board_blocked_ref_cooldown(board: str, *, state: dict, dry_run: bool,
+                                    enforce: bool, report: list[str],
+                                    tasks: dict, comments: dict) -> None:
+    """RULE 6: blocked-reference cooldown (t_69764ac8).
+
+    See module docstring RULE 6 for the full incident writeup. Conservative
+    by construction: a candidate is skipped entirely (dispatch normally, no
+    state write beyond the baseline) whenever the reference resolves
+    (done/archived/unknown), its content signature just changed, a
+    credential/approval-critical marker is present anywhere in either task,
+    or this is the very first sighting of this exact (task, ref, signature)
+    tuple — there is nothing yet to suppress a duplicate of. Suppression
+    only fires for a SECOND-OR-LATER sighting of the identical tuple inside
+    the TTL window, and even then only silences the duplicate COMMENT: the
+    task is pushed back to 'todo' via a plain kind=dependency reblock (when
+    it was 'ready') so a claim/spawn race loses more often — this cron is a
+    best-effort throttle on cadence, not a kernel-level fix (out of
+    footprint per the accepted design). `enforce=False` (the safe default)
+    still writes state/report so a >=24h dry-run evidence report can be
+    captured, but never calls the mutating `hermes kanban block`; flipping
+    enforcement requires the same Frank sign-off as this script's existing
+    rules (t_d787b0f8 / t_71d3e221)."""
+    now = time.time()
+    for t in tasks.values():
+        if t["status"] not in ("todo", "ready"):
+            continue
+        cs = comments.get(t["id"], [])
+        ref_id = find_rule6_reference(board, t, cs)
+        if not ref_id or ref_id == t["id"]:
+            continue
+        resolved = resolve_ref_anywhere(ref_id, home_board=board)
+        if resolved is None:
+            continue  # unresolvable id — nothing to compare against
+        ref_board, ref_task, ref_comments = resolved
+        if ref_task["status"] not in RULE6_REF_OPEN_STATUSES:
+            continue  # ref resolved -> dispatch normally, never suppress
+        if rule6_critical(t, ref_task, ref_comments):
+            continue  # credential/approval-critical -> never suppressed
+        sig_hash = ref_signature_hash(ref_task, ref_comments)
+        key = f"{RULE6_KEY_PREFIX}{board}:{t['id']}:{ref_id}:{sig_hash}"
+        prior_ts = state["actions"].get(key)
+        if prior_ts is None:
+            # First sighting of this exact signature: record the baseline
+            # only, take no other action. A genuinely new match must never
+            # be silently suppressed sight-unseen.
+            report.append(
+                f"BASELINE [RULE6-blocked-ref-cooldown] {board}/{t['id']} "
+                f"-> {ref_board}/{ref_id} sig={sig_hash}: first sighting of "
+                f"this signature, dispatching normally"
+            )
+            if not dry_run:
+                state["actions"][key] = time.strftime(RULE6_ISO_FMT, time.gmtime(now))
+                save_state(state)
+            continue
+        try:
+            age_hours = (now - _rule6_parse_ts(prior_ts)) / 3600.0
+        except ValueError:
+            age_hours = RULE6_TTL_HOURS  # unparsable timestamp -> fail open, treat as expired
+        if age_hours >= RULE6_TTL_HOURS:
+            # TTL elapsed: exactly one fresh pass-through to refresh the
+            # baseline, then resume suppressing on the next sighting.
+            report.append(
+                f"TTL-REFRESH [RULE6-blocked-ref-cooldown] {board}/{t['id']} "
+                f"-> {ref_board}/{ref_id} sig={sig_hash}: {age_hours:.1f}h >= "
+                f"{RULE6_TTL_HOURS}h TTL, one fresh dispatch allowed through"
+            )
+            if not dry_run:
+                state["actions"][key] = time.strftime(RULE6_ISO_FMT, time.gmtime(now))
+                save_state(state)
+            continue
+        verb = "WOULD-SUPPRESS(dry-run)" if dry_run else "SUPPRESS"
+        report.append(
+            f"{verb} [RULE6-blocked-ref-cooldown] {board}/{t['id']} "
+            f"({t['status']}) -> {ref_board}/{ref_id} unchanged sig={sig_hash} "
+            f"({age_hours:.1f}h < {RULE6_TTL_HOURS}h TTL): suppressing duplicate "
+            f"re-diagnosis comment"
+            + (", reblocking kind=dependency" if t["status"] == "ready" else "")
+        )
+        if dry_run:
+            continue
+        if not enforce:
+            report.append(
+                f"SKIPPED (enforcement not enabled; pass "
+                f"--enforce-blocked-ref-cooldown) [RULE6-blocked-ref-cooldown] "
+                f"{board}/{t['id']}"
+            )
+            continue
+        if t["status"] == "ready":
+            # Argument ORDER matters here too (see act()): the reason is a
+            # positional with nargs='*' and MUST come before --kind.
+            ok = run_hermes(
+                ["kanban", "--board", board, "block", t["id"],
+                 f"[{GUARD_AUTHOR}] RULE6-blocked-ref-cooldown: still waiting "
+                 f"on {ref_board}/{ref_id} (unchanged evidence, key={key})",
+                 "--kind", "dependency"]
+            )
+            if not ok:
+                report.append(
+                    f"ERROR: RULE6 reblock failed for {board}/{t['id']}"
+                )
+
+
 # --- core scan ---------------------------------------------------------------
 
 def scan_board(board: str, *, include_archived: bool, assume_blocked: set[str],
                state: dict, dry_run: bool, report: list[str],
-               resolve_stale_refs: bool = False) -> None:
+               resolve_stale_refs: bool = False,
+               enforce_blocked_ref_cooldown: bool = False) -> None:
     data = load_board(board)
     if data is None:
         report.append(f"ERROR: board '{board}' has no kanban.db")
         return
     tasks, comments, links = data["tasks"], data["comments"], data["links"]
+    _BOARD_CACHE[board] = data  # seed RULE 6's cross-board cache; avoid a reload
 
     gate_blocked = {
         t["id"]: t for t in tasks.values()
@@ -634,6 +942,17 @@ def scan_board(board: str, *, include_archived: bool, assume_blocked: set[str],
         report=report, tasks=tasks, comments=comments,
     )
 
+    # RULE 6: blocked-reference cooldown (an active task parked on a still-
+    # open, content-unchanged prose reference is a phantom-redispatch
+    # candidate). Report/baseline-only unless --enforce-blocked-ref-cooldown
+    # is explicitly passed (Frank-approval-gated per the accepted design,
+    # same precedent as RULE 4's --resolve-stale-refs).
+    scan_board_blocked_ref_cooldown(
+        board, state=state, dry_run=dry_run,
+        enforce=enforce_blocked_ref_cooldown,
+        report=report, tasks=tasks, comments=comments,
+    )
+
 
 def hook_check() -> None:
     """Read pre_tool_call payload on stdin. Print block reason to stdout to
@@ -733,6 +1052,11 @@ def main() -> int:
     ap.add_argument("--resolve-stale-refs", action="store_true",
                     help="RULE 4: auto-close blocked lanes referencing a done "
                          "task (default: report-only, no board mutation).")
+    ap.add_argument("--enforce-blocked-ref-cooldown", action="store_true",
+                    help="RULE 6: reblock (kind=dependency) an active task "
+                         "whose reference is unchanged within the TTL "
+                         "(default: report/baseline-only, no board mutation; "
+                         "Frank-approval-gated per accepted design t_69764ac8).")
     args = ap.parse_args()
 
     if args.hook_check:
@@ -752,7 +1076,8 @@ def main() -> int:
             scan_board(board, include_archived=args.include_archived,
                        assume_blocked=set(args.assume_blocked),
                        state=state, dry_run=args.dry_run, report=report,
-                       resolve_stale_refs=args.resolve_stale_refs)
+                       resolve_stale_refs=args.resolve_stale_refs,
+                       enforce_blocked_ref_cooldown=args.enforce_blocked_ref_cooldown)
         except Exception as e:  # never wedge the cron
             report.append(f"ERROR scanning {board}: {e!r}")
 
