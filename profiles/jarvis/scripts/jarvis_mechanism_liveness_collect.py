@@ -66,9 +66,51 @@ def load_jobs(profile: str) -> list[dict[str, Any]]:
     return [j for j in jobs if isinstance(j, dict)]
 
 
+def load_mark_job_run_drops(profile: str) -> dict[str, Any]:
+    """Read the scheduler's durable terminal-write diagnostic for ``profile``.
+
+    ``cron/jobs.py:mark_job_run()`` persists ``cron/mark_job_run_drops.json``
+    (t_95fbd07c) whenever a completed execution's terminal metadata write
+    could not find its job record (finish_execution succeeded but
+    last_run_at was never stamped). The sidecar is absent on healthy stores
+    and that is not an error. A malformed or unreadable sidecar is reported
+    explicitly instead of being treated as zero, so this collector cannot
+    silently hide diagnostic corruption.
+    """
+    path = PROFILES / profile / "cron" / "mark_job_run_drops.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"count": 0, "state": "absent", "path": str(path)}
+    except (OSError, UnicodeError) as exc:
+        return {"count": None, "state": "read_error", "error": str(exc), "path": str(path)}
+    except json.JSONDecodeError as exc:
+        return {"count": None, "state": "malformed", "error": str(exc), "path": str(path)}
+    if not isinstance(data, dict):
+        return {"count": None, "state": "malformed", "error": "expected JSON object", "path": str(path)}
+    try:
+        count = int(data.get("count", 0))
+    except (TypeError, ValueError):
+        return {"count": None, "state": "malformed", "error": "count is not an integer", "path": str(path)}
+    if count < 0:
+        return {"count": None, "state": "malformed", "error": "count is negative", "path": str(path)}
+    return {
+        "count": count,
+        "state": "recorded" if count else "clean",
+        "last_at": data.get("last_at"),
+        "last_job_id": data.get("last_job_id"),
+        "path": str(path),
+    }
+
+
 def all_profile_jobs() -> list[tuple[str, dict[str, Any]]]:
     out: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
     for path in sorted(PROFILES.glob("*/cron/jobs.json")):
+        real = str(path.resolve())
+        if real in seen:
+            continue
+        seen.add(real)
         profile = path.parents[1].name
         for job in load_jobs(profile):
             out.append((profile, job))
@@ -276,6 +318,82 @@ def classify_job(
     return "OK", "enabled, last_status ok, last_run fresh/enough", age
 
 
+KANBAN_MANIFEST_PATH = ROOT / "kanban" / "boards-manifest.json"
+
+PM_TRIAGE_KEY_PREFIX = "pm-triage-"
+
+
+def load_boards_manifest() -> dict[str, Any] | None:
+    """Read-only load of the fleet boards manifest (see scripts/fleet_boards.py).
+
+    Returns None on any missing/malformed manifest so callers can fail
+    visibly (keep the real classify_job() verdict) instead of silently
+    treating an unreadable manifest as "board is dormant".
+    """
+    try:
+        data = json.loads(KANBAN_MANIFEST_PATH.read_text())
+    except Exception:
+        return None
+    boards = data.get("boards") if isinstance(data, dict) else None
+    if not isinstance(boards, dict):
+        return None
+    return boards
+
+
+def pm_triage_board_name(key: str) -> str | None:
+    if not key.startswith(PM_TRIAGE_KEY_PREFIX):
+        return None
+    board = key[len(PM_TRIAGE_KEY_PREFIX):]
+    return board or None
+
+
+def apply_pm_triage_manifest_override(row: dict[str, Any], exp: "Expected") -> dict[str, Any]:
+    """t_6f8c78be: defer pm-triage-<board> DEAD verdicts to the manifest's triage flag.
+
+    classify_job() correctly treats a paused/disabled job as DEAD in general
+    -- that IS the right call for a mechanism that is supposed to be
+    ticking. But a `pm-triage-<board>` row whose board the fleet boards
+    manifest (scripts/fleet_boards.py's source of truth) has explicitly
+    marked not-triaged (triage: false, e.g. dormant/denied/aliased) is NOT
+    supposed to be ticking: pausing (or never wiring) its cron job is the
+    correct state, not a mechanism death. This only ever overrides an
+    existing DEAD verdict, and only when the manifest is readable AND
+    explicitly says triage=false for that exact board -- an unreadable
+    manifest, an unknown board, or a board still expecting triage=true
+    leaves the real classify_job()/row_for_expected() verdict untouched
+    (fail-visible; no permanent hardcoded removal of the Expected entry).
+    If the board is later reactivated (manifest triage flips back to true),
+    this stops overriding on the very next collector run with no code
+    change -- the mechanism goes back to expecting a live ticking job.
+    """
+    if row.get("status") != "DEAD":
+        return row
+    board = pm_triage_board_name(exp.key)
+    if board is None:
+        return row
+    boards = load_boards_manifest()
+    if boards is None:
+        return row  # manifest unreadable: fail visible, keep real DEAD verdict
+    cfg = boards.get(board)
+    if not isinstance(cfg, dict) or cfg.get("triage") is not False:
+        return row  # unknown board, or manifest still expects triage -> real DEAD stands
+    overridden = dict(row)
+    overridden["status"] = "OK"
+    overridden["reason"] = (
+        f"retired: board {board!r} manifest state={cfg.get('state', 'unknown')!r}, "
+        f"triage=false (board not expected to run PM triage); "
+        f"underlying classify_job verdict: {row.get('reason')}"
+    )
+    overridden["manifest_triage_override"] = {
+        "board": board,
+        "manifest_state": cfg.get("state"),
+        "manifest_reason": cfg.get("reason"),
+        "underlying_status": "DEAD",
+        "underlying_reason": row.get("reason"),
+    }
+    return overridden
+
+
 @dataclass(frozen=True)
 class Expected:
     key: str
@@ -285,33 +403,208 @@ class Expected:
     script: str | None = None
     max_age_minutes: int | None = None
     required: bool = True
+    # When a source row was paused by CONDENSE, classify against this exact
+    # runner check rather than treating the intentionally paused row as dead.
+    bundle_check: str | None = None
+
+
+# Stable source-row -> runner-check aliases. Keep this explicit: absent or
+# failed bundle checks must remain DEAD, and provider-owned PM rows are not
+# absorbed merely because a bundle exists.
+BUNDLE_ALIASES = {
+    "registered-implies-ticking": ("guard-bundle-tick-15m", "cron-health-canary"),
+    "black-hole-weekly": ("guard-bundle-tick-daily", "standing-no-black-holes-detector"),
+    "leak-guard": ("guard-bundle-tick-daily", "sycode-canonical-leak-guard-v2-weekly"),
+    "escalation-notifier-service-gate": ("guard-bundle-tick-15m", "dgx-service-gate-escalation"),
+}
 
 
 EXPECTED = [
     Expected("verdict-router", "verdict-router last_run + shadow/apply state", "jarvis", name="deterministic-verdict-router", max_age_minutes=30),
     Expected("wake-scanner", "wake scanner last_run + last wake action", "jarvis", name="kanban-scheduled-wake-scanner", max_age_minutes=30),
-    Expected("pm-triage-jarvis-os", "PM triage cron: jarvis-os", "jarvis", name="elon-governance-loop", max_age_minutes=90),
+    Expected("pm-triage-jarvis-os", "PM triage visibility bridge: jarvis-os", "jarvis", name="board-pm-triage-jarvis-os", max_age_minutes=90),
     Expected("pm-triage-sycode-trading", "PM triage visibility bridge: sycode-trading", "jarvis", name="board-pm-triage-sycode-trading", max_age_minutes=90),
     Expected("pm-triage-sycode-ai", "PM triage visibility bridge: sycode-ai", "jarvis", name="board-pm-triage-sycode-ai", max_age_minutes=90),
     Expected("pm-triage-yorkstone-supplies", "PM triage visibility bridge: yorkstone-supplies", "jarvis", name="board-pm-triage-yorkstone-supplies", max_age_minutes=90),
     Expected("pm-triage-upero", "PM triage cron: upero", "jarvis", name="upero-pm-governance", max_age_minutes=90),
-    Expected("registered-implies-ticking", "detector: registered-implies-ticking cron-health canary", "jarvis", name="cron-health-canary", max_age_minutes=90),
-    Expected("black-hole-weekly", "detector: no-black-holes weekly", "jarvis", script="no_black_holes_detector.py", max_age_minutes=8 * 24 * 60),
+    Expected("registered-implies-ticking", "detector: registered-implies-ticking cron-health canary", "jarvis", name="cron-health-canary", max_age_minutes=90, bundle_check="cron-health-canary"),
+    Expected("black-hole-weekly", "detector: no-black-holes weekly", "jarvis", script="no_black_holes_detector.py", max_age_minutes=8 * 24 * 60, bundle_check="standing-no-black-holes-detector"),
     Expected("fork-drift", "detector: profile script fork drift", "jarvis", name="profile-script-drift-watch", max_age_minutes=36 * 60),
     Expected("quarantine-invariant", "detector: Sycode strategy quarantine invariant", "jarvis", name="sycode-strategy-quarantine-invariant-critical-alerts", max_age_minutes=36 * 60),
-    Expected("leak-guard", "detector: Sycode canonical leak guard v2", "jarvis", name="sycode-canonical-leak-guard-v2-weekly", max_age_minutes=8 * 24 * 60),
+    Expected("leak-guard", "detector: Sycode canonical leak guard v2", "jarvis", name="sycode-canonical-leak-guard-v2-weekly", max_age_minutes=8 * 24 * 60, bundle_check="sycode-canonical-leak-guard-v2-weekly"),
     Expected("auto-review-router", "auto-review-router", "jarvis", name="review-required-auto-router", max_age_minutes=30),
     Expected("breaker", "breaker: codex exhaustion circuit breaker", "jarvis", name="codex-exhaustion-circuit-breaker", max_age_minutes=20),
     Expected("oob-canary", "OOB canary / alertmanager spool drain", "jarvis", name="sycode-alertmanager-oob-spool-drain", max_age_minutes=10),
     Expected("escalation-notifier-critical", "escalation notifier tier: blocked-task critical notifier", "jarvis", name="blocked-task-notifier", max_age_minutes=45),
-    Expected("escalation-notifier-service-gate", "escalation notifier tier: service-gate escalation", "jarvis", name="dgx-service-gate-escalation", max_age_minutes=90),
+    Expected("escalation-notifier-service-gate", "escalation notifier tier: service-gate escalation", "jarvis", name="dgx-service-gate-escalation", max_age_minutes=90, bundle_check="dgx-service-gate-escalation"),
 ]
+
+
+def load_bundle_check(check_name: str) -> dict[str, Any] | None:
+    """Read the runner manifest without starting a check or changing state."""
+    runner = JARVIS_HOME / "scripts" / "cron_guard_bundle_runner.py"
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("jarvis_guard_bundle_runner", runner)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.CHECKS.get(check_name)
+    except Exception:
+        return None
+
+
+def guard_bundle_state_path() -> Path:
+    """Path to the runner's per-check state file (mirrors cron_guard_bundle_runner.py)."""
+    return JARVIS_HOME / "cron" / "state" / "guard_bundle_last_run.json"
+
+
+def load_guard_bundle_state() -> dict[str, Any]:
+    """Read-only load of the guard-bundle runner's per-check state file.
+
+    Never mutates the file (the collector must stay read-only). Returns {}
+    on any read/parse error so a missing/corrupt state file degrades to the
+    fail-visible DEAD path in bundle_check_status rather than crashing.
+    """
+    try:
+        return json.loads(guard_bundle_state_path().read_text())
+    except Exception:
+        return {}
+
+
+def bundle_check_status(
+    check_name: str,
+    bundle_job: dict[str, Any],
+    now: datetime,
+    max_age_minutes: int | None,
+    state: dict[str, Any] | None = None,
+) -> tuple[str, str, float | None]:
+    """Classify one guard-bundle-absorbed check by its OWN recorded outcome.
+
+    t_a781c1f2: the previous implementation called classify_job() on the
+    whole bundle cron job record, so ANY sibling check's failure that tick
+    flipped every other (healthy) check in the same bundle to DEAD too
+    (reproduced live: standing-no-black-holes-detector failing in
+    guard-bundle-tick-daily false-DEADed the unrelated, genuinely clean
+    leak-guard check). cron_guard_bundle_runner.py now persists each check's
+    own last_status/last_error into guard_bundle_last_run.json
+    (f"{name}:last_status" / f"{name}:last_error") alongside the pre-existing
+    per-check last-run timestamp; classify from that, not the bundle
+    aggregate.
+
+    Bundle-level gates (the whole bundle disabled/paused, or never ticked at
+    all) still apply first: a bundle that has never fired can't have run any
+    of its checks, regardless of what stale per-check state might say.
+    """
+    enabled = bool(bundle_job.get("enabled", True)) and bundle_job.get("state") != "paused"
+    if not enabled:
+        return "DEAD", "guard bundle job paused/disabled", None
+    if not bundle_job.get("last_run_at"):
+        return "DEAD", "guard bundle job never run", None
+    if state is None:
+        state = load_guard_bundle_state()
+    raw_ts = state.get(check_name)
+    if not raw_ts:
+        return "DEAD", f"check '{check_name}' has no per-check state entry (never run within the bundle)", None
+    try:
+        last_run = datetime.fromtimestamp(int(raw_ts), timezone.utc)
+    except Exception:
+        return "DEAD", f"check '{check_name}' per-check timestamp is unparseable: {raw_ts!r}", None
+    age = age_minutes(last_run, now)
+    per_status = state.get(f"{check_name}:last_status")
+    if per_status is None:
+        # Old-format state file written before t_a781c1f2 (timestamp only, no
+        # pass/fail key). Degrade safely: fail-visible DEAD rather than a
+        # KeyError or a silently-inherited wrong verdict. The next bundle
+        # tick writes the new keys and this self-heals.
+        return "DEAD", (
+            f"check '{check_name}' last ran at {last_run.isoformat()} but its state "
+            "predates per-check status tracking (old-format guard_bundle_last_run.json); "
+            "will self-heal on the next bundle tick"
+        ), age
+    if per_status != "ok":
+        err = state.get(f"{check_name}:last_error") or f"last_status={per_status}"
+        return "DEAD", f"check '{check_name}' own last run failed: {err}", age
+    if max_age_minutes is not None and age is not None and age > max_age_minutes:
+        return "DEAD", f"check '{check_name}' own last-run age {age:.1f}m > {max_age_minutes}m", age
+    return "OK", (
+        f"check '{check_name}' own last-run status ok"
+        + (f", age {age:.1f}m" if age is not None else "")
+    ), age
+
+
+def bundle_row_for_expected(exp: Expected) -> tuple[str, str, dict[str, Any]] | None:
+    """Return the live bundle row and manifest check for a condensed source row."""
+    alias = BUNDLE_ALIASES.get(exp.key)
+    if not alias:
+        return None
+    bundle_name, check_name = alias
+    match = find_job("jarvis", name=bundle_name)
+    if not match:
+        return None
+    return bundle_name, check_name, match[1]
 
 
 def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
     match = find_job(exp.profile, name=exp.name, script=exp.script)
+    if match:
+        profile, job = match
+        if exp.bundle_check and job.get("state") == "paused" and "CONDENSE 1/4" in str(job.get("paused_reason", "")):
+            bundle_match = bundle_row_for_expected(exp)
+            check = load_bundle_check(exp.bundle_check)
+            if not bundle_match or check is None:
+                return {"key": exp.key, "label": exp.label, "status": "DEAD",
+                        "reason": "condensed source row is paused but bundle check is missing",
+                        "expected": exp.__dict__, "bundle_check": exp.bundle_check,
+                        "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
+                        "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}"}
+            bundle_name, _check_name, bundle_job = bundle_match
+            # t_a781c1f2: classify this check by its OWN per-check state, not
+            # the whole bundle job's aggregate last_status/last_error (that
+            # aggregate reflects ANY check in the bundle, including unrelated
+            # siblings). last_run_at/enabled/paused staleness on the bundle
+            # job itself is still honored inside bundle_check_status.
+            own_state = load_guard_bundle_state()
+            status, reason, age = bundle_check_status(exp.bundle_check, bundle_job, now, exp.max_age_minutes, state=own_state)
+            check_path = (JARVIS_HOME / "scripts" / str(check.get("script", ""))).resolve()
+            if not check_path.is_file():
+                status, reason = "DEAD", f"bundle check script missing: {check_path}"
+            own_status = own_state.get(f"{exp.bundle_check}:last_status")
+            own_error = own_state.get(f"{exp.bundle_check}:last_error")
+            own_ts = own_state.get(exp.bundle_check)
+            own_last_run_at = None
+            if own_ts:
+                try:
+                    own_last_run_at = datetime.fromtimestamp(int(own_ts), timezone.utc).isoformat()
+                except Exception:
+                    own_last_run_at = None
+            return {
+                "key": exp.key, "label": exp.label, "status": status,
+                "reason": f"condensed into {bundle_name}/{exp.bundle_check}: {reason}",
+                "profile": "jarvis", "job_id": bundle_job.get("id"), "job_name": bundle_name,
+                "enabled": bool(bundle_job.get("enabled", True)), "state": bundle_job.get("state"),
+                "schedule": bundle_job.get("schedule_display"), "next_run_at": bundle_job.get("next_run_at"),
+                # These now reflect the CHECK's own last recorded outcome (the
+                # verdict this row's status is derived from), not the whole
+                # bundle job's aggregate. bundle_last_* below keeps the
+                # aggregate for visibility only.
+                "last_run_at": own_last_run_at or bundle_job.get("last_run_at"),
+                "last_age_minutes": None if age is None else round(age, 1),
+                "last_status": own_status if own_status is not None else bundle_job.get("last_status"),
+                "last_error": own_error if own_status not in (None, "ok") else None,
+                "bundle_last_run_at": bundle_job.get("last_run_at"),
+                "bundle_last_status": bundle_job.get("last_status"),
+                "bundle_last_error": bundle_job.get("last_error"),
+                "last_delivery_error": bundle_job.get("last_delivery_error"), "script": check.get("script"),
+                "bundle": bundle_name, "bundle_check": exp.bundle_check,
+                "producer": f"{JARVIS_HOME}/scripts/cron_guard_bundle_runner.py:{exp.bundle_check}",
+                "consumer": "local -> /home/frank/.hermes/scripts/report-to-board.py -> jarvis-os -> jarvis-os-pm",
+                "output_artifact": latest_output(str(bundle_job.get("id"))),
+                "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
+                "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}"}
     if not match:
-        return {
+        return apply_pm_triage_manifest_override({
             "key": exp.key,
             "label": exp.label,
             "status": "DEAD" if exp.required else "WARN",
@@ -319,7 +612,7 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
             "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
             "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}",
             "expected": exp.__dict__,
-        }
+        }, exp)
     profile, job = match
     status, reason, age = classify_job(profile, job, now, exp.max_age_minutes)
     extra: dict[str, Any] = {}
@@ -329,7 +622,26 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
     if exp.key == "wake-scanner":
         extra["last_wake_action"] = recent_comment_by_author("scheduled-wake-scanner", since_minutes=7 * 24 * 60)
     output = latest_output(str(job.get("id")))
-    return {
+    last_run_at = job.get("last_run_at")
+    last_error = job.get("last_error")
+    # t_95fbd07c: mark_job_run() can drop a completed execution's terminal
+    # write when its job record isn't found at write time (finish_execution
+    # still records success). Surface that drop as a probe-visible DEAD row
+    # instead of a silent stale last_run_at — this is the named consumer for
+    # cron/jobs.py's mark_job_run_drops.json sidecar.
+    drops = load_mark_job_run_drops(profile)
+    if drops["state"] in {"malformed", "read_error"}:
+        status = "DEAD"
+        last_error = f"mark_job_run drop counter {drops['state']}: {drops.get('error', 'unknown error')}"
+        reason = last_error
+    elif drops.get("count", 0) > 0:
+        status = "DEAD"
+        last_error = (
+            f"mark_job_run terminal metadata drops={drops['count']} "
+            f"(last_at={drops.get('last_at')}, last_job_id={drops.get('last_job_id')})"
+        )
+        reason = last_error
+    return apply_pm_triage_manifest_override({
         "key": exp.key,
         "label": exp.label,
         "status": status,
@@ -341,17 +653,18 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
         "state": job.get("state"),
         "schedule": job.get("schedule_display"),
         "next_run_at": job.get("next_run_at"),
-        "last_run_at": job.get("last_run_at"),
+        "last_run_at": last_run_at,
         "last_age_minutes": None if age is None else round(age, 1),
         "last_status": job.get("last_status"),
-        "last_error": job.get("last_error"),
+        "last_error": last_error,
         "last_delivery_error": job.get("last_delivery_error"),
+        "mark_job_run_drops": drops,
         "script": job.get("script"),
         "output_artifact": output,
         "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
         "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}",
         **extra,
-    }
+    }, exp)
 
 
 def extra_pm_visibility(now: datetime) -> list[dict[str, Any]]:
