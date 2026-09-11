@@ -141,6 +141,7 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp) / "boards"
     root.mkdir(parents=True)
     guard.BOARDS_DIR = root
+    guard.STATE_PATH = Path(tmp) / "state.json"
     guard._BOARD_CACHE.clear()
     recorder = RunHermesRecorder()
     guard.run_hermes = recorder
@@ -198,6 +199,7 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp) / "boards"
     root.mkdir(parents=True)
     guard.BOARDS_DIR = root
+    guard.STATE_PATH = Path(tmp) / "state.json"
     guard._BOARD_CACHE.clear()
     recorder = RunHermesRecorder()
     guard.run_hermes = recorder
@@ -241,6 +243,7 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp) / "boards"
     root.mkdir(parents=True)
     guard.BOARDS_DIR = root
+    guard.STATE_PATH = Path(tmp) / "state.json"
     guard._BOARD_CACHE.clear()
     recorder = RunHermesRecorder()
     guard.run_hermes = recorder
@@ -268,6 +271,7 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp) / "boards"
     root.mkdir(parents=True)
     guard.BOARDS_DIR = root
+    guard.STATE_PATH = Path(tmp) / "state.json"
     guard._BOARD_CACHE.clear()
     recorder = RunHermesRecorder()
     guard.run_hermes = recorder
@@ -306,6 +310,7 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp) / "boards"
     root.mkdir(parents=True)
     guard.BOARDS_DIR = root
+    guard.STATE_PATH = Path(tmp) / "state.json"
     guard._BOARD_CACHE.clear()
     recorder = RunHermesRecorder()
     guard.run_hermes = recorder
