@@ -1667,5 +1667,37 @@
       ]
     },
     "description": "BLOCK: paired negative for t_e48eedbc's new NEGATED_CONCRETE_WEB_REFERENCE_PATTERNS 'apps/web ... still classifies as web' allow — a genuine apps/web implementation card that happens to share the exact same wording and a frontend-builder mention must still classify web and require running-app VERIFY_PASS (proves the new allow does not neutralize real frontend implementation work)."
+  },
+  {
+    "name": "t_2edaef65-openapi-swagger-apidocs-backend-nonapp-allows",
+    "task_id": "t_2edaef65_fixture",
+    "title": "API DOCS: OpenAPI/Swagger for yss-api (NestJS @nestjs/swagger + committed openapi.json)",
+    "body": "OUTCOME: yss-api exposes an accurate OpenAPI 3 spec + Swagger UI generated from the existing NestJS controllers/DTOs, plus a committed openapi.json artifact the Admin/storefront frontends and the agent mesh can consume as the API contract.\nCONTEXT: yss-api is NestJS + TypeORM but has NO @nestjs/swagger today (verified 2026-09-13: no SwaggerModule/DocumentBuilder in src, no swagger dep in package.json, no /api-docs). Zero API-spec coverage in the roadmap before this card.\nACCEPTANCE TEST: (1) @nestjs/swagger installed + CLI plugin enabled; SwaggerModule.setup wired in main.ts behind auth/flag (NOT unauthenticated in prod). (2) core surfaces annotated (catalog/CMS, pricing, users, orders/quote) with @ApiTags/@ApiOperation/@ApiProperty. (3) openapi.json emitted by a build step and committed. (4) Swagger UI reachable in dev/staging with curl proof of the spec + one endpoint schema.\nREUSE: agree with the existing read-contract tests (t_f6fec390) and the pricing/sku generated contract (t_e1507018); use the @nestjs/swagger CLI plugin to avoid hand-annotating every DTO.\nINPUTS: yss-api src controllers+DTOs, main.ts. BASE=staging.\nGATES: no unauthenticated Swagger UI in production; staging-only until reviewed; independent review (/review or platform-reviewer) before landing; decorators-only (no business-logic edits).\nDEPENDS: none (foundational). Feeds the API-contract card.\nROLLBACK: additive; revert the PR. STOP: if annotation forces logic changes, flag scope creep.",
+    "expected": "allow",
+    "expected_class": "not_web",
+    "summary": "hook selftest PASS; openapi.json emitted by a build step and committed; no browser/app surface changed",
+    "metadata": {
+      "changed_files": [
+        "src/main.ts",
+        "src/catalog/catalog.controller.ts",
+        "openapi.json"
+      ]
+    },
+    "description": "ALLOW: backend NestJS API-docs deliverable (OpenAPI/Swagger + committed openapi.json) with zero concrete browser/app implementation signal; the sole WEB_PATTERNS hit is the bare `ui` token in \"Swagger UI\" plus API-contract-consumer prose. Paired with t_2edaef65-paired-frontend-swagger-ui-negative-blocks."
+  },
+  {
+    "name": "t_2edaef65-paired-frontend-swagger-ui-negative-blocks",
+    "task_id": "t_2edaef65_negative",
+    "title": "FRONTEND: build the Swagger UI spec viewer page in the storefront admin app",
+    "body": "Implement the apps/web React route component and page layout that renders the OpenAPI spec inside the storefront admin UI; add the /api-docs route. This is concrete frontend work and no running app VERIFY_PASS is supplied.",
+    "expected": "block",
+    "expected_class": "web",
+    "summary": "apps/web component built; no running app VERIFY_PASS supplied",
+    "metadata": {
+      "changed_files": [
+        "apps/web/src/app/api-docs/page.tsx"
+      ]
+    },
+    "description": "BLOCK: paired negative for t_2edaef65 wording; the same Swagger-UI/OpenAPI API-docs prose attached to concrete apps/web React route/page work must still classify web and require running-app VERIFY_PASS."
   }
 ]

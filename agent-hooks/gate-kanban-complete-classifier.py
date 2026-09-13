@@ -560,6 +560,24 @@ NEGATED_WEB_SURFACE_PATTERNS: PatternList = [
     # genuine "Build frontend page (ready, frontend-builder)" implementation
     # card stays web.
     r"\((?:ready|blocked|todo|done|triage|scheduled|running|review|cancelled)\s*,\s*[a-z][a-z0-9]*(?:-[a-z0-9]+)*\)",
+    # (t_2edaef65) OpenAPI/Swagger API-documentation deliverables. A backend
+    # API-docs card ("expose the OpenAPI 3 spec + Swagger UI ... plus a
+    # committed openapi.json") trips WEB_PATTERNS[0] on the bare `ui`/`storefront`/
+    # `frontend` tokens even though it ships zero browser/app code. Scoped to
+    # require an explicit OpenAPI/Swagger API-docs signal (spec/documentation/
+    # contract noun) so generic "ui"/"frontend" prose is untouched; still vetoed
+    # below by has_concrete_web_impl/has_concrete_app_impl and preempted by
+    # BLOCK_APP_CHANGED_FILES, so a genuine frontend card that also mentions
+    # "Swagger UI" (apps/web, React/Next page/route/component, dashboard UI)
+    # stays web (paired negative fixture).
+    r"\b(?:@nestjs/swagger|swaggermodule|swagger\s*ui|openapi(?:\.json|\s*3)?)\b[^\n]{0,200}\b(?:api[- ](?:docs?|documentation|spec(?:ification)?|contract)|spec(?:ification)?|documentation)\b",
+    # (t_2edaef65) "API-contract consumer" prose inside an API-docs deliverable:
+    # frontend/storefront/client nouns describing the *consumers* of an API
+    # contract/spec, not a browser implementation surface. Requires the
+    # OpenAPI/Swagger artifact token on the same line, so instruction-shaped
+    # frontend prose ("wire the storefront frontend to consume the API
+    # contract") is NOT exempted; also vetoed by the concrete-impl checks.
+    r"\b(?:openapi|swagger|@nestjs/swagger)\b[^\n]{0,200}\b(?:frontends?|storefronts?|clients?)\b[^\n]{0,100}\b(?:consum(?:e|es|ing|ers?))\b[^\n]{0,100}\b(?:api[- ](?:contract|spec(?:ification)?|docs?|documentation))\b",
 ]
 
 
