@@ -2913,10 +2913,20 @@ def edit_completed_task_result(
 def block_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
     kind: Optional[str] = None, expected_run_id: Optional[int] = None,
-) -> bool:
+    with_reason: bool = False,
+) -> "bool | tuple[bool, Optional[str]]":
     """``running``/``ready`` -> ``blocked`` (or ``todo`` / ``triage``, see
     :func:`_route_block`). ``transient`` still counts toward the loop breaker
-    so a forever-flaky task escalates. True on any transition."""
+    so a forever-flaky task escalates.
+
+    Returns ``bool``, or ``(ok, reason)`` with ``with_reason`` — the reason names
+    the refusal (unknown id, already transitioned, superseded run) so a worker
+    whose card moved on is not told its own task id is unknown.
+    """
+
+    def _ret(ok: bool, why: Optional[str] = None) -> "bool | tuple[bool, Optional[str]]":
+        return (ok, why) if with_reason else ok
+
     if kind is not None and kind not in VALID_BLOCK_KINDS:
         raise ValueError(f"block kind must be one of {sorted(VALID_BLOCK_KINDS)} or None")
     with write_txn(conn):
@@ -2924,7 +2934,7 @@ def block_task(
             "SELECT status, block_kind, block_recurrences FROM tasks WHERE id = ?", (task_id,),
         ).fetchone()
         if cur_row is None:
-            return False
+            return _ret(False, "task not found")
         source_status = _retry_status_for_run(conn, task_id) if cur_row["status"] == "running" else "ready"
         new_status, event_kind, set_sql, params, payload = _route_block(
             kind, reason, source_status, prev_kind=_row_get(cur_row, "block_kind"),
@@ -2945,7 +2955,7 @@ def block_task(
             sql += " AND current_run_id = ?"
             params = (*params, int(expected_run_id))
         if conn.execute(sql, params).rowcount != 1:
-            return False
+            return _ret(False, _block_refusal_reason(conn, task_id, expected_run_id))
         run_id = _end_or_synthesize_run(
             conn, task_id, outcome="blocked", status="blocked", summary=reason, synthesize=bool(reason),
         )
@@ -2954,9 +2964,49 @@ def block_task(
         if kind == "dependency":
             # Historical ordering: the dependency lane fires inside the txn.
             _fire_task_hook("kanban_task_blocked", blocked_task, task_id, run_id, reason=reason)
-            return True
+            return _ret(True)
     _fire_task_hook("kanban_task_blocked", blocked_task, task_id, run_id, reason=reason)
-    return True
+    return _ret(True)
+
+
+def _block_refusal_reason(
+    conn: sqlite3.Connection, task_id: str, expected_run_id: Optional[int],
+) -> str:
+    """Why :func:`block_task`'s guarded UPDATE matched no row — named, not generic.
+
+    Read only after the update missed, so it sees the real post-miss row. The
+    three live causes are an unknown id, a task already out of ``running`` /
+    ``ready`` (a terminal transition landed first — ``kanban_complete``,
+    ``kanban_request_review``, ``kanban_request_changes``, a reclaim), and a
+    stale worker whose run is no longer the current one. The old message
+    (``unknown id or not in running/ready``) collapsed all three, which reads as
+    "your task id is wrong" to a worker whose card simply moved on.
+    """
+    row = conn.execute(
+        "SELECT status, current_run_id FROM tasks WHERE id = ?", (task_id,),
+    ).fetchone()
+    if row is None:
+        return "task not found"
+    status = str(row["status"] or "")
+    if status not in ("running", "ready"):
+        return (
+            f"task is already {status!r} — this worker's run has already ended "
+            f"(a terminal transition landed first), so no block is needed"
+        )
+    if expected_run_id is not None and row["current_run_id"] != int(expected_run_id):
+        if row["current_run_id"] is None:
+            # No run holds the card: the worker's own run ended (a review handoff
+            # returns the card to ``ready`` with ``current_run_id`` cleared), so
+            # there is nothing left for this worker to block.
+            return (
+                f"task is already {status!r} and no run holds it — this worker's run "
+                f"{int(expected_run_id)} has ended, so no block is needed"
+            )
+        return (
+            f"task is {status!r} under run {row['current_run_id']}, not this worker's "
+            f"run {int(expected_run_id)} — the run was superseded"
+        )
+    return f"task is {status!r} and did not accept the block"
 
 
 def _route_block(
@@ -3130,10 +3180,20 @@ def request_changes(
         if task_row is None:
             return False, "task not found"
         current_run_id = task_row["current_run_id"]
-        if task_row["status"] != "running" or current_run_id is None:
-            return False, "task is not in an active review run"
+        if task_row["status"] != "running":
+            # Distinct from the "wrong lane" refusals below: the card already left
+            # review (the terminal transition landed), so there is nothing to hand back.
+            return False, (
+                f"task is already {task_row['status']!r} — this review run was already "
+                f"closed, so there is nothing to hand back"
+            )
+        if current_run_id is None:
+            return False, "task has no active run to hand back"
         if expected_run_id is not None and int(current_run_id) != int(expected_run_id):
-            return False, "run_id mismatch"
+            return False, (
+                f"this worker's run (id {int(expected_run_id)}) is no longer the current "
+                f"run (run {int(current_run_id)}) — the review handoff already moved on"
+            )
 
         claimed_event = _latest_event(conn, task_id, "claimed", current_run_id)
         claimed_payload = _json_dict(_row_get(claimed_event, "payload"))
