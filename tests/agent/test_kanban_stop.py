@@ -1,4 +1,17 @@
-"""Tests for the kanban worker turn-end stop guard."""
+"""Tests for the kanban worker turn-end stop guard.
+
+The guard's job: a worker that ends a turn with no board-terminal tool is nudged once or
+twice before the dispatcher records a protocol violation. Its failure mode (jarvis-os
+t_530e25ca, t_6af13e4d): re-arming a session whose lifecycle ALREADY ended, which tells the
+worker to call a terminal tool that the board will refuse, or worse a `kanban_complete` that
+would approve a card another lane now owns.
+
+Two suppression rules are pinned here:
+  * a board-terminal tool in this session's history — including the review-lane hand-offs
+    (`kanban_request_review` / `kanban_request_changes`), which close the run too;
+  * this worker's OWN run already terminal on the board (`task_runs.outcome` set for
+    `HERMES_KANBAN_RUN_ID`) — bound to run identity, not to `tasks.status`.
+"""
 
 from __future__ import annotations
 
@@ -9,34 +22,29 @@ import pytest
 from agent.kanban_stop import (
     build_kanban_stop_nudge,
     kanban_stop_nudge_enabled,
+    reset_run_outcome_cache,
     session_called_kanban_terminal,
 )
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def clear_kanban_env(monkeypatch):
+    """No inherited board pins: a dispatcher-spawned test run must never read a live board."""
     for var in (
-        "HERMES_KANBAN_TASK",
-        "HERMES_KANBAN_STOP_NUDGE",
-        "HERMES_KANBAN_DB",
-        "HERMES_KANBAN_BOARD",
-        "HERMES_KANBAN_RUN_ID",
-        "HERMES_KANBAN_WORKSPACES_ROOT",
+        "HERMES_KANBAN_TASK", "HERMES_KANBAN_RUN_ID", "HERMES_KANBAN_STOP_NUDGE",
+        "HERMES_KANBAN_DB", "HERMES_KANBAN_BOARD", "HERMES_KANBAN_WORKSPACES_ROOT",
     ):
         monkeypatch.delenv(var, raising=False)
+    # The run-outcome memo is process-global; a stale entry would mask a rule under test.
+    reset_run_outcome_cache()
     return monkeypatch
 
 
 @pytest.fixture
-def kanban_board(tmp_path: Path, monkeypatch, clear_kanban_env):
-    """An isolated, empty board under a temp HERMES_HOME.
-
-    Every ``HERMES_KANBAN_*`` pin is cleared, not just the task id: the suite can run
-    inside a real dispatcher-spawned worker, where an inherited ``HERMES_KANBAN_DB``
-    would make the guard read (and this fixture write) the live board.
-    """
+def board(tmp_path, monkeypatch):
+    """A real, isolated board DB so the guard's run-outcome read hits actual rows."""
     home = tmp_path / ".hermes"
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -45,20 +53,29 @@ def kanban_board(tmp_path: Path, monkeypatch, clear_kanban_env):
     return home
 
 
-def _review_handoff(conn, tid: str) -> tuple[str, int]:
-    """Drive a card through implementer → review → reviewer claim.
+def _plain_text_turn() -> list[dict]:
+    """A turn that ends with narration only — what the guard exists to catch."""
+    return [
+        {"role": "user", "content": "work kanban task"},
+        {"role": "assistant", "content": "Done, the review is written up."},
+    ]
 
-    Returns ``(task_id, reviewer_run_id)``; the implementer's run is already closed by
-    ``request_review``, so the reviewer run is the only live one.
-    """
-    kb.claim_task(conn, tid)
-    implementer_run = kb.get_task(conn, tid).current_run_id
-    assert kb.request_review(
-        conn, tid, summary="implemented", expected_run_id=implementer_run,
-    ) is True
-    claimed = kb.claim_review_task(conn, tid)
-    assert claimed is not None and claimed.current_run_id is not None
-    return tid, int(claimed.current_run_id)
+
+def _review_handoff() -> tuple[str, int, int]:
+    """Implementer hands off to review, a reviewer claims it: (task_id, run, reviewer_run)."""
+    with kbc.connect() as conn:
+        tid = kb.create_task(conn, title="review lane", assignee="implementer")
+        kb.claim_task(conn, tid)
+        implementer_run = kb.get_task(conn, tid).current_run_id
+        assert kb.request_review(
+            conn, tid, summary="ready for review", expected_run_id=implementer_run,
+        ) is True
+        reviewer = kb.claim_review_task(conn, tid)
+        assert reviewer is not None
+    return tid, implementer_run, reviewer.current_run_id
+
+
+# ── Existing guard contract ─────────────────────────────────────────────────
 
 
 def test_env_can_disable(clear_kanban_env):
@@ -113,104 +130,116 @@ def test_no_nudge_after_kanban_complete(clear_kanban_env):
     assert build_kanban_stop_nudge(messages=messages) is None
 
 
-# ── Board-truth guard ────────────────────────────────────────────────
-# The nudge's liveness source is the board, not the message history: a refused
-# terminal call and a successful one look identical in the transcript. These pin
-# both directions — suppressed once the run is closed by ANY path, still emitted
-# while the run is genuinely open.
+def test_nudge_claims_only_what_it_read(clear_kanban_env):
+    """The template must not assert card state the module never read."""
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    nudge = build_kanban_stop_nudge(messages=_plain_text_turn())
+    assert nudge is not None
+    assert "is still `running`" not in nudge
+    assert "is still running" not in nudge
 
 
-def test_no_nudge_after_review_handoff_closed_the_run(
-    kanban_board: Path, clear_kanban_env,
-) -> None:
-    """Regression: a reviewer that handed the card back must not be nudged to
-    re-terminate. Under the message-history-only check the board had already
-    advanced to ``ready`` (run closed, ``ended_at`` set) yet the worker was told
-    "task is still running" — the only reachable answers then were a false
-    ``kanban_complete`` (approving a card sent back for changes) or a
-    ``kanban_block`` the board refuses."""
-    with kbc.connect() as conn:
-        tid = kb.create_task(conn, title="review lane", assignee="implementer")
-        _, reviewer_run = _review_handoff(conn, tid)
-        clear_kanban_env.setenv("HERMES_KANBAN_TASK", tid)
-        clear_kanban_env.setenv("HERMES_KANBAN_RUN_ID", str(reviewer_run))
-        ok, implementer = kb.request_changes(
-            conn, tid, reason="please fix X", expected_run_id=reviewer_run,
-        )
-        assert ok is True and implementer == "implementer"
-        # The card left review and the reviewer's run is closed.
-        assert kb.get_task(conn, tid).status == "ready"
-        ended = conn.execute(
-            "SELECT ended_at FROM task_runs WHERE id = ?", (reviewer_run,),
-        ).fetchone()
-        assert ended["ended_at"] is not None
+# ── Rule 1: a board-terminal tool in the session ────────────────────────────
 
+
+@pytest.mark.parametrize("tool", ["kanban_request_review", "kanban_request_changes"])
+def test_review_handoff_in_session_is_terminal(clear_kanban_env, tool):
+    """A review-lane hand-off closes the run exactly like complete/block."""
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_review")
     messages = [
         {"role": "user", "content": "work kanban task"},
         {
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {
-                    "id": "1",
-                    "type": "function",
-                    "function": {"name": "kanban_request_changes", "arguments": "{}"},
-                }
+                {"id": "1", "type": "function", "function": {"name": tool, "arguments": "{}"}}
             ],
         },
-        {
-            "role": "tool",
-            "name": "kanban_request_changes",
-            "tool_call_id": "1",
-            "content": '{"ok": true, "status": "ready"}',
-        },
+        {"role": "tool", "name": tool, "tool_call_id": "1", "content": '{"ok": true}'},
     ]
-    # Not a recognized terminal tool — the transcript alone cannot tell success
-    # from refusal, which is exactly why the board must be consulted.
-    assert session_called_kanban_terminal(messages) is False
+    assert session_called_kanban_terminal(messages) is True
     assert build_kanban_stop_nudge(messages=messages, attempts=0) is None
 
 
-def test_no_nudge_when_the_task_left_running_without_a_run_id(
-    kanban_board: Path, clear_kanban_env,
-) -> None:
-    """A worker with no dispatcher run id still reads the task row: a task that is
-    no longer ``running`` owes no terminal call."""
+def test_non_terminal_tools_still_nudge(clear_kanban_env):
+    """comment/heartbeat/hold are not board-terminal: the guard still fires."""
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_nonterminal")
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "1", "type": "function", "function": {"name": "kanban_comment", "arguments": "{}"}},
+                {"id": "2", "type": "function", "function": {"name": "kanban_heartbeat", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "name": "kanban_comment", "tool_call_id": "1", "content": "ok"},
+        {"role": "tool", "name": "kanban_heartbeat", "tool_call_id": "2", "content": "ok"},
+    ]
+    assert session_called_kanban_terminal(messages) is False
+    assert build_kanban_stop_nudge(messages=messages, attempts=0) is not None
+
+
+# ── Rule 2: this worker's own run is already terminal on the board ──────────
+
+
+def test_no_nudge_when_own_run_is_terminal_on_board(clear_kanban_env, board):
+    """The reported repro: reviewer hands the card back, run closed, card left `ready`."""
+    tid, _implementer_run, reviewer_run = _review_handoff()
     with kbc.connect() as conn:
-        tid = kb.create_task(conn, title="done already", assignee="worker")
-        kb.claim_task(conn, tid)
-        run_id = kb.get_task(conn, tid).current_run_id
-        assert kb.complete_task(conn, tid, summary="finished", expected_run_id=run_id)
+        ok, implementer = kb.request_changes(
+            conn, tid, reason="needs rework", expected_run_id=reviewer_run,
+        )
+        assert ok is True
+        assert implementer == "implementer"
+        assert kb.get_task(conn, tid).status == "ready"  # no run holds the card any more
     clear_kanban_env.setenv("HERMES_KANBAN_TASK", tid)
+    clear_kanban_env.setenv("HERMES_KANBAN_RUN_ID", str(reviewer_run))
+    # Plain-text turn: the nudge would previously fire and demand a terminal the board refuses.
+    assert build_kanban_stop_nudge(messages=_plain_text_turn(), attempts=0) is None
+
+
+def test_no_nudge_when_own_run_has_outcome_even_with_no_transcript(clear_kanban_env, board):
+    tid, _implementer_run, reviewer_run = _review_handoff()
+    with kbc.connect() as conn:
+        assert kb.request_changes(conn, tid, reason="rework", expected_run_id=reviewer_run)[0] is True
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", tid)
+    clear_kanban_env.setenv("HERMES_KANBAN_RUN_ID", str(reviewer_run))
     assert build_kanban_stop_nudge(messages=[], attempts=0) is None
 
 
-def test_nudge_still_fires_while_the_run_is_open(
-    kanban_board: Path, clear_kanban_env,
-) -> None:
-    """The guard's protection is intact: a live run that stops without a terminal
-    call is still nudged."""
+def test_nudge_still_fires_while_the_run_is_open(clear_kanban_env, board):
+    """The guard's actual job must not regress: an open run with a silent turn is nudged."""
     with kbc.connect() as conn:
-        tid = kb.create_task(conn, title="live run", assignee="worker")
+        tid = kb.create_task(conn, title="live work", assignee="implementer")
         claimed = kb.claim_task(conn, tid)
         assert claimed is not None
+        assert kb.get_task(conn, tid).status == "running"
     clear_kanban_env.setenv("HERMES_KANBAN_TASK", tid)
     clear_kanban_env.setenv("HERMES_KANBAN_RUN_ID", str(claimed.current_run_id))
-    nudge = build_kanban_stop_nudge(messages=[], attempts=0)
-    assert nudge is not None and tid in nudge
+    nudge = build_kanban_stop_nudge(messages=_plain_text_turn(), attempts=0)
+    assert nudge is not None
+    assert "kanban_complete" in nudge
 
 
-def test_nudge_is_fail_open_when_the_board_cannot_be_read(
-    kanban_board: Path, clear_kanban_env, tmp_path: Path,
-) -> None:
-    """A board read failure must never silence a genuine nudge: the guard falls
-    back to its message-history behaviour instead of letting a worker exit clean."""
-    with kbc.connect() as conn:
-        tid = kb.create_task(conn, title="unreadable board", assignee="worker")
-        claimed = kb.claim_task(conn, tid)
-        assert claimed is not None
-    # A directory can never open as a SQLite database.
-    clear_kanban_env.setenv("HERMES_KANBAN_DB", str(tmp_path / "not-a-db"))
-    (tmp_path / "not-a-db").mkdir()
-    clear_kanban_env.setenv("HERMES_KANBAN_TASK", tid)
-    assert build_kanban_stop_nudge(messages=[], attempts=0) is not None
+# ── Fail-open on board-read failure ─────────────────────────────────────────
+
+
+def test_fail_open_when_board_is_unreadable(clear_kanban_env, tmp_path):
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    clear_kanban_env.setenv("HERMES_KANBAN_RUN_ID", "424242")
+    clear_kanban_env.setenv("HERMES_KANBAN_DB", str(tmp_path))  # a directory, not a DB file
+    nudge = build_kanban_stop_nudge(messages=_plain_text_turn(), attempts=0)
+    assert nudge is not None, "an unreadable board must never silence a genuine nudge"
+
+
+def test_fail_open_when_run_id_is_unknown(clear_kanban_env, board):
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    clear_kanban_env.setenv("HERMES_KANBAN_RUN_ID", "999999999")
+    assert build_kanban_stop_nudge(messages=_plain_text_turn(), attempts=0) is not None
+
+
+def test_fail_open_when_run_id_is_absent(clear_kanban_env, board):
+    """Older dispatchers export no run id: fall back to transcript-only behaviour."""
+    clear_kanban_env.setenv("HERMES_KANBAN_TASK", "t_abc")
+    assert build_kanban_stop_nudge(messages=_plain_text_turn(), attempts=0) is not None
