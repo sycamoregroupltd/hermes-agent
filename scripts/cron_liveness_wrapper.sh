@@ -45,24 +45,45 @@ DETECT_RC=$?
 set -e
 
 # 2. Route to kanban tracker (always — router resolves on healthy too).
+# Keep the real detector JSON on healthy ticks (was overwritten with scanned:0,
+# which erased the receipt that proved the monitor actually scanned jobs —
+# same silent-cron class as ci-runner-liveness .cron.log 0B until heartbeat).
 HEALTHY=1
 if [ "$DETECT_RC" -ne 0 ]; then
   HEALTHY=0
-  python3 "$MONITOR" --json > "$JSON_OUT" 2>/dev/null || true
+  # Prefer the first capture; only re-run if the file is empty/unreadable.
+  if [ ! -s "$JSON_OUT" ]; then
+    python3 "$MONITOR" --json > "$JSON_OUT" 2>/dev/null || true
+  fi
   cat "$JSON_OUT" | CRON_LIVENESS_HEALTHY=0 python3 "$ROUTER" > "$ROUTER_OUT" 2>&1 || true
 else
-  echo '{"monitor":"cron-liveness","stamp":"'"$STAMP"'","grace_h":'"${CRON_LIVENESS_GRACE_H:-2}"',"scanned":0,"findings":[]}' > "$JSON_OUT"
-  echo "" | CRON_LIVENESS_HEALTHY=1 python3 "$ROUTER" > "$ROUTER_OUT" 2>&1 || true
+  cat "$JSON_OUT" | CRON_LIVENESS_HEALTHY=1 python3 "$ROUTER" > "$ROUTER_OUT" 2>&1 || true
 fi
+
+SCANNED=$(python3 -c "import json; d=json.load(open('$JSON_OUT')); print(d.get('scanned', '?'))" 2>/dev/null || echo "?")
+N_FIND=$(python3 -c "import json; d=json.load(open('$JSON_OUT')); print(len(d.get('findings', [])))" 2>/dev/null || echo "?")
+
+# Cron redirect stayed silent on healthy ticks since ~2026-09-05 (only UNHEALTHY
+# lines). Echo one OK line to stdout so crontab tee proves the job fired.
+echo "[$STAMP] OK scanned=$SCANNED findings=$N_FIND healthy=$HEALTHY detect_rc=$DETECT_RC"
 
 # 3. Human alert (only when UNHEALTHY). One concise line + board link.
 if [ "$DETECT_RC" -ne 0 ]; then
-  N=$(python3 -c "import json,sys; d=json.load(open('$JSON_OUT')); print(len(d.get('findings',[])))" 2>/dev/null || echo "?")
+  N="$N_FIND"
   CARD_LINK="see kanban sycode-trading board (cron-liveness-monitor)"
   echo "[$STAMP] CRON LIVENESS UNHEALTHY: $N finding(s) — route+resolve on board. $CARD_LINK" \
     > "$STATE_DIR/runs/alert-$STAMP.txt"
   cat "$STATE_DIR/runs/alert-$STAMP.txt" >&2 || true
 fi
 
-# 4. Exit mirrors the detector (so host cron / wrapper consumers see liveness).
+# 4. Retention — runs/ was unbounded (38M / 11k+ files from Aug11→Sep6).
+# Keep last CRON_LIVENESS_KEEP_HOURS (default 48). Best-effort; never fail the tick.
+KEEP_H="${CRON_LIVENESS_KEEP_HOURS:-48}"
+KEEP_MIN=$((KEEP_H * 60))
+PRUNED=$(find "$STATE_DIR/runs" -type f -mmin +"$KEEP_MIN" -print -delete 2>/dev/null | wc -l | tr -d ' ')
+if [ "${PRUNED:-0}" -gt 0 ]; then
+  echo "[$STAMP] PRUNE deleted=$PRUNED keep_hours=$KEEP_H"
+fi
+
+# 5. Exit mirrors the detector (so host cron / wrapper consumers see liveness).
 exit "$DETECT_RC"

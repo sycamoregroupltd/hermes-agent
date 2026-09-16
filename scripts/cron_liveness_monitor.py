@@ -179,7 +179,7 @@ def profile_estop_active(cron_dir: Path) -> bool:
 
 
 def check_store(cron_dir: Path, findings: list[dict], scanned: list[str],
-                suspended: list[str]) -> None:
+                suspended: list[str], held: list[dict]) -> None:
     jobs, profile = load_enabled_jobs(cron_dir)
     if not jobs:
         return
@@ -220,6 +220,22 @@ def check_store(cron_dir: Path, findings: list[dict], scanned: list[str],
             continue
         threshold = timedelta(seconds=period) + GRACE
 
+        # --- fire_claim: job is intentionally held by a worker, not dead ---
+        # A fire_claim is set by the scheduler when a worker picks up the job for
+        # execution. While held, the job is deliberately not re-dispatched. This
+        # is YELLOW/held state, not RED — flagging it as MISSED would be a false
+        # positive (the job is alive, just busy). Reported separately so the
+        # monitor output can show held jobs without minting a breach card.
+        fire_claim = job.get("fire_claim")
+        if fire_claim is not None and isinstance(fire_claim, dict):
+            held.append({
+                "profile": profile, "job_id": jid, "name": name,
+                "fire_claim_at": fire_claim.get("at"),
+                "fire_claim_by": fire_claim.get("by"),
+            })
+            scanned.append(f"{profile}/{name}")
+            continue
+
         # --- Liveness proof (UNION of durable record + scheduler last_run) ---
         last_completed: datetime | None = None
         if con is not None:
@@ -254,43 +270,55 @@ def check_store(cron_dir: Path, findings: list[dict], scanned: list[str],
 
         created = parse_dt(job.get("created_at"))
         next_run = parse_dt(job.get("next_run_at"))
-        # Suppress for non-defeat cases:
-        #  (a) too young to judge (created < MIN_JOB_AGE) and never fired, OR
-        #  (b) younger than its own first due-window (age < period) — a job whose
-        #      first scheduled occurrence has not yet come due cannot be "missed".
-        #  (c) LOW-FREQUENCY GUARD: the scheduler has pushed next_run_at into the
-        #      future relative to now. A stale last_run with a future next_run
-        #      means the next occurrence has not yet come due — the job is healthy
-        #      and waiting, not missed (verified 2026-08-11: jarvis monthly jobs
-        #      last fired Aug 1 but next_run_at is Sept 1; the scheduler recomputes
-        #      next_run only on fire, so a healthy low-freq job looks stale here).
+
+        # --- Classification (task t_e2b5f698) ---
+        # PRIMARY signal is next_run_at (the scheduler's own "when is this due"
+        # clock), NOT last_run_at. A job is RED only when next_run_at < now()
+        # (truly overdue). A job with future next_run_at is GREEN — scheduled,
+        # not due yet — regardless of how old last_run_at is. This fixes the
+        # false-positive class where weekly/daily/interval jobs were flagged
+        # MISSED between their natural runs (stale last_run + future next_run).
+        #
+        # GREEN (healthy — skip without finding):
+        #  (a) Too young to judge (created < MIN_JOB_AGE) and never fired.
+        #  (b) First occurrence not yet due (age < period and never fired).
+        #  (c) next_run > now(): the scheduler has NOT yet pushed this job
+        #      past its due time — it is waiting for the next natural fire.
+        #      This is the canonical "not yet due" case.
+        #  (d) Recent proof of life within threshold (job fired recently and
+        #      next_run is also past — the scheduler just hasn't recomputed).
         if created is not None and proof is None and (t - created) < MIN_JOB_AGE:
             scanned.append(f"{profile}/{name}")
-            continue  # never fired and not old enough to be due yet
+            continue
         if created is not None and proof is None and (t - created) < threshold:
             scanned.append(f"{profile}/{name}")
-            continue  # first occurrence not yet due
-        if proof is None and next_run is not None and next_run > t:
+            continue
+        if next_run is not None and next_run > t:
+            # next_run in the future ⇒ job is not due yet ⇒ GREEN.
+            # This is the single most important check: it prevents flagging
+            # weekly/daily/interval jobs between natural runs.
             scanned.append(f"{profile}/{name}")
-            continue  # next occurrence hasn't come due yet (low-frequency / monthly job)
-        if proof is not None and next_run is not None and next_run > t and age is not None and age <= threshold.total_seconds():
+            continue
+        if proof is not None and age is not None and age <= threshold.total_seconds():
             scanned.append(f"{profile}/{name}")
-            continue  # healthy low-freq job: last run within threshold AND next is future
+            continue  # recent proof of life — GREEN
 
-        if proof is None or age is None or age > threshold.total_seconds():
-            if proof is None:
-                detail = f"no completed execution AND no fresh last_run_at ever recorded"
-            else:
-                detail = f"last proof of completed run {age/3600:.1f}h ago > threshold {threshold.total_seconds()/3600:.1f}h"
-            findings.append({
-                "class": "MISSED",
-                "profile": profile, "job_id": jid, "name": name,
-                "period_h": round(period / 3600, 2),
-                "last_completed": last_completed.isoformat() if last_completed else None,
-                "last_run_at": job.get("last_run_at"),
-                "last_status": last_status,
-                "detail": detail,
-            })
+        # RED: next_run <= now() (or None) AND no recent proof of life.
+        # The job is overdue and has not fired within its threshold.
+        if proof is None:
+            detail = f"no completed execution AND no fresh last_run_at ever recorded"
+        else:
+            detail = f"last proof of completed run {age/3600:.1f}h ago > threshold {threshold.total_seconds()/3600:.1f}h"
+        findings.append({
+            "class": "MISSED",
+            "profile": profile, "job_id": jid, "name": name,
+            "period_h": round(period / 3600, 2),
+            "last_completed": last_completed.isoformat() if last_completed else None,
+            "last_run_at": job.get("last_run_at"),
+            "last_status": last_status,
+            "next_run_at": job.get("next_run_at"),
+            "detail": detail,
+        })
 
         # --- Script-not-found pre-flight (t_027a2bc9) ---
         if not script_resolves(profile, job):
@@ -305,10 +333,11 @@ def check_store(cron_dir: Path, findings: list[dict], scanned: list[str],
         con.close()
 
 
-def run_scan() -> tuple[list[dict], list[str], list[str]]:
+def run_scan() -> tuple[list[dict], list[str], list[str], list[dict]]:
     findings: list[dict] = []
     scanned: list[str] = []
     suspended: list[str] = []
+    held: list[dict] = []
     cron_dirs = sorted(HERMES_HOME.glob("profiles/*/cron")) + [HERMES_HOME / "cron"]
     seen: set[str] = set()
     for cron_dir in cron_dirs:
@@ -318,14 +347,40 @@ def run_scan() -> tuple[list[dict], list[str], list[str]]:
         if real in seen:
             continue
         seen.add(real)
-        check_store(cron_dir, findings, scanned, suspended)
-    return findings, scanned, suspended
+        check_store(cron_dir, findings, scanned, suspended, held)
+    return findings, scanned, suspended, held
+
 
 
 def _selftest() -> int:
+    """Hermetic self-test wrapper (ESTOP-leak class, Frank 2026-08-28).
+
+    Runs the deterministic tests against a THROWAWAY HERMES_HOME (temp dir) so
+    no self-test write — ESTOP sentinels, *.ESTOP variants, fake probe scripts,
+    synthetic cron stores — can ever land in a real profile dir. The previous
+    structure wrote sentinels under the real ~/.hermes/profiles/... during the
+    ESTOP-skip assertions and did not reliably clean up; a stray reason:null
+    sentinel froze the jarvis profile (cron dispatch silently skipped) on
+    2026-08-28 14:56. try/finally guarantees HERMES_HOME restoration AND temp
+    dir removal on every exit path (pass or fail).
+    """
+    import shutil
+    import tempfile
+    _orig_home = HERMES_HOME
+    tmp = Path(tempfile.mkdtemp())
+    globals()["HERMES_HOME"] = tmp
+    try:
+        return _selftest_body()
+    finally:
+        globals()["HERMES_HOME"] = _orig_home
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _selftest_body() -> int:
     """Deterministic offline tests for the union liveness logic."""
     from datetime import datetime as _dt
     failures = []
+    import shutil
     import tempfile
     tmp = Path(tempfile.mkdtemp())
 
@@ -365,8 +420,8 @@ def _selftest() -> int:
     con.execute("INSERT INTO executions VALUES ('x','other-job','builtin','p',1,NULL,'completed','2026-08-01T00:00:00+00:00',NULL,NULL,NULL)")
     con.commit(); con.close()
 
-    f, scanned, suspended = [], [], []
-    check_store(store, f, scanned, suspended)
+    f, scanned, suspended, held = [], [], [], []
+    check_store(store, f, scanned, suspended, held)
     misses = [x for x in f if x["class"] == "MISSED"]
     if misses:
         failures.append(f"healthy evicted daily job should NOT be MISSED, got {misses}")
@@ -374,21 +429,24 @@ def _selftest() -> int:
     # 4. Truly stale job (no completed exec, stale last_run) -> MISSED.
     jobs[0]["last_run_at"] = (_dt.now(timezone.utc) - timedelta(days=3)).isoformat()
     (store / "jobs.json").write_text(json.dumps({"jobs": jobs, "updated_at": _dt.now(timezone.utc).isoformat()}))
-    f2, _, _ = [], [], []
-    check_store(store, f2, [], [])
+    f2, _, _, _ = [], [], [], []
+    check_store(store, f2, [], [], [])
     misses2 = [x for x in f2 if x["class"] == "MISSED"]
     if not misses2:
         failures.append("stale daily job should be MISSED")
 
     # 5. Script-not-found: enabled job with missing script -> SCRIPT_MISSING.
+    #    Job must be RED (overdue) for SCRIPT_MISSING to be reported — set
+    #    next_run_at in the past so the job is genuinely overdue (not GREEN).
     jobs.append({"id": "s-1", "name": "scriptless", "enabled": True, "state": "scheduled",
                  "schedule": {"kind": "interval", "minutes": 60},
                  "script": "does_not_exist.py", "created_at": "2026-06-01T00:00:00+01:00",
-                 "last_run_at": (_dt.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+                 "last_run_at": (_dt.now(timezone.utc) - timedelta(days=3)).isoformat(),
+                 "next_run_at": (_dt.now(timezone.utc) - timedelta(days=2)).isoformat(),
                  "last_status": "error"})
     (store / "jobs.json").write_text(json.dumps({"jobs": jobs, "updated_at": _dt.now(timezone.utc).isoformat()}))
-    f3, _, _ = [], [], []
-    check_store(store, f3, [], [])
+    f3, _, _, _ = [], [], [], []
+    check_store(store, f3, [], [], [])
     sm = [x for x in f3 if x["class"] == "SCRIPT_MISSING"]
     if not sm:
         failures.append("missing-script job should be SCRIPT_MISSING")
@@ -416,8 +474,8 @@ def _selftest() -> int:
             json.dumps({"jobs": jobs2, "updated_at": _dt.now(timezone.utc).isoformat()}))
 
         # (a) control: no sentinel -> stale job is MISSED, not suspended.
-        fA, scA, susA = [], [], []
-        check_store(store2, fA, scA, susA)
+        fA, scA, susA, hA = [], [], [], []
+        check_store(store2, fA, scA, susA, hA)
         if not [x for x in fA if x["class"] == "MISSED"]:
             failures.append("stale job in non-ESTOP profile should be MISSED")
         if susA:
@@ -425,8 +483,8 @@ def _selftest() -> int:
 
         # (b) exact ESTOP sentinel -> SUSPENDED, zero MISSED.
         (pdir / "ESTOP").write_text('{"reason":"operator test"}')
-        fB, scB, susB = [], [], []
-        check_store(store2, fB, scB, susB)
+        fB, scB, susB, hB = [], [], [], []
+        check_store(store2, fB, scB, susB, hB)
         if [x for x in fB if x["class"] == "MISSED"]:
             failures.append("ESTOP'd profile must NOT emit MISSED")
         if "estopprofile" not in susB:
@@ -435,21 +493,22 @@ def _selftest() -> int:
         # (c) *.ESTOP variant name also suspends.
         (pdir / "ESTOP").unlink()
         (pdir / "variant.ESTOP").write_text("x")
-        fC, scC, susC = [], [], []
-        check_store(store2, fC, scC, susC)
+        fC, scC, susC, hC = [], [], [], []
+        check_store(store2, fC, scC, susC, hC)
         if [x for x in fC if x["class"] == "MISSED"] or "estopprofile" not in susC:
             failures.append("*.ESTOP variant should also SUSPEND")
 
         # (d) resume (lift sentinel) -> MISSED restored (acceptance #3).
         (pdir / "variant.ESTOP").unlink()
-        fD, scD, susD = [], [], []
-        check_store(store2, fD, scD, susD)
+        fD, scD, susD, hD = [], [], [], []
+        check_store(store2, fD, scD, susD, hD)
         if not [x for x in fD if x["class"] == "MISSED"]:
             failures.append("after resume, stale job should be MISSED again")
         if "estopprofile" in susD:
             failures.append("after resume, profile should NOT be SUSPENDED")
     finally:
         globals()["HERMES_HOME"] = _orig_home
+        shutil.rmtree(home2, ignore_errors=True)
 
     if failures:
         print("SELFTEST_FAIL")
@@ -464,18 +523,23 @@ def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if "--selftest" in argv:
         return _selftest()
-    findings, scanned, suspended = run_scan()
+    findings, scanned, suspended, held = run_scan()
     stamp = _now().strftime("%Y-%m-%dT%H:%MZ")
     if "--json" in argv:
         print(json.dumps({
             "monitor": "cron-liveness", "stamp": stamp,
             "grace_h": GRACE_H, "scanned": len(scanned),
-            "suspended_profiles": suspended, "findings": findings,
+            "suspended_profiles": suspended, "held_jobs": held,
+            "findings": findings,
         }, sort_keys=True))
     else:
         if suspended:
             print(f"  NOTE: {len(suspended)} profile(s) under active ESTOP — skipped: "
                   f"{', '.join(sorted(suspended))}")
+        if held:
+            print(f"  NOTE: {len(held)} job(s) held by active fire_claim (YELLOW):")
+            for h in held:
+                print(f"      HELD profile={h['profile']} job={h['name']} [{h['job_id']}] claim_at={h.get('fire_claim_at')} by={h.get('fire_claim_by')}")
         if findings:
             print(f"CRON LIVENESS {stamp} — {len(findings)} finding(s) across {len(scanned)} enabled recurring job(s) scanned:")
             for f in findings:
