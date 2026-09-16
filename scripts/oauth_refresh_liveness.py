@@ -931,7 +931,11 @@ def main() -> int:
         f"{r['profile']}:{r['provider']}" for r in results
         if not r.get("healthy") and r.get("status") == "dead"
     ]
-    errors = [r for r in results if r.get("status") == "error"]
+    # Deadline errors are NOT fatal: they are expected on a large fleet where
+    # not all 36 probe pairs fit in RUN_DEADLINE_SECONDS. The cursor rotation
+    # (next_scan_cursor) guarantees the skipped pairs get probed next tick.
+    # Only genuine OAuth/config failures should be fatal.
+    errors = [r for r in results if r.get("status") == "error" and not is_deadline_error(r)]
     skipped = [r for r in results if r.get("status") == "skipped"]
     deadline_errors = [r for r in results if is_deadline_error(r)]
     summary = {
