@@ -8,6 +8,7 @@ sycode-trading kanban incident consumer (t_dd27733b).
   python3 sycode_residual_monitor_route.py --monitor candle-per-symbol-freshness
   python3 sycode_residual_monitor_route.py --monitor pit-context-join
   python3 sycode_residual_monitor_route.py --monitor drift-monitor
+  python3 sycode_residual_monitor_route.py --monitor candles-venue-recon-daily
   python3 sycode_residual_monitor_route.py --monitor signal-fusion-fill-rate-check
 
 Healthy ticks stay silent (router action=silent). Breaches create/dedupe a
@@ -33,6 +34,7 @@ MONITOR_DETECTORS = {
     "candle-per-symbol-freshness": [sys.executable, str(SCRIPT_DIR / "sycode_candle_per_symbol_freshness.py")],
     "pit-context-join": [sys.executable, str(SCRIPT_DIR / "sycode_pit_context_join.py")],
     "drift-monitor": ["bash", str(SCRIPT_DIR / "sycode-drift-monitor.sh")],
+    "candles-venue-recon-daily": [sys.executable, str(SCRIPT_DIR / "candles_venue_recon_daily.py")],
 }
 
 
@@ -105,6 +107,10 @@ def _selftest() -> int:
     p2 = _run([sys.executable, str(SCRIPT_DIR / "sycode_pit_context_join.py"), "--self-test"])
     if p1.returncode != 0 or p2.returncode != 0 or p1.stdout != p2.stdout:
         failures.append("PIT --self-test must be deterministic and green")
+    d1 = _run(["bash", str(SCRIPT_DIR / "sycode-drift-monitor.sh"), "--self-test"])
+    d2 = _run(["bash", str(SCRIPT_DIR / "sycode-drift-monitor.sh"), "--self-test"])
+    if d1.returncode != 0 or d2.returncode != 0 or d1.stdout != d2.stdout:
+        failures.append("drift monitor --self-test must be deterministic and green")
 
     # Router contract via FakeHarness --selftest.
     r = _run([sys.executable, str(ROUTER), "--selftest"])
@@ -175,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         # Keep healthy runs silent: no extra human payload.
         return 0
     print(json.dumps({"detector_rc": detect_rc, "router": result}, sort_keys=True))
-    if not healthy and result.get("action") not in {"created", "deduped", "dry_run_breach", "superseded"}:
+    if not healthy and result.get("action") not in {"created", "deduped", "deduped_suppressed", "dry_run_breach", "superseded"}:
         return 2 if route_rc == 0 else route_rc
     return route_rc
 
