@@ -35,7 +35,7 @@ fi
   echo "## Pending Frank (review-required / needs-approval, oldest first)"
   for db in /home/frank/.hermes/kanban/boards/*/kanban.db; do
     b=$(basename "$(dirname "$db")")
-    sqlite3 -separator ' | ' "$db" "SELECT '$b', id, substr(title,1,50) FROM tasks WHERE status='blocked' ORDER BY created_at ASC LIMIT 5" 2>/dev/null | sed 's/^/- /'
+    sqlite3 -separator ' | ' "$db" "SELECT '$b', id, substr(title,1,50) FROM tasks WHERE status='blocked' ORDER BY created_at ASC LIMIT 50" 2>/dev/null | sed 's/^/- /'
   done
 } > "$OUT.tmp" 2>/dev/null && mv "$OUT.tmp" "$OUT"
 
