@@ -195,7 +195,7 @@ if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
         [ -f "$f" ] && smalls+=("$f")
     done
     if [ ${#smalls[@]} -gt 0 ]; then
-        if ! rsync -4 -a --timeout=300 --partial -e 'ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-sockets/%r@%h:%p' "${smalls[@]}" "mac:$remote_root/"; then
+        if ! rsync -4 -a --timeout=300 --partial --whole-file -e 'ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-sockets/%r@%h:%p' "${smalls[@]}" "mac:$remote_root/"; then
             echo "WARNING: phase-A small-file rsync failed — continuing to hermes-state attempts" >&2
         else
             echo "phase-A pushed ${#smalls[@]} small artifact(s) to mac:$remote_root/"
