@@ -317,6 +317,21 @@ class TestGeneratedSystemdUnits:
         unit = gateway_cli.generate_systemd_unit(system=False)
         assert "TimeoutStopSec=60" in unit
 
+    def test_unit_includes_execstop_planned_stop_marker(self):
+        """The generated unit's ExecStop= runs the planned-stop marker helper
+        BEFORE KillSignal=SIGTERM so systemd stops are classified as planned
+        (exit 0) instead of unexpected (exit 1)."""
+        import hermes_cli.gateway as gw_mod
+        unit = gw_mod.generate_systemd_unit(system=False)
+        # The marker helper is invoked via the same python_path as ExecStart
+        python_path = gw_mod.get_python_path()
+        expected_execstop = f"ExecStop={python_path} -m gateway.planned_stop_marker $MAINPID"
+        assert expected_execstop in unit
+        # ExecStop= must be the planned_stop_marker module, not cgroup_cleanup
+        assert "gateway.planned_stop_marker" in unit
+        # KillSignal must still be SIGTERM
+        assert "KillSignal=SIGTERM" in unit
+
     def test_restart_exit_code_is_also_declared_a_success_status(self):
         """#104251: a planned restart (gateway/restart.py's exit 75) is force-restarted
         via RestartForceExitStatus, but without SuccessExitStatus=75 too, systemd still

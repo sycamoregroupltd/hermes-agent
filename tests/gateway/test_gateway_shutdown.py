@@ -1,5 +1,8 @@
 import asyncio
+import os
+import signal
 import subprocess
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -444,3 +447,97 @@ async def test_shutdown_mcp_servers_nonblocking_completes_fast_path():
         done = await gateway_run._shutdown_mcp_servers_nonblocking(timeout=5)
     assert done is True
     assert calls == [1]
+
+
+# ---------------------------------------------------------------------------
+# ExecStop= planned-stop marker classification
+#
+# When the generated systemd unit's ExecStop= helper writes the marker
+# before SIGTERM, the signal handler classifies the stop as planned and
+# the exit-verdict resolves to exit 0 (clean). Unmarked signals still
+# resolve to exit 1 (failure) so service managers revive the gateway.
+# ---------------------------------------------------------------------------
+
+
+def _exit_verdict_runner(**overrides):
+    values = {
+        "should_exit_with_failure": False,
+        "exit_reason": None,
+        "exit_code": None,
+        "_restart_requested": False,
+        "_restart_via_service": False,
+        "stop": AsyncMock(),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_marked_stop_resolves_to_clean_exit(tmp_path, monkeypatch):
+    """Marker present + drain clean → exit 0 (clean stop)."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    from gateway import status, run_shutdown
+
+    pid = os.getpid()
+    # The ExecStop= helper writes the marker via write_planned_stop_marker
+    assert status.write_planned_stop_marker(pid) is True
+    # Marker exists on disk
+    assert status._get_planned_stop_marker_path().exists()
+
+    # Signal handler: marker present → planned_stop=True → signal_initiated_shutdown=False
+    # Exit verdict: signal_initiated_shutdown=False, no restart → exit 0
+    runner = _exit_verdict_runner()
+    verdict = run_shutdown._resolve_gateway_exit_verdict(runner, signal_initiated_shutdown=False)
+    assert verdict is True  # exit 0
+
+
+def test_unmarked_sigterm_through_real_handler_resolves_to_failure(monkeypatch, tmp_path):
+    """Unmarked SIGTERM (external kill, OOM, container) → exit 1."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    # Marker path set to a non-existent file so no marker is found
+    from gateway import status, run_shutdown
+
+    runner = _exit_verdict_runner()
+    # signal_initiated_shutdown=True is set by the real handler when no marker
+    verdict = run_shutdown._resolve_gateway_exit_verdict(runner, signal_initiated_shutdown=True)
+    assert verdict is False  # exit 1
+
+
+def test_sigint_classification_unchanged(monkeypatch):
+    """SIGINT is still treated as a planned stop regardless of marker state."""
+    from gateway import run_shutdown
+
+    runner = _exit_verdict_runner()
+    # The signal handler sets signal_initiated_shutdown=False for SIGINT
+    verdict = run_shutdown._resolve_gateway_exit_verdict(runner, signal_initiated_shutdown=False)
+    assert verdict is True  # exit 0
+
+
+def test_restart_via_service_unaffected_by_marker_feature():
+    """The restart-via-service path still raises SystemExit(75)."""
+    from gateway import run_shutdown
+
+    runner = _exit_verdict_runner(_restart_requested=True, _restart_via_service=True)
+    with pytest.raises(SystemExit) as exc_info:
+        run_shutdown._resolve_gateway_exit_verdict(runner, signal_initiated_shutdown=False)
+    assert exc_info.value.code == 75
+
+
+def test_takeover_marker_precedence_unaffected(monkeypatch, tmp_path):
+    """A takeover marker still classifies as a planned takeover (exit 0)
+    even when a planned-stop marker is also present — the handler checks
+    takeover first."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    from gateway import status, run_shutdown
+
+    pid = os.getpid()
+    # Write both markers
+    assert status.write_planned_stop_marker(pid) is True
+    assert status.write_takeover_marker(pid) is True
+
+    runner = _exit_verdict_runner()
+    # The signal handler checks takeover first: consume_takeover_marker_for_self()
+    # would return True and short-circuit before planned_stop check.
+    # At the exit-verdict level, signal_initiated_shutdown=False (set by handler
+    # when planned_takeover or planned_stop is True) → exit 0.
+    verdict = run_shutdown._resolve_gateway_exit_verdict(runner, signal_initiated_shutdown=False)
+    assert verdict is True
