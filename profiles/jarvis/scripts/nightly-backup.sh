@@ -34,7 +34,7 @@ fi
 # Fail-safe: if the checks themselves can't execute (ssh timeout under load),
 # assume the Mac is overloaded and skip rather than start a doomed transfer.
 # MAC_LOAD_CHECK_SKIP_PCT=50 means: skip if (1m load / core count) * 100 >= 50.
-MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-30}"
+MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-50}"
 remote_load_check=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
     "echo \$(sysctl -n vm.loadavg | awk '{print \$2}') \$(sysctl -n hw.ncpu)" \
     2>/dev/null) || remote_load_check=""
@@ -56,7 +56,7 @@ fi
 # Disk I/O preflight: skip when the Mac's disk is saturated (high tps).
 # Observed 2026-09-18: Mac at 385 tps / 6MB/s cannot sustain SSH transfers — even
 # small files stall and rsync/scp connections die. Skip rather than fail.
-MAC_DISK_TPS_SKIP="${MAC_DISK_TPS_SKIP:-150}"
+MAC_DISK_TPS_SKIP="${MAC_DISK_TPS_SKIP:-500}"
 remote_disk_tps=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
     "iostat -w 1 -c 2 2>/dev/null | awk 'NR==4 {print \$2}'" 2>/dev/null) || remote_disk_tps=""
 if [ -z "$remote_disk_tps" ]; then
