@@ -53,22 +53,7 @@ if [ -n "$remote_ncpu" ] && [ "$remote_ncpu" -gt 0 ] 2>/dev/null; then
         exit 0
     fi
 fi
-# Disk I/O preflight: skip when the Mac's disk is saturated (high tps).
-# Observed 2026-09-18: Mac at 385 tps / 6MB/s cannot sustain SSH transfers — even
-# small files stall and rsync/scp connections die. Skip rather than fail.
-MAC_DISK_TPS_SKIP="${MAC_DISK_TPS_SKIP:-500}"
-remote_disk_tps=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
-    "iostat -w 1 -c 2 2>/dev/null | awk 'NR==4 {print \$2}'" 2>/dev/null) || remote_disk_tps=""
-if [ -z "$remote_disk_tps" ]; then
-    echo "BACKUP DISK CHECK SKIP: could not read Mac disk I/O (ssh failed) — skipping transfer."
-    echo "[SILENT] nightly backup disk-check-skipped ($TS)"
-    exit 0
-fi
-if [[ "$remote_disk_tps" =~ ^[0-9]+$ ]] && [ "$remote_disk_tps" -ge "$MAC_DISK_TPS_SKIP" ]; then
-    echo "BACKUP DISK I/O SKIP: Mac disk ${remote_disk_tps} tps >= ${MAC_DISK_TPS_SKIP} tps threshold — skipping transfer, will retry next run."
-    echo "[SILENT] nightly backup disk-skipped ($TS)"
-    exit 0
-fi
+
 DEST="$HOME/fleet-backups/$TS"
 mkdir -p "$DEST"
 
