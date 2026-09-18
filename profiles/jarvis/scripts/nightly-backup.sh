@@ -30,21 +30,44 @@ fi
 # likely be lower next night. This is distinct from the disk-headroom preflight
 # above, which exits 1 (real failure) because a full disk needs intervention.
 # MAC_LOAD_CHECK_SKIP_PCT=80 means: skip if (1m load / core count) * 100 >= 80.
-MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-80}"
+# Load + I/O preflight: skip when Mac is too loaded to accept transfers.
+# Fail-safe: if the checks themselves can't execute (ssh timeout under load),
+# assume the Mac is overloaded and skip rather than start a doomed transfer.
+# MAC_LOAD_CHECK_SKIP_PCT=25 means: skip if (1m load / core count) * 100 >= 25.
+MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-25}"
 remote_load_check=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
     "echo \$(sysctl -n vm.loadavg | awk '{print \$2}') \$(sysctl -n hw.ncpu)" \
     2>/dev/null) || remote_load_check=""
-if [ -n "$remote_load_check" ]; then
-    remote_load_1m=$(echo "$remote_load_check" | awk '{print $1}')
-    remote_ncpu=$(echo "$remote_load_check" | awk '{print $2}')
-    if [ -n "$remote_ncpu" ] && [ "$remote_ncpu" -gt 0 ] 2>/dev/null; then
-        load_pct=$(echo "$remote_load_1m $remote_ncpu" | awk '{printf "%d", ($1/$2)*100}')
-        if [ -n "$load_pct" ] && [ "$load_pct" -ge "$MAC_LOAD_CHECK_SKIP_PCT" ] 2>/dev/null; then
-            echo "BACKUP LOAD SKIP: Mac load/core ${load_pct}% (load=${remote_load_1m}, cores=${remote_ncpu}) >= ${MAC_LOAD_CHECK_SKIP_PCT}% threshold — skipping transfer, will retry next run."
-            echo "[SILENT] nightly backup load-skipped ($TS)"
-            exit 0
-        fi
+if [ -z "$remote_load_check" ]; then
+    echo "BACKUP LOAD CHECK SKIP: could not read Mac load (ssh failed/timeout) — Mac likely overloaded, skipping transfer."
+    echo "[SILENT] nightly backup load-check-skipped ($TS)"
+    exit 0
+fi
+remote_load_1m=$(echo "$remote_load_check" | awk '{print $1}')
+remote_ncpu=$(echo "$remote_load_check" | awk '{print $2}')
+if [ -n "$remote_ncpu" ] && [ "$remote_ncpu" -gt 0 ] 2>/dev/null; then
+    load_pct=$(echo "$remote_load_1m $remote_ncpu" | awk '{printf "%d", ($1/$2)*100}')
+    if [ -n "$load_pct" ] && [ "$load_pct" -ge "$MAC_LOAD_CHECK_SKIP_PCT" ] 2>/dev/null; then
+        echo "BACKUP LOAD SKIP: Mac load/core ${load_pct}% (load=${remote_load_1m}, cores=${remote_ncpu}) >= ${MAC_LOAD_CHECK_SKIP_PCT}% threshold — skipping transfer, will retry next run."
+        echo "[SILENT] nightly backup load-skipped ($TS)"
+        exit 0
     fi
+fi
+# Disk I/O preflight: skip when the Mac's disk is saturated (high tps).
+# Observed 2026-09-18: Mac at 385 tps / 6MB/s cannot sustain SSH transfers — even
+# small files stall and rsync/scp connections die. Skip rather than fail.
+MAC_DISK_TPS_SKIP="${MAC_DISK_TPS_SKIP:-200}"
+remote_disk_tps=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
+    "iostat -w 1 -c 2 2>/dev/null | awk 'NR==4 {print \$2}'" 2>/dev/null) || remote_disk_tps=""
+if [ -z "$remote_disk_tps" ]; then
+    echo "BACKUP DISK CHECK SKIP: could not read Mac disk I/O (ssh failed) — skipping transfer."
+    echo "[SILENT] nightly backup disk-check-skipped ($TS)"
+    exit 0
+fi
+if [[ "$remote_disk_tps" =~ ^[0-9]+$ ]] && [ "$remote_disk_tps" -ge "$MAC_DISK_TPS_SKIP" ]; then
+    echo "BACKUP DISK I/O SKIP: Mac disk ${remote_disk_tps} tps >= ${MAC_DISK_TPS_SKIP} tps threshold — skipping transfer, will retry next run."
+    echo "[SILENT] nightly backup disk-skipped ($TS)"
+    exit 0
 fi
 DEST="$HOME/fleet-backups/$TS"
 mkdir -p "$DEST"
@@ -205,7 +228,7 @@ if ssh mac true 2>/dev/null; then
     if [ -f "$HOME/fleet-backups/$TS/hermes-state.tar.gz" ]; then
         chunk_dir="$HOME/fleet-backups/$TS/hermes-state.parts"
         mkdir -p "$chunk_dir"
-        split -b 20m "$HOME/fleet-backups/$TS/hermes-state.tar.gz" "$chunk_dir/chunk-"
+        split -b 5m "$HOME/fleet-backups/$TS/hermes-state.tar.gz" "$chunk_dir/chunk-"
         # HARDENED 2026-09-18 (t_64f652ce): the previous approach sent ALL chunks over ONE
         # rsync/SSH connection. IPv6 endpoint roaming on the Mac kills the entire SSH session,
         # so every in-progress chunk transfer died and the whole batch restarted from 0.
@@ -217,7 +240,7 @@ if ssh mac true 2>/dev/null; then
         echo "hermes-state split into $chunk_count chunks — pushing per-chunk (independent ssh)..."
         # Per-chunk retry budget: each chunk gets up to 5 attempts. Total wall time bounded by
         # the 10800s cron timeout; per-chunk --timeout=120 caps a stalled single-chunk transfer.
-        CHUNK_MAX_RETRIES=5
+        CHUNK_MAX_RETRIES=8
         all_landed=0
         for c in "$chunk_dir"/chunk-*; do
             cname=$(basename "$c")
