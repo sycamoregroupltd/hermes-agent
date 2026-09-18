@@ -7,7 +7,7 @@ TS=$(date +%Y%m%d-%H%M%S)
 # exhausted. This is alert-only; cleanup, process termination, and reboot stay Frank-gated.
 REMOTE_MIN_FREE_GB="${REMOTE_MIN_FREE_GB:-10}"
 REMOTE_MAX_USED_PCT="${REMOTE_MAX_USED_PCT:-99}"
-remote_df=$(ssh mac "df -kP ~" 2>/dev/null | awk 'NR==2 {print $4, $5}') || remote_df=""
+remote_df=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac "df -kP ~" 2>/dev/null | awk 'NR==2 {print $4, $5}') || remote_df=""
 if [ -z "$remote_df" ]; then
     echo "BACKUP PREFLIGHT FAILED: cannot read Mac filesystem headroom; refusing to create a snapshot."
     exit 1
@@ -34,8 +34,8 @@ fi
 # Fail-safe: if the checks themselves can't execute (ssh timeout under load),
 # assume the Mac is overloaded and skip rather than start a doomed transfer.
 # MAC_LOAD_CHECK_SKIP_PCT=50 means: skip if (1m load / core count) * 100 >= 50.
-MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-50}"
-remote_load_check=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
+MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-30}"
+remote_load_check=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
     "echo \$(sysctl -n vm.loadavg | awk '{print \$2}') \$(sysctl -n hw.ncpu)" \
     2>/dev/null) || remote_load_check=""
 if [ -z "$remote_load_check" ]; then
@@ -56,8 +56,8 @@ fi
 # Disk I/O preflight: skip when the Mac's disk is saturated (high tps).
 # Observed 2026-09-18: Mac at 385 tps / 6MB/s cannot sustain SSH transfers — even
 # small files stall and rsync/scp connections die. Skip rather than fail.
-MAC_DISK_TPS_SKIP="${MAC_DISK_TPS_SKIP:-200}"
-remote_disk_tps=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
+MAC_DISK_TPS_SKIP="${MAC_DISK_TPS_SKIP:-150}"
+remote_disk_tps=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
     "iostat -w 1 -c 2 2>/dev/null | awk 'NR==4 {print \$2}'" 2>/dev/null) || remote_disk_tps=""
 if [ -z "$remote_disk_tps" ]; then
     echo "BACKUP DISK CHECK SKIP: could not read Mac disk I/O (ssh failed) — skipping transfer."
@@ -100,11 +100,11 @@ prune_keep() {  # $1=root  $2=keep count  $3=label
 # LOCAL_KEEP default 7 (was 14): ~8.6G/night x 14 ~120G on DGX; Isolation-safe reclaim 2026-09-05.
 LOCAL_KEEP="${LOCAL_KEEP:-7}"
 prune_keep "$HOME/fleet-backups" "$LOCAL_KEEP" local
-ssh mac 'cd ~/dgx-fleet-backups 2>/dev/null || exit 0
+ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac 'cd ~/dgx-fleet-backups 2>/dev/null || exit 0
     ls -1d 20*/ 2>/dev/null | sed "s#/\$##" | sort -r | tail -n +3 | while read -r d; do
         [ -n "$d" ] && rm -rf "./${d:?}" && echo "  pruned remote $d"
     done' 2>/dev/null \
-    || echo "WARNING: remote retention prune failed — check ssh mac df -h \~"
+    || echo "WARNING: remote retention prune failed — check ssh mac df -h ~"
 
 for b in upero sycode-ai sycode-trading jarvis-os; do
     db="$HOME/.hermes/kanban/boards/$b/kanban.db"
@@ -195,20 +195,20 @@ done
 #   * --partial              -> keep partially-transferred files on interrupt (openrsync receiver: no --append support)
 #   * bounded retry loop     -> rides out transient Tailscale stalls (3 attempts, 60s backoff)
 #   * remote size check      -> verify the tars landed with matching sizes; fail loudly if not
-if ssh mac true 2>/dev/null; then
+if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
     # SLIM 2026-09-06: push small artifacts first (kanban + fleet vault), then hermes-state.
     # Observed 20260906-043055: whole-dir rsync spent the 7200s budget on hermes-state.tar.gz
     # (~4.5G @ ~1MB/s) and Mac only received a partial hermes-state; vault+kanban never landed.
     push_ok=0
     remote_root="dgx-fleet-backups/$TS"
-    ssh mac "mkdir -p ~/$remote_root" 2>/dev/null || true
+    ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac "mkdir -p ~/$remote_root" 2>/dev/null || true
     # Phase A — small/critical first
     smalls=()
     for f in "$HOME/fleet-backups/$TS"/kanban-*.db "$HOME/fleet-backups/$TS"/obsidian-fleet-vault.tar.gz "$HOME/fleet-backups/$TS"/obsidian.tar.gz; do
         [ -f "$f" ] && smalls+=("$f")
     done
     if [ ${#smalls[@]} -gt 0 ]; then
-        if ! rsync -a --timeout=300 --partial "${smalls[@]}" "mac:$remote_root/"; then
+        if ! rsync -4 -a --timeout=300 --partial "${smalls[@]}" "mac:$remote_root/"; then
             echo "WARNING: phase-A small-file rsync failed — continuing to hermes-state attempts" >&2
         else
             echo "phase-A pushed ${#smalls[@]} small artifact(s) to mac:$remote_root/"
@@ -228,7 +228,7 @@ if ssh mac true 2>/dev/null; then
     if [ -f "$HOME/fleet-backups/$TS/hermes-state.tar.gz" ]; then
         chunk_dir="$HOME/fleet-backups/$TS/hermes-state.parts"
         mkdir -p "$chunk_dir"
-        split -b 5m "$HOME/fleet-backups/$TS/hermes-state.tar.gz" "$chunk_dir/chunk-"
+        split -b 1m "$HOME/fleet-backups/$TS/hermes-state.tar.gz" "$chunk_dir/chunk-"
         # HARDENED 2026-09-18 (t_64f652ce): the previous approach sent ALL chunks over ONE
         # rsync/SSH connection. IPv6 endpoint roaming on the Mac kills the entire SSH session,
         # so every in-progress chunk transfer died and the whole batch restarted from 0.
@@ -240,7 +240,7 @@ if ssh mac true 2>/dev/null; then
         echo "hermes-state split into $chunk_count chunks — pushing per-chunk (independent ssh)..."
         # Per-chunk retry budget: each chunk gets up to 5 attempts. Total wall time bounded by
         # the 10800s cron timeout; per-chunk --timeout=120 caps a stalled single-chunk transfer.
-        CHUNK_MAX_RETRIES=8
+        CHUNK_MAX_RETRIES=15
         all_landed=0
         for c in "$chunk_dir"/chunk-*; do
             cname=$(basename "$c")
@@ -248,17 +248,17 @@ if ssh mac true 2>/dev/null; then
             landed=0
             for retry in $(seq 1 $CHUNK_MAX_RETRIES); do
                 # Check if this chunk already landed on a previous run
-                rsz=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
+                rsz=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
                     "stat -f %z ~/$remote_root/hermes-state.parts/$cname 2>/dev/null || echo 0" 2>/dev/null || echo 0)
                 if [ "$lsz" = "$rsz" ]; then
                     landed=1
                     break
                 fi
-                if scp -o ConnectTimeout=10 -o BatchMode=yes -o ServerAliveInterval=15 \
-                    -o ServerAliveCountMax=8 -o IPQoS=throughput \
+                if scp -4 -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=10 \
+                    -o ServerAliveCountMax=6 -o IPQoS=throughput \
                     "$c" "mac:$remote_root/hermes-state.parts/$cname" 2>/dev/null; then
                     # Verify post-landing
-                    rsz2=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
+                    rsz2=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
                         "stat -f %z ~/$remote_root/hermes-state.parts/$cname 2>/dev/null || echo 0" 2>/dev/null || echo 0)
                     if [ "$lsz" = "$rsz2" ]; then
                         landed=1
@@ -278,9 +278,9 @@ if ssh mac true 2>/dev/null; then
         if [ "$all_landed" -eq 1 ]; then
             # Reassemble remotely and verify final size
             local_total_sz=$(stat -c %s "$HOME/fleet-backups/$TS/hermes-state.tar.gz")
-            if ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
+            if ssh -4 -o ConnectTimeout=30 -o BatchMode=yes mac \
                 "cat ~/$remote_root/hermes-state.parts/chunk-* > ~/$remote_root/hermes-state.tar.gz && rm -rf ~/$remote_root/hermes-state.parts" 2>/dev/null; then
-                remote_total_sz=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
+                remote_total_sz=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
                     "stat -f %z ~/$remote_root/hermes-state.tar.gz 2>/dev/null || echo 0" 2>/dev/null || echo 0)
                 if [ "$local_total_sz" = "$remote_total_sz" ]; then
                     push_ok=1
@@ -329,7 +329,7 @@ else
 fi
 
 # Report remaining remote headroom so exhaustion is visible BEFORE it breaks the backup.
-avail=$(ssh mac "df -g ~ | awk 'NR==2{print \$4}'" 2>/dev/null || echo "")
+avail=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac "df -g ~ | awk 'NR==2{print \$4}'" 2>/dev/null || echo "")
 if [ -n "$avail" ] && [ "$avail" -lt 20 ] 2>/dev/null; then
     echo "BACKUP REMOTE LOW SPACE: mac has ${avail}G free; a night is ~3-4G (fleet vault; personal obsidian skipped by default). Prune dgx-fleet-backups or reduce retention."
 fi
