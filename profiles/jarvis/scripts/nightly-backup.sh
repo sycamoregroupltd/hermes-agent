@@ -217,7 +217,7 @@ push_ok=0
 if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac "mkdir -p ~/$REMOTE_ROOT" 2>/dev/null; then
     echo "Triggering Mac pull of $TS via HTTP range-pull..."
     if ssh -4 -o ConnectTimeout=30 -o BatchMode=yes mac \
-        "$HOME/dgx-fleet-backups/dgx-pull-snapshot.sh $TS $TS_IP"; then
+        "~/$REMOTE_ROOT/dgx-pull-snapshot.sh $TS $TS_IP"; then
         push_ok=1
         echo "Mac pull completed successfully (all files verified)"
     else
