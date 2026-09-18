@@ -228,7 +228,7 @@ if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
     if [ -f "$HOME/fleet-backups/$TS/hermes-state.tar.gz" ]; then
         chunk_dir="$HOME/fleet-backups/$TS/hermes-state.parts"
         mkdir -p "$chunk_dir"
-        split -b 1m "$HOME/fleet-backups/$TS/hermes-state.tar.gz" "$chunk_dir/chunk-"
+        split -b 500k "$HOME/fleet-backups/$TS/hermes-state.tar.gz" "$chunk_dir/chunk-"
         # HARDENED 2026-09-18 (t_64f652ce): the previous approach sent ALL chunks over ONE
         # rsync/SSH connection. IPv6 endpoint roaming on the Mac kills the entire SSH session,
         # so every in-progress chunk transfer died and the whole batch restarted from 0.
@@ -240,7 +240,7 @@ if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
         echo "hermes-state split into $chunk_count chunks — pushing per-chunk (independent ssh)..."
         # Per-chunk retry budget: each chunk gets up to 5 attempts. Total wall time bounded by
         # the 10800s cron timeout; per-chunk --timeout=120 caps a stalled single-chunk transfer.
-        CHUNK_MAX_RETRIES=15
+        CHUNK_MAX_RETRIES=20
         all_landed=0
         for c in "$chunk_dir"/chunk-*; do
             cname=$(basename "$c")
@@ -254,8 +254,8 @@ if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
                     landed=1
                     break
                 fi
-                if scp -4 -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=10 \
-                    -o ServerAliveCountMax=6 -o IPQoS=throughput \
+                if scp -4 -o ConnectTimeout=3 -o BatchMode=yes -o ServerAliveInterval=5 \
+                    -o ServerAliveCountMax=4 -o IPQoS=throughput \
                     "$c" "mac:$remote_root/hermes-state.parts/$cname" 2>/dev/null; then
                     # Verify post-landing
                     rsz2=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
@@ -265,8 +265,8 @@ if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
                         break
                     fi
                 fi
-                echo "  chunk $cname attempt $retry/$CHUNK_MAX_RETRIES failed — sleeping 30s" >&2
-                sleep 30
+                echo "  chunk $cname attempt $retry/$CHUNK_MAX_RETRIES failed — sleeping 10s" >&2
+                sleep 10
             done
             if [ "$landed" -ne 1 ]; then
                 echo "CHUNK FAILED: $cname did not land after $CHUNK_MAX_RETRIES attempts" >&2
@@ -274,6 +274,7 @@ if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
                 break
             fi
             all_landed=1
+            sleep 2
         done
         if [ "$all_landed" -eq 1 ]; then
             # Reassemble remotely and verify final size
