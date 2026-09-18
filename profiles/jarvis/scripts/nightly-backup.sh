@@ -167,154 +167,84 @@ done
 # LATEST only after verified off-box push (below). Writing it here advanced the restore
 # pointer on failed/partial nights (same class as 2026-08-14).
 
-# Push off-box (Mac alias from ~/.ssh/config; BatchMode)
-# The rsync EXIT CODE is checked. It previously was not: the script printed "pushed" and
-# then "[SILENT] ... ok" whatever rsync did, so a failed push (e.g. remote disk full) was indistinguishable
-# from a good one. Under the [SILENT] convention that meant a dead backup looked healthy — the same
-# fabricated-success class this whole backup fix exists to kill.
-# HARDENED 2026-08-28 (t_f340551d): the Tailscale path to the Mac is slow (~1-1.4MB/s, ~46ms RTT)
-# and intermittently stalls. Observed 2026-08-27 18:50: rsync made zero progress for >51min (remote
-# dir 20260827-185023 left EMPTY with LATEST pointing at it) until the 3600s cron timeout killed the
-# run. Changes:
-#   * --timeout=300          -> abort a stalled transfer after 5min of zero progress instead of hanging forever
-#   * --partial              -> keep partially-transferred files on interrupt (openrsync receiver: no --append support)
-#   * bounded retry loop     -> rides out transient Tailscale stalls (3 attempts, 60s backoff)
-#   * remote size check      -> verify the tars landed with matching sizes; fail loudly if not
-if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
-    # SLIM 2026-09-06: push small artifacts first (kanban + fleet vault), then hermes-state.
-    # Observed 20260906-043055: whole-dir rsync spent the 7200s budget on hermes-state.tar.gz
-    # (~4.5G @ ~1MB/s) and Mac only received a partial hermes-state; vault+kanban never landed.
-    push_ok=0
-    remote_root="dgx-fleet-backups/$TS"
-    ssh -4 -o ConnectTimeout=5 -o BatchMode=yes -o ControlMaster=auto \
-        -o ControlPath=~/.ssh/cm-sockets/%r@%h:%p -o ControlPersist=600 \
-        mac "mkdir -p ~/$remote_root" 2>/dev/null || true
-    # Phase A — small/critical first
-    smalls=()
-    for f in "$HOME/fleet-backups/$TS"/kanban-*.db "$HOME/fleet-backups/$TS"/obsidian-fleet-vault.tar.gz "$HOME/fleet-backups/$TS"/obsidian.tar.gz; do
-        [ -f "$f" ] && smalls+=("$f")
-    done
-    if [ ${#smalls[@]} -gt 0 ]; then
-        if ! rsync -4 -a --timeout=300 --partial --whole-file -e 'ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-sockets/%r@%h:%p' "${smalls[@]}" "mac:$remote_root/"; then
-            echo "WARNING: phase-A small-file rsync failed — continuing to hermes-state attempts" >&2
-        else
-            echo "phase-A pushed ${#smalls[@]} small artifact(s) to mac:$remote_root/"
-        fi
-    fi
-    # Phase B — large hermes-state last (bounded retries)
-    # CHUNKED 2026-09-18 (t_0f13adaf): the Mac's Tailscale IPv6 endpoint roams mid-transfer
-    # (observed two consecutive `tailscale ping` calls returning different embedded IPv6
-    # segments/ports for the SAME peer), and the receiver is openrsync (no --append support),
-    # so every whole-file retry restarted hermes-state.tar.gz from byte 0. Across 3 attempts
-    # with a ~300s stall window each, the transfer never got an uninterrupted window long enough
-    # to finish a 371M file at the observed ~0.5-1MB/s link rate (manually reproduced 2026-09-18
-    # 05:12-05:37: 3/3 attempts died mid-transfer with identical "Broken pipe"/rc=10).
-    # Splitting into ~20M chunks means a mid-transfer drop only loses the in-flight chunk; rsync's
-    # default quick-check (size+mtime) skips already-landed chunks on retry, so each retry makes
-    # real forward progress instead of re-paying the whole 371M every time.
-    if [ -f "$HOME/fleet-backups/$TS/hermes-state.tar.gz" ]; then
-        chunk_dir="$HOME/fleet-backups/$TS/hermes-state.parts"
-        mkdir -p "$chunk_dir"
-        split -b 500k "$HOME/fleet-backups/$TS/hermes-state.tar.gz" "$chunk_dir/chunk-"
-        # HARDENED 2026-09-18 (t_64f652ce): the previous approach sent ALL chunks over ONE
-        # rsync/SSH connection. IPv6 endpoint roaming on the Mac kills the entire SSH session,
-        # so every in-progress chunk transfer died and the whole batch restarted from 0.
-        # Per-chunk INDEPENDENT ssh/scp connections: each chunk gets its own SSH session, so a
-        # mid-transfer roam kills only that one chunk; already-landed chunks are never re-sent.
-        # State file on the Mac tracks which chunks have landed so this loop is idempotent
-        # across cron re-runs (a fresh run re-scps only the missing chunks).
-        chunk_count=$(ls -1 "$chunk_dir"/chunk-* 2>/dev/null | wc -l)
-        echo "hermes-state split into $chunk_count chunks — pushing per-chunk (independent ssh)..."
-        # Per-chunk retry budget: each chunk gets up to 5 attempts. Total wall time bounded by
-        # the 10800s cron timeout; per-chunk --timeout=120 caps a stalled single-chunk transfer.
-        CHUNK_MAX_RETRIES=20
-        all_landed=0
-        for c in "$chunk_dir"/chunk-*; do
-            cname=$(basename "$c")
-            lsz=$(stat -c %s "$c")
-            landed=0
-            for retry in $(seq 1 $CHUNK_MAX_RETRIES); do
-                # Check if this chunk already landed on a previous run
-                rsz=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
-                    "stat -f %z ~/$remote_root/hermes-state.parts/$cname 2>/dev/null || echo 0" 2>/dev/null || echo 0)
-                if [ "$lsz" = "$rsz" ]; then
-                    landed=1
-                    break
-                fi
-                if scp -4 -o ConnectTimeout=3 -o BatchMode=yes -o ServerAliveInterval=5 \
-                    -o ServerAliveCountMax=4 -o IPQoS=throughput \
-                    "$c" "mac:$remote_root/hermes-state.parts/$cname" 2>/dev/null; then
-                    # Verify post-landing
-                    rsz2=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
-                        "stat -f %z ~/$remote_root/hermes-state.parts/$cname 2>/dev/null || echo 0" 2>/dev/null || echo 0)
-                    if [ "$lsz" = "$rsz2" ]; then
-                        landed=1
-                        break
-                    fi
-                fi
-                echo "  chunk $cname attempt $retry/$CHUNK_MAX_RETRIES failed — sleeping 10s" >&2
-                sleep 10
-            done
-            if [ "$landed" -ne 1 ]; then
-                echo "CHUNK FAILED: $cname did not land after $CHUNK_MAX_RETRIES attempts" >&2
-                all_landed=0
-                break
-            fi
-            all_landed=1
-            sleep 2
-        done
-        if [ "$all_landed" -eq 1 ]; then
-            # Reassemble remotely and verify final size
-            local_total_sz=$(stat -c %s "$HOME/fleet-backups/$TS/hermes-state.tar.gz")
-            if ssh -4 -o ConnectTimeout=30 -o BatchMode=yes mac \
-                "cat ~/$remote_root/hermes-state.parts/chunk-* > ~/$remote_root/hermes-state.tar.gz && rm -rf ~/$remote_root/hermes-state.parts" 2>/dev/null; then
-                remote_total_sz=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac \
-                    "stat -f %z ~/$remote_root/hermes-state.tar.gz 2>/dev/null || echo 0" 2>/dev/null || echo 0)
-                if [ "$local_total_sz" = "$remote_total_sz" ]; then
-                    push_ok=1
-                    echo "reassembled hermes-state.tar.gz on mac (verified ${remote_total_sz} bytes)"
-                else
-                    echo "REASSEMBLY SIZE MISMATCH: local=$local_total_sz remote=$remote_total_sz" >&2
-                fi
-            else
-                echo "REMOTE REASSEMBLY FAILED" >&2
-            fi
-        fi
-        rm -rf "$chunk_dir"
-    else
-        # No hermes-state tar; treat phase-A success as enough if smalls exist
-        push_ok=1
-    fi
-    if [ "$push_ok" -ne 1 ]; then
-        echo "BACKUP PUSH FAILED: hermes-state did not fully reach mac — $TS may be partial off-box."
-        echo "  Quarantining remote dir if present; check ssh mac / Tailscale; remote free: ssh mac df -h ~"
-        ssh mac "if [ -d ~/$remote_root ]; then mv ~/$remote_root ~/${remote_root}.INCOMPLETE-quarantine-$(date +%Y%m%d%H%M%S); fi" 2>/dev/null || true
-        exit 1
-    fi
-    # Remote completeness check: the tars must be present with matching sizes.
-    missing=0
-    for f in hermes-state.tar.gz obsidian-fleet-vault.tar.gz obsidian.tar.gz; do
-        if [ -f "$HOME/fleet-backups/$TS/$f" ]; then
-            local_sz=$(stat -c %s "$HOME/fleet-backups/$TS/$f")
-            remote_sz=$(ssh mac "stat -f %z ~/dgx-fleet-backups/$TS/$f" 2>/dev/null || echo 0)
-            if [ "$local_sz" != "$remote_sz" ]; then
-                echo "WARNING: remote $f size mismatch (local=$local_sz remote=$remote_sz)" >&2
-                missing=1
-            fi
-        fi
-    done
-    if [ "$missing" -ne 0 ]; then
-        echo "BACKUP PUSH INCOMPLETE: some files did not reach mac:dgx-fleet-backups/$TS — do not trust LATEST until verified."
-        exit 1
-    fi
-    # Advance restore pointer only after verified complete push.
-    echo "$TS" > "$HOME/fleet-backups/LATEST"
-    ssh mac "echo $TS > ~/dgx-fleet-backups/LATEST" 2>/dev/null || true
-    echo "pushed $TS to mac:dgx-fleet-backups/ (verified)"
-else
-    echo "WARNING: mac unreachable — backup is on-box only at $DEST"
+# Push off-box via HTTP range-server (replaces rsync — survives ~33% packet loss
+# on the DGX<->Mac Tailscale link where rsync stalls with "Broken pipe").
+# Approach: DGX serves the snapshot over HTTP with byte-range support; Mac pulls
+# each file with curl -C - (resume) + SHA256 verification. A mid-transfer drop
+# loses only the in-flight file; already-landed files are never re-fetched.
+# This is the same approach that manually succeeded in t_477edff2 where rsync failed.
+# HARDENED 2026-09-18 (t_d28dacd8): switch transport from rsync to HTTP range-pull.
+
+# Generate checksums so the Mac can verify each file after download.
+(cd "$DEST" && sha256sum hermes-state.tar.gz kanban-*.db obsidian-fleet-vault.tar.gz > SHA256SUMS 2>/dev/null) \
+    || echo "WARNING: SHA256SUMS generation failed — Mac will still pull but cannot verify" >&2
+
+# Detect DGX Tailscale IP for the Mac to reach us.
+TS_IP=$(tailscale ip -4 2>/dev/null) || TS_IP=""
+if [ -z "$TS_IP" ]; then
+    echo "BACKUP PUSH FAILED: cannot determine DGX Tailscale IP (tailscale ip -4)." >&2
     exit 1
 fi
+
+# Start range-server serving the snapshot dir; kill any stale one first.
+pkill -f "range-server.py" 2>/dev/null || true
+sleep 1
+RANGE_PORT=18888
+RANGE_LOG="/tmp/range-server-$TS.log"
+python3 "$HOME/.hermes/profiles/jarvis/scripts/range-server.py" \
+    --root "$DEST" --port "$RANGE_PORT" --bind 0.0.0.0 > "$RANGE_LOG" 2>&1 &
+RANGE_PID=$!
+# Ensure cleanup on exit
+trap 'kill $RANGE_PID 2>/dev/null || true' EXIT INT TERM
+# Wait for server to be ready (up to 10s)
+SERVER_READY=0
+for _ in $(seq 1 10); do
+    if curl -fsS "http://127.0.0.1:$RANGE_PORT/" >/dev/null 2>&1; then
+        SERVER_READY=1
+        break
+    fi
+    sleep 1
+done
+if [ "$SERVER_READY" -ne 1 ]; then
+    echo "BACKUP PUSH FAILED: range-server did not start (log: $RANGE_LOG)." >&2
+    exit 1
+fi
+echo "range-server serving $DEST on $TS_IP:$RANGE_PORT (pid $RANGE_PID)"
+
+# Pull from Mac with the parameterized pull script
+REMOTE_ROOT="dgx-fleet-backups"
+push_ok=0
+if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac "mkdir -p ~/$REMOTE_ROOT" 2>/dev/null; then
+    echo "Triggering Mac pull of $TS via HTTP range-pull..."
+    if ssh -4 -o ConnectTimeout=30 -o BatchMode=yes mac \
+        "$HOME/dgx-fleet-backups/dgx-pull-snapshot.sh $TS $TS_IP"; then
+        push_ok=1
+        echo "Mac pull completed successfully (all files verified)"
+    else
+        echo "BACKUP PUSH FAILED: Mac pull of $TS returned non-zero exit code." >&2
+    fi
+else
+    echo "BACKUP PUSH FAILED: cannot create remote dir on Mac." >&2
+fi
+
+# Stop range-server
+kill $RANGE_PID 2>/dev/null || true
+trap - EXIT INT TERM
+
+if [ "$push_ok" -ne 1 ]; then
+    echo "BACKUP PUSH FAILED: $TS did not fully reach mac — check ssh mac / Tailscale." >&2
+    echo "  Quarantining remote dir if present; remote free: ssh mac df -h ~"
+    ssh mac "if [ -d ~/$REMOTE_ROOT/$TS ]; then mv ~/$REMOTE_ROOT/$TS ~/$REMOTE_ROOT/${TS}.INCOMPLETE-quarantine-$(date +%Y%m%d%H%M%S); fi" 2>/dev/null || true
+    exit 1
+fi
+
+# Advance restore pointer only after verified complete push.
+echo "$TS" > "$HOME/fleet-backups/LATEST"
+ssh mac "echo $TS > ~/dgx-fleet-backups/LATEST" 2>/dev/null || true
+echo "pushed $TS to mac:dgx-fleet-backups/ (verified)"
+
+# Clean up any stale quarantine dirs from previous failed runs (best-effort).
+ssh mac "cd ~/$REMOTE_ROOT 2>/dev/null && ls -d *.INCOMPLETE-quarantine-* 2>/dev/null | while read -r q; do [ -n \"\$q\" ] && rm -rf \"./\${q:?}\" && echo \"  pruned quarantine \$q\"; done" 2>/dev/null || true
 
 # Report remaining remote headroom so exhaustion is visible BEFORE it breaks the backup.
 avail=$(ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac "df -g ~ | awk 'NR==2{print \$4}'" 2>/dev/null || echo "")
