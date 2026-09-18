@@ -33,8 +33,8 @@ fi
 # Load + I/O preflight: skip when Mac is too loaded to accept transfers.
 # Fail-safe: if the checks themselves can't execute (ssh timeout under load),
 # assume the Mac is overloaded and skip rather than start a doomed transfer.
-# MAC_LOAD_CHECK_SKIP_PCT=15 means: skip if (1m load / core count) * 100 >= 15.
-MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-15}"
+# MAC_LOAD_CHECK_SKIP_PCT=50 means: skip if (1m load / core count) * 100 >= 50.
+MAC_LOAD_CHECK_SKIP_PCT="${MAC_LOAD_CHECK_SKIP_PCT:-50}"
 remote_load_check=$(ssh -o ConnectTimeout=10 -o BatchMode=yes mac \
     "echo \$(sysctl -n vm.loadavg | awk '{print \$2}') \$(sysctl -n hw.ncpu)" \
     2>/dev/null) || remote_load_check=""
