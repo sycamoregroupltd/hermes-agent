@@ -201,14 +201,16 @@ if ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac true 2>/dev/null; then
     # (~4.5G @ ~1MB/s) and Mac only received a partial hermes-state; vault+kanban never landed.
     push_ok=0
     remote_root="dgx-fleet-backups/$TS"
-    ssh -4 -o ConnectTimeout=5 -o BatchMode=yes mac "mkdir -p ~/$remote_root" 2>/dev/null || true
+    ssh -4 -o ConnectTimeout=5 -o BatchMode=yes -o ControlMaster=auto \
+        -o ControlPath=~/.ssh/cm-sockets/%r@%h:%p -o ControlPersist=600 \
+        mac "mkdir -p ~/$remote_root" 2>/dev/null || true
     # Phase A — small/critical first
     smalls=()
     for f in "$HOME/fleet-backups/$TS"/kanban-*.db "$HOME/fleet-backups/$TS"/obsidian-fleet-vault.tar.gz "$HOME/fleet-backups/$TS"/obsidian.tar.gz; do
         [ -f "$f" ] && smalls+=("$f")
     done
     if [ ${#smalls[@]} -gt 0 ]; then
-        if ! rsync -4 -a --timeout=300 --partial "${smalls[@]}" "mac:$remote_root/"; then
+        if ! rsync -4 -a --timeout=300 --partial -e 'ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-sockets/%r@%h:%p' "${smalls[@]}" "mac:$remote_root/"; then
             echo "WARNING: phase-A small-file rsync failed — continuing to hermes-state attempts" >&2
         else
             echo "phase-A pushed ${#smalls[@]} small artifact(s) to mac:$remote_root/"
