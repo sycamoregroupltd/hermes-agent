@@ -403,8 +403,9 @@ class Expected:
     script: str | None = None
     max_age_minutes: int | None = None
     required: bool = True
-    # When a source row was paused by CONDENSE, classify against this exact
-    # runner check rather than treating the intentionally paused row as dead.
+    # When a source row was paused by CONDENSE — or the paused source row was
+    # later pruned — classify against this exact runner check rather than
+    # treating the absorbed mechanism as a missing job.
     bundle_check: str | None = None
 
 
@@ -437,6 +438,13 @@ EXPECTED = [
     Expected("oob-canary", "OOB canary / alertmanager spool drain", "jarvis", name="sycode-alertmanager-oob-spool-drain", max_age_minutes=10),
     Expected("escalation-notifier-critical", "escalation notifier tier: blocked-task critical notifier", "jarvis", name="blocked-task-notifier", max_age_minutes=45),
     Expected("escalation-notifier-service-gate", "escalation notifier tier: service-gate escalation", "jarvis", name="dgx-service-gate-escalation", max_age_minutes=90, bundle_check="dgx-service-gate-escalation"),
+    # ADDITIVE (t_673f6cba): completion-gate latency tripwire consumer. Unlike
+    # the rows above it has no paused CONDENSE source row — it is a brand-new
+    # guard-bundle check. row_for_expected() classifies it by its OWN per-check
+    # state (direct-additive branch); required=False keeps it WARN (visibility)
+    # until the first 15m tick writes per-check state, so landing it cannot
+    # fabricate a DEAD repair card.
+    Expected("completion-gate-latency-watch", "completion-gate latency tripwire consumer (guard-bundle 15m)", "jarvis", name="guard-bundle-tick-15m", bundle_check="gate-kanban-complete-latency-watch", max_age_minutes=30, required=False),
 ]
 
 
@@ -546,27 +554,105 @@ def bundle_row_for_expected(exp: Expected) -> tuple[str, str, dict[str, Any]] | 
     return bundle_name, check_name, match[1]
 
 
+def classify_absorbed_bundle_row(
+    exp: Expected,
+    now: datetime,
+    bundle_name: str,
+    bundle_job: dict[str, Any],
+    reason_prefix: str,
+) -> dict[str, Any]:
+    """Classify an absorbed mechanism by its own guard-bundle check.
+
+    Shared by CONDENSE-paused source rows and by BUNDLE_ALIASES keys whose
+    source row has already been pruned. Per-check state (t_a781c1f2) is the
+    verdict; the bundle job's aggregate last_status stays visibility-only.
+    """
+    check_name = exp.bundle_check or ""
+    check = load_bundle_check(check_name)
+    if check is None:
+        return {
+            "key": exp.key,
+            "label": exp.label,
+            "status": "DEAD",
+            "reason": f"{reason_prefix}: bundle check missing from runner manifest",
+            "expected": exp.__dict__,
+            "bundle_check": exp.bundle_check,
+            "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
+            "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}",
+        }
+    own_state = load_guard_bundle_state()
+    status, reason, age = bundle_check_status(
+        check_name, bundle_job, now, exp.max_age_minutes, state=own_state
+    )
+    check_path = (JARVIS_HOME / "scripts" / str(check.get("script", ""))).resolve()
+    if not check_path.is_file():
+        status, reason = "DEAD", f"bundle check script missing: {check_path}"
+    own_status = own_state.get(f"{check_name}:last_status")
+    own_error = own_state.get(f"{check_name}:last_error")
+    own_ts = own_state.get(check_name)
+    own_last_run_at = None
+    if own_ts:
+        try:
+            own_last_run_at = datetime.fromtimestamp(int(own_ts), timezone.utc).isoformat()
+        except Exception:
+            own_last_run_at = None
+    return {
+        "key": exp.key,
+        "label": exp.label,
+        "status": status,
+        "reason": f"{reason_prefix}: {reason}",
+        "profile": "jarvis",
+        "job_id": bundle_job.get("id"),
+        "job_name": bundle_name,
+        "enabled": bool(bundle_job.get("enabled", True)),
+        "state": bundle_job.get("state"),
+        "schedule": bundle_job.get("schedule_display"),
+        "next_run_at": bundle_job.get("next_run_at"),
+        "last_run_at": own_last_run_at or bundle_job.get("last_run_at"),
+        "last_age_minutes": None if age is None else round(age, 1),
+        "last_status": own_status if own_status is not None else bundle_job.get("last_status"),
+        "last_error": own_error if own_status not in (None, "ok") else None,
+        "bundle_last_run_at": bundle_job.get("last_run_at"),
+        "bundle_last_status": bundle_job.get("last_status"),
+        "bundle_last_error": bundle_job.get("last_error"),
+        "last_delivery_error": bundle_job.get("last_delivery_error"),
+        "script": check.get("script"),
+        "bundle": bundle_name,
+        "bundle_check": exp.bundle_check,
+        "producer": f"{JARVIS_HOME}/scripts/cron_guard_bundle_runner.py:{exp.bundle_check}",
+        "consumer": "local -> /home/frank/.hermes/scripts/report-to-board.py -> jarvis-os -> jarvis-os-pm",
+        "output_artifact": latest_output(str(bundle_job.get("id"))),
+        "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
+        "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}",
+    }
+
+
 def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
     match = find_job(exp.profile, name=exp.name, script=exp.script)
     if match:
         profile, job = match
-        if exp.bundle_check and job.get("state") == "paused" and "CONDENSE 1/4" in str(job.get("paused_reason", "")):
-            bundle_match = bundle_row_for_expected(exp)
+        if exp.bundle_check and job.get("name") == exp.name and str(exp.name).startswith("guard-bundle-tick-"):
+            # ADDITIVE guard-bundle check with no paused CONDENSE source row:
+            # classify the CHECK's OWN recorded state (t_a781c1f2 semantics),
+            # not the whole bundle aggregate. required=False keeps a brand-new
+            # check at WARN (visibility) until its first bundle tick writes
+            # per-check state, so landing it cannot fabricate a DEAD repair card.
+            bundle_name, bundle_job = job.get("name"), job
             check = load_bundle_check(exp.bundle_check)
-            if not bundle_match or check is None:
+            if check is None:
                 return {"key": exp.key, "label": exp.label, "status": "DEAD",
-                        "reason": "condensed source row is paused but bundle check is missing",
+                        "reason": f"additive bundle check missing from runner manifest: {exp.bundle_check}",
                         "expected": exp.__dict__, "bundle_check": exp.bundle_check,
                         "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
                         "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}"}
-            bundle_name, _check_name, bundle_job = bundle_match
-            # t_a781c1f2: classify this check by its OWN per-check state, not
-            # the whole bundle job's aggregate last_status/last_error (that
-            # aggregate reflects ANY check in the bundle, including unrelated
-            # siblings). last_run_at/enabled/paused staleness on the bundle
-            # job itself is still honored inside bundle_check_status.
             own_state = load_guard_bundle_state()
-            status, reason, age = bundle_check_status(exp.bundle_check, bundle_job, now, exp.max_age_minutes, state=own_state)
+            if not own_state.get(exp.bundle_check) and not exp.required:
+                status, reason, age = "WARN", (
+                    f"guard-bundle additive check {bundle_name}/{exp.bundle_check} has no "
+                    "per-check state yet (first 15m tick will populate); visibility only, not DEAD"
+                ), None
+            else:
+                status, reason, age = bundle_check_status(exp.bundle_check, bundle_job, now, exp.max_age_minutes, state=own_state)
             check_path = (JARVIS_HOME / "scripts" / str(check.get("script", ""))).resolve()
             if not check_path.is_file():
                 status, reason = "DEAD", f"bundle check script missing: {check_path}"
@@ -581,14 +667,10 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
                     own_last_run_at = None
             return {
                 "key": exp.key, "label": exp.label, "status": status,
-                "reason": f"condensed into {bundle_name}/{exp.bundle_check}: {reason}",
+                "reason": f"guard-bundle additive check {bundle_name}/{exp.bundle_check}: {reason}",
                 "profile": "jarvis", "job_id": bundle_job.get("id"), "job_name": bundle_name,
                 "enabled": bool(bundle_job.get("enabled", True)), "state": bundle_job.get("state"),
                 "schedule": bundle_job.get("schedule_display"), "next_run_at": bundle_job.get("next_run_at"),
-                # These now reflect the CHECK's own last recorded outcome (the
-                # verdict this row's status is derived from), not the whole
-                # bundle job's aggregate. bundle_last_* below keeps the
-                # aggregate for visibility only.
                 "last_run_at": own_last_run_at or bundle_job.get("last_run_at"),
                 "last_age_minutes": None if age is None else round(age, 1),
                 "last_status": own_status if own_status is not None else bundle_job.get("last_status"),
@@ -603,7 +685,31 @@ def row_for_expected(exp: Expected, now: datetime) -> dict[str, Any]:
                 "output_artifact": latest_output(str(bundle_job.get("id"))),
                 "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
                 "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}"}
+        if exp.bundle_check and job.get("state") == "paused" and "CONDENSE 1/4" in str(job.get("paused_reason", "")):
+            bundle_match = bundle_row_for_expected(exp)
+            if not bundle_match:
+                return {"key": exp.key, "label": exp.label, "status": "DEAD",
+                        "reason": "condensed source row is paused but bundle check is missing",
+                        "expected": exp.__dict__, "bundle_check": exp.bundle_check,
+                        "repair_idempotency_key": f"mechanism-liveness:{exp.key}",
+                        "suggested_repair_title": f"REPAIR mechanism liveness: {exp.label}"}
+            bundle_name, _check_name, bundle_job = bundle_match
+            return classify_absorbed_bundle_row(
+                exp, now, bundle_name, bundle_job,
+                f"condensed into {bundle_name}/{exp.bundle_check}",
+            )
     if not match:
+        # Source row gone (pruned after CONDENSE). If this key is absorbed into
+        # a live guard-bundle check, classify that producer instead of filing
+        # a false-DEAD missing-job repair. Non-absorbed keys still DEAD.
+        if exp.bundle_check and exp.key in BUNDLE_ALIASES:
+            bundle_match = bundle_row_for_expected(exp)
+            if bundle_match:
+                bundle_name, _check_name, bundle_job = bundle_match
+                return classify_absorbed_bundle_row(
+                    exp, now, bundle_name, bundle_job,
+                    f"condensed into {bundle_name}/{exp.bundle_check} (source job gone)",
+                )
         return apply_pm_triage_manifest_override({
             "key": exp.key,
             "label": exp.label,
