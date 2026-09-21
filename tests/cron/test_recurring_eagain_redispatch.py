@@ -101,6 +101,15 @@ class TestEAGAINRecurringRedispatches:
             return _OkProc(argv, **kwargs)
 
         monkeypatch.setattr(sched_mod.subprocess, "Popen", fake_popen)
+        # The live spawn path is cron.scheduler_script.subprocess.Popen
+        # (t_be118f75 rework). Patch both so a one-shot EAGAIN still fails
+        # the tick after the bounded retry budget is exhausted — this file
+        # covers NEXT-TICK redispatch after a recorded failure, not same-tick
+        # spawn retry.
+        import cron.scheduler_script as sched_script
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script, "SCRIPT_SPAWN_EAGAIN_MAX_RETRIES", 0)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
         return state
 
     def test_eagain_then_redispatched_on_next_tick(self, wedge_env, monkeypatch, tmp_path):
