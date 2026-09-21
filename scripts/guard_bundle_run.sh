@@ -15,7 +15,8 @@
 set -uo pipefail
 
 TICK="${GUARD_TICK:?GUARD_TICK must be set (5m|15m|hourly|daily)}"
-RUNNER=/home/frank/.hermes/profiles/jarvis/scripts/cron_guard_bundle_runner.py
+GUARD_BUNDLE_ROOT="${GUARD_BUNDLE_ROOT:-/home/frank/.hermes}"
+RUNNER="${GUARD_BUNDLE_ROOT}/profiles/jarvis/scripts/cron_guard_bundle_runner.py"
 
 if [[ ! -f "$RUNNER" ]]; then
   echo "GUARD BUNDLE ERROR: missing runner $RUNNER" >&2
