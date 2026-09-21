@@ -1141,21 +1141,39 @@ class BuzzAdapter(BasePlatformAdapter):
                 backoff = min(backoff * 2, 30.0)
 
     async def _ws_read_loop(self, websocket, subscriptions: Dict[str, Optional[str]]) -> None:
-        """Read frames until the relay closes; a close or an idle read raises ConnectionError to reconnect."""
+        """Read frames until the relay closes; a close or a dead keepalive raises ConnectionError to reconnect.
+
+        Quiet relays deliver no application frames for long stretches. Library ping/pong
+        (ping_interval=20) does not wake `__anext__`, so a bare idle timeout thrash-reconnects
+        every 300s (t_c1ea8710). On idle we probe with an explicit ping: if the socket is
+        alive we keep the parked receive and wait again; only a failed keepalive (or a
+        truly stuck CLOSE_WAIT where ping fails) forces reconnect.
+        """
         frame_iter = websocket.__aiter__()
         while True:
             read_task = asyncio.ensure_future(frame_iter.__anext__())
             try:
-                done, _ = await asyncio.wait(
-                    {read_task}, timeout=_WS_READ_IDLE_TIMEOUT, return_when=asyncio.FIRST_COMPLETED
-                )
-                if not done:
-                    # wait_for() cancels and then waits for its awaitable to acknowledge the cancellation.
-                    # A transport receive stuck below asyncio can ignore that cancellation forever, leaving the
-                    # adapter healthy-looking. Detach the read instead so the outer loop can close and reconnect.
-                    raise ConnectionError(
-                        f"no WebSocket frame for {_WS_READ_IDLE_TIMEOUT:.0f}s; assuming the connection went silent"
+                while True:
+                    done, _ = await asyncio.wait(
+                        {read_task}, timeout=_WS_READ_IDLE_TIMEOUT, return_when=asyncio.FIRST_COMPLETED
                     )
+                    if done:
+                        break
+                    # No application frame for the idle window. Probe keepalive before
+                    # assuming CLOSE_WAIT / silent death (see #98097 / t_c1ea8710).
+                    try:
+                        await asyncio.wait_for(websocket.ping(), timeout=20.0)
+                    except Exception as ping_err:
+                        # Detach the stalled receive so the outer loop can close + reconnect.
+                        raise ConnectionError(
+                            f"no WebSocket frame for {_WS_READ_IDLE_TIMEOUT:.0f}s; keepalive ping failed: {ping_err}"
+                        ) from ping_err
+                    logger.debug(
+                        "Buzz: no app frame for %.0fs but keepalive ping ok; staying connected",
+                        _WS_READ_IDLE_TIMEOUT,
+                    )
+                    # Keep the same read_task; do not cancel — just wait another idle window.
+                    continue
                 raw = read_task.result()
             except StopAsyncIteration:
                 # A clean relay close is still a disconnect: raising sends it through the same
