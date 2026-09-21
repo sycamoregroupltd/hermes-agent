@@ -440,6 +440,302 @@ class TestRunJobScript:
         assert isinstance(output, str)
         assert output  # a message is always produced, never a silent drop
 
+    def test_transient_eagain_is_retried_and_succeeds(self, cron_env, monkeypatch):
+        """A transient [Errno 11] EAGAIN on Popen must be retried with backoff
+        until it clears, not reported as a script failure (t_be118f75 /
+        t_f8f3935a)."""
+        import errno as _errno
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+        sleeps = []
+
+        class _OkProc:
+            def __init__(self):
+                self.returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+            def communicate(self, timeout=None):
+                return ("ok\n", "")
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise OSError(_errno.EAGAIN, "Resource temporarily unavailable")
+            return _OkProc()
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", sleeps.append)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 3  # two EAGAIN retries, third succeeded
+        assert success is True
+        assert output == "ok"
+        assert len(sleeps) == 2
+
+    def test_transient_ewouldblock_is_retried_and_succeeds(self, cron_env, monkeypatch):
+        """EWOULDBLOCK shares EAGAIN's value on Linux; treat it as retryable."""
+        import errno as _errno
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        class _OkProc:
+            def __init__(self):
+                self.returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+            def communicate(self, timeout=None):
+                return ("ok\n", "")
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError(_errno.EWOULDBLOCK, "Resource temporarily unavailable")
+            return _OkProc()
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 2
+        assert success is True
+        assert output == "ok"
+
+    def test_persistent_eagain_fails_after_bounded_retries(self, cron_env, monkeypatch):
+        """If EAGAIN persists past the retry budget, the run fails (does not
+        spin forever) and the error names the resource-pressure cause."""
+        import errno as _errno
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import (
+            SCRIPT_SPAWN_EAGAIN_MAX_RETRIES,
+            _run_job_script,
+        )
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            raise OSError(_errno.EAGAIN, "Resource temporarily unavailable")
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert success is False
+        assert "Resource temporarily unavailable" in output
+        assert calls["n"] == SCRIPT_SPAWN_EAGAIN_MAX_RETRIES + 1
+
+    def test_nontransient_spawn_error_not_retried(self, cron_env, monkeypatch):
+        """A genuine spawn error (FileNotFoundError) is not retried."""
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            raise FileNotFoundError("no such file")
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1
+        assert success is False
+        assert "no such file" in output
+
+    def test_script_timeout_not_retried(self, cron_env, monkeypatch):
+        """A script TimeoutExpired on communicate must still report the timeout
+        branch and must NOT be treated as a retryable spawn EAGAIN."""
+        import subprocess as _sp
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("import time; time.sleep(60)")
+
+        calls = {"n": 0}
+
+        class _NeverFinishes:
+            def __init__(self, argv, **kwargs):
+                calls["n"] += 1
+                self.returncode = None
+                self.pid = 4242
+
+            def poll(self):
+                return None
+
+            def communicate(self, timeout=None):
+                raise _sp.TimeoutExpired(cmd="probe.py", timeout=timeout or 0.1)
+
+            def wait(self, timeout=None):
+                return None
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", _NeverFinishes)
+        monkeypatch.setattr(sched_script, "_get_script_timeout", lambda: 1)
+        monkeypatch.setattr(sched_script, "_terminate_cron_script_tree", lambda proc: None)
+        monkeypatch.setattr(sched_script, "_drain_script_pipes", lambda proc: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1  # timeout is terminal, never retried as spawn
+        assert success is False
+        assert "timed out" in output.lower()
+
+    def test_enomem_is_not_retried(self, cron_env, monkeypatch):
+        """ENOMEM is not in the EAGAIN/EWOULDBLOCK errno contract."""
+        import errno as _errno
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            raise OSError(_errno.ENOMEM, "Cannot allocate memory")
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1
+        assert success is False
+        assert "Cannot allocate memory" in output
+
+    def test_runtimeerror_is_not_retried(self, cron_env, monkeypatch):
+        """RuntimeError at Popen must surface immediately (1 attempt)."""
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            raise RuntimeError("out of memory")
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1
+        assert success is False
+        assert "out of memory" in output
+
+    def test_valueerror_is_not_retried(self, cron_env, monkeypatch):
+        """ValueError at Popen must surface immediately (1 attempt)."""
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            raise ValueError("fork: Resource temporarily unavailable")
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1
+        assert success is False
+        assert "fork:" in output
+
+    def test_message_only_lookalike_without_eagain_errno_is_not_retried(
+        self, cron_env, monkeypatch
+    ):
+        """A message that *looks* like EAGAIN but carries a non-retryable
+        errno (or none) must not be retried. The old predicate matched
+        substrings such as 'out of memory' / 'fork:' / '[Errno 11]'."""
+        import errno as _errno
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            # EINVAL plus an EAGAIN-shaped message — must be 1 attempt.
+            raise OSError(_errno.EINVAL, "Resource temporarily unavailable")
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1
+        assert success is False
+        assert "Resource temporarily unavailable" in output
+
+    def test_message_only_clone_string_without_errno_is_not_retried(
+        self, cron_env, monkeypatch
+    ):
+        """clone(): / fork: message-only OSError with errno=None is not retryable."""
+        from cron import scheduler_script as sched_script
+        from cron.scheduler_script import _run_job_script
+
+        script = cron_env / "scripts" / "probe.py"
+        script.write_text("print('ok')")
+
+        calls = {"n": 0}
+
+        def fake_popen(argv, **kwargs):
+            calls["n"] += 1
+            err = OSError("clone(): Resource temporarily unavailable")
+            err.errno = None
+            raise err
+
+        monkeypatch.setattr(sched_script.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(sched_script.time, "sleep", lambda _: None)
+
+        success, output = _run_job_script("probe.py")
+
+        assert calls["n"] == 1
+        assert success is False
+        assert "clone():" in output
+
 
 class TestBuildJobPromptWithScript:
     """Test that script output is injected into the prompt."""

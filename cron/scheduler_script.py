@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import errno
 import logging
 import os
+import random
 import shutil
 import signal
 import subprocess
@@ -320,6 +322,66 @@ def _script_argv(path: Path) -> tuple[Optional[list[str]], dict[str, str], Optio
     return [python_exe, str(path)], env_overlay, None
 
 
+# Bounded retry on the fork() that starts a no_agent script. Kernel EAGAIN /
+# EWOULDBLOCK under swap/Committed_AS pressure used to fail the whole job on
+# a single unretried Popen (t_be118f75 / t_f8f3935a). Retry is errno-only:
+# ENOMEM, RuntimeError/ValueError, and message-only lookalikes are NOT
+# retryable. Activation of this code in a live gateway is a separate
+# operator-reviewed restart (child t_97c8d3b7) — this module is READY, not live.
+SCRIPT_SPAWN_EAGAIN_MAX_RETRIES = 5
+SCRIPT_SPAWN_EAGAIN_BACKOFF_BASE_SECONDS = 0.15
+SCRIPT_SPAWN_EAGAIN_BACKOFF_MAX_SECONDS = 4.0
+_SCRIPT_SPAWN_RETRYABLE_ERRNOS = frozenset(
+    {errno.EAGAIN, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
+)
+
+
+def _script_spawn_is_transient_error(exc: BaseException) -> bool:
+    """True only for kernel fork EAGAIN / EWOULDBLOCK (errno contract).
+
+    Message substrings, ENOMEM, RuntimeError, and ValueError are deliberately
+    excluded: the acceptance for t_be118f75 is EAGAIN-only, and a broader
+    predicate previously retried non-EAGAIN spawn failures.
+    """
+    if not isinstance(exc, OSError):
+        return False
+    eno = getattr(exc, "errno", None)
+    return eno is not None and eno in _SCRIPT_SPAWN_RETRYABLE_ERRNOS
+
+
+def _popen_with_eagain_retry(argv, **popen_kwargs):
+    """``subprocess.Popen`` with bounded exponential-backoff retry on EAGAIN.
+
+    Only the constructor is retried. Once a process object exists, timeout /
+    cancel / communicate stay on the existing polling path and are never
+    retried as spawn pressure.
+    """
+    max_retries = SCRIPT_SPAWN_EAGAIN_MAX_RETRIES
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return subprocess.Popen(argv, **popen_kwargs)
+        except OSError as exc:
+            last_exc = exc
+            if not _script_spawn_is_transient_error(exc):
+                raise
+            if attempt >= max_retries:
+                break
+            delay = min(
+                SCRIPT_SPAWN_EAGAIN_BACKOFF_BASE_SECONDS * (2 ** attempt),
+                SCRIPT_SPAWN_EAGAIN_BACKOFF_MAX_SECONDS,
+            )
+            delay += random.uniform(0, SCRIPT_SPAWN_EAGAIN_BACKOFF_BASE_SECONDS)
+            logger.warning(
+                "cron script spawn EAGAIN (transient fork-pressure Errno %s); "
+                "retry %d/%d after %.2fs backoff",
+                getattr(exc, "errno", "?"), attempt + 1, max_retries, delay,
+            )
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _run_job_script(
     script_path: str, workdir: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None,
@@ -374,7 +436,7 @@ def _run_job_script(
         # Use the job's workdir as the subprocess cwd when configured, otherwise default to the scripts-dir
         # parent (back-compat). NEVER mutate the Python process cwd — that would leak into concurrent
         # gateway sessions (#69396).
-        proc = subprocess.Popen(
+        proc = _popen_with_eagain_retry(
             argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             cwd=workdir or str(path.parent), env=env, **popen_kwargs)
         deadline = time.monotonic() + script_timeout
