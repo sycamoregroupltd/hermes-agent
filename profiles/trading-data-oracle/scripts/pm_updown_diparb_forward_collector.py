@@ -25,7 +25,10 @@ from pathlib import Path
 COLLECTOR_DIR = Path("/home/frank/wallet-intel/pm-updown-diparb")
 PYTHON = COLLECTOR_DIR / ".venv" / "bin" / "python"
 SCRIPT = COLLECTOR_DIR / "run_continuous.py"
-ARGS = ["--assets", "btc,eth,sol,xrp", "--tfs", "5m,15m", "--minutes", "12"]
+# run_continuous.py checks MAX_MINUTES only BETWEEN cycles (RUN_S=660s).
+# --minutes 12 therefore starts a second cycle (~22 min) and overlapping 11m
+# fires lose their claim. --minutes 10 exits after the first cycle (~11 min).
+ARGS = ["--assets", "btc,eth,sol,xrp", "--tfs", "5m,15m", "--minutes", "10"]
 
 
 def main() -> int:
