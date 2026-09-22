@@ -18,28 +18,6 @@ SHAPE — the error-digest pattern generalised, and the constraints are the poin
   pipe. Preserve non-zero only when delivery fails (status error) or the wrapped
   script fails with empty stdout (no board action possible).
 
-OBSERVATION PROTOCOL (t_d14445d2 — opt-in per job via RTB_OBSERVATION_PROTOCOL):
-  A silent watchdog cannot prove recovery. For a bundle whose checks run on their
-  own intervals, empty stdout can mean "every due check passed", "nothing was due"
-  or "the wall-clock budget ran out" — and this consumer used to close the
-  incident on all three (R01/R06 false recovery). An opted-in producer instead
-  sends exactly one control record on rc=0:
-
-      GUARD_BUNDLE_OBSERVATION_V1 CLEAN | NO_DUE_CHECKS | DEFERRED
-
-  and this consumer clears the incident ONLY on an exact CLEAN:
-    * CLEAN          -> the existing eligible close/archive path, with wording
-                        qualified by what was actually observed.
-    * NO_DUE_CHECKS  -> silent no-op (rc=0). No board call, no state write.
-    * DEFERRED       -> silent no-op (rc=0). Due work remains unobserved.
-    * anything else  -> observation contract error, reported under the same key
-                        with rc=1. Never a clear.
-  A genuine rc != 0 always dominates (for EVERY job, opted in or not): empty
-  stdout on a failed run is a measurement failure and is reported, never read as
-  a cleared condition. Non-opted-in jobs keep their previous behavior exactly.
-  The same-job lock makes the producer run and the board application one
-  serialized unit, so a slow tick cannot interleave with the next tick's verdict.
-
 CONFIG (env, set per job by its shim):
   RTB_SCRIPT  canonical script to run (required)
   RTB_KEY     stable job identity for the idempotency key (required)
@@ -47,13 +25,8 @@ CONFIG (env, set per job by its shim):
   RTB_BOARD   target board (default jarvis-os)
 """
 from __future__ import annotations
-import ast, functools, hashlib, json, os, re, subprocess, sys, time
+import ast, hashlib, json, os, re, subprocess, sys, time
 from pathlib import Path
-
-try:
-    import fcntl
-except ImportError:  # non-POSIX fallback (shouldn't happen on DGX)
-    fcntl = None
 
 STATE = Path(os.environ.get(
     "RTB_STATE", "/home/frank/.hermes/state/report-to-board.json"
@@ -204,100 +177,6 @@ def assignee_for(board: str) -> str:
 # kill boundary while preserving the wrapped check's alert semantics.
 RTB_TIMEOUT = int(os.environ.get("RTB_TIMEOUT", "600"))
 
-# ---- observation protocol (t_d14445d2) -------------------------------------
-# A control record is a TRANSPORT instruction, never content: it must match the
-# whole output exactly (one trailing newline tolerated) and is never a substring
-# test, never enters a card body and is never echoed. Anything that is not
-# exactly one known record stays a report.
-OBSERVATION_PROTOCOL = "guard-bundle-v1"
-OBSERVATION_MARKERS = ("CLEAN", "NO_DUE_CHECKS", "DEFERRED")
-_OBSERVATION_MARKER_RE = re.compile(
-    r"^GUARD_BUNDLE_OBSERVATION_V1 (CLEAN|NO_DUE_CHECKS|DEFERRED)$")
-
-
-def _protocol_enabled() -> bool:
-    return os.environ.get("RTB_OBSERVATION_PROTOCOL", "").strip() == OBSERVATION_PROTOCOL
-
-
-def _normalise_final_newline(text: str) -> str:
-    return text[:-1] if text.endswith("\n") else text
-
-
-def classify_observation(out: str) -> str:
-    """Return the control record if `out` is EXACTLY one, else ''."""
-    match = _OBSERVATION_MARKER_RE.match(_normalise_final_newline(out))
-    return match.group(1) if match else ""
-
-
-def _observation_lock_path(board: str, key: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{board}__{key}")
-    return STATE.parent / f"report-to-board.{safe}.lock"
-
-
-def _acquire_observation_lock(board: str, key: str):
-    """Non-blocking per-(board,key) lock held across producer AND board apply.
-
-    flock (not lockf): the lock is tied to the open file description, so it
-    conflicts between two opens even inside one process — which is what makes
-    the guard real rather than decorative. Returns the fd (int) when acquired,
-    False when another run owns this job, None when fcntl is unavailable.
-    """
-    if fcntl is None:
-        return None
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(_observation_lock_path(board, key)), os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        os.close(fd)
-        return False
-    return fd
-
-
-def _release_observation_lock(fd) -> None:
-    if not isinstance(fd, int):
-        return
-    try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
-
-
-def _observation_lock_guard(func):
-    """Serialize one job's producer run + board application (t_d14445d2).
-
-    Without this, a tick that outruns RTB_TIMEOUT overlaps the next tick: the
-    older run can apply a stale verdict after the newer one already acted. The
-    lock is opt-in only — every non-opted-in job keeps its exact behavior.
-    """
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        if not _protocol_enabled():
-            return func(*args, **kwargs)
-        board = os.environ.get("RTB_BOARD", "jarvis-os").strip()
-        key = os.environ.get("RTB_KEY", "").strip()
-        if not key:
-            return func(*args, **kwargs)
-        try:
-            fd = _acquire_observation_lock(board, key)
-        except OSError as exc:
-            # Cannot establish the guard: fail loudly rather than risk an
-            # interleaved verdict (setup/permission error is never silent).
-            print(json.dumps({"status": "error",
-                              "error": f"observation lock setup failed: {exc}"}),
-                  file=sys.stderr)
-            return 1
-        if fd is False:
-            # A concurrent run of THIS job owns the tick. Silent rc=0 and,
-            # critically, no observation: a skipped run is not a clear.
-            return 0
-        try:
-            return func(*args, **kwargs)
-        finally:
-            if fd is not None:
-                _release_observation_lock(fd)
-    return wrapper
-
 
 def hermes(*a, timeout=90):
     try:
@@ -320,7 +199,6 @@ def persist_state(state: dict) -> None:
     STATE.write_text(json.dumps(state, indent=1, sort_keys=True))
 
 
-@_observation_lock_guard
 def main() -> int:
     script = os.environ.get("RTB_SCRIPT", "").strip()
     key = os.environ.get("RTB_KEY", "").strip()
@@ -342,7 +220,6 @@ def main() -> int:
         # 600s (unchanged) for every job that does not set RTB_TIMEOUT.
         r = subprocess.run(runner, capture_output=True, text=True, timeout=RTB_TIMEOUT)
         out, rc = (r.stdout or "").strip(), r.returncode
-        err = (r.stderr or "").strip()
     except subprocess.TimeoutExpired as e:
         stdout = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, (bytes, bytearray)) else (e.stdout or "")
         stderr = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or "")
@@ -355,7 +232,6 @@ def main() -> int:
             + "report is no longer authoritative for this cycle.\n"
         ).strip()
         rc = 124
-        err = ""
     except Exception as e:
         print(json.dumps({"status": "error", "error": str(e)}), file=sys.stderr)
         return 1
@@ -364,57 +240,6 @@ def main() -> int:
     state = json.loads(STATE.read_text()) if STATE.exists() else {}
     rec = state.get(key, {})
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-    # ---- observation classification (t_d14445d2) -------------------------
-    # Ordered, and the order is the contract:
-    #   1. A genuine rc != 0 dominates for EVERY job (opted in or not): an
-    #      unrelated exit-1 with empty stdout is a measurement failure, never
-    #      evidence that the condition cleared.
-    #   2. An opted-in rc=0 run must carry exactly one control record.
-    #   3. Only CLEAN may clear; NO_DUE_CHECKS/DEFERRED are silent no-ops.
-    #   4. Everything else from an opted-in run is a contract error: reported
-    #      under the same key, exit nonzero, incident stays open.
-    protocol = _protocol_enabled()
-    verdict = classify_observation(out) if protocol else ""
-    # An opted-in job that cannot state a verdict is a contract failure: the
-    # report is still delivered (the card IS the pipe) but the exit code stays
-    # non-zero so the failure is visible to the scheduler as well.
-    contract_error = False
-
-    if protocol and rc == 0:
-        if verdict == "CLEAN":
-            out = ""
-        elif verdict in ("NO_DUE_CHECKS", "DEFERRED"):
-            # Not observed != healthy. Leave the mapping and the card exactly
-            # as they are: no read, no write, no board call.
-            print(json.dumps({"status": "ok", "observation": verdict, "key": key}),
-                  file=sys.stderr)
-            return 0
-        else:
-            detail = out if out else "(no output)"
-            out = (f"## OBSERVATION CONTRACT ERROR\n"
-                   f"Job '{key}' is opted into {OBSERVATION_PROTOCOL} but exited 0 "
-                   f"without exactly one control record "
-                   f"({'|'.join(OBSERVATION_MARKERS)}).\n"
-                   f"A missing or malformed verdict is a measurement failure, not a "
-                   f"cleared condition — the incident stays open.\n\n{detail[:2000]}")
-            rc = 1
-            contract_error = True
-
-    if rc != 0 and not out:
-        # Was: empty stdout => "condition cleared" regardless of exit code.
-        out = (f"## PRODUCER EXIT {rc}\n"
-               "The wrapped script exited nonzero with no stdout. Empty output on a "
-               "failed run is a measurement failure, not a clear verdict — the "
-               "incident stays open."
-               + (f"\n\nstderr:\n{err[:2000]}" if err else ""))
-    elif rc != 0 and protocol and verdict:
-        # A control record cannot outrank a nonzero exit.
-        out = (f"## PRODUCER EXIT {rc}\n"
-               f"An opted-in producer emitted the control record '{verdict}' AND "
-               f"exited {rc}. A nonzero exit dominates: the record is discarded "
-               f"and the incident stays open."
-               + (f"\n\nstderr:\n{err[:2000]}" if err else ""))
 
     # Optional echo so Hermes cron output files are non-silent for jobs
     # whose primary consumer is a file artifact (fusion-calibration-report).
@@ -434,30 +259,12 @@ def main() -> int:
         if rec.get("card_id"):
             card_id = rec["card_id"]
             card_board = rec.get("board", board)
-            # Wording must state only what was actually observed. A non-opted
-            # job reports nothing; an opted-in job proved completed due checks.
-            clear_note = ("completed due checks passed and pending rechecks cleared"
-                          if protocol else "reported nothing this run")
             status = card_status(card_id, card_board)
-            if protocol and status is None:
-                # A clear we cannot apply is not a clear. Never fall through to
-                # a state write or a board call on an unreadable card.
-                print(json.dumps({"status": "error",
-                                  "error": f"unknown card status for {card_id}"}),
-                      file=sys.stderr)
-                return 1
             if status in {"done", "completed", "cancelled"}:
                 arc, _ = hermes("kanban", "--board", card_board, "archive", card_id)
                 if arc == 0:
                     state.pop(key, None)
                     persist_state(state)
-                elif protocol:
-                    # Mapping is retained (no false closure claim); the failed
-                    # archive is loud and retries on the next qualified clean.
-                    print(json.dumps({"status": "error",
-                                      "error": f"archive failed for {card_id}"}),
-                          file=sys.stderr)
-                    return 1
             elif status == "archived":
                 state.pop(key, None)
                 persist_state(state)
@@ -468,7 +275,7 @@ def main() -> int:
             elif status in {"ready", "todo", "triage", "scheduled", "blocked"}:
                 crc, _ = hermes("kanban", "--board", card_board, "complete", card_id,
                                 "--summary",
-                                f"Auto-closed {stamp}: '{title}' {clear_note}, so the "
+                                f"Auto-closed {stamp}: '{title}' reported nothing this run, so the "
                                 f"condition has cleared. Closed by the same job that opened it.")
                 arc, _ = ((1, "") if crc != 0 else
                           hermes("kanban", "--board", card_board, "archive", card_id))
@@ -476,31 +283,17 @@ def main() -> int:
                     state.pop(key, None)
                     persist_state(state)
                     print(json.dumps({"status": "ok", "closed": card_id}), file=sys.stderr)
-                elif protocol:
-                    print(json.dumps({"status": "error",
-                                      "error": f"close failed for {card_id}"}),
-                          file=sys.stderr)
-                    return 1
             elif status is not None:
                 # A worker/reviewer owns the card. Do not stomp its lifecycle;
                 # attach the recovery evidence and let that owner close it.
-                note = (f"RESOLVED {stamp}: '{title}' reported nothing this run; "
-                        "the underlying condition has cleared.")
-                if protocol:
-                    note += (f" Qualified observation ({OBSERVATION_PROTOCOL}): "
-                             f"{clear_note}. No complete/archive — this card is owned "
-                             "by a worker/reviewer.")
                 hermes("kanban", "--board", card_board, "comment", "--author",
-                       "report-to-board", card_id, note)
+                       "report-to-board", card_id,
+                       f"RESOLVED {stamp}: '{title}' reported nothing this run; "
+                       "the underlying condition has cleared.")
         return rc
 
     # --- reporting: one durable card per active incident -------------------
     digest = hashlib.sha256(out.encode()).hexdigest()[:16]
-    # Delivery succeeded means the card carries the failure, which is the pipe
-    # this exists to feed — so the exit code is 0 for a delivered report. The
-    # ONE exception is an opted-in observation contract error: it must also be
-    # visible to the scheduler, so it keeps a non-zero exit.
-    delivery_rc = 1 if contract_error else 0
 
     # t_4ed34e09: fingerprint the STABLE cause (see dedup_fingerprint) and
     # compare against the tombstone that survives card close/archive. This
@@ -526,7 +319,7 @@ def main() -> int:
         if status not in {None, "done", "completed", "cancelled", "archived"}:
             if rec.get("digest") == digest:
                 print(json.dumps({"status": "ok", "unchanged": card_id}), file=sys.stderr)
-                return delivery_rc
+                return 0
             if quiet_active:
                 # Same underlying cause (dead_keys/infra/crash signature
                 # unchanged), only volatile text (timestamps, ages) moved.
@@ -539,7 +332,7 @@ def main() -> int:
                 print(json.dumps({"status": "ok", "suppressed_refresh": card_id,
                                    "quiet_window_s": RTB_QUIET_WINDOW_SEC}),
                       file=sys.stderr)
-                return delivery_rc
+                return 0
             update = (f"REPORT REFRESH {stamp} (exit {rc}):\n\n{out[:6000]}")
             crc, cout = hermes("kanban", "--board", card_board, "comment",
                                "--author", "report-to-board", card_id, update)
@@ -549,7 +342,7 @@ def main() -> int:
                 _touch_tombstone()
                 persist_state(state)
                 print(json.dumps({"status": "ok", "updated": card_id}), file=sys.stderr)
-                return delivery_rc
+                return 0
             print(json.dumps({"status": "error", "out": cout[:200]}), file=sys.stderr)
             return rc if rc else 1
         if status in {"done", "completed", "cancelled"}:
@@ -567,7 +360,7 @@ def main() -> int:
         print(json.dumps({"status": "ok", "suppressed_new_card": True,
                            "quiet_window_s": RTB_QUIET_WINDOW_SEC,
                            "last_action_at": tomb.get("at")}), file=sys.stderr)
-        return delivery_rc
+        return 0
 
     body = (f"{out[:6000]}\n\n---\nReported {stamp} by cron job '{key}' (exit {rc}).\n"
             f"This card IS the delivery — the voice line reads it on every call.\n"
@@ -581,7 +374,7 @@ def main() -> int:
         _touch_tombstone()
         persist_state(state)
         print(json.dumps({"status": "ok", "card": m.group(1), "board": board}), file=sys.stderr)
-        return delivery_rc
+        return 0
     print(json.dumps({"status": "error", "out": cout[:200]}), file=sys.stderr)
     return rc if rc else 1
 
