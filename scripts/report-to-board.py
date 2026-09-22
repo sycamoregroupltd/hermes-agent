@@ -13,8 +13,10 @@ SHAPE — the error-digest pattern generalised, and the constraints are the poin
   completed automatically. A detector that opens cards but cannot close them is a
   ratchet — that is the defect this fleet already has 230 CRON-HEALTH cards of.
   SILENT WHEN CLEAN. Empty stdout produces nothing, exactly as `--no-agent` intends.
-  EXIT CODE PRESERVED. For a no_agent job the exit code is the only liveness signal
-  cron records, so it is passed through untouched.
+  EXIT CODE: when board delivery succeeds (JSON status ok — card created/updated/
+  suppressed/closed), exit 0 so cron-doctor does not double-alarm; the card IS the
+  pipe. Preserve non-zero only when delivery fails (status error) or the wrapped
+  script fails with empty stdout (no board action possible).
 
 CONFIG (env, set per job by its shim):
   RTB_SCRIPT  canonical script to run (required)
@@ -317,7 +319,7 @@ def main() -> int:
         if status not in {None, "done", "completed", "cancelled", "archived"}:
             if rec.get("digest") == digest:
                 print(json.dumps({"status": "ok", "unchanged": card_id}), file=sys.stderr)
-                return rc
+                return 0
             if quiet_active:
                 # Same underlying cause (dead_keys/infra/crash signature
                 # unchanged), only volatile text (timestamps, ages) moved.
@@ -330,7 +332,7 @@ def main() -> int:
                 print(json.dumps({"status": "ok", "suppressed_refresh": card_id,
                                    "quiet_window_s": RTB_QUIET_WINDOW_SEC}),
                       file=sys.stderr)
-                return rc
+                return 0
             update = (f"REPORT REFRESH {stamp} (exit {rc}):\n\n{out[:6000]}")
             crc, cout = hermes("kanban", "--board", card_board, "comment",
                                "--author", "report-to-board", card_id, update)
@@ -340,9 +342,9 @@ def main() -> int:
                 _touch_tombstone()
                 persist_state(state)
                 print(json.dumps({"status": "ok", "updated": card_id}), file=sys.stderr)
-            else:
-                print(json.dumps({"status": "error", "out": cout[:200]}), file=sys.stderr)
-            return rc
+                return 0
+            print(json.dumps({"status": "error", "out": cout[:200]}), file=sys.stderr)
+            return rc if rc else 1
         if status in {"done", "completed", "cancelled"}:
             # Retire the terminal incident so the stable idempotency key can be
             # reused if the condition genuinely recurs.
@@ -358,7 +360,7 @@ def main() -> int:
         print(json.dumps({"status": "ok", "suppressed_new_card": True,
                            "quiet_window_s": RTB_QUIET_WINDOW_SEC,
                            "last_action_at": tomb.get("at")}), file=sys.stderr)
-        return rc
+        return 0
 
     body = (f"{out[:6000]}\n\n---\nReported {stamp} by cron job '{key}' (exit {rc}).\n"
             f"This card IS the delivery — the voice line reads it on every call.\n"
@@ -372,9 +374,9 @@ def main() -> int:
         _touch_tombstone()
         persist_state(state)
         print(json.dumps({"status": "ok", "card": m.group(1), "board": board}), file=sys.stderr)
-    else:
-        print(json.dumps({"status": "error", "out": cout[:200]}), file=sys.stderr)
-    return rc
+        return 0
+    print(json.dumps({"status": "error", "out": cout[:200]}), file=sys.stderr)
+    return rc if rc else 1
 
 
 if __name__ == "__main__":
