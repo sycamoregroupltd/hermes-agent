@@ -31,6 +31,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "profiles" / "jarvis" / "scripts" / "cron_guard_bundle_runner.py"
@@ -799,6 +800,29 @@ class RealEntrypointChainTests(unittest.TestCase):
             "guard-bundle-15m": {"card_id": "t_12345678", "board": "jarvis-os",
                                  "at": "2026-09-22T00:00:00Z", "digest": "x"}}))
 
+    # t_d14445d2 F4 (isolation): scope isolation for the child env.
+    #
+    # An inherited kanban-worker scope is dangerous here: the shim exports
+    # HERMES_HOME and execs wrapper -> runner -> consumer -> `hermes`, so a
+    # leaked HERMES_KANBAN_TASK/_BOARD/_DB would let report-to-board.py act on a
+    # REAL worker card under test. The dict built below is a fresh allow-list,
+    # never `dict(os.environ)`; the strip below is therefore belt-and-braces on
+    # purpose, so a later refactor that starts inheriting os.environ fails
+    # closed (AssertionError) instead of silently re-opening that hole.
+    CHILD_ENV_DENY_PREFIXES = ("HERMES_KANBAN_", "HERMES_TENANT")
+
+    @classmethod
+    def strip_inherited_kanban_scope(cls, env):
+        """Drop any inherited worker scope from `env` and refuse to return a
+        mapping that still carries one."""
+        for key in [k for k in env if k.startswith(cls.CHILD_ENV_DENY_PREFIXES)]:
+            env.pop(key, None)
+        leaked = sorted(k for k in env if k.startswith(cls.CHILD_ENV_DENY_PREFIXES))
+        if leaked:
+            raise AssertionError(
+                "kanban worker scope leaked into the child env: " + ", ".join(leaked))
+        return env
+
     def _env(self, **extra):
         env = {
             "PATH": f"{self.fake_bin}:/usr/local/bin:/usr/bin:/bin",
@@ -808,7 +832,7 @@ class RealEntrypointChainTests(unittest.TestCase):
             "RTB_STATE": str(self.rtb_state),
         }
         env.update({k: str(v) for k, v in extra.items()})
-        return env
+        return self.strip_inherited_kanban_scope(env)
 
     def _run_shim(self, env=None):
         return subprocess.run(
@@ -843,6 +867,65 @@ class RealEntrypointChainTests(unittest.TestCase):
         self.assertEqual("", proc.stdout)
         self.assertEqual("", self.log.read_text())
         self.assertEqual(before, self.rtb_state.read_text())
+
+    # -----------------------------------------------------------------------
+    # F4 (isolation): no inherited kanban-worker scope reaches a child process
+    # -----------------------------------------------------------------------
+    # The parent pytest process may itself be a kanban worker (HERMES_KANBAN_TASK
+    # etc. exported). These tests set that scope in the parent and then prove it
+    # cannot reach the shim -> wrapper -> runner -> consumer -> `hermes` chain.
+    LEAKY = {
+        "HERMES_KANBAN_TASK": "t_deadbeef",
+        "HERMES_KANBAN_BOARD": "jarvis-os",
+        "HERMES_KANBAN_DB": "/tmp/live-kanban.db",
+        "HERMES_KANBAN_WORKSPACE": "/tmp/live-workspace",
+        "HERMES_TENANT": "jarvis-os",
+    }
+
+    def test_child_env_builder_strips_and_asserts(self):
+        """The builder strips the scope, and refuses a mapping that still has it."""
+        with mock.patch.dict(os.environ, self.LEAKY, clear=False):
+            env = self._env()
+        self.assertEqual([], sorted(k for k in env if k.startswith(
+            ("HERMES_KANBAN_", "HERMES_TENANT"))), env)
+        # Nailed-down behaviour: even a future inheriting builder is corrected,
+        # and an un-correctable mapping raises instead of leaking.
+        dirty = dict(os.environ)
+        dirty["HERMES_KANBAN_TASK"] = "t_deadbeef"
+        self.assertNotIn("HERMES_KANBAN_TASK",
+                         self.strip_inherited_kanban_scope(dirty))
+        # ...while the allow-listed channel the chain actually needs survives.
+        self.assertEqual(str(self.rtb_state), env["RTB_STATE"])
+
+    def test_real_chain_child_process_cannot_see_inherited_kanban_scope(self):
+        """End-to-end: the REAL shim chain runs with a leaked parent scope and
+        still hands `hermes` an environment without it."""
+        envlog = self.tmp / "child-env.log"
+        # Local probe double: same contract, but dumps the env it was handed.
+        (self.fake_bin / "hermes").write_text(
+            "#!/usr/bin/env bash\n"
+            'env | sort > "$HERMES_ENV_LOG"\n'
+            'echo "$@" >> "$HERMES_FAKE_LOG"\n'
+            'case "$*" in\n'
+            '  *" show "*) echo "  status: blocked" ;;\n'
+            '  *" create "*) echo "created t_deadbeef" ;;\n'
+            "esac\n"
+            "exit 0\n")
+        (self.fake_bin / "hermes").chmod(0o755)
+        self.log.write_text("")
+        with mock.patch.dict(os.environ, self.LEAKY, clear=False):
+            proc = self._run_shim(self._env(HERMES_ENV_LOG=str(envlog)))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertTrue(envlog.exists(),
+                        f"the chain never reached the hermes double: {proc.stderr!r}")
+        child_env = envlog.read_text()
+        leaked = [line for line in child_env.splitlines()
+                  if line.startswith(("HERMES_KANBAN_", "HERMES_TENANT"))]
+        self.assertEqual([], leaked, f"scope leaked into the real child chain: {leaked}")
+        # Non-vacuous: the probe really did run inside the chain, and the
+        # allow-listed vars it needs are intact.
+        self.assertIn("show t_12345678", self.log.read_text())
+        self.assertIn(f"GUARD_BUNDLE_ROOT={self.root}", child_env)
 
 
 if __name__ == "__main__":
