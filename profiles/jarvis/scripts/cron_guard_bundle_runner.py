@@ -86,9 +86,15 @@ STATE_FILE = CRON_DIR / "state" / "guard_bundle_last_run.json"
 # (t_8cdc9260). Keep every bundle well below that boundary; report-to-board
 # retains wrapper slack. Unfinished checks run next tick via the state file.
 BUDGETS: dict[str, int] = {
-    "5m": 120,
+    "5m": 175,   # was 160; raised after t_faa7c65b: the guard's polling loop
+                 # (16 x 10s = 160s worst case) + sibling checks (~15s) can
+                 # exceed 160s under load. 175s sits 25s under RTB_TIMEOUT=200.
     "15m": 240,
-    "hourly": 360,
+    # t_362d3583: live safety-config walk is ~350s. After sibling hourly
+    # checks (~53s) the old 360s budget left 307s remaining-wall, which
+    # TimeoutExpired 124. 420s still sits under hourly RTB_TIMEOUT=450;
+    # min_timeout still skips when remaining < 360.
+    "hourly": 420,
     "daily": 450,
 }
 
@@ -133,7 +139,7 @@ CHECKS: dict[str, dict] = {
     "dgx-fleet-chain-alert-drain":       {"script": "fleet_chain_alert_drain.sh",          "interval": _min(5)},
     "hl-desk-watchman-guard":            {"script": "hl-desk-watchman-guard.sh",           "interval": _min(5)},
     "dgx-unified-health-probe":          {"script": "rtb-dgx-unified-health-probe.py",     "interval": _min(10)},
-    "hl-candle-recorder-guard":          {"script": "hl-candle-recorder-guard.sh",         "interval": _min(10)},
+    "hl-candle-recorder-guard":          {"script": "hl-candle-recorder-guard.sh",         "interval": _min(10), "min_timeout": 165},
     "position-age-watchdog":             {"script": "position_age_watchdog.py",            "interval": _min(10)},
     "elon-skill-write-guard":            {"script": "elon-skill-write-guard.sh",           "interval": _min(5)},  # was 2m; floored to bundle 5m
     # ---- tick-15m bundle: 15m-30m checks ----------------------------------
@@ -151,13 +157,37 @@ CHECKS: dict[str, dict] = {
     "deadpid-fleet-alert-guard":         {"script": "deadpid-fleet-alert-guard.py",        "interval": _min(30)},
     "dgx-service-gate-escalation":       {"script": "service_gate_escalation_watchdog.py", "interval": _min(30)},
     "cron-health-canary":                {"script": "cron_health_canary_wrapper.sh",       "interval": _min(30)},
+    "hermes-mixed-module-probe":           {"script": "hermes-mixed-module-probe.sh",        "interval": _min(15)},
+    # ADDITIVE (t_673f6cba): named consumer for the completion-gate latency
+    # tripwire store ~/.hermes/logs/gate-kanban-complete-latency.log. The gate
+    # (owned by t_6b9abe2d) writes a line when a kanban_complete gate run takes
+    # >= HERMES_HOOK_GATE_LATENCY_WARN (default 10s) — approaching the 30s
+    # plugin-callback budget that previously failed closed invisibly. This check
+    # reads the store, alerts on NEW lines via the guard-bundle escalation path,
+    # and rotates the log at a size cap. Report-only wrt kanban.
+    "gate-kanban-complete-latency-watch":{"script": "gate-kanban-complete-latency-watch.py","interval": _min(15), "timeout": 60},
+    # ADDITIVE (t_7258f6a6 / Pulse IDEA): observe-only systemd dead-path
+    # scan. Silent when broken_count=0. Never --apply-mask from cron.
+    # Isolation: never auto-mask lean-core; never revive shed.
+    "systemd-dead-path-observe":         {"script": "systemd_dead_path_observe.py",         "interval": _min(15), "timeout": 60},
+    # ADDITIVE (Pulse 2026-09-20 native-improve): observe-only discord:# hash
+    # lint. Silent when hash_count=0. Never retargets from cron.
+    # Closes prior Pulse IDEA (Hermes-native discord-target-lint cron).
+    "discord-target-hash-lint":          {"script": "discord_target_hash_lint.py",          "interval": _min(15), "timeout": 90},
+    # ADDITIVE (t_29bb20a7 anti-hack rails): refuse new hermes-agent core
+    # paths when overlay budget rises without an Isolation card naming them.
+    # Silent rc=0 when QUIET/AUTHORIZED/BASELINE. Never writes budget receipts.
+    "overlay-budget-core-patch-refuse":  {"script": "overlay_budget_core_patch_refuse.py",  "interval": _min(15), "timeout": 90},
     # ---- tick-hourly bundle: hourly + 6h/8h audits ------------------------
     "untracked-cron-script-guard":       {"script": "cron_untracked_script_guard.py",      "interval": 3600},
     "kanban-idempotency-board-guard":    {"script": "kanban_idempotency_board_guard.py",   "interval": 6 * 3600},
     "dgx-disk-space-watchdog":           {"script": "rtb-dgx-disk-space-watchdog.py",      "interval": 3600},
     "primary-provider-liveness":         {"script": "rtb-primary-provider-liveness.py",    "interval": 3600},
     "dgx-agent-context-audit":           {"script": "agent_context_audit.py",              "interval": 6 * 3600},
-    "dgx-fleet-safety-config-audit":     {"script": "fleet_safety_config_audit.py",        "interval": 6 * 3600},
+    # t_362d3583: live walk is ~350s (127k yaml/json). Hourly remaining
+    # wall of 307s TimeoutExpired 124 is not an audit RED. min_timeout
+    # 360 skips launch unless remaining can cover measured duration + slack.
+    "dgx-fleet-safety-config-audit":     {"script": "fleet_safety_config_audit.py",        "interval": 6 * 3600, "min_timeout": 360},
     # ---- tick-daily bundle: daily + weekly ---------------------------------
     "ephemeral-workspace-config-guard":  {"script": "ephemeral_workspace_config_guard.py", "interval": 86400},
     "skill-cli-drift-guard":             {"script": "skill-cli-drift-guard.py",            "interval": 7 * 86400},
@@ -192,7 +222,9 @@ BUNDLES: dict[str, list[str]] = {
         "kanban-cap-invariant", "kanban-audit-chain-monitor",
         "cron-ticker-invariant-guard", "fleet-knowledge-catalog-regen-watchdog",
         "data-freshness-probe", "strategy-audit-drift-watch", "deadpid-fleet-alert-guard",
-        "dgx-service-gate-escalation", "cron-health-canary",
+        "dgx-service-gate-escalation", "cron-health-canary", "hermes-mixed-module-probe",
+        "gate-kanban-complete-latency-watch", "systemd-dead-path-observe",
+        "discord-target-hash-lint", "overlay-budget-core-patch-refuse",
     ],
     "hourly": [
         "untracked-cron-script-guard", "kanban-idempotency-board-guard",
@@ -239,10 +271,45 @@ def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str]:
     # (sycode-trading) and never saw the jarvis-os duplicate storm (fixed
     # 2026-08-30).
     argv += list(spec.get("args", []))
+    env = os.environ.copy()
+    # t_6397f2c1: parent guard_bundle_tick_*.sh already exported RTB_SCRIPT /
+    # RTB_KEY for the OUTER report-to-board. Absorbed rtb-*.py shims used
+    # setdefault, so inherited parent values were a no-op and the inner
+    # report-to-board re-exec'd guard_bundle_run.sh (flock skip, rc=0) —
+    # the absorbed producer never ran. Strip RTB_* from the CHILD env so
+    # each shim can bind its own script/key. Parent process env is unchanged.
+    for _rtb_key in [k for k in env if k.startswith("RTB_")]:
+        env.pop(_rtb_key, None)
+    # t_34f62258: daily bundle wall is 450s (t_8cdc9260, stay under the 600s
+    # kill). FCV's own timeout=3100 is therefore always clamped. Without
+    # FCV_TOTAL_BUDGET the Python scan hangs until TimeoutExpired → rc 124
+    # even when the chain is live. Hand the clamped budget to the validator
+    # so it SKIPPED-exits instead of being killed; DEAD rungs still exit 1.
+    #
+    # t_ffd97c90: do NOT inflate FCV_TOTAL_BUDGET above the parent kill
+    # (old max(30, timeout-5) could hand FCV 30s while the runner dies at
+    # 10s). Incomplete scan is SKIPPED rc=0 by contract; a real DEAD_KEY
+    # from a finished probe still exits 1.
+    if name == "dgx-fleet-chain-validator":
+        budget = max(0, int(timeout) - 5)
+        env["FCV_TOTAL_BUDGET"] = str(budget)
+        env.setdefault("FCV_RUNG_TIMEOUT", "120")
+        rung_to = int(env["FCV_RUNG_TIMEOUT"])
+        if int(timeout) < rung_to:
+            # Remaining daily wall cannot finish one rung. Do not launch
+            # a 120s probe under a shorter parent timeout.
+            return 0, ""
+    # t_362d3583: same remaining-wall class for the hourly safety-config
+    # walk. Live duration ~350s; a 307s parent wait is TimeoutExpired 124
+    # not an audit RED. Incomplete/deferred scan is silent rc=0; a real
+    # nonzero from a finished check still alerts.
+    min_needed = int(spec.get("min_timeout", 0) or 0)
+    if min_needed and int(timeout) < min_needed:
+        return 0, ""
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout,
-            cwd=str(SCRIPTS_DIR), env=os.environ.copy(), start_new_session=True,
+            cwd=str(SCRIPTS_DIR), env=env, start_new_session=True,
         )
         out = (proc.stdout or "").strip()
         err = (proc.stderr or "").strip()
@@ -255,6 +322,16 @@ def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str]:
             return proc.returncode, "\n".join(parts)
         return 0, ""  # healthy -> suppress
     except subprocess.TimeoutExpired:
+        # t_ffd97c90 safety net: remaining wall < rung timeout is SKIPPED,
+        # not a DEAD_KEY alert. Keep 124 when the parent wait was long
+        # enough that a probe should have finished.
+        if name == "dgx-fleet-chain-validator":
+            rung_to = int(env.get("FCV_RUNG_TIMEOUT", "120"))
+            if int(timeout) < rung_to:
+                return 0, ""
+        min_needed = int(spec.get("min_timeout", 0) or 0)
+        if min_needed and int(timeout) < min_needed:
+            return 0, ""
         return 124, f"[{name}] timed out after {timeout}s"
     except Exception as e:
         return 2, f"[{name}] execution error: {e}"
@@ -330,11 +407,36 @@ def main() -> int:
         # check can never eat the whole run (min 30s so legitimate long audits
         # still get a fair window on a fresh tick).
         remaining = budget - elapsed
+        # t_362d3583: do not launch (and do not mark complete) when the
+        # remaining hourly wall is under this check's measured floor.
+        # TimeoutExpired 124 would be remaining-wall, not a real RED.
+        # Next tick retries because state is left unchanged.
+        min_needed = int(spec.get("min_timeout", 0) or 0)
+        if min_needed and remaining < min_needed:
+            continue
         check_timeout = max(30, min(int(spec.get("timeout", DEFAULT_TIMEOUT)), int(remaining)))
         rc, out = run_check(name, spec, check_timeout)
         # Save state INCREMENTALLY after each check (not just at the end) so a
         # killed run preserves completed checks and never re-runs everything.
         state[name] = now
+        # t_a781c1f2: also persist this check's OWN pass/fail outcome, keyed
+        # separately from the timestamp. Without this the mechanism-liveness
+        # collector had no way to know an individual check's own result and
+        # fell back to the bundle cron job's aggregate last_status/last_error,
+        # which reflects ANY sibling check's failure that tick — a healthy
+        # check (e.g. leak-guard) was falsely reported DEAD whenever an
+        # unrelated bundle sibling (e.g. standing-no-black-holes-detector)
+        # failed on the same tick. This is a structured state-file write, not
+        # new console output — the SUCCESS PATH SILENT rule for this cron
+        # job's own stdout/exit code is unchanged.
+        state[f"{name}:last_status"] = "ok" if rc == 0 else "error"
+        if rc != 0:
+            # Truncated: this file is read by the collector for classification,
+            # not a full log (full detail still goes to the aggregate report
+            # below and to the kanban card the report-to-board wrapper files).
+            state[f"{name}:last_error"] = out[:400]
+        else:
+            state.pop(f"{name}:last_error", None)
         save_state(state)
         if rc != 0:
             failures.append(out)
