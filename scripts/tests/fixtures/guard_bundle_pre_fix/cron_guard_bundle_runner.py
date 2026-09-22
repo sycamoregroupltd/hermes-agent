@@ -22,32 +22,10 @@ WATCHDOG SEMANTICS
   exit 0 = fully silent.
 * A check that times out (or crashes) is recorded as a failure (never silent).
 
-OBSERVATION PROTOCOL (t_d14445d2, opt-in, default OFF)
------------------------------------------------------
-A bundle cannot prove recovery from silence: checks run on their own intervals,
-so one silent tick can mean "every due check passed", "nothing was due" or "the
-wall-clock budget ran out mid-tick". The consumer used to treat all three as a
-cleared condition (false recovery, R01/R06 of the design contract).
-
-When RTB_OBSERVATION_PROTOCOL=guard-bundle-v1 is explicitly set by the job's shim,
-this runner emits exactly ONE control record on stdout and rc=0:
-
-    GUARD_BUNDLE_OBSERVATION_V1 CLEAN           completed due work, empty debt
-    GUARD_BUNDLE_OBSERVATION_V1 NO_DUE_CHECKS   nothing was due this tick
-    GUARD_BUNDLE_OBSERVATION_V1 DEFERRED        due work remains unfinished
-
-only after loading a per-bundle recovery-debt sidecar. A check's identity is
-added to pending_recheck BEFORE it is launched and removed only when it returns
-0; CLEAN is emitted only when every due check ran and the pending set is empty.
-NO_DUE_CHECKS/DEFERRED are never recovery evidence. Failures keep the existing
-aggregate report + rc=1 (never a record). Without the env var every byte of the
-legacy behavior above is unchanged.
-
 This preserves the alert-on-nonzero semantics of the absorbed validators
 (e.g. dgx-fleet-chain-validator, data-freshness-probe) verbatim.
 
 State file: <profile_cron>/state/guard_bundle_last_run.json  (per-check last-run)
-Recovery-debt sidecar: <profile_cron>/state/guard_bundle_observations_<bundle>.json
 
 RESILIENCE FIX (2026-08-29, t_74f47880 CRON-HEALTH→ACTION)
 ----------------------------------------------------------
@@ -102,20 +80,6 @@ HERMES_HOME = Path(os.environ.get("HERMES_HOME", "/home/frank/.hermes/profiles/j
 SCRIPTS_DIR = HERMES_HOME / "scripts"
 CRON_DIR = HERMES_HOME / "cron"
 STATE_FILE = CRON_DIR / "state" / "guard_bundle_last_run.json"
-
-# ---- observation protocol (t_d14445d2) ------------------------------------
-OBSERVATION_PROTOCOL = "guard-bundle-v1"
-OBSERVATION_MARKER_PREFIX = "GUARD_BUNDLE_OBSERVATION_V1 "
-# Bundles whose shim may opt in, with the exact job binding that shim must
-# present. A control record suppresses a report at the consumer, so an opt-in
-# that cannot be bound to its job is a loud configuration error, never a
-# silent downgrade.
-OBSERVATION_BINDINGS: dict[str, dict[str, str]] = {
-    "15m": {
-        "GUARD_TICK": "15m",
-        "RTB_KEY": "guard-bundle-15m",
-    },
-}
 
 # ---- per-bundle wall-clock budgets (seconds) ------------------------------
 # The live guard-bundle path has previously observed a 600s kill boundary
@@ -295,134 +259,12 @@ def save_state(state: dict) -> None:
         print(f"guard-bundle WARN: could not write state file: {e}")
 
 
-def _atomic_write_json(path: Path, payload: dict) -> None:
-    """Persist required state without ever exposing a partial file.
-
-    save_state() above (legacy path, unchanged) writes a fixed .tmp name and
-    swallows errors — fine for a re-derivable timestamp cache, not fine for
-    recovery evidence or for the opted-in timestamp save, where a silent
-    failure would look exactly like a healthy tick.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
-    try:
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2, sort_keys=True)
-            fh.write("\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-        dir_fd = os.open(str(path.parent), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-    except Exception:
-        try:
-            tmp.unlink()
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def _observation_path(bundle: str) -> Path:
-    return CRON_DIR / "state" / f"guard_bundle_observations_{bundle}.json"
-
-
-def load_observation_state(bundle: str) -> tuple[dict | None, str | None]:
-    """Load/validate the recovery-debt sidecar. Never recover from bad evidence.
-
-    Missing sidecar -> bootstrap with EVERY member pending, so the first
-    protocol run cannot claim CLEAN for work that has not been observed since
-    the protocol was switched on.
-    """
-    path = _observation_path(bundle)
-    members = sorted(BUNDLES[bundle])
-    if not path.exists():
-        state = {"version": 1, "bundle": bundle, "members": members,
-                 "pending_recheck": members, "in_flight": None}
-        try:
-            _atomic_write_json(path, state)
-        except Exception as exc:
-            return None, (f"guard-bundle observation state error ({path}): "
-                          f"bootstrap write failed: {exc}")
-        return state, None
-    try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(state, dict) or state.get("version") != 1:
-            raise ValueError("version must be integer 1")
-        if state.get("bundle") != bundle:
-            raise ValueError("bundle does not match cadence")
-        old_members = state.get("members")
-        pending = state.get("pending_recheck")
-        in_flight = state.get("in_flight")
-        if (not isinstance(old_members, list) or
-                any(not isinstance(item, str) for item in old_members) or
-                old_members != sorted(set(old_members))):
-            raise ValueError("members must be sorted and unique strings")
-        if (not isinstance(pending, list) or
-                any(not isinstance(item, str) for item in pending) or
-                pending != sorted(set(pending))):
-            raise ValueError("pending_recheck must be sorted and unique strings")
-        if in_flight is not None and not isinstance(in_flight, str):
-            raise ValueError("in_flight must be null or a string")
-    except Exception as exc:
-        return None, f"guard-bundle observation state error ({path}): {exc}"
-
-    # Membership changes invalidate positive evidence. Retain old unresolved
-    # identities for explicit disposition rather than silently dropping debt.
-    if old_members != members:
-        state["members"] = members
-        state["pending_recheck"] = sorted(set(pending) | set(old_members) | set(members))
-        try:
-            _atomic_write_json(path, state)
-        except Exception as exc:
-            return None, (f"guard-bundle observation state error ({path}): "
-                          f"membership invalidation write failed: {exc}")
-    if in_flight is not None and in_flight not in state["pending_recheck"]:
-        state["pending_recheck"] = sorted(set(state["pending_recheck"]) | {in_flight})
-        try:
-            _atomic_write_json(path, state)
-        except Exception as exc:
-            return None, (f"guard-bundle observation state error ({path}): "
-                          f"in-flight recovery write failed: {exc}")
-    return state, None
-
-
-def save_observation_state(bundle: str, state: dict) -> None:
-    _atomic_write_json(_observation_path(bundle), state)
-
-
-def load_state_strict() -> tuple[dict, str | None]:
-    """Opted-in timestamp load: an unreadable state file is a visible failure.
-
-    Legacy load_state() returns {} on any error, which would silently re-run
-    every due check (a re-run storm) — acceptable for a best-effort cache,
-    not for a run that will publish a control record.
-    """
-    if not STATE_FILE.exists():
-        return {}, None
-    try:
-        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        if not isinstance(state, dict):
-            raise ValueError("state must be an object")
-        return state, None
-    except Exception as exc:
-        return {}, f"guard-bundle timestamp state error ({STATE_FILE}): {exc}"
-
-
-def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str, bool]:
-    """Run one absorbed check. Returns (exit_code, captured_output, attempted).
-
-    `attempted` is False only for the preflight refusals that decide NOT to
-    launch a check (FCV rung/min_timeout remaining-wall). They are neither a
-    pass nor a failure and must never be counted as completed work.
-    """
+def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str]:
+    """Run one absorbed check. Returns (exit_code, captured_output)."""
     script = spec["script"]
     path = (SCRIPTS_DIR / script).resolve()
     if not path.is_file():
-        return 2, f"script missing: {path}", True
+        return 2, f"script missing: {path}"
     argv = ["bash", str(path)] if path.suffix in (".sh", ".bash") else [sys.executable, str(path)]
     # Per-check extra CLI args. Without this every absorbed check ran bare, so
     # kanban_dedupe_guard silently scanned only its default board
@@ -456,14 +298,14 @@ def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str, bool]:
         if int(timeout) < rung_to:
             # Remaining daily wall cannot finish one rung. Do not launch
             # a 120s probe under a shorter parent timeout.
-            return 0, "", False
+            return 0, ""
     # t_362d3583: same remaining-wall class for the hourly safety-config
     # walk. Live duration ~350s; a 307s parent wait is TimeoutExpired 124
     # not an audit RED. Incomplete/deferred scan is silent rc=0; a real
     # nonzero from a finished check still alerts.
     min_needed = int(spec.get("min_timeout", 0) or 0)
     if min_needed and int(timeout) < min_needed:
-        return 0, "", False
+        return 0, ""
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout,
@@ -477,8 +319,8 @@ def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str, bool]:
                 parts.append(out)
             if err:
                 parts.append(f"stderr: {err}")
-            return proc.returncode, "\n".join(parts), True
-        return 0, "", True  # healthy -> suppress
+            return proc.returncode, "\n".join(parts)
+        return 0, ""  # healthy -> suppress
     except subprocess.TimeoutExpired:
         # t_ffd97c90 safety net: remaining wall < rung timeout is SKIPPED,
         # not a DEAD_KEY alert. Keep 124 when the parent wait was long
@@ -486,86 +328,43 @@ def run_check(name: str, spec: dict, timeout: int) -> tuple[int, str, bool]:
         if name == "dgx-fleet-chain-validator":
             rung_to = int(env.get("FCV_RUNG_TIMEOUT", "120"))
             if int(timeout) < rung_to:
-                return 0, "", False
+                return 0, ""
         min_needed = int(spec.get("min_timeout", 0) or 0)
         if min_needed and int(timeout) < min_needed:
-            return 0, "", False
-        return 124, f"[{name}] timed out after {timeout}s", True
+            return 0, ""
+        return 124, f"[{name}] timed out after {timeout}s"
     except Exception as e:
-        return 2, f"[{name}] execution error: {e}", True
+        return 2, f"[{name}] execution error: {e}"
 
 
-def acquire_single_instance(bundle: str) -> bool | None:
+def acquire_single_instance(bundle: str) -> bool:
     """Non-blocking flock guard: one runner per bundle at a time.
 
     Returns True if this process holds the lock (it should run), False if
-    another instance is already running (the caller should exit silently), and
-    None if the lock could not be established at all (the caller must fail
-    visibly — a silent "skip" would leave the tick unobserved while looking
-    exactly like the healthy case).
+    another instance is already running (the caller should exit silently).
     The lock is released automatically when this process exits or is killed.
     """
     if fcntl is None:
         return True  # no fcntl -> degrade to no guard rather than break the job
-    lock_dir = STATE_FILE.parent
     try:
+        lock_dir = STATE_FILE.parent
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_path = lock_dir / f"guard_bundle_{bundle}.lock"
-    except OSError:
-        return None
-    try:
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
-    except OSError:
-        return None
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Keep the fd open for the lifetime of the process (do not close it
-        # here — closing would release the lock). Store on a module attr.
-        _held_locks.append(fd)
-        return True
-    except BlockingIOError:
-        os.close(fd)
-        return False
-    except OSError:
-        os.close(fd)
-        return None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Keep the fd open for the lifetime of the process (do not close it
+            # here — closing would release the lock). Store on a module attr.
+            _held_locks.append(fd)
+            return True
+        except (BlockingIOError, OSError):
+            os.close(fd)
+            return False
+    except Exception:
+        return True  # lock failure should not break the bundle; degrade safely
 
 
 _held_locks: list[int] = []
-
-
-def _observation_requested(bundle: str) -> bool:
-    """True only when THIS job is the shim that legitimately opts in.
-
-    An unbound opt-in (env set by a parent shell, a copied shim, a manual
-    probe) could emit a control record from a job the consumer never intended
-    to trust. Validate the job binding before anything runs; a mismatch is a
-    loud configuration error, never a silent downgrade.
-    """
-    if os.environ.get("RTB_OBSERVATION_PROTOCOL", "") != OBSERVATION_PROTOCOL:
-        return False
-    expected = OBSERVATION_BINDINGS.get(bundle)
-    if expected is None:
-        print(f"guard-bundle observation configuration error: bundle {bundle!r} has "
-              f"no {OBSERVATION_PROTOCOL} binding")
-        return False
-    problems = [f"{key}={os.environ.get(key)!r} (expected {value!r})"
-                for key, value in expected.items()
-                if os.environ.get(key) != value]
-    rtb_script = os.environ.get("RTB_SCRIPT") or ""
-    script_path = Path(rtb_script)
-    if script_path.name != "guard_bundle_run.sh" or script_path.parent.name != "scripts":
-        problems.append(
-            f"RTB_SCRIPT={rtb_script!r} (expected <hermes root>/scripts/guard_bundle_run.sh)")
-    if problems:
-        print("guard-bundle observation configuration error: " + "; ".join(problems))
-        return False
-    return True
-
-
-def _emit_observation(verdict: str) -> int:
-    print(f"{OBSERVATION_MARKER_PREFIX}{verdict}")
-    return 0
 
 
 def main() -> int:
@@ -573,70 +372,37 @@ def main() -> int:
         print("usage: cron_guard_bundle_runner.py <5m|15m|hourly|daily>")
         return 2
     bundle = sys.argv[1]
-    protocol = os.environ.get("RTB_OBSERVATION_PROTOCOL", "").strip() == OBSERVATION_PROTOCOL
-    if protocol and not _observation_requested(bundle):
-        # Loud (rc=2 + stdout): the consumer keeps this as a report rather
-        # than reading an unbound record as a verdict.
-        return 2
     budget = BUDGETS.get(bundle, DEFAULT_TIMEOUT)
 
     # Single-instance guard: if another runner for this bundle is alive, skip.
-    acquired = acquire_single_instance(bundle)
-    if acquired is None:
-        print(f"GUARD BUNDLE [{bundle}] — single-instance lock setup failure",
-              file=sys.stderr)
-        return 1
-    if not acquired:
+    if not acquire_single_instance(bundle):
         # Concurrent fire — another instance is already running this bundle.
         # Exit silently (exit 0): the running instance owns this tick. We must
-        # NOT report failure here (the other instance will). Never a record:
-        # this tick observed nothing.
+        # NOT report failure here (the other instance will).
         return 0
 
     now = int(time.time())
     started = time.monotonic()
-    if protocol:
-        state, state_error = load_state_strict()
-        observation, observation_error = load_observation_state(bundle)
-        if state_error or observation_error or observation is None:
-            failures = [item for item in (state_error, observation_error) if item]
-            print(f"GUARD BUNDLE [{bundle}] — observation state failure at "
-                  f"{time.strftime('%Y-%m-%dT%H:%M:%S')}:\n\n" + "\n\n".join(failures))
-            return 1
-    else:
-        state = load_state()
-        observation = None
+    state = load_state()
     failures: list[str] = []
-    deferred = False
-    attempted_count = 0
+    due_ran = 0
+    budget_exhausted = False
 
-    try:
-        due_names = [name for name in BUNDLES[bundle]
-                     if now - int(state.get(name, 0) or 0) >= int(CHECKS[name]["interval"])]
-    except (TypeError, ValueError, OverflowError) as exc:
-        # A timestamp we cannot interpret must not read as "not due" (a
-        # silently unobserved tick) or as "due" (a re-run storm).
-        if protocol:
-            print(f"GUARD BUNDLE [{bundle}] — timestamp state validation failure: {exc}")
-            return 1
-        raise
-
-    if protocol and not due_names:
-        # Nothing was due. This is NOT evidence of recovery: work with a longer
-        # interval simply was not examined this tick, and pending rechecks may
-        # still be owed. The consumer must not close the incident on it.
-        return _emit_observation("NO_DUE_CHECKS")
-
-    for name in due_names:
+    for name in BUNDLES[bundle]:
         # Wall-clock budget: stop launching new checks once exhausted. Completed
         # checks already had their state saved incrementally, so unfinished ones
         # simply run on the next tick. No loss, no pile-up.
         elapsed = time.monotonic() - started
         if elapsed >= budget:
-            deferred = True
+            budget_exhausted = True
             break
 
         spec = CHECKS[name]
+        interval = int(spec["interval"])
+        last = int(state.get(name, 0) or 0)
+        if now - last < interval:
+            continue  # not due yet
+        due_ran += 1
         # Clamp this check's timeout to the remaining budget so a single hung
         # check can never eat the whole run (min 30s so legitimate long audits
         # still get a fair window on a fresh tick).
@@ -644,45 +410,12 @@ def main() -> int:
         # t_362d3583: do not launch (and do not mark complete) when the
         # remaining hourly wall is under this check's measured floor.
         # TimeoutExpired 124 would be remaining-wall, not a real RED.
-        # Next tick retries because state is left unchanged. A refusal to
-        # launch is a deferral, never recovery evidence.
+        # Next tick retries because state is left unchanged.
         min_needed = int(spec.get("min_timeout", 0) or 0)
         if min_needed and remaining < min_needed:
-            deferred = True
             continue
         check_timeout = max(30, min(int(spec.get("timeout", DEFAULT_TIMEOUT)), int(remaining)))
-
-        if protocol:
-            # Record the debt BEFORE launching: if this process is killed
-            # mid-check (600s job cap, OOM, SIGKILL) the identity stays pending
-            # and the next tick can never mistake the gap for a clean pass.
-            observation["pending_recheck"] = sorted(
-                set(observation["pending_recheck"]) | {name})
-            observation["in_flight"] = name
-            try:
-                save_observation_state(bundle, observation)
-            except Exception as exc:
-                failures.append(f"[{name}] observation prelaunch persistence failed: {exc}")
-                observation["in_flight"] = None
-                break
-
-        rc, out, attempted = run_check(name, spec, check_timeout)
-        if not attempted:
-            deferred = True
-            if protocol:
-                observation["in_flight"] = None
-                try:
-                    save_observation_state(bundle, observation)
-                except Exception as exc:
-                    failures.append(f"[{name}] observation persistence failed: {exc}")
-                # Opted in: a preflight refusal must not advance this check's
-                # window — it was not observed, so it stays due next tick.
-                continue
-            # Legacy path keeps the historical behavior for an in-run_check
-            # refusal (t_34f62258 / t_ffd97c90): window advanced, silent rc=0.
-        if attempted:
-            attempted_count += 1
-
+        rc, out = run_check(name, spec, check_timeout)
         # Save state INCREMENTALLY after each check (not just at the end) so a
         # killed run preserves completed checks and never re-runs everything.
         state[name] = now
@@ -704,40 +437,21 @@ def main() -> int:
             state[f"{name}:last_error"] = out[:400]
         else:
             state.pop(f"{name}:last_error", None)
-        if protocol:
-            try:
-                _atomic_write_json(STATE_FILE, state)
-            except Exception as exc:
-                failures.append(f"[{name}] timestamp persistence failed: {exc}")
-        else:
-            save_state(state)
+        save_state(state)
         if rc != 0:
-            failures.append(out or f"[{name}] exited {rc} with no output")
-        elif protocol:
-            pending = set(observation["pending_recheck"])
-            pending.discard(name)
-            observation["pending_recheck"] = sorted(pending)
+            failures.append(out)
 
-        if protocol:
-            observation["in_flight"] = None
-            try:
-                save_observation_state(bundle, observation)
-            except Exception as exc:
-                failures.append(f"[{name}] observation persistence failed: {exc}")
+    if budget_exhausted:
+        # Only when there was actually more due work than the budget allowed.
+        # Not a failure — a deferral. The state file keeps unfinished checks due
+        # for the next tick. Keep this out of `failures` so we stay silent.
+        pass
 
     if failures:
         print(f"GUARD BUNDLE [{bundle}] — {len(failures)} failed check(s) at "
               f"{time.strftime('%Y-%m-%dT%H:%M:%S')}:\n")
         print("\n\n".join(failures))
         return 1
-
-    if protocol:
-        # A positive record requires that every due check actually ran and no
-        # identity is still owed. Budget deferral, an empty tick and pending
-        # debt all mean "not observed", not "healthy".
-        if deferred or observation["pending_recheck"] or attempted_count == 0:
-            return _emit_observation("DEFERRED")
-        return _emit_observation("CLEAN")
 
     # All due checks passed: emit NOTHING (empty stdout = silent watchdog).
     return 0
