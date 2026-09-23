@@ -22,7 +22,7 @@ monitor's numeric logic.
 
 ```bash
 cd /home/frank/.hermes/scripts/drift_baseline
-python3 build_training_baseline.py --self-test                      # DB-free, 12 checks
+python3 build_training_baseline.py --self-test                      # DB-free, 26 checks
 python3 build_training_baseline.py --all-deployed --window-map windows.json \
         --max-rows 120000 --out-dir baselines
 python3 build_training_baseline.py --rebuild-manifest --out-dir baselines   # re-verify sha256
