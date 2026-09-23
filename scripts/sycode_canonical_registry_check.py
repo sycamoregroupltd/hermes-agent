@@ -20,10 +20,44 @@ USAGE
     python3 ~/.hermes/scripts/sycode_canonical_registry_check.py --registry /path/to/canonical-dataset-registry.json
 
 EXIT CODES
-    0  all canonical datasets pass their SLO AND the manifest governance contract holds
+    0  all canonical datasets pass their SLO AND the manifest governance contract holds.
+       A probe that was BOUNDED OUT is reported as a WARN row and does NOT gate (see
+       PROBE TIMEOUT CONTRACT below).
     1  one or more canonical datasets FAIL their SLO, OR the manifest governance contract
        is violated (reported as a FAIL row, id=manifest-contract)
-    3  harness error (cannot read registry or measure) — NOT the same as a pass
+    3  harness error: cannot read the registry, OR a probe failed for a NON-timeout reason
+       (connection, syntax, permission). NOT the same as a pass.
+
+PROBE TIMEOUT CONTRACT (t_38bdf784, 2026-09-23)
+    A canonical probe that cannot finish inside its bound must not be reported as a harness
+    error. Before this contract, one slow probe made the run exit 3, and the cron shim maps
+    exit 3 to a WARNING spool alert — so the daily gate alerted about its own measurement
+    instead of about the estate (5-failure streak; job ee967d2b04ca paused 2026-08-30).
+    Two changes:
+      (a) PER-PROBE BOUND — every datasets[].probe_sql runs under PROBE_STMT_TIMEOUT (15s
+          server-side, PG cancels) plus PROBE_SUBPROCESS_TIMEOUT (45s client-side, we kill
+          psql), instead of one global STMT_TIMEOUT shared by the whole run. Order 10-20s:
+          an index-backed newest-row probe is sub-second, so anything near the bound is a
+          scan, not an unlucky run.
+      (b) CLASSIFICATION — a probe that times out is a WARN row (ok=None, warn=True), printed
+          in the table AND to stderr, counted in the summary line, and it does NOT set
+          harness_err. Exit stays 0/1. A non-timeout probe error still exits 3, so genuine
+          harness breakage is never swallowed.
+    WARN is deliberately non-gating: the shim's exit-1 path spools a CRITICAL alert to
+    discord:#critical-alerts, and a bounded-out probe is not a canonical-SLO break. The cost
+    is real and accepted — a permanently-WARN probe is visible in the cron run log and on
+    manual runs, not in Discord. Read the WARN rows when triaging a daily run.
+
+    NOTE ON ROW 8 (tick_trades), the exit-3 cause fixed here: the probe read
+    max(created_at), a column with NO index, so every run did a parallel sequential scan of a
+    111 GB table and PG cancelled it at the 120s statement_timeout. The probe is now anchored
+    on "timestamp", which idx_tick_trades_timestamp (drizzle migration 0129) serves as an
+    Index Only Scan Backward: 0.13s measured 2026-09-23. Both columns advance together
+    (insert-lag mean 0.46s / 1.76s / 1.17s over three index-bounded windows), but "timestamp"
+    is NOT NULL and is the tape's own recency, whereas a late backfill could refresh
+    created_at while the tape itself did not advance. Changing the probe can only turn a
+    false FAIL/WARN into a true verdict, never the reverse: a dead tick writer stops
+    advancing max(timestamp) just as it stops advancing max(created_at).
 
 MANIFEST GOVERNANCE CONTRACT (t_012941ae, 2026-09-22)
     The registry's *dataset list* was already load-bearing, but the governance clauses
@@ -66,7 +100,22 @@ from datetime import datetime, timezone
 
 CONTAINER = "sycodetrading-supabase-db"
 STMT_TIMEOUT = "120s"
+# Per-probe bound (t_38bdf784). A canonical probe gets a much tighter cap than the whole
+# run so one slow dataset cannot consume the run budget or turn the gate into an error.
+PROBE_STMT_TIMEOUT = "15s"
+PROBE_SUBPROCESS_TIMEOUT = 45
 DEFAULT_REGISTRY = "/home/frank/obsidian/sycode-trading/architecture/canonical-dataset-registry.json"
+
+# Sentinel verdict for a probe that could not finish inside its bound. Reported, never gating.
+WARN = "WARN"
+# psql / PostgreSQL phrasings that mean "bounded out", not "harness broken".
+TIMEOUT_MARKERS = (
+    "statement timeout",
+    "canceling statement",
+    "cancelling statement",
+    "timeout expired",
+    "harness timeout after",
+)
 
 
 def load_registry(path):
@@ -74,13 +123,24 @@ def load_registry(path):
         return json.load(fh)
 
 
-def q(sql, timeout=180):
-    """Run a read-only SELECT via the acceptance docker pattern. Returns (value, error)."""
+def is_timeout_error(err):
+    """True when the error text is a bounded-out probe rather than harness breakage."""
+    low = str(err).lower()
+    return any(m in low for m in TIMEOUT_MARKERS)
+
+
+def q(sql, timeout=180, stmt_timeout=STMT_TIMEOUT):
+    """Run a read-only SELECT via the acceptance docker pattern. Returns (value, error).
+
+    stmt_timeout bounds the SERVER side (PG cancels the statement, psql exits non-zero);
+    timeout bounds the CLIENT side (we kill psql). Callers probing a canonical dataset pass
+    PROBE_STMT_TIMEOUT / PROBE_SUBPROCESS_TIMEOUT so a slow dataset cannot consume the run.
+    """
     if any(w in sql.upper() for w in (" INSERT ", " UPDATE ", " DELETE ", " DROP ", " ALTER ",
-                                      " CREATE ", " TRUNCATE ", " VACUUM ", " REINDEX ", " GRANT ")):
+                                     " CREATE ", " TRUNCATE ", " VACUUM ", " REINDEX ", " GRANT ")):
         return None, "refused: statement is not read-only"
     cmd = ["docker", "exec", CONTAINER, "psql", "-U", "postgres", "-d", "postgres", "-At",
-           "-c", f"SET statement_timeout='{STMT_TIMEOUT}'; {sql}"]
+           "-c", f"SET statement_timeout='{stmt_timeout}'; {sql}"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -123,7 +183,12 @@ def is_flat_book():
 
 
 def eval_dataset(ds):
-    """Return (ok: bool|None, measured: str) for one canonical dataset. ok=None = UNKNOWN."""
+    """Return (ok, measured) for one canonical dataset.
+
+    ok is True (PASS) / False (FAIL) / None (UNKNOWN) / WARN (bounded out) — the WARN
+    sentinel is a distinct value, never folded into None, because a bounded-out probe must
+    not read the same as a dataset with no probe at all (see PROBE TIMEOUT CONTRACT).
+    """
     probe = ds.get("probe_sql")
     mode = ds.get("probe_mode", "age_lt")
     slo = ds.get("slo_hours")
@@ -132,8 +197,12 @@ def eval_dataset(ds):
     if not probe:
         return None, "no probe_sql (sidecar/mcp surface — verified via its own monitor)"
 
-    raw, err = q(probe)
+    raw, err = q(probe, timeout=PROBE_SUBPROCESS_TIMEOUT, stmt_timeout=PROBE_STMT_TIMEOUT)
     if err:
+        if is_timeout_error(err):
+            # Bounded out: report it, do not gate the exit code, do NOT call it a harness error.
+            return WARN, (f"PROBE TIMEOUT — bounded at {PROBE_STMT_TIMEOUT} statement_timeout / "
+                          f"{PROBE_SUBPROCESS_TIMEOUT}s client; non-fatal WARN ({err})")
         return None, f"ERROR: {err}"
     if raw is None:
         return None, "no rows returned"
@@ -248,16 +317,22 @@ def main():
     for ds in datasets:
         if not ds.get("canonical"):
             rows.append(dict(id=ds.get("id"), name=ds.get("name"), canonical=False,
-                             target="non-canonical (report only)", measured="-", verdict="INFO", ok=None))
+                             target="non-canonical (report only)", measured="-", verdict="INFO",
+                             ok=None, warn=False))
             continue
         ok, measured = eval_dataset(ds)
+        is_warn = (ok == WARN)
         if ok is None and "ERROR" in str(measured):
             harness_err = True
         target = f"<{ds.get('slo_hours')}h" if ds.get("probe_mode", "age_lt") != "count_ge" \
             else f">={ds.get('probe_target')}/24h"
+        verdict = ("WARN" if is_warn
+                   else "PASS" if ok is True
+                   else "FAIL" if ok is False
+                   else "UNKNOWN")
         rows.append(dict(id=ds.get("id"), name=ds.get("name"), canonical=True, target=target,
-                         measured=measured,
-                         verdict=("PASS" if ok else ("FAIL" if ok is False else "UNKNOWN")), ok=ok))
+                         measured=measured, verdict=verdict,
+                         ok=(None if is_warn else ok), warn=is_warn))
 
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows.insert(0, dict(
@@ -269,10 +344,11 @@ def main():
                   if not contract_violations
                   else "FAIL — " + "; ".join(contract_violations)),
         verdict=("PASS" if not contract_violations else "FAIL"),
-        ok=(not contract_violations)))
+        ok=(not contract_violations), warn=False))
     npass = sum(1 for r in rows if r["ok"] is True)
     nfail = sum(1 for r in rows if r["ok"] is False)
-    nunk = sum(1 for r in rows if r["ok"] is None and r.get("canonical"))
+    nwarn = sum(1 for r in rows if r.get("warn"))
+    nunk = sum(1 for r in rows if r["ok"] is None and r.get("canonical") and not r.get("warn"))
     ninfo = sum(1 for r in rows if not r.get("canonical"))
 
     if args.json:
@@ -280,17 +356,27 @@ def main():
     else:
         print(f"# Sycode canonical dataset registry check — {stamp}")
         print(f"registry: {args.registry}")
-        print(f"\n**{npass} PASS · {nfail} FAIL · {nunk} UNKNOWN (canonical) · {ninfo} non-canonical (info)**\n")
+        print(f"\n**{npass} PASS · {nfail} FAIL · {nwarn} WARN · {nunk} UNKNOWN (canonical) · "
+              f"{ninfo} non-canonical (info)**\n")
         print("| id | dataset | SLO | measured | verdict |")
         print("|---|---|---|---|---|")
         for r in rows:
-            badge = {"PASS": "PASS", "FAIL": "**FAIL**", "UNKNOWN": "_UNKNOWN_", "INFO": "info"}[r["verdict"]]
+            badge = {"PASS": "PASS", "FAIL": "**FAIL**", "WARN": "**WARN**",
+                     "UNKNOWN": "_UNKNOWN_", "INFO": "info"}[r["verdict"]]
             print(f"| {r['id']} | {r['name']} | {r['target']} | {r['measured']} | {badge} |")
         print("\n> Re-run before quoting. A number in a note is provenance; only a fresh run is status.")
+        if nwarn:
+            print(f"WARN: {nwarn} canonical probe(s) bounded out by the per-probe "
+                  f"{PROBE_STMT_TIMEOUT} statement_timeout — reported as WARN and excluded from "
+                  f"the exit code (0/1 contract). Investigate the WARN rows above.",
+                  file=sys.stderr)
 
     # FAILs win over harness errors: a genuine canonical-SLO break must surface as
     # CRITICAL (exit 1) even when a sibling dataset probe timed out, so one slow
     # dataset cannot mask a real gate break. (t_7b10dfee)
+    # WARN rows are intentionally non-gating (t_38bdf784): a bounded-out probe is a
+    # measurement gap, not a canonical-SLO break, and the shim's exit-1 path spools a
+    # CRITICAL alert. Exit 3 is reserved for real harness breakage.
     if any(r["ok"] is False and r.get("canonical") for r in rows):
         return 1
     if harness_err:
