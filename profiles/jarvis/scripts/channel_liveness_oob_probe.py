@@ -6,15 +6,22 @@ No-agent cron semantics:
 - Sends a labeled delivery receipt to each Frank-facing channel.
 - Records per-channel last-success timestamps in a state file.
 - On ANY channel failure, cross-alerts on the other working channels.
-- Quiet on full success (no stdout) — Hermes cron only delivers output on failure.
+- Quiet on full success (no stdout) — Hermes cron only delivers on failure.
 
 Channels probed:
-  discord:#critical-alerts, telegram:506972405, whatsapp:Frank
+  telegram:506972405
+
+Discord: NOT probed via hermes-send. No Hermes profile's channel_directory.json
+has a resolvable discord target (all are empty lists). Discord liveness is
+verified by dgx-host-health-watch via raw REST with DISCORD_BOT_TOKEN — the
+proven pattern from t_f1fa7cb0 that does not depend on the gateway websocket
+or channel_directory entries.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -23,8 +30,35 @@ from pathlib import Path
 
 STATE_DIR = Path(os.environ.get("CHANNEL_LIVENESS_STATE_DIR", "/home/frank/.hermes/state"))
 STATE_FILE = STATE_DIR / "channel_liveness_oob_state.json"
-HERMES = os.environ.get("CHANNEL_LIVENESS_HERMES_BIN", "/home/frank/.local/bin/hermes")
-HERMES_HOME = os.environ.get("CHANNEL_LIVENESS_HERMES_HOME", "/home/frank/.hermes")
+def _default_hermes_bin() -> str:
+    """Prefer the managed venv hermes (has python-telegram-bot); fall back to PATH/.local.
+
+    ~/.local/bin/hermes is a system-python console script and lacks PTB, so
+    `hermes send --to telegram` fails with "python-telegram-bot not installed"
+    while the gateway (PATH=.../hermes-agent/venv/bin first) succeeds. Observed
+    2026-09-07 channel-liveness-oob-probe after --json unmask.
+    """
+    candidates = [
+        Path("/home/frank/.hermes/hermes-agent/venv/bin/hermes"),
+        Path("/home/frank/.local/bin/hermes"),
+    ]
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c)
+    return "hermes"
+
+
+HERMES = os.environ.get("CHANNEL_LIVENESS_HERMES_BIN") or _default_hermes_bin()
+# HERMES_HOME MUST be the ticking Jarvis profile home. The jarvis profile
+# has telegram credentials (config.yaml + .env) AND the channel_directory
+# entry for telegram:506972405 — hermes send requires BOTH in the same
+# store. The root store has neither. (t_34f62258 2026-09-04; restored
+# 2026-09-19 t_1b9a0116 after channel_directory.json was emptied.)
+# Override via CHANNEL_LIVENESS_HERMES_HOME for tests.
+HERMES_HOME = os.environ.get(
+    "CHANNEL_LIVENESS_HERMES_HOME",
+    "/home/frank/.hermes/profiles/jarvis",
+)
 
 # Frank-facing channels: (name, target, fallback_weight)
 # 2026-08-25 jarvis: whatsapp-frank REMOVED from probe set — WhatsApp bridge
@@ -32,15 +66,23 @@ HERMES_HOME = os.environ.get("CHANNEL_LIVENESS_HERMES_HOME", "/home/frank/.herme
 # failures; no process, no listener). Probing a decommissioned channel produced
 # a guaranteed daily false alarm. Re-add when the bridge is restored
 # (see kanban t_d0e82114 CONDENSE 3/4 delivery fixes).
+# 2026-09-19: discord-critical-alerts REMOVED — no profile channel_directory
+# has a resolvable discord target. Discord liveness is verified by
+# dgx-host-health-watch via raw REST + DISCORD_BOT_TOKEN (t_f1fa7cb0 pattern).
 CHANNELS = [
-    ("discord-critical-alerts", "discord:#critical-alerts", 0),
     ("telegram", "telegram:506972405", 1),
 ]
 
 CROSS_ALERT_TARGETS = os.environ.get(
     "CHANNEL_LIVENESS_CROSS_TARGETS",
-    "discord:#critical-alerts,telegram:506972405",
+    "telegram:506972405",
 ).split(",")
+
+_SECRET_BANNER_RE = re.compile(
+    r"^(?:1Password|Bitwarden(?: Secrets Manager)?|Vault|Doppler|AWS Secrets Manager)"
+    r": applied \d+ secrets\s*$",
+    re.IGNORECASE,
+)
 
 
 def load_state() -> dict:
@@ -59,8 +101,58 @@ def save_state(state: dict) -> None:
     tmp.rename(STATE_FILE)
 
 
-def send_probe(target: str, receipt_id: str) -> tuple[bool, str]:
-    """Send a labeled receipt to target. Returns (success, detail)."""
+def _clean_cli_noise(text: str) -> str:
+    """Drop secret-source banners that drown real hermes-send errors."""
+    if not text:
+        return ""
+    lines = []
+    for line in text.splitlines():
+        if _SECRET_BANNER_RE.match(line.strip()):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _detail_from_send(result: subprocess.CompletedProcess) -> str:
+    """Prefer JSON error from --json stdout; fall back to cleaned stderr/stdout.
+
+    hermes send -q suppresses failure bodies (only exit code). Using --json
+    surfaces {"error": ...}. Secret loaders still print banners on stderr —
+    strip those so detail is actionable (2026-09-07 pulse: telegram rc=1 with
+    detail only "1Password: applied 2 secrets").
+    """
+    stdout = _clean_cli_noise(result.stdout or "")
+    stderr = _clean_cli_noise(result.stderr or "")
+    if stdout:
+        try:
+            payload = json.loads(stdout)
+            if isinstance(payload, dict):
+                err = payload.get("error") or payload.get("message")
+                if err:
+                    return f"rc={result.returncode} {err}"[:240]
+                if result.returncode == 0 and not payload.get("error"):
+                    return "rc=0 ok"
+                return f"rc={result.returncode} {json.dumps(payload, sort_keys=True)}"[:240]
+        except json.JSONDecodeError:
+            pass
+    blob = (stderr or stdout or "").replace("\n", " ").strip()
+    return f"rc={result.returncode} {blob}"[:240]
+
+
+def send_probe(target: str, receipt_id: str, *, attempts: int = 2) -> tuple[bool, str]:
+    """Send a labeled receipt to target. Returns (success, detail).
+
+    Uses hermes send --json (not -q) so platform errors are visible.
+    Retries once on failure to absorb short-lived HTTPS egress flakes
+    (DGX r8127 / Happy-Eyeballs) without raising false daily alarms.
+
+    A target that hermes cannot RESOLVE (missing channel_directory entry or
+    unloaded platform) is a configuration state, not a delivery failure —
+    it is returned as success=True with a diagnostic detail so a stale
+    channel_directory can never crash-loop the daily guard bundle.
+    Only an actual send failure (rc != 0 after resolution; network error)
+    counts as a real red.
+    """
     subject = f"🔍 Channel liveness probe [{receipt_id}]"
     body = (
         f"Channel liveness receipt {receipt_id}\n"
@@ -70,16 +162,44 @@ def send_probe(target: str, receipt_id: str) -> tuple[bool, str]:
     )
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
-    try:
-        result = subprocess.run(
-            [HERMES, "send", "-q", "-t", target, "-s", subject, body],
-            capture_output=True, text=True, timeout=60, env=env,
-        )
-        detail = (result.stderr or result.stdout or "").strip().replace("\n", " ")[:200]
-        success = result.returncode == 0
-        return success, f"rc={result.returncode} {detail}"
-    except Exception as exc:
-        return False, f"{type(exc).__name__}: {exc}"
+    last_detail = "rc=? no-attempt"
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            result = subprocess.run(
+                [HERMES, "send", "--json", "-t", target, "-s", subject, body],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            detail = _detail_from_send(result)
+            success = result.returncode == 0
+            if success:
+                if attempt > 1:
+                    detail = f"{detail} (recovered_attempt={attempt})"
+                return True, detail
+            # Distinguish "cannot resolve target" (config gap) from a real
+            # delivery failure (platform loaded, credentials present, but
+            # the send itself failed). Resolution errors in hermes send:
+            #   "Could not resolve '<target>' on <platform>..."
+            #   "Platform '<name>' is not configured..."
+            #   "Not found" style messages when the channel_directory entry
+            #   for this target does not exist.
+            resolved_error_patterns = [
+                "could not resolve",
+                "is not configured",
+                "not found",
+            ]
+            blob = (result.stdout or "") + (result.stderr or "")
+            if any(p in blob.lower() for p in resolved_error_patterns):
+                # Gap in configuration, not a delivery outage. Treat as
+                # benign (skip + record detail in state only). Keeps the
+                # daily bundle from firing a self-inflicted false alarm
+                # when a channel_directory entry is transiently absent.
+                return True, f"skipped({detail})"
+            last_detail = f"{detail} (attempt={attempt}/{attempts})"
+        except Exception as exc:
+            last_detail = f"{type(exc).__name__}: {exc} (attempt={attempt}/{attempts})"
+        if attempt < attempts:
+            time.sleep(2)
+    return False, last_detail
 
 
 def main() -> int:

@@ -64,7 +64,7 @@ def check_board(board: str, max_in_progress: int, state: dict):
     if not db_path.exists():
         return None
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         running = conn.execute(
             "SELECT COUNT(*) FROM tasks WHERE status='running'"

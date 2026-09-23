@@ -46,7 +46,7 @@ TARGET_NAME = "fleet-knowledge-catalog-regen"
 TARGET_ID = "3ddf2469949e"
 SCRIPT = "fleet_knowledge_catalog_regen.py"
 SCHEDULE = "23 4 * * *"
-DELIVER = "discord:#fleet-reports"
+DELIVER = "discord:fleet-reports"
 LOG = Path(os.environ.get("HERMES_CATALOG_REGEN_WATCHDOG_LOG", "/home/frank/.hermes/var/fleet-knowledge-catalog-regen-watchdog.log"))
 PY = sys.executable or "python3"
 

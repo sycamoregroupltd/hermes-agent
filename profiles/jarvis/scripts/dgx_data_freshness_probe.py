@@ -187,7 +187,7 @@ def normalize_alert_for_fingerprint(alert):
 # which kills max(ts) probes on multi-gigabyte tables even when indexes are present.
 # SET LOCAL raises it only for this psql session; does NOT mutate the role or affect
 # other connections/servers. Safe connection-pool-tuning fix authorized by t_c1eed563.
-PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(60000))
+PROBE_STATEMENT_TIMEOUT = os.getenv("DATA_FRESHNESS_PSQL_TIMEOUT_MS", str(300000))
 
 
 def psql_scalar(q):
@@ -196,7 +196,7 @@ def psql_scalar(q):
     wrapped_q = f"SET statement_timeout = {PROBE_STATEMENT_TIMEOUT}; {q}"
     r = subprocess.run(
         ["docker", "exec", PG, "psql", "-U", "postgres", "-d", "postgres", "-Atc", wrapped_q],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, timeout=360)
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).strip()
         raise RuntimeError(msg.splitlines()[-1][:90] if msg else "rc=%d" % r.returncode)

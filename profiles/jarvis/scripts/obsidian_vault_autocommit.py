@@ -6,12 +6,17 @@ one line per commit or actionable failure.
 
 When a vault has an `origin` remote, push HEAD after a successful commit, and
 also push when there is nothing new to commit but local HEAD is still ahead.
-A failing push is always printed so it cannot go silent, and the two kinds are
-scored differently (t_61312ab9 review F1): PUSH-FAILED (network/auth/hook — may
-self-heal next tick) is advisory and leaves rc=0; PUSH-DIVERGED (remote history
-moved under us: non-fast-forward / fetch first) never self-heals without a human,
-so it is a FAILURE_MARKER and exits 1 — the exit code is the only liveness signal
-a Deliver:local no_agent cron has. No force push, ever.
+Before pushing, fetch and reconcile if we are behind — but ONLY via a
+fast-forward or a conflict-free three-way merge (2026-09-16, t_f1fa7cb0
+incident follow-up): neither rewrites a single commit, so both stay inside
+the "no force push, ever" rule below. A failing push is always printed so it
+cannot go silent, and the outcomes are scored differently (t_61312ab9 review
+F1): PUSH-FAILED / FETCH-FAILED (network/auth/hook — may self-heal next tick)
+is advisory and leaves rc=0; PUSH-DIVERGED (a REAL merge conflict — both
+sides touched the same lines, so no automatic reconciliation is safe) never
+self-heals without a human, so it is a FAILURE_MARKER and exits 1 — the exit
+code is the only liveness signal a Deliver:local no_agent cron has. No force
+push, ever.
 
 Staged content is scanned with the tight second-brain secret patterns before
 commit. A hit blocks the commit and does not push. A false positive is cleared by
@@ -28,6 +33,7 @@ import fcntl
 import json
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -49,6 +55,10 @@ VAULTS = [
 # A lock older than this cannot belong to a live run (a run commits in seconds),
 # so it was left behind by a crash/killed process and must not block commits forever.
 LOCK_STALE_SECONDS = 3600
+
+# Bound remote transport time so one hung push cannot strand the remaining vaults
+# or the scheduled job indefinitely.  A timeout is a visible chain failure.
+PUSH_TIMEOUT_SECONDS = 120
 
 # Tight patterns — same shapes as fleet System/Scripts/audit_second_brain.py
 # (2026-08-13). Do not re-introduce hyphenated sk-* prose matches.
@@ -135,6 +145,12 @@ research/artifacts/**/*.jsonl
 research/world-class-trading-loop/artifacts/**/*.csv
 research/world-class-trading-loop/artifacts/**/*.jsonl
 
+# Hermes official concatenated docs dump (public website llms-full.txt).
+# Example credential shapes in CLI auth docs trip the fleet pre-commit
+# scanner. Keep on disk + nightly tarball; not the git wiki. Scanner
+# stays armed — do not allowlist (t_c17f6fd0, 2026-09-20).
+Research/Guides/hermes-docs-llms/llms-full.txt
+
 # Environment / dependency / build trees. These are NEVER vault content, and
 # staging them is what breaks the backup: 2026-08-21..08-28 a 387MB venv/ appeared
 # in obsidian/investments, `git add -A` staged its 12,849 site-packages files,
@@ -171,7 +187,51 @@ site-packages/
 
 # Local automation artifacts
 .obsidian-git-autocommit.lock
+
+# Runtime / scratch state (vault audit P0, Frank via jarvis-voice 2026-09-16).
+# These are live process outputs, not notes: they churn on every run and were
+# being committed as if they were knowledge (commit 76fe26f2 carried +9,630 lines
+# of SESSION-BUS.md and 4,277/2,264 lines of BUS-MONITOR-LIVE.md). They stay on
+# disk (Session Bus append-only guard + nightly tarball) and out of the git wiki.
+# Untracking them from an already-tracked vault needs a one-off `git rm --cached`;
+# an ignore rule alone never untracks. RUNTIME_NOTE_PATHS below keeps the
+# IGNORED-NOTES warning honest for the two .md files in this list.
+Operations/last.txt
+Operations/backup-receipt.json
+Orchestration/activity/.bus-monitor-heartbeat
+Orchestration/activity/BUS-MONITOR-LIVE.md
+Orchestration/sessions/SESSION-BUS.md
+*.stdout
+*.stderr
+*.rc
+*.out
+*.err
+*.bak
+*.bak-*
+*.bak-session-reconcile
+*.pre
+*.before
+
+# Git worktrees never live inside a vault: two full copies nested in the fleet
+# vault tripled every note count and are a documented obsidian-git failure mode.
+.codex-worktrees/
+.claude/worktrees/
 """
+
+# Runtime notes deliberately ignored above. ignored_notes() must not report them
+# as swallowed knowledge: they are event streams whose backup is the Session Bus
+# append-only guard and the nightly tarball, not the git wiki.
+RUNTIME_NOTE_PATHS = frozenset({
+    'Orchestration/activity/BUS-MONITOR-LIVE.md',
+    'Orchestration/sessions/SESSION-BUS.md',
+})
+
+# gitignore never untracks an already-staged path (t_de78cf24). After
+# `git add -A`, drop these from the index so a blocked dump cannot
+# restage itself. Files stay on disk. Paths missing in a vault are a no-op.
+INDEX_UNTRACK_PATHS = (
+    'Research/Guides/hermes-docs-llms/llms-full.txt',
+)
 
 
 def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -239,6 +299,31 @@ def secret_scan_staged(vault: Path, allow: list[re.Pattern[str]]) -> list[str]:
     return sorted(set(hits))
 
 
+def case_colliding_index_paths(vault: Path) -> list[str]:
+    """Tracked paths that would collapse on a case-insensitive filesystem (macOS APFS).
+
+    `git ls-files` is the index (what a commit / clone restore materializes). On
+    Linux, Architecture/foo.md and architecture/foo.md are two files; on Mac they
+    are one, so a restored worktree is never clean (t_813effb9, Mac
+    com.sycamore.second-brain-backup failing since 19 Sep). Refuse the commit
+    rather than snapshot the collision.
+    """
+    res = run(['git', 'ls-files', '-z'], vault, check=False)
+    if res.returncode != 0:
+        return []
+    groups: dict[str, list[str]] = {}
+    for path in res.stdout.split('\0'):
+        if not path:
+            continue
+        groups.setdefault(path.casefold(), []).append(path)
+    collisions: list[str] = []
+    for variants in groups.values():
+        unique = sorted(set(variants))
+        if len(unique) > 1:
+            collisions.extend(unique)
+    return collisions
+
+
 def ignored_notes(vault: Path) -> list[str]:
     """Notes the ignore rules are swallowing — the blind spot the ignore list creates.
 
@@ -257,6 +342,8 @@ def ignored_notes(vault: Path) -> list[str]:
         if not path:
             continue
         if any(seg in '/' + path for seg in VENDOR_SEGMENTS):
+            continue
+        if path in RUNTIME_NOTE_PATHS:
             continue
         out.append(path)
     return sorted(out)
@@ -460,6 +547,38 @@ def vault_aliases(vault: Path) -> list[Path]:
     return out
 
 
+def bounded_push(vault: Path) -> subprocess.CompletedProcess[str]:
+    """Run git push with a process-group timeout and visible result.
+
+    A remote transport can hang forever (observed SSH/git push blocked in
+    ``anon_pipe_read`` for >1 hour).  Use a new session so timeout cleanup kills
+    git and its SSH descendants, not just the direct child, then return a normal
+    CompletedProcess for the existing per-vault failure isolation path.
+    """
+    cmd = ['git', 'push', '-u', 'origin', 'HEAD']
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(vault),
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=PUSH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = proc.communicate()
+        stderr = (stderr or '') + f' push exceeded {PUSH_TIMEOUT_SECONDS:g}s timeout'
+        return subprocess.CompletedProcess(cmd, 124, stdout, stderr)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
 PUSH_STATE = Path('/home/frank/.hermes/state/vault-autocommit-push-state.json')
 
 
@@ -503,10 +622,42 @@ def record_push_state(vault: Path, pushed: bool) -> str | None:
     return None
 
 
+def reconcile_behind(vault: Path) -> str | None:
+    """Fetch and, only when it is provably safe, catch HEAD up to @{upstream}.
+
+    A fast-forward merge and a conflict-free three-way merge both preserve
+    every existing commit unchanged — neither rewrites history, so both stay
+    inside the "no force push, ever" invariant. Only when git itself cannot
+    resolve the merge without a conflict do we fall back to the original
+    PUSH-DIVERGED path, which still requires a human (t_61312ab9 review F1
+    reasoning still applies to a REAL conflict — just not to every divergence).
+    Returns None on success (or nothing to reconcile), else a FAILURE_MARKER string.
+    """
+    fetch = run(['git', 'fetch', 'origin'], vault, check=False)
+    if fetch.returncode != 0:
+        err = (fetch.stderr or fetch.stdout).strip().replace('\n', ' ')[:300]
+        return f'FETCH-FAILED {vault} rc={fetch.returncode} {err}'
+    behind = run(['git', 'rev-list', '--count', 'HEAD..@{upstream}'], vault, check=False)
+    if behind.returncode != 0 or behind.stdout.strip() in ('', '0'):
+        return None  # no upstream yet, or already caught up — nothing to do
+    ff = run(['git', 'merge', '--ff-only', '@{upstream}'], vault, check=False)
+    if ff.returncode == 0:
+        return None
+    merge = run(['git', 'merge', '--no-edit', '@{upstream}'], vault, check=False)
+    if merge.returncode == 0:
+        return None
+    run(['git', 'merge', '--abort'], vault, check=False)
+    err = (merge.stderr or merge.stdout).strip().replace('\n', ' ')[:300]
+    return f'PUSH-DIVERGED {vault} unresolved merge conflict against @{{upstream}}: {err}'
+
+
 def maybe_push(vault: Path) -> str | None:
     remotes = run(['git', 'remote'], vault, check=False).stdout.split()
     if 'origin' not in remotes:
         return f'NO-REMOTE {vault} — push skipped'
+    reconcile_error = reconcile_behind(vault)
+    if reconcile_error:
+        return reconcile_error
     ahead = run(
         ['git', 'rev-list', '--count', '@{upstream}..HEAD'],
         vault,
@@ -516,9 +667,11 @@ def maybe_push(vault: Path) -> str | None:
     if ahead.returncode == 0 and ahead.stdout.strip() == '0':
         # In sync: nothing to push, but record that we VERIFIED it (review F3).
         return record_push_state(vault, pushed=False)
-    result = run(['git', 'push', '-u', 'origin', 'HEAD'], vault, check=False)
+    result = bounded_push(vault)
     if result.returncode != 0:
         err = (result.stderr or result.stdout).strip().replace('\n', ' ')[:300]
+        if result.returncode == 124:
+            return f'PUSH-TIMEOUT {vault} rc=124 {err}'
         # Divergence = the REMOTE history moved and ours is not a descendant. Git
         # says exactly one of: "! [rejected] ... (non-fast-forward)" or
         # "... (fetch first)". A "[remote rejected] ... (pre-receive hook declined)"
@@ -560,6 +713,11 @@ def autocommit(vault: Path) -> str | None:
     try:
         ensure_repo(vault)
         run(['git', 'add', '-A'], vault)
+        run(
+            ['git', 'rm', '-f', '--cached', '--ignore-unmatch', '--', *INDEX_UNTRACK_PATHS],
+            vault,
+            check=False,
+        )
         diff = run(['git', 'diff', '--cached', '--quiet'], vault, check=False)
         messages: list[str] = []
         allow, invalid = load_allowlist(vault)
@@ -573,6 +731,14 @@ def autocommit(vault: Path) -> str | None:
                 f'IGNORED-NOTES {vault} n={len(swallowed)} files={swallowed[:10]} '
                 f'— these notes match an ignore rule and are NOT being backed up'
             )
+        collisions = case_colliding_index_paths(vault)
+        if collisions:
+            return '\n'.join(messages + [
+                f'CASE-COLLISION-BLOCKED {vault} n={len(collisions)} '
+                f'files={collisions[:20]} '
+                f'| this vault did NOT commit; the other vaults were unaffected '
+                f'| Mac APFS restore would be dirty — git rm one of each case-colliding pair'
+            ])
         if diff.returncode != 0:
             blocked = secret_scan_staged(vault, allow)
             if blocked:
@@ -617,7 +783,8 @@ def autocommit(vault: Path) -> str | None:
 # stopped advancing and will not resume without a human, and the notice-card path
 # had never fired for a vaultnotice_* key — so rc=0 here read as GREEN everywhere.
 FAILURE_MARKERS = (
-    'SECRET-SCAN-BLOCKED', 'COMMIT-FAILED', 'ERROR ', 'MISSING ', 'PUSH-DIVERGED',
+    'SECRET-SCAN-BLOCKED', 'CASE-COLLISION-BLOCKED', 'COMMIT-FAILED', 'ERROR ',
+    'MISSING ', 'PUSH-DIVERGED', 'PUSH-TIMEOUT',
 )
 
 # Worth a board card, but NOT a chain death — these do not touch rc. Without this
@@ -626,7 +793,7 @@ FAILURE_MARKERS = (
 # a network/auth/hook refusal usually clears on the next 30-minute tick.
 NOTICE_MARKERS = (
     'ALLOWLIST-INVALID', 'IGNORED-NOTES', 'NO-REMOTE',
-    'PUSH-FAILED', 'PUSH-METRIC-FAILED',
+    'PUSH-FAILED', 'PUSH-METRIC-FAILED', 'FETCH-FAILED',
 )
 
 
@@ -680,7 +847,7 @@ def main() -> int:
                 f'{msg}\n\nThe other vaults in this pass were NOT stopped — '
                 f'{len(vaults) - len(failed)} of {len(vaults)} still committed.\n'
                 f'Script: /home/frank/.hermes/scripts/obsidian_vault_autocommit.py\n'
-                f'Job: hermes cron b2536429e954 (obsidian-vault-git-autocommit, every 30m)\n'
+                f'Job: hermes cron 9c4ab17cb312 (obsidian-vault-git-autocommit, every 30m)\n'
                 f'False-positive secret hit? add a regex line to {vault / ALLOWLIST_NAME}.',
             )
         else:

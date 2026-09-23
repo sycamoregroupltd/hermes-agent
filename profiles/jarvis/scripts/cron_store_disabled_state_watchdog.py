@@ -36,7 +36,14 @@ def run_selftest() -> int:
 def main() -> int:
     if "--selftest" in sys.argv[1:]:
         return run_selftest()
-    stores = sorted(Path("/home/frank/.hermes/profiles").glob("*/cron/jobs.json"))
+    stores = []
+    seen: set[str] = set()
+    for store in sorted(Path("/home/frank/.hermes/profiles").glob("*/cron/jobs.json")):
+        real = str(store.resolve())
+        if real in seen:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        seen.add(real)
+        stores.append(store)
     if not stores:
         print("WARN: no live cron stores found under profiles/", file=sys.stderr)
         return 0
