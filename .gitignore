@@ -29,6 +29,12 @@
 !/scripts/*.sh
 !/scripts/*.md
 
+# model-pin policy (kanban t_6b347dd9, 2026-09-23): NON-SECRET model/provider names
+# only. This is the approved fleet-pin SoT (Frank binder POLICY 2026-09-19) that
+# stack-health-audit.sh sources before running model-pin-drift-check.py; it must be
+# versioned or a rebuild leaves the monitor on its expired default pin.
+!/scripts/model-pin-policy.env
+
 # Regression tests for those scripts are part of the same durable substrate —
 # an untracked test cannot gate a future change (task t_e263797e, 2026-08-02).
 !/scripts/tests/

@@ -355,6 +355,21 @@ fi
 # kanban-audit-chain-monitor.sh pattern). Env overrides (MODEL_PIN_DB / WINDOW_HOURS /
 # NO_CONFIG) exist for RED-PATH DRILLS ONLY — point MODEL_PIN_DB at a scratch copy so a
 # drill never reads/writes anything but scratch.
+# Align the monitor with the approved fleet pin (Frank binder POLICY 2026-09-19 +
+# lean routing 2026-09-12): the SoT is model-pin-policy.env, which REPLACED the
+# expired promo-only expected pin deepseek/deepseek-v4-flash-0731. The policy vars
+# MUST be EXPORTED: a bare `. file` sets shell-local vars, so the python checker
+# (a child process) never sees them and falls back to its own 0731 default — which
+# flags the policy-sanctioned pin ~deepseek/deepseek-v4-flash-latest|nous as DRIFT
+# (a false page every 10 min; t_6b347dd9). `set -a` exports every assignment made
+# while sourcing.
+MODEL_PIN_POLICY_ENV="${MODEL_PIN_POLICY_ENV:-/home/frank/.hermes/scripts/model-pin-policy.env}"
+if [ -f "$MODEL_PIN_POLICY_ENV" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$MODEL_PIN_POLICY_ENV"
+    set +a
+fi
 MODEL_PIN_PROBE="${MODEL_PIN_PROBE:-/home/frank/.hermes/scripts/model-pin-drift-check.py}"
 mp_problem=""
 mp_class=""   # stable identity token for the alert key ("drift"|"unmonitored")
