@@ -227,15 +227,22 @@ _DELEGATED_CHILD_DENIED_BOARD_ACTIONS: frozenset[str] = frozenset({
 
 
 def _is_delegated_child_cli_mutation(args: argparse.Namespace) -> bool:
+    from agent.delegation_context import kanban_path_is_fenced, kanban_structure_is_fenced
+
     action = getattr(args, "kanban_action", None)
     if action == "boards":
         if (getattr(args, "boards_action", None) or "list") not in _DELEGATED_CHILD_DENIED_BOARD_ACTIONS:
             return False
-    elif action not in _DELEGATED_CHILD_DENIED_ACTIONS:
+        # Board structure is root-level, not one board's data: denied for every descendant,
+        # whichever board the lineage is dispatched for.
+        return kanban_structure_is_fenced()
+    if action not in _DELEGATED_CHILD_DENIED_ACTIONS:
         return False
-    from agent.delegation_context import kanban_path_is_fenced
-
-    return kanban_path_is_fenced(kb.kanban_home()) or kanban_path_is_fenced(kb.kanban_db_path())
+    # Task mutations are per board: only the lineage's own board is fenced, so a descendant
+    # asked to correct ANOTHER board (unpinned HERMES_KANBAN_DB + `--board <slug>`) can. With
+    # the dispatcher pin present this still resolves to the lineage's board — the CLI operates
+    # on the pinned board then, so the refusal stays correct.
+    return kanban_path_is_fenced(kb.kanban_db_path(board=getattr(args, "board", None)))
 
 
 def _joined_words(words) -> Optional[str]:

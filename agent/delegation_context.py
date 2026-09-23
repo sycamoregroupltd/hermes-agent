@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from pathlib import Path
 from typing import Iterator, Mapping, MutableMapping, overload
 
 _DELEGATED_CHILD_CONTEXT: ContextVar[bool] = ContextVar("hermes_delegated_child_context", default=False)
@@ -89,14 +90,46 @@ def is_delegated_child_process_context() -> bool:
     return bool(_DELEGATED_CHILD_CONTEXT.get()) or bool(os.environ.get(DELEGATED_CHILD_ENV_MARKER))
 
 
-def _fenced_kanban_root() -> str:
-    """The board root this process's Kanban lineage lives under (``kanban_home()``); ``"1"`` when it
-    cannot be resolved, which readers treat as "fence every board" (the pre-path marker)."""
+def _fenced_kanban_path(env: Mapping[str, str] | MutableMapping[str, str]) -> str:
+    """The path this process's Kanban lineage is fenced to: the board the lineage is dispatched for.
+
+    ``kanban_home()`` is NOT that path — every board lives under it, so a root-valued marker denied
+    mutations on every board instead of the lineage's own. The fenced path is the board DB the env
+    pins (``HERMES_KANBAN_DB``, injected into workers; else ``HERMES_KANBAN_BOARD``), and when that
+    DB sits in its board's own directory (``<root>/kanban/boards/<slug>/``) the directory itself, so
+    the board's metadata/workspaces/logs are fenced with it. The ``default`` board's DB sits directly
+    under the root, so it fences as that DB file only: its metadata dir is root-level board structure,
+    denied for every descendant by :func:`kanban_structure_is_fenced` regardless of lineage.
+
+    ``"1"`` when it cannot be resolved — readers treat that as "fence every board" (the legacy
+    marker), never as "no fence".
+    """
     try:
-        from hermes_cli.kanban_db import kanban_home
-        return str(kanban_home())
+        from hermes_cli.kanban_db import DEFAULT_BOARD, board_dir, boards_root, kanban_home
+        pinned = str(env.get("HERMES_KANBAN_DB") or "").strip()
+        if pinned:
+            db = Path(pinned).expanduser()
+        else:
+            slug = str(env.get("HERMES_KANBAN_BOARD") or "").strip()
+            db = board_dir(slug) / "kanban.db" if slug and slug != DEFAULT_BOARD \
+                else kanban_home() / "kanban.db"
+        root = boards_root()
+        if db.parent != root and db.parent.parent.resolve() == root.resolve():
+            return str(db.parent)
+        return str(db)
     except Exception:
         return "1"
+
+
+def kanban_structure_is_fenced() -> bool:
+    """Whether root-level board STRUCTURE (``boards create/rename/remove/switch``, the ``current``
+    pointer, ``board.json``) is denied for this process.
+
+    That is a mutation of the root, not of one board's data, so it stays denied for every delegate
+    descendant whatever board its lineage is dispatched for. Per-board scope is
+    :func:`kanban_path_is_fenced`, which only fences the lineage's own board.
+    """
+    return is_delegated_child_process_context()
 
 
 def scrub_kanban_env(env: Mapping[str, str] | MutableMapping[str, str]) -> dict[str, str]:
@@ -106,15 +139,17 @@ def scrub_kanban_env(env: Mapping[str, str] | MutableMapping[str, str]) -> dict[
     survives later execs, including scripts that remove TASK themselves. This is
     cooperative runtime scoping, not confinement of code with direct SQLite access.
 
-    The marker's value is the fenced board ROOT, so the fence applies to the lineage's
-    board and not to every Kanban DB the descendant touches: a child running a repro
-    against a temp ``HERMES_HOME`` got a silently read-only board there. An inherited
+    The marker's value is the fenced board itself (:func:`_fenced_kanban_path`), so the
+    fence applies to the lineage's board and not to every Kanban DB the descendant
+    touches: a child running a repro against a temp ``HERMES_HOME`` got a silently
+    read-only board there, and a child asked to correct a DIFFERENT board was refused
+    by a root-valued marker however the target was addressed. An inherited
     path-valued marker is kept (a grandchild that moved HERMES_HOME must not re-fence
     onto its scratch root and unfence the real one).
     """
     cleaned = {k: v for k, v in env.items() if k not in KANBAN_ENV_KEYS}
     inherited = str(env.get(DELEGATED_CHILD_ENV_MARKER) or "")
-    cleaned[DELEGATED_CHILD_ENV_MARKER] = inherited if inherited and inherited != "1" else _fenced_kanban_root()
+    cleaned[DELEGATED_CHILD_ENV_MARKER] = inherited if inherited and inherited != "1" else _fenced_kanban_path(env)
     return cleaned
 
 
@@ -122,7 +157,8 @@ def kanban_path_is_fenced(path: "os.PathLike[str] | str") -> bool:
     """Whether Kanban mutations at *path* (a board DB or board-metadata root) are denied for this
     process: always for an in-process delegate child (the parent's own board); for a spawned
     descendant only when *path* is the dispatcher-pinned ``HERMES_KANBAN_DB`` or lies under the
-    fenced root the marker carries. A legacy ``"1"`` marker fences everything."""
+    fenced path the marker carries. A legacy ``"1"`` marker fences everything. Root-level board
+    structure is not a path question — see :func:`kanban_structure_is_fenced`."""
     if _DELEGATED_CHILD_CONTEXT.get():
         return True
     marker = os.environ.get(DELEGATED_CHILD_ENV_MARKER, "")
@@ -130,7 +166,6 @@ def kanban_path_is_fenced(path: "os.PathLike[str] | str") -> bool:
         return False
     if marker == "1":
         return True
-    from pathlib import Path
     target = Path(path).expanduser().resolve()
     pinned = os.environ.get("HERMES_KANBAN_DB", "").strip()
     if pinned and target == Path(pinned).expanduser().resolve():

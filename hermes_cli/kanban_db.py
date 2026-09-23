@@ -138,12 +138,16 @@ def _assert_not_delegated_child_mutation(path: "str | Path | None" = None) -> No
     The tool/CLI fast-fail guards are UX, not a trust boundary (a child can shell
     out or import this module); the invariant lives here so every ``write_txn``
     user and board-metadata mutator fails closed before touching durable state.
-    *path* is the board DB / metadata root being mutated; ``None`` means the
-    lineage's own board (``kanban_home()``).
+    *path* is the board DB / metadata root being mutated (fenced only for the
+    lineage's own board); ``None`` means a ROOT-level board-structure mutation
+    (``kanban_home()``: create/switch/rename/remove a board, the ``current``
+    pointer), denied for every descendant because it reshapes the root rather
+    than one board.
     """
-    from agent.delegation_context import kanban_path_is_fenced
+    from agent.delegation_context import kanban_path_is_fenced, kanban_structure_is_fenced
 
-    if kanban_path_is_fenced(kanban_home() if path is None else path):
+    fenced = kanban_structure_is_fenced() if path is None else kanban_path_is_fenced(path)
+    if fenced:
         raise PermissionError("delegate_task child contexts cannot mutate Kanban tasks or boards")
 
 

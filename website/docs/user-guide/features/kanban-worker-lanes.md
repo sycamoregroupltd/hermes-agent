@@ -55,9 +55,15 @@ children remain fenced even when a script removes the inherited task ID: CLI and
 tool mutations are rejected, rather than treating that script as an orchestrator.
 Board/database routing and workspace paths are retained. Descendants can read an
 existing board without running schema migrations; its owner must initialize it.
-The fence is scoped to the lineage's board root (the marker's value is that root, plus the
-dispatcher-pinned `HERMES_KANBAN_DB`): a descendant that works against a different Kanban
-home — a test or reproduction under a scratch `HERMES_HOME` — gets a normal read-write board.
+The fence is scoped to the lineage's own board, not to the Kanban home: the marker's value is
+that board — its directory (`<root>/kanban/boards/<slug>/`, which holds the DB, metadata,
+workspaces and logs), or just its DB file for the `default` board, whose DB sits directly under
+the root — plus the dispatcher-pinned `HERMES_KANBAN_DB`. A descendant that works against a
+different Kanban home (a test or reproduction under a scratch `HERMES_HOME`) or is asked to
+correct a *different* board (unpin `HERMES_KANBAN_DB`, then `--board <slug>`) gets a normal
+read-write board, while a mutation aimed at its own board is still refused. Root-level board
+*structure* — `boards create/rename/remove/switch` and the `current` pointer — is not one
+board's data, so it stays denied for every descendant whatever board its lineage is on.
 
 The dispatcher explicitly grants a newly assigned worker its own scope. The managed
 Hermes-tools MCP endpoint can likewise act for its supervising worker, while the
