@@ -44,6 +44,18 @@
 !/scripts/frank-gate-probe/*.sh
 /scripts/frank-gate-probe/__pycache__/
 
+# Drift-baseline generator + consumer in a depth-2 scripts/ subdir (2026-09-23,
+# t_8053a910). Same depth-2 blind spot as frank-gate-probe above: `!/scripts/*.py`
+# does NOT match scripts/drift_baseline/build_training_baseline.py, so the tool
+# the drift-baseline consumer runs (t_a29cab1e acceptance-2) had no commit to
+# attribute its running bytes to. Only durable source is re-included: baselines/,
+# *.out, windows.json and __pycache__ stay denied by default.
+!/scripts/drift_baseline/
+/scripts/drift_baseline/*
+!/scripts/drift_baseline/*.py
+!/scripts/drift_baseline/*.md
+/scripts/drift_baseline/__pycache__/
+
 # Deny scratch / runtime / cache subdirs under scripts/
 /scripts/archive/
 /scripts/backups/
