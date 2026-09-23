@@ -9,6 +9,22 @@ intended to use /home/frank/.hermes/scripts must therefore be either exact byte
 copies or small exec shims pointing at the central canonical script. Symlinks are
 not sufficient because scheduler.py resolves and path-guards the target.
 
+Bundle-runner indirection (t_25086e48): the guard bundle (t_db689c47) condensed
+whole groups of cron jobs into four tick wrappers, so the real checks are no
+longer any job's `script` field. The executed path is
+
+    guard-bundle-tick-* -> guard_bundle_run.sh -> report-to-board.py
+      -> <profile_home>/scripts/cron_guard_bundle_runner.py
+      -> <profile_home>/scripts/<check>
+
+A jobs.json-only scan is blind to every one of those check files: the drift that
+mattered (a 411-line stale cron_untracked_script_guard.py executing in the jarvis
+profile against a 460-line canonical, t_f0afde60) produced ZERO rows and was
+found by hand. This watcher therefore also parses each profile-local bundle
+runner's CHECKS manifest and drift-checks every manifest `script` against its
+canonical <root>/scripts/ counterpart, resolved from the ACTUAL consumer path
+(<profile_home>/scripts/, exactly as the scheduler and the runner resolve it).
+
 This is a no-agent watchdog: clean state emits zero stdout and exits 0; any
 stdout is the alert payload delivered by the owning cron job (currently Jarvis
 `profile-script-drift-watch`, deliver=discord:#critical-alerts).
@@ -32,11 +48,36 @@ TASK_ID = "t_f1aded94"
 SOURCE_MAP_TASK_ID = "t_8734e698"
 KANBAN_DUPE_ROLLOUT_TASK_ID = "t_86bb3798"
 DEFAULT_ROOT = Path("/home/frank/.hermes")
-DEFAULT_DELIVER = "discord:#critical-alerts"
+DEFAULT_DELIVER = "discord:critical-alerts"
 SHIM_MARKER = "CANONICAL-COPY RULE"
 KANBAN_DUPE_HOOK = "/home/frank/.hermes/agent-hooks/gate-kanban-dupe-create.sh"
 KANBAN_DUPE_MATCHER = "kanban_create"
 MAX_ALERT_ROWS = 50
+
+# Bundle-runner indirection (t_25086e48). The guard bundle's profile-local runner
+# is discovered by name under each profile's scripts/ dir — the same directory the
+# scheduler and the runner itself resolve check paths against.
+BUNDLE_RUNNER_NAME = "cron_guard_bundle_runner.py"
+BUNDLE_COVERAGE_TASK_ID = "t_25086e48"
+# A marker-less profile-local copy is still an approved canonical shim when it is
+# provably nothing but an exec of the canonical file (see *_exec_adapter below).
+# The SHIM_MARKER is a naming convention, not the contract; requiring it reported
+# six legitimate `exec /home/frank/.hermes/scripts/<x>` adapters as fork drift
+# (hl-desk-watchman-guard.sh, hl-candle-recorder-guard.sh,
+# hermes-mixed-module-probe.sh, systemd_dead_path_observe.py,
+# discord_target_hash_lint.py, overlay_budget_core_patch_refuse.py) — false
+# positives are how a guard gets muted.
+PY_ADAPTER_MAX_LINES = 60
+PY_ADAPTER_DENY = (
+    "subprocess",
+    "write_text",
+    "write_bytes",
+    "os.remove",
+    "os.unlink",
+    "os.system",
+    "eval(",
+    "exec(",
+)
 
 # Pairs (profile_name, script_name) intentionally exempted from drift detection.
 # Each excluded pair must document why in a kanban task referenced in the installer
@@ -68,22 +109,10 @@ MUTATION_SCRIPTS: set[str] = {
     "sycode_edge_emergence_scan.py",     # may create kanban investigation tasks
 }
 
-# Scripts whose canonical default is ENFORCEMENT (board/db mutation) and which
-# must only run through a shim that passes an explicit --dry-run flag. The
-# generic drift check allows byte-identical copies, but for these scripts an
-# exact copy is DANGEROUS: the no-agent cron invokes the script with no args,
-# so the canonical's enforcement default fires. Incident t_d787b0f8
-# (2026-08-11): kanban-dedupe-guard f96bc59a9657 posted 15 real comments on
-# sycode-trading tasks because the profile-local shim had been overwritten
-# with a byte-identical copy of the canonical.
-DRY_RUN_REQUIRED_SCRIPTS: set[str] = {
-    "kanban_dedupe_guard.py",
-}
-
 # DORMANT_SHADOW_RISK_DELIVER — delivery target for the dormant-shadow-risk
 # report (paused jobs that reference mutation scripts). Distinct from the
 # alert-format deliver so an operator can route it to a quieter channel.
-DORMANT_SHADOW_RISK_DELIVER = "discord:#fleet-reports"
+DORMANT_SHADOW_RISK_DELIVER = "discord:fleet-reports"
 
 
 def sha256(path: Path) -> str:
@@ -149,14 +178,74 @@ def is_shell_shim(text: str, central: Path) -> bool:
     return str(central) in text
 
 
+def shell_exec_adapter(text: str, central: Path) -> bool:
+    """Marker-less shell copy that is provably nothing but an exec of the canonical.
+
+    Every executable line must be `set ...`, `export ...`, or the single
+    `exec <central> "$@"` line, so nothing else can run and the executed code IS
+    the canonical script -> no drift is possible. Conservative by construction:
+    one stray command (a curl, a write, a second exec) and this returns False.
+    """
+    if str(central) not in text:
+        return False
+    active = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not active:
+        return False
+    execs = [line for line in active if line.startswith(("exec ", "exec\t"))]
+    if len(execs) != 1 or str(central) not in execs[0]:
+        return False
+    return all(
+        line in execs or line.startswith(("set ", "set\t", "export "))
+        for line in active
+    )
+
+
+def python_exec_adapter(text: str, central: Path) -> bool:
+    """Marker-less python copy that is provably nothing but an exec of the canonical.
+
+    Requires: the canonical path as a string literal, an `os.execv*` call, a
+    shim-sized body, no state-mutating or subprocess primitives, and a top level
+    made only of imports/assignments/defs/docs/guards. A full diverged script
+    body (the t_f0afde60 failure mode: 411 vs 460 lines) can never qualify.
+    """
+    if str(central) not in text or "os.execv" not in text:
+        return False
+    if len(text.splitlines()) > PY_ADAPTER_MAX_LINES:
+        return False
+    if any(bad in text for bad in PY_ADAPTER_DENY):
+        return False
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    allowed = (
+        ast.Import,
+        ast.ImportFrom,
+        ast.Assign,
+        ast.AnnAssign,
+        ast.FunctionDef,
+        ast.ClassDef,
+        ast.If,
+        ast.Expr,
+        ast.Pass,
+    )
+    if any(not isinstance(node, allowed) for node in tree.body):
+        return False
+    return str(central) in set(string_literals(text))
+
+
 def approved_shim(actual: Path, central: Path) -> bool:
     try:
         text = actual.read_text(errors="replace")
     except Exception:
         return False
     if actual.suffix.lower() in {".sh", ".bash"}:
-        return is_shell_shim(text, central)
-    return is_python_shim(text, central)
+        return is_shell_shim(text, central) or shell_exec_adapter(text, central)
+    return is_python_shim(text, central) or python_exec_adapter(text, central)
 
 
 def inspect_kanban_dupe_hook_coverage(root: Path) -> list[dict]:
@@ -187,7 +276,12 @@ def inspect_kanban_dupe_hook_coverage(root: Path) -> list[dict]:
             "hook": KANBAN_DUPE_HOOK,
             "task": KANBAN_DUPE_ROLLOUT_TASK_ID,
         })
-    for config_path in sorted(profiles.glob("*/config.yaml")):
+    _seen_cfg = set()
+    for _cfg in sorted(profiles.glob("*/config.yaml")):
+        if os.path.realpath(_cfg) in _seen_cfg:
+            continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+        _seen_cfg.add(os.path.realpath(_cfg))
+        config_path = _cfg
         profile = config_path.parent.name
         try:
             lines = config_path.read_text(errors="replace").splitlines()
@@ -252,7 +346,12 @@ def inspect_duplicate_mutation_scripts(root: Path) -> tuple[list[dict], list[dic
 
     # Collect all (script_name, job_id, profile, job_name, enabled, paused)
     script_entries: dict[str, list[dict]] = {}
-    for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+    _seen_jobs = set()
+    for _jp in sorted(profiles.glob("*/cron/jobs.json")):
+        if os.path.realpath(_jp) in _seen_jobs:
+            continue  # symlink alias — dedupe
+        _seen_jobs.add(os.path.realpath(_jp))
+        jobs_path = _jp
         profile = jobs_path.parents[1].name
         for job in load_jobs(jobs_path):
             if "_load_error" in job:
@@ -343,7 +442,13 @@ def inspect_retention_policy_duplicates(root: Path) -> list[dict]:
     search_roots = [root / "scripts"]
     profiles = root / "profiles"
     if profiles.exists():
-        search_roots += sorted(profiles.glob("*/scripts"))
+        seen = {os.path.realpath(root / "scripts")}
+        for scripts_dir in sorted(profiles.glob("*/scripts")):
+            rp = os.path.realpath(scripts_dir)
+            if rp in seen:
+                continue  # symlink alias — dedupe (sycode-trading -> sycode-trading-pm)
+            seen.add(rp)
+            search_roots.append(scripts_dir)
 
     for scripts_dir in search_roots:
         if not scripts_dir.exists():
@@ -394,74 +499,147 @@ def inspect_retention_policy_duplicates(root: Path) -> list[dict]:
     return alerts
 
 
-def inspect_dry_run_required(root: Path) -> list[dict]:
-    """Flag enabled jobs for DRY_RUN_REQUIRED_SCRIPTS whose profile-local
-    script is NOT a shim that passes an explicit --dry-run flag.
+def classify_script_pair(
+    profile: str, script: str, actual: Path, central: Path, ctx: dict
+) -> dict | None:
+    """One drift verdict for one (profile-local executed copy, canonical) pair.
 
-    Incident t_d787b0f8 (2026-08-11): kanban-dedupe-guard f96bc59a9657 ran
-    enforcement because the profile-local file was a byte-identical copy of the
-    canonical (which defaults dry_run=False) and the no_agent cron invoked it
-    with no args. An exact copy is NOT safe for these scripts even though the
-    drift check allows exact copies in general: their canonical default is
-    board/db mutation, so only a shim passing the literal --dry-run argument
-    may run them.
+    Shared by the job-`script` scan and the bundle-runner-manifest scan so both
+    paths apply byte-identical semantics (PROFILE_SCRIPT_MISSING / hash error /
+    exact / approved shim / SCRIPT_FORK_DRIFT) to copies that really execute.
+    """
+    if not central.exists():
+        # Profile-local by reconciliation policy: no central source of truth.
+        return None
+    base = {"profile": profile, "script": str(script), **ctx}
+    if not actual.exists():
+        return {
+            "type": "PROFILE_SCRIPT_MISSING",
+            **base,
+            "actual": str(actual),
+            "central": str(central),
+        }
+    try:
+        exact = sha256(actual) == sha256(central)
+    except Exception as exc:
+        return {
+            "type": "SCRIPT_HASH_ERROR",
+            **base,
+            "actual": str(actual),
+            "central": str(central),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if exact or approved_shim(actual, central):
+        return None
+    return {
+        "type": "SCRIPT_FORK_DRIFT",
+        **base,
+        "actual": str(actual),
+        "central": str(central),
+        "actual_sha256": sha256(actual),
+        "central_sha256": sha256(central),
+        "task": TASK_ID,
+        "source_map_task": SOURCE_MAP_TASK_ID,
+    }
+
+
+def bundle_manifest_scripts(runner: Path) -> list[tuple[str, str]]:
+    """Return [(check_name, script)] from a guard-bundle runner's CHECKS manifest.
+
+    Parsed with `ast`, not a regex: manifest values legitimately contain calls
+    and dict lookups (`_min(5)`, `_manifest_boards()`), and only the literal
+    `script` key carries the executed file name.
+    """
+    try:
+        tree = ast.parse(runner.read_text(errors="replace"))
+    except Exception:
+        return []
+    out: list[tuple[str, str]] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "CHECKS" for t in targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            continue
+        for key, value in zip(node.value.keys, node.value.values):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                continue
+            if not isinstance(value, ast.Dict):
+                continue
+            for vkey, vvalue in zip(value.keys, value.values):
+                if (
+                    isinstance(vkey, ast.Constant)
+                    and vkey.value == "script"
+                    and isinstance(vvalue, ast.Constant)
+                    and isinstance(vvalue.value, str)
+                ):
+                    out.append((key.value, vvalue.value))
+    return out
+
+
+def inspect_bundle_runner_checks(root: Path, covered: set[tuple[str, str]]) -> list[dict]:
+    """Drift-check bundle-runner-indirected executed copies (t_25086e48).
+
+    The guard bundle (t_db689c47) condensed whole job groups into four tick
+    wrappers, so the real checks stopped being any job's `script` field:
+
+        guard-bundle-tick-* -> guard_bundle_run.sh -> report-to-board.py
+          -> <profile_home>/scripts/cron_guard_bundle_runner.py
+          -> <profile_home>/scripts/<check>
+
+    Every such check file is an executed copy with a canonical counterpart, and
+    none of them was drift-checked: `cron_untracked_script_guard.py` executed a
+    411-line stale jarvis copy against a 460-line canonical for 6 weeks and the
+    watcher never emitted a row (t_f0afde60 — found by hand).
+
+    Rows already produced from a job `script` field are skipped via `covered`, so
+    a script reachable both ways is reported exactly once.
     """
     alerts: list[dict] = []
-    profiles = root / "profiles"
-    for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
-        profile_home = jobs_path.parents[1]
+    seen_runners: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set(covered)
+    for runner in sorted((root / "profiles").glob(f"*/scripts/{BUNDLE_RUNNER_NAME}")):
+        real = os.path.realpath(runner)
+        if real in seen_runners:
+            continue  # symlink alias — dedupe (t_a39fa15e)
+        seen_runners.add(real)
+        profile_home = runner.parents[1]
         profile = profile_home.name
-        for job in load_jobs(jobs_path):
-            if "_load_error" in job:
+        for check, script in bundle_manifest_scripts(runner):
+            if (profile, script) in seen_pairs:
                 continue
-            script = job.get("script")
-            if not script or not enabled(job):
+            seen_pairs.add((profile, script))
+            if (profile, script) in DRIFT_EXCLUSIONS:
                 continue
-            if script not in DRY_RUN_REQUIRED_SCRIPTS:
-                continue
-            actual = script_path(profile_home, str(script))
+            actual = script_path(profile_home, script)
             central = central_counterpart(root, profile_home, actual)
-            if not actual.exists() or not central.exists():
-                continue  # covered by PROFILE_SCRIPT_MISSING / fork-drift checks
-            try:
-                text = actual.read_text(errors="replace")
-            except OSError as exc:
-                alerts.append({
-                    "type": "DRY_RUN_SCRIPT_READ_ERROR",
-                    "profile": profile,
-                    "job_id": job.get("id"),
-                    "job_name": job.get("name"),
-                    "script": str(script),
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "task": TASK_ID,
-                })
-                continue
-            if actual.suffix.lower() in {".sh", ".bash"}:
-                dry_flag = "--dry-run" in text
-            else:
-                dry_flag = "--dry-run" in string_literals(text)
-            if approved_shim(actual, central) and dry_flag:
-                continue  # safe: shim always passes the explicit dry-run flag
-            alerts.append({
-                "type": "DRY_RUN_MISSING",
-                "profile": profile,
-                "job_id": job.get("id"),
-                "job_name": job.get("name"),
-                "script": str(script),
-                "actual": str(actual),
-                "central": str(central),
-                "task": TASK_ID,
-                "incident": "t_d787b0f8",
-            })
+            alert = classify_script_pair(
+                profile,
+                script,
+                actual,
+                central,
+                {
+                    "check": check,
+                    "via": "guard-bundle",
+                    "bundle_runner": str(runner),
+                    "bundle_task": BUNDLE_COVERAGE_TASK_ID,
+                },
+            )
+            if alert is not None:
+                alerts.append(alert)
     return alerts
 
 
 def inspect(root: Path) -> tuple[list[dict], list[dict]]:
     """Return (drift_and_dupe_alerts, dormant_shadow_risk_alerts).
 
-    drift_and_dupe_alerts: script-fork-drift, kanban-dupe-hook-coverage,
-    duplicate-mutation-script, and dry-run-required (t_d787b0f8) alerts —
-    actionable items needing operator attention.
+    drift_and_dupe_alerts: script-fork-drift, kanban-dupe-hook-coverage, and
+    duplicate-mutation-script alerts — actionable items needing operator attention.
 
     dormant_shadow_risk_alerts: paused jobs referencing mutation scripts that
     represent dormant capacity which would cause double-execution if resumed
@@ -479,7 +657,15 @@ def inspect(root: Path) -> tuple[list[dict], list[dict]]:
     if not profiles.exists() or not central_scripts.exists():
         return [{"type": "ROOT_MISSING", "root": str(root)}], []
     alerts.extend(inspect_kanban_dupe_hook_coverage(root))
-    for jobs_path in sorted(profiles.glob("*/cron/jobs.json")):
+    # (profile, script) pairs already drift-checked from a job `script` field, so
+    # the bundle-manifest pass reports each executed copy exactly once.
+    covered: set[tuple[str, str]] = set()
+    _seen_jobs2 = set()
+    for _jp2 in sorted(profiles.glob("*/cron/jobs.json")):
+        if os.path.realpath(_jp2) in _seen_jobs2:
+            continue  # symlink alias — dedupe
+        _seen_jobs2.add(os.path.realpath(_jp2))
+        jobs_path = _jp2
         profile_home = jobs_path.parents[1]
         profile = profile_home.name
         for job in load_jobs(jobs_path):
@@ -494,60 +680,75 @@ def inspect(root: Path) -> tuple[list[dict], list[dict]]:
             script = job.get("script")
             if not script or not enabled(job):
                 continue
-            actual = script_path(profile_home, str(script))
+            script = str(script)
+            actual = script_path(profile_home, script)
             central = central_counterpart(root, profile_home, actual)
-            if (profile, str(script)) in DRIFT_EXCLUSIONS:
+            covered.add((profile, script))
+            if (profile, script) in DRIFT_EXCLUSIONS:
                 continue
-            if not central.exists():
-                # Profile-local by reconciliation policy: no central source of truth.
-                continue
-            if not actual.exists():
-                alerts.append({
-                    "type": "PROFILE_SCRIPT_MISSING",
-                    "profile": profile,
-                    "job_id": job.get("id"),
-                    "job_name": job.get("name"),
-                    "script": str(script),
-                    "actual": str(actual),
-                    "central": str(central),
-                })
-                continue
-            try:
-                exact = sha256(actual) == sha256(central)
-            except Exception as exc:
-                alerts.append({
-                    "type": "SCRIPT_HASH_ERROR",
-                    "profile": profile,
-                    "job_id": job.get("id"),
-                    "job_name": job.get("name"),
-                    "actual": str(actual),
-                    "central": str(central),
-                    "error": f"{type(exc).__name__}: {exc}",
-                })
-                continue
-            if exact or approved_shim(actual, central):
-                continue
-            alerts.append({
-                "type": "SCRIPT_FORK_DRIFT",
-                "profile": profile,
-                "job_id": job.get("id"),
-                "job_name": job.get("name"),
-                "script": str(script),
-                "actual": str(actual),
-                "central": str(central),
-                "actual_sha256": sha256(actual),
-                "central_sha256": sha256(central),
-                "task": TASK_ID,
-                "source_map_task": SOURCE_MAP_TASK_ID,
-            })
+            alert = classify_script_pair(
+                profile,
+                script,
+                actual,
+                central,
+                {"job_id": job.get("id"), "job_name": job.get("name")},
+            )
+            if alert is not None:
+                alerts.append(alert)
+    # Bundle-runner-indirected checks (t_25086e48): executed copies whose runner is
+    # not any job's `script` field. Deduped against everything the jobs.json scan
+    # above already covered.
+    alerts.extend(inspect_bundle_runner_checks(root, covered))
     # Add duplicate-mutation-script checks
     dupe_alerts, dormant_alerts = inspect_duplicate_mutation_scripts(root)
     alerts.extend(dupe_alerts)
     # Add retention-policy duplicate/value-drift checks (t_c198fcb5 seat decision)
     alerts.extend(inspect_retention_policy_duplicates(root))
-    # Add dry-run-required shim checks (t_d787b0f8 control-bypass restoration)
-    alerts.extend(inspect_dry_run_required(root))
     return alerts, dormant_alerts
+
+
+
+def auto_canonical_copy(alerts: list[dict]) -> list[dict]:
+    """Copy central to profile-local for PROFILE_SCRIPT_MISSING rows.
+
+    Symlinks are insufficient (path-guard). Returns list of copy result dicts.
+    """
+    results: list[dict] = []
+    for item in alerts:
+        if item.get("type") != "PROFILE_SCRIPT_MISSING":
+            continue
+        central = Path(str(item.get("central", "")))
+        actual = Path(str(item.get("actual", "")))
+        if not central.is_file():
+            results.append({**item, "copy": "skip_no_central"})
+            continue
+        try:
+            actual.parent.mkdir(parents=True, exist_ok=True)
+            data = central.read_bytes()
+            actual.write_bytes(data)
+            mode = central.stat().st_mode & 0o777
+            if central.suffix.lower() in {".sh", ".bash", ".py"}:
+                mode |= 0o755
+            actual.chmod(mode)
+            results.append({
+                "type": "PROFILE_SCRIPT_COPIED",
+                "profile": item.get("profile"),
+                "job_id": item.get("job_id"),
+                "job_name": item.get("job_name"),
+                "script": item.get("script"),
+                "from": str(central),
+                "to": str(actual),
+                "bytes": len(data),
+            })
+        except Exception as exc:
+            results.append({
+                "type": "PROFILE_SCRIPT_COPY_FAILED",
+                "profile": item.get("profile"),
+                "job_id": item.get("job_id"),
+                "script": item.get("script"),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+    return results
 
 
 def format_alerts(alerts: list[dict], deliver: str = DEFAULT_DELIVER) -> str:
@@ -638,6 +839,68 @@ def make_fixture_root() -> Path:
     write(profile / "drift.py", "print('diverged profile fork')\n")
 
     write(profile / "local_only.py", "print('intentional profile-local')\n")
+
+    # --- bundle-runner-indirected fixture (t_25086e48) -------------------------
+    # The runner's manifest names the check files the runner executes; the drift
+    # watcher must resolve them from THIS scripts dir (the actual consumer path).
+    write(central / "bundle_exact.py", "print('bundle exact')\n")
+    write(profile / "bundle_exact.py", "print('bundle exact')\n")
+
+    write(central / "bundle_adapter.sh", "# canonical body\nexit 0\n")
+    write(
+        profile / "bundle_adapter.sh",
+        "#!/usr/bin/env bash\n"
+        "# marker-less exec adapter -> canonical (sanctioned shim form)\n"
+        f'exec {central / "bundle_adapter.sh"} "$@"\n',
+        stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
+    )
+
+    write(central / "bundle_adapter.py", "# canonical body\nprint('central')\n")
+    write(
+        profile / "bundle_adapter.py",
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        f"TARGET = {str(central / 'bundle_adapter.py')!r}\n"
+        "os.execv(sys.executable, [sys.executable, TARGET, *sys.argv[1:]])\n",
+        stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
+    )
+
+    write(central / "bundle_drift.py", "print('central bundle check')\n")
+    write(profile / "bundle_drift.py", "print('stale 411-line style fork')\n")
+
+    write(profile / "bundle_nocentral.py", "print('profile-local by policy')\n")
+
+    write(central / "bundle_absent.py", "print('never installed in the profile')\n")
+
+    write(
+        profile / BUNDLE_RUNNER_NAME,
+        "#!/usr/bin/env python3\n"
+        '"""Fixture guard-bundle runner (mirrors the real manifest shape)."""\n'
+        "def _min(v):\n"
+        "    return v\n\n"
+        "SOME_VAR = 'dynamic-value-not-a-literal'\n"
+        "CHECKS: dict[str, dict] = {\n"
+        '    "bundle-exact": {"script": "bundle_exact.py", "cadence": _min(5)},\n'
+        '    "bundle-adapter": {"script": "bundle_adapter.sh", "cadence": _min(5)},\n'
+        '    "bundle-py-adapter": {"script": "bundle_adapter.py", "cadence": _min(5)},\n'
+        '    "bundle-drift": {"script": "bundle_drift.py", "cadence": _min(5)},\n'
+        '    "bundle-nocentral": {"script": "bundle_nocentral.py", "cadence": _min(5)},\n'
+        '    "bundle-missing": {"script": "bundle_absent.py", "cadence": _min(5)},\n'
+        '    "bundle-drift-already-covered": {"script": "drift.py", "cadence": _min(5)},\n'
+        '    "bundle-dynamic-skipped": {"script": SOME_VAR, "cadence": _min(5)},\n'
+        "}\n",
+    )
+    write(
+        central / BUNDLE_RUNNER_NAME,
+        "#!/usr/bin/env python3\nCHECKS: dict[str, dict] = {}\n",
+    )
+    # Symlink-alias profile: its jobs.json AND bundle runner resolve to the same
+    # realpath as profiles/fixture -> both scans must dedupe (t_a39fa15e).
+    alias = root / "profiles" / "fixture-alias"
+    try:
+        alias.symlink_to(root / "profiles" / "fixture", target_is_directory=True)
+    except OSError:
+        pass
 
     # Mutation script — placed in both central and profile so it doesn't
     # trigger PROFILE_SCRIPT_MISSING path in the drift watch
@@ -734,85 +997,6 @@ def run_retention_fixture() -> int:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def run_dry_run_fixture() -> int:
-    """Prove the dry-run-required guard (t_d787b0f8) fires correctly.
-
-    Scenarios:
-      1. Byte-identical copy of canonical (default enforcement) -> DRY_RUN_MISSING.
-      2. Approved shim passing explicit --dry-run -> clean.
-      3. Approved shim WITHOUT --dry-run -> DRY_RUN_MISSING.
-      4. Paused job with byte-identical copy -> clean (enabled() gate).
-    """
-    root = Path(tempfile.mkdtemp(prefix="dryrun-required-fixture-"))
-    try:
-        central = root / "scripts"
-        profile = root / "profiles" / "fixture" / "scripts"
-        cron = root / "profiles" / "fixture" / "cron"
-        central.mkdir(parents=True)
-        profile.mkdir(parents=True)
-        cron.mkdir(parents=True)
-
-        # Canonical fake: default-enforcement script that DEFINES --dry-run
-        # (so a naive substring check would wrongly accept an exact copy).
-        canonical = (
-            "#!/usr/bin/env python3\n"
-            "import argparse\n"
-            "ap = argparse.ArgumentParser()\n"
-            'ap.add_argument("--dry-run", action="store_true")\n'
-            "print('fake canonical')\n"
-        )
-        write(central / "kanban_dedupe_guard.py", canonical)
-
-        shim_safe = (
-            "#!/usr/bin/env python3\n"
-            f'"""{SHIM_MARKER}: dry-run shim fixture."""\n'
-            "import os, sys\n"
-            f"TARGET = {str(central / 'kanban_dedupe_guard.py')!r}\n"
-            'os.execv(sys.executable, [sys.executable, TARGET, "--dry-run", "--boards", "all"])\n'
-        )
-        shim_unsafe = shim_safe.replace('"--dry-run", ', "")
-
-        def write_jobs(enabled_flag: bool, job_id: str) -> None:
-            write(cron / "jobs.json", json.dumps({"jobs": [
-                {"id": job_id, "name": job_id, "enabled": enabled_flag,
-                 "state": "scheduled" if enabled_flag else "paused",
-                 "script": "kanban_dedupe_guard.py"}]}, indent=2) + "\n")
-
-        # 1. byte-identical copy -> DRY_RUN_MISSING
-        write(profile / "kanban_dedupe_guard.py", canonical)
-        write_jobs(True, "fixture-dryrun-exact")
-        a = inspect_dry_run_required(root)
-        if len(a) != 1 or a[0].get("type") != "DRY_RUN_MISSING" or a[0].get("job_id") != "fixture-dryrun-exact":
-            sys.stderr.write(f"dry-run fixture 1 expected DRY_RUN_MISSING, got {json.dumps(a, sort_keys=True)}\n")
-            return 1
-
-        # 2. safe shim -> clean
-        write(profile / "kanban_dedupe_guard.py", shim_safe)
-        a = inspect_dry_run_required(root)
-        if a:
-            sys.stderr.write(f"dry-run fixture 2 expected clean, got {json.dumps(a, sort_keys=True)}\n")
-            return 1
-
-        # 3. shim without --dry-run -> DRY_RUN_MISSING
-        write(profile / "kanban_dedupe_guard.py", shim_unsafe)
-        a = inspect_dry_run_required(root)
-        if len(a) != 1 or a[0].get("type") != "DRY_RUN_MISSING":
-            sys.stderr.write(f"dry-run fixture 3 expected DRY_RUN_MISSING, got {json.dumps(a, sort_keys=True)}\n")
-            return 1
-
-        # 4. paused job with byte-identical copy -> clean (enabled() gate)
-        write(profile / "kanban_dedupe_guard.py", canonical)
-        write_jobs(False, "fixture-dryrun-paused")
-        a = inspect_dry_run_required(root)
-        if a:
-            sys.stderr.write(f"dry-run fixture 4 expected paused ignored, got {json.dumps(a, sort_keys=True)}\n")
-            return 1
-
-        return 0
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
 def run_fixture() -> int:
     root = make_fixture_root()
     try:
@@ -824,11 +1008,16 @@ def run_fixture() -> int:
         if dormant_output:
             sys.stdout.write(dormant_output)
 
-        # Expect: 1 SCRIPT_FORK_DRIFT (fixture-drift) +
+        # Expect: 2 SCRIPT_FORK_DRIFT (fixture-drift job row + bundle_drift.py
+        #           via the bundle-runner manifest) +
+        #         1 PROFILE_SCRIPT_MISSING (bundle_absent.py, manifest-only) +
         #         1 DUPLICATE_MUTATION_SCRIPT (macro-regime-change-monitor.py 2x)
         #         1 DORMANT_SHADOW_RISK (fixture-mutation-paused)
-        if len(alerts) != 2:
-            sys.stderr.write(f"fixture expected 2 drift+dupe alerts, got {len(alerts)} in {root}\n")
+        if len(alerts) != 4:
+            sys.stderr.write(
+                f"fixture expected 4 drift+dupe alerts, got {len(alerts)} in {root}: "
+                f"{json.dumps(alerts, sort_keys=True)}\n"
+            )
             return 1
         if len(dormant) != 1:
             sys.stderr.write(f"fixture expected 1 dormant shadow risk, got {len(dormant)} in {root}\n")
@@ -836,16 +1025,68 @@ def run_fixture() -> int:
 
         drift = [a for a in alerts if a.get("type") == "SCRIPT_FORK_DRIFT"]
         dupe = [a for a in alerts if a.get("type") == "DUPLICATE_MUTATION_SCRIPT"]
-        if len(drift) != 1 or len(dupe) != 1:
+        missing = [a for a in alerts if a.get("type") == "PROFILE_SCRIPT_MISSING"]
+        if len(drift) != 2 or len(dupe) != 1 or len(missing) != 1:
             sys.stderr.write(
-                f"fixture type mismatch: drift={len(drift)} dupe={len(dupe)} in {root}\n"
+                f"fixture type mismatch: drift={len(drift)} dupe={len(dupe)} "
+                f"missing={len(missing)} in {root}\n"
             )
             return 1
-        drift_alert = drift[0]
+
+        job_drift = [a for a in drift if a.get("job_id") == "fixture-drift"]
+        bundle_drift = [a for a in drift if a.get("via") == "guard-bundle"]
+        if len(job_drift) != 1 or len(bundle_drift) != 1:
+            sys.stderr.write(
+                f"fixture drift routing mismatch: job={len(job_drift)} bundle={len(bundle_drift)} "
+                f"in {root}: {json.dumps(drift, sort_keys=True)}\n"
+            )
+            return 1
+        drift_alert = job_drift[0]
         dupe_alert = dupe[0]
-        if drift_alert.get("job_id") != "fixture-drift" or "local_only" in (output or ""):
+        if "local_only" in (output or ""):
             sys.stderr.write(f"fixture drift mismatch in {root}: {json.dumps(drift_alert, sort_keys=True)}\n")
             return 1
+
+        # Regression for the t_f0afde60 detection gap: a diverged copy that is
+        # reachable ONLY through the bundle runner must still be reported, from the
+        # actual consumer path, exactly once, and identified as bundle-indirected.
+        bd = bundle_drift[0]
+        profile_home = root / "profiles" / "fixture"
+        if (
+            bd.get("script") != "bundle_drift.py"
+            or bd.get("check") != "bundle-drift"
+            or bd.get("profile") != "fixture"
+            or bd.get("actual") != str(profile_home / "scripts" / "bundle_drift.py")
+            or bd.get("central") != str(root / "scripts" / "bundle_drift.py")
+            or bd.get("bundle_runner") != str(profile_home / "scripts" / BUNDLE_RUNNER_NAME)
+            or bd.get("bundle_task") != BUNDLE_COVERAGE_TASK_ID
+        ):
+            sys.stderr.write(f"fixture bundle-drift row mismatch in {root}: {json.dumps(bd, sort_keys=True)}\n")
+            return 1
+        if output.count('"script": "bundle_drift.py"') != 1:
+            sys.stderr.write(f"fixture bundle drift reported more than once in {root}\n")
+            return 1
+        # The manifest-only missing copy is reported as PROFILE_SCRIPT_MISSING,
+        # not as drift, and keeps its bundle provenance.
+        if (
+            missing[0].get("script") != "bundle_absent.py"
+            or missing[0].get("via") != "guard-bundle"
+            or missing[0].get("check") != "bundle-missing"
+        ):
+            sys.stderr.write(f"fixture bundle-missing row mismatch in {root}: {json.dumps(missing[0], sort_keys=True)}\n")
+            return 1
+        # Manifest-only pairs with no central counterpart, byte-identical copies,
+        # marker-less exec adapters and the dynamic (non-literal) manifest value
+        # must all stay silent.
+        for silent in ("bundle_nocentral", "bundle_exact", "bundle_adapter", "dynamic-value-not-a-literal"):
+            if silent in (output or ""):
+                sys.stderr.write(f"fixture false positive for {silent} in {root}: {output}\n")
+                return 1
+        # A script reachable BOTH ways is reported once, by the job scan (no `via`).
+        if output.count('"script": "drift.py"') != 1 or job_drift[0].get("via"):
+            sys.stderr.write(f"fixture dedupe failure for drift.py in {root}: {output}\n")
+            return 1
+
         if dupe_alert.get("script") != "macro-regime-change-monitor.py":
             sys.stderr.write(f"fixture dupe script mismatch: {json.dumps(dupe_alert, sort_keys=True)}\n")
             return 1
@@ -864,6 +1105,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--deliver", default=os.environ.get("HERMES_SCRIPT_DRIFT_DELIVER", DEFAULT_DELIVER))
     parser.add_argument("--fixture", action="store_true", help="create a temp divergent pair and print the alert payload")
     parser.add_argument("--json", action="store_true", help="emit raw alert rows as JSON, including [] when clean")
+    parser.add_argument("--auto-canonical-copy", action="store_true",
+                        help="for PROFILE_SCRIPT_MISSING: copy central script into profile-local (real file, not symlink)")
     return parser.parse_args(argv)
 
 
@@ -873,12 +1116,25 @@ def main(argv: list[str] | None = None) -> int:
         rc = run_fixture()
         if rc != 0:
             return rc
-        rc = run_retention_fixture()
-        if rc != 0:
-            return rc
-        return run_dry_run_fixture()
+        return run_retention_fixture()
     root = Path(args.root).expanduser()
     alerts, dormant = inspect(root)
+    copy_results: list[dict] = []
+    if getattr(args, "auto_canonical_copy", False):
+        copy_results = auto_canonical_copy(alerts)
+        copied_keys = {
+            (r.get("profile"), r.get("script"))
+            for r in copy_results
+            if r.get("type") == "PROFILE_SCRIPT_COPIED"
+        }
+        alerts = [
+            a for a in alerts
+            if not (
+                a.get("type") == "PROFILE_SCRIPT_MISSING"
+                and (a.get("profile"), a.get("script")) in copied_keys
+            )
+        ]
+        alerts = copy_results + alerts
     if args.json:
         # JSON mode: emit both in one payload with sections
         import json as jmod
