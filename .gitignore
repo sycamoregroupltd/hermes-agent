@@ -35,6 +35,19 @@
 !/scripts/tests/*.py
 /scripts/tests/__pycache__/
 
+# Drift-baseline generator + README, depth-2 under scripts/ (2026-09-23,
+# t_8053a910). The depth-1 `!/scripts/*.py` above does NOT match a script in a
+# subdirectory of scripts/, so the generator the drift-baseline consumer runs
+# (t_a29cab1e acceptance-2) had no commit to attribute its running bytes to.
+# Deny-by-default preserved: /scripts/drift_baseline/* denies every child and
+# only durable source (.py/.md) is re-included; baselines/, *.out, windows.json
+# and __pycache__ stay untracked.
+!/scripts/drift_baseline/
+/scripts/drift_baseline/*
+!/scripts/drift_baseline/*.py
+!/scripts/drift_baseline/*.md
+/scripts/drift_baseline/__pycache__/
+
 # Deny scratch / runtime / cache subdirs under scripts/
 /scripts/archive/
 /scripts/backups/
