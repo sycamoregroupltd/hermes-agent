@@ -25,6 +25,13 @@
 # waits (up to 10s, polling disk-vs-new-tree) for git to finish applying the new
 # tree, then re-instates prev content for any referenced file that changed.
 #
+# SCOPE + PREDICATE (t_4880331c, 2026-09-22 live incident): this hook only acts on a
+# checkout performed AGAINST the live worktree itself, and it only restores a file whose
+# on-disk content is exactly what that checkout wrote. Without the scope check, a worker
+# `rebase` in an ISOLATED linked worktree (git worktrees share .git/hooks) rewrote 23 live
+# files; without the predicate, any file carrying an uncommitted live-path fix was reverted
+# to the previous HEAD's blob. Both are live-path data loss.
+#
 # SELF-CONTAINED: the referenced-path computation is embedded here so the hook
 # never depends on a working-tree file whose content varies by branch. It tries
 # scripts/cron_untracked_script_guard.py --referenced-paths first (fast path)
@@ -64,6 +71,21 @@ if [ -z "$PREV_SHA" ] || [ -z "$NEW_SHA" ] || [ "$PREV_SHA" = "$NEW_SHA" ]; then
     exit 0
 fi
 
+# --- live-worktree scoping (t_4880331c) -------------------------------------
+# git worktrees SHARE .git/hooks, so this hook also fires for every checkout in
+# the isolated worktrees under /home/frank/.hermes-worktrees and
+# /home/frank/.hermes-automation-worktrees. Such a checkout cannot change what
+# the live tree executes — but everything below always writes into $REPO.
+# Incident 2026-09-22T23:14 (t_4880331c): a worker rebase in
+# .hermes-worktrees/fleet-engineer-t_d14445d2-guard-bundle-splice
+# (prev=dede58fe new=6f7c2d36) restored 23 live paths, silently reverting the
+# uncommitted obsidian_vault_autocommit.py fix in profiles/jarvis/scripts/.
+# githooks(5): hooks run with cwd = root of the worktree being operated on, so
+# only act when that IS the live worktree. Fail closed (no writes) otherwise.
+REPO_REAL="$(cd "$REPO" 2>/dev/null && pwd -P)" || exit 0
+TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$REPO_REAL" ] && [ "$TOPLEVEL" = "$REPO_REAL" ] || exit 0
+
 # --- referenced-path computation (self-contained) ---------------------------
 # Prefer the guard's mode when available; fall back to embedded logic.
 REFS="$(python3 "$GUARD" --referenced-paths 2>/dev/null)"
@@ -72,7 +94,7 @@ case "$REFS" in
         ;;
     *)
         REFS="$(python3 - "$REPO" <<'PY'
-import json, re, sys
+import ast, json, os, re, sys
 from pathlib import Path
 REPO = Path(sys.argv[1])
 COMMAND_FIELDS = ("command", "prompt")
@@ -130,6 +152,61 @@ if root.exists():
         data = None
     if data is not None:
         scan(REPO, data, paths)
+# Bundle-runner indirection (t_881f0f42): guard-bundle-tick-* -> guard_bundle_run.sh
+# -> report-to-board.py -> <profile_home>/scripts/cron_guard_bundle_runner.py
+#   -> <profile_home>/scripts/<check>. Neither the runner nor any manifest check is
+# named by a cron store, so mirror the union the fast path
+# (cron_untracked_script_guard.bundle_referenced_paths) computes — the two must
+# agree, and the hourly guard CONTROL-checks the installed hook against this file.
+def bundle_manifest_scripts(runner):
+    try:
+        tree = ast.parse(runner.read_text(errors="replace"))
+    except Exception:
+        return []
+    out = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "CHECKS" for t in targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            continue
+        for key, value in zip(node.value.keys, node.value.values):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                continue
+            if not isinstance(value, ast.Dict):
+                continue
+            for vkey, vvalue in zip(value.keys, value.values):
+                if (isinstance(vkey, ast.Constant) and vkey.value == "script"
+                        and isinstance(vvalue, ast.Constant)
+                        and isinstance(vvalue.value, str)):
+                    out.append(vvalue.value)
+    return out
+
+seen_runners = set()
+for runner in sorted((REPO / "profiles").glob("*/scripts/cron_guard_bundle_runner.py")):
+    real = os.path.realpath(runner)
+    if real in seen_runners:
+        continue
+    seen_runners.add(real)
+    profile_home = runner.parents[1]
+    try:
+        rp = runner.resolve()
+        rp.relative_to(REPO)
+        paths.append(str(rp))
+    except ValueError:
+        pass
+    for script in bundle_manifest_scripts(runner):
+        try:
+            resolved = resolve_like_scheduler(profile_home, script)
+            resolved.relative_to(REPO)
+            paths.append(str(resolved))
+        except ValueError:
+            pass
 # Defense-in-depth (t_041d138a): union the static live-critical manifest so the
 # EMBEDDED fallback protects seat launchers too when the python fast-path is
 # unavailable. Same semantics as scripts/cron_untracked_script_guard.py.
@@ -167,6 +244,7 @@ RESTORED=0
 N_SHOW_FAIL=0
 N_CP_FAIL=0
 N_MATCH=0
+N_LOCAL=0
 while IFS= read -r abs; do
     [ -z "$abs" ] && continue
     # Only protect files inside the repo working tree.
@@ -181,6 +259,24 @@ while IFS= read -r abs; do
     # Restore only if the checkout actually changed it on disk.
     if cmp -s "$TMPDIR/prev" "$abs" 2>/dev/null; then
         N_MATCH=$((N_MATCH + 1))
+        continue
+    fi
+
+    # (t_4880331c) Restore ONLY a file this checkout actually rewrote or deleted:
+    #   - absent on disk  -> the checkout deleted it; restore prev (this hook's job)
+    #   - on-disk == NEW blob -> the checkout rewrote it; restore prev
+    #   - anything else   -> a local uncommitted edit on the live path (the live-fix
+    #                        lineage): NEVER overwrite it
+    if [ ! -e "$abs" ]; then
+        :
+    elif git -C "$REPO" show "$NEW_SHA:$rel" > "$TMPDIR/newblob" 2>/dev/null; then
+        if ! cmp -s "$TMPDIR/newblob" "$abs" 2>/dev/null; then
+            N_LOCAL=$((N_LOCAL + 1))
+            continue
+        fi
+    else
+        # absent from the NEW tree yet still on disk: a local file — leave it alone
+        N_LOCAL=$((N_LOCAL + 1))
         continue
     fi
 
@@ -241,6 +337,18 @@ if [ -s "$CHANGEDFILE" ]; then
             if cmp -s "$TMP2/prev" "$abs" 2>/dev/null; then
                 continue
             fi
+            # Same predicate as the foreground pass (t_4880331c): only undo a change
+            # this checkout actually made. A file matching NEITHER prev nor new is a
+            # local uncommitted edit on the live path — never overwrite it.
+            if [ ! -e "$abs" ]; then
+                :
+            elif git -C "$REPO" show "$NEW_SHA:$rel" > "$TMP2/newblob" 2>/dev/null; then
+                if ! cmp -s "$TMP2/newblob" "$abs" 2>/dev/null; then
+                    continue
+                fi
+            else
+                continue
+            fi
             mode="$(git -C "$REPO" ls-tree "$PREV_SHA" -- "$rel" | awk '{print $1}')"
             if [ -n "$mode" ]; then
                 chmod "${mode#100}" "$TMP2/prev" 2>/dev/null || true
@@ -261,7 +369,7 @@ else
 fi
 
 {
-    echo "post-checkout $(date -Is) refs=$(wc -l < "$TMPDIR/refs") restored=$RESTORED match=$N_MATCH showfail=$N_SHOW_FAIL cpfail=$N_CP_FAIL prev=$PREV_SHA new=$NEW_SHA flag=$FLAG"
+    echo "post-checkout $(date -Is) refs=$(wc -l < "$TMPDIR/refs") restored=$RESTORED match=$N_MATCH local=$N_LOCAL showfail=$N_SHOW_FAIL cpfail=$N_CP_FAIL prev=$PREV_SHA new=$NEW_SHA flag=$FLAG"
 } >> "$LOGFILE"
 
 # --- live cron-store git-tracking guard (t_6c32b13c completion) --------------

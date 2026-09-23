@@ -40,6 +40,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -353,12 +354,110 @@ def audit() -> tuple[list[dict], list[str], list[str]]:
     return violations, sorted(set(v["reason"] for v in violations)), errors
 
 
+# ---- bundle-runner indirection (t_881f0f42) --------------------------------
+# The guard bundle (t_db689c47) condensed whole job groups into four tick jobs:
+#
+#   guard-bundle-tick-* -> guard_bundle_run.sh -> report-to-board.py
+#     -> <profile_home>/scripts/cron_guard_bundle_runner.py
+#     -> <profile_home>/scripts/<check>
+#
+# Neither the runner nor any manifest check is named by a cron store `script`
+# field, so the store scan in referenced_paths() cannot see them: t_25086e48
+# protected exactly ONE of them (the guard's own executed copy, via
+# live-critical-paths.txt) and left the runner plus the other 43 checks outside
+# the post-checkout self-heal set. A live-tree checkout could therefore silently
+# revert any of them to its HEAD blob (stale for several — see t_f20b594a).
+BUNDLE_RUNNER_NAME = "cron_guard_bundle_runner.py"
+
+
+def bundle_manifest_scripts(runner: Path) -> list[str]:
+    """Executed check file names from a guard-bundle runner's CHECKS manifest.
+
+    Parsed with `ast`, not a regex: manifest values legitimately contain calls
+    and dict lookups (`_min(5)`, `_manifest_boards()`), and only the literal
+    `script` key carries the executed file name. Deliberately the same parse as
+    profile_script_drift_watch.bundle_manifest_scripts (t_25086e48), so the
+    durability half and the detection half agree on what actually executes.
+    """
+    try:
+        tree = ast.parse(runner.read_text(errors="replace"))
+    except Exception:
+        return []
+    out: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "CHECKS" for t in targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            continue
+        for key, value in zip(node.value.keys, node.value.values):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                continue
+            if not isinstance(value, ast.Dict):
+                continue
+            for vkey, vvalue in zip(value.keys, value.values):
+                if (
+                    isinstance(vkey, ast.Constant)
+                    and vkey.value == "script"
+                    and isinstance(vvalue, ast.Constant)
+                    and isinstance(vvalue.value, str)
+                ):
+                    out.append(vvalue.value)
+    return out
+
+
+def bundle_referenced_paths() -> list[Path]:
+    """The bundle runner itself plus every check it executes (t_881f0f42).
+
+    Resolved exactly like the scheduler: a bare manifest name becomes
+    <profile_home>/scripts/<name>, and anything that escapes the owning profile
+    scripts dir (the scheduler's SCHEDULER-BLOCKED condition) is skipped — it can
+    never execute. Paths are returned whether or not they exist, like the store
+    scan: a file a checkout just deleted is exactly what the hook must restore.
+    """
+    paths: list[Path] = []
+    seen_runners: set[str] = set()
+    for runner in sorted((REPO / "profiles").glob(f"*/scripts/{BUNDLE_RUNNER_NAME}")):
+        real = os.path.realpath(runner)
+        if real in seen_runners:
+            continue  # symlink alias — dedupe
+        seen_runners.add(real)
+        profile_home = runner.parents[1]
+        try:
+            paths.append(runner.resolve())
+            paths[-1].relative_to(REPO)
+        except ValueError:
+            paths.pop()  # outside REPO: a checkout here cannot affect it
+        for script in bundle_manifest_scripts(runner):
+            try:
+                resolved, _ = resolve_like_scheduler(profile_home, script)
+            except ValueError:
+                continue  # scheduler-blocked: never a live path
+            try:
+                resolved.relative_to(REPO)
+            except ValueError:
+                continue
+            paths.append(resolved)
+    return paths
+
+
 def referenced_paths() -> tuple[list[Path], list[str]]:
     """Resolve every file referenced by an enabled cron job to an absolute path.
 
     Used by the post-checkout live-cron self-heal hook (t_82b9432a): the hook
     restores these files from the previous HEAD after any checkout so a branch
     swap can never silently change what the fleet executes.
+
+    Three sources, unioned (t_881f0f42 added the third):
+      1. every enabled cron job's `script` / command-embedded path,
+      2. guard-bundle-indirected executed copies (the runner + its CHECKS
+         manifest; no cron store names them),
+      3. live-critical-paths.txt (seat-invoked launchers, not cron-wired).
 
     Only paths inside REPO are returned — a checkout in this repo cannot affect
     files outside it. Paths are returned whether or not they currently exist:
@@ -388,6 +487,10 @@ def referenced_paths() -> tuple[list[Path], list[str]]:
             except ValueError:
                 continue
             paths.append(resolved)
+    # Bundle-runner-indirected executed copies (t_881f0f42). Added AFTER the
+    # store scan so a file named both ways is still protected once; the final
+    # dedupe in main()/callers collapses the overlap.
+    paths.extend(bundle_referenced_paths())
     # Static live-critical manifest (t_041d138a, 2026-08-11): seat-invoked scripts
     # that are NOT cron-wired but must survive a worker branch-switch (the gap that
     # wiped the experiment-factory launchers). One repo-relative path per line, '#'
