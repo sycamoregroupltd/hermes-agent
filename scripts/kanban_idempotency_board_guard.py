@@ -136,7 +136,13 @@ def iter_cron_prompts():
     if GLOBAL_CRON_STORE.exists():
         stores.append(GLOBAL_CRON_STORE)
     if PROFILES_DIR.exists():
-        stores.extend(sorted(PROFILES_DIR.glob("*/cron/jobs.json")))
+        seen: set[str] = set()
+        for p in sorted(PROFILES_DIR.glob("*/cron/jobs.json")):
+            real = str(p.resolve())
+            if real in seen:
+                continue
+            seen.add(real)
+            stores.append(p)
     for store in stores:
         try:
             data = json.loads(store.read_text(encoding="utf-8"))
@@ -308,7 +314,14 @@ def scan_roots(target=None):
             scan_text(text, p, findings)
             return findings
     else:
-        roots = [SCRIPTS_DIR] + sorted(PROFILES_DIR.glob("*/scripts"))
+        roots = [SCRIPTS_DIR]
+        _seen_roots: set[str] = {str(SCRIPTS_DIR.resolve())}
+        for _sd in sorted(PROFILES_DIR.glob("*/scripts")):
+            _rr = str(_sd.resolve())
+            if _rr in _seen_roots:
+                continue  # symlink alias (e.g. sycode-trading -> sycode-trading-pm) — dedupe
+            _seen_roots.add(_rr)
+            roots.append(_sd)
     for path, text in iter_script_files(roots):
         scan_text(text, path, findings)
     for store, job_name, prompt in iter_cron_prompts():

@@ -14,6 +14,14 @@ inherit the default toolset and DO get terminal — those are not flagged.
 Exit 0 = no gaps. Exit 1 = at least one profile has an exec obligation it
 cannot satisfy. Quiet on success so it can run as a no_agent cron watchdog.
 
+BY-DESIGN ALERTING (KNOW-16, t_9fa78c30, standardized wording from
+nous_token_presence.sh): exit 1 here means a genuine allowlist/obligation gap
+was found — cron error state IS the alert (exit-code liveness doctrine). Do
+NOT "fix" this by suppressing the exit code; fix the profile's
+platform_toolsets allowlist (or its SOUL.md obligation) instead. Absorbed
+into guard-bundle-tick-daily (t_db689c47) as of 2026-08-29, which preserves
+this exact alert-on-nonzero semantics per-check.
+
 Usage:
   profile_toolset_obligation_audit.py            # report gaps only
   profile_toolset_obligation_audit.py --all      # full allowlist table
@@ -64,9 +72,13 @@ EXEC_OBLIGATION = re.compile(
     r"|git\s+(commit|push|fetch|merge-base|worktree|ls-remote)\b"
     r"|run\s+the\s+(harness|verification|tests?|typecheck)"
     r"|re-run\s+the\s+tests?"
-    r"|type-check)",
+    r")",
     re.I,
 )
+# Bare "type-check" was removed 2026-09-04 (t_34f62258). It matched Avoid
+# prose such as yorkstone-supplies-pm SOUL.md:16 'Treating "type-check green"
+# as done' — a coordinator must NOT get terminal (assign-and-pin). Real
+# exec obligations still match bun/npm run, pytest, git, verify-*.sh, etc.
 
 # The pre_tool_call hook that contains a reviewer's shell to read-only use.
 READONLY_HOOK = "gate-critic-readonly"

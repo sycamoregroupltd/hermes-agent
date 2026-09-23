@@ -174,9 +174,16 @@ def iter_cron_stores() -> Iterable[tuple[str, Path, dict[str, Any]]]:
     paths = []
     if (HERMES_HOME / "cron" / "jobs.json").exists():
         paths.append(("global", HERMES_HOME / "cron" / "jobs.json"))
+    seen = set()
     if PROFILES_DIR.exists():
         for p in sorted(PROFILES_DIR.glob("*/cron/jobs.json")):
-            paths.append((p.parts[-3], p))
+            rp = os.path.realpath(p)
+            if rp in seen:
+                continue  # symlink alias — dedupe (sycode-trading -> sycode-trading-pm)
+            seen.add(rp)
+            rpath = Path(rp)
+            # Key by the RESOLVED (real) profile dir name so an alias shares one profile identity.
+            paths.append((rpath.parents[1].name, rpath))
     for profile, path in paths:
         data = read_json(path, {"jobs": []})
         for job in data.get("jobs", []) if isinstance(data, dict) else []:

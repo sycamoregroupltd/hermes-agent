@@ -92,7 +92,7 @@ ALERT_MIN_INTERVAL_SECONDS = int(
     os.environ.get("DEADPID_ALERT_MIN_INTERVAL", "3600")
 )
 HERMES_BIN = os.environ.get("HERMES_BIN", "/home/frank/.local/bin/hermes")
-TARGET = os.environ.get("DEADPID_FLEET_ALERT_TARGET", "discord:#fleet-reports")
+TARGET = os.environ.get("DEADPID_FLEET_ALERT_TARGET", "discord:fleet-reports")
 HERMES_PROFILE = os.environ.get("DEADPID_FLEET_ALERT_PROFILE", "jarvis")
 
 

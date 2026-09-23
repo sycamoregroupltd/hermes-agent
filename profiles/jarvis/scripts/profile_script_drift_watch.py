@@ -88,6 +88,14 @@ DRIFT_EXCLUSIONS: set[tuple[str, str]] = {
     # (task t_f8c1e76e). The central copy is a different full script body
     # — this is a correct fork, not a drift failure.
     ("jarvis", "pit-monitor.sh"),
+    # rtb-primary-provider-liveness.py: the CENTRAL copy is deliberately a
+    # 23-line os.execv POINTER SHIM into the jarvis executed copy (task
+    # t_6348e35c, 2026-09-23): a stale byte-identical twin was replaced by a
+    # pointer so the approved fix cannot rot in an unexecuted copy. The pair is
+    # intentionally divergent — installing canonical→profile would make the
+    # profile shim exec itself — so the profile copy is the source of truth for
+    # the LOGIC and the central path intentionally holds none.
+    ("jarvis", "rtb-primary-provider-liveness.py"),
 }
 
 # Set of script names known to mutate state (writes to kanban, database,
