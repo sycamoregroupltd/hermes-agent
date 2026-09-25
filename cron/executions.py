@@ -305,9 +305,14 @@ def finish_execution(
     return record
 
 
+# A row is recovered here only on proof that the owner process is gone (see _owner_is_live);
+# the ledger records that observable fact, not a cause. The previous text asserted "Scheduler
+# restarted", which is false on the common path — the owner is killed externally (e.g. an
+# out-of-band systemd scope stop) while the scheduler keeps running, and the false cause cost a
+# full investigation detour (jarvis-os/t_86537381). Never assert an unverified cause here.
 _OWNER_GONE_REASON = (
-    "Scheduler restarted after this execution's owner exited before a durable "
-    "terminal state; whether side effects ran is unknown."
+    "Execution owner process exited before a durable terminal state was written; "
+    "whether side effects ran is unknown."
 )
 _OWNER_WEDGED_REASON = (
     "Owner process is still alive but the claim outlived the derived stale bound; "
