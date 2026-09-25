@@ -291,7 +291,13 @@ def test_restart_marks_interrupted_execution_unknown_without_requeue(tmp_path):
     assert records[0]["id"] == execution_id
     assert records[0]["status"] == "unknown"
     assert records[0]["finished_at"]
-    assert "restart" in records[0]["error"].lower()
+    # The reason records only the observable fact (owner process gone; no durable
+    # terminal state written) and deliberately does NOT assert an unverified cause:
+    # on the real incident (jarvis-os/t_86537381) no scheduler restarted — the owner
+    # was killed out-of-band, and the false "Scheduler restarted" cause cost a whole
+    # investigation detour. Assert the fact, and the absence of the false cause.
+    assert "restart" not in records[0]["error"].lower()
+    assert "unknown" in records[0]["error"].lower()
     # Recovery only classifies the old attempt. It must not manufacture a new
     # claimed record (which would imply an automatic retry).
     assert [r["status"] for r in records] == ["unknown"]
