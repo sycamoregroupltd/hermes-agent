@@ -211,6 +211,66 @@ def refuse_foreign_owned_venv(project_root: Path) -> None:
             )
 
 
+
+#: Session Bus flight_key that owns a hermes source tip-apply / finish-update.
+_HERMES_UPDATE_FLIGHT_KEY = "hermes-update"
+
+
+def _session_bus_db_path() -> Path:
+    """Resolve ``$HERMES_HOME/session-bus/bus.db`` (stdlib-only; no busctl import)."""
+    home = os.environ.get("HERMES_HOME", "").strip()
+    root = Path(home) if home else (Path.home() / ".hermes")
+    return root / "session-bus" / "bus.db"
+
+
+def _owned_hermes_update_claim() -> bool:
+    """True iff an **owned**, non-expired ``flight_claim`` exists for hermes-update.
+
+    READ ONLY sqlite SELECT — never writes bus.db / never imports busctl.
+    Mirrors ``~/.hermes/scripts/hermes-unclaimed-finish-gate.sh`` so product
+    behaviour matches the Isolation HOLD quarantine once that flag is lifted.
+
+    ``HERMES_ALLOW_UNCLAIMED_FINISH=1`` opts out (tests / explicit operator).
+    Missing db, missing table, or any read error → False (fail closed).
+    """
+    if os.environ.get("HERMES_ALLOW_UNCLAIMED_FINISH", "").lower() in ("1", "true", "yes"):
+        return True
+    db = _session_bus_db_path()
+    if not db.is_file():
+        return False
+    try:
+        import sqlite3
+
+        # URI mode=ro refuses create; matches quarantine read-only SELECT.
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=1.0)
+        try:
+            row = con.execute(
+                "SELECT 1 FROM flight_claim "
+                "WHERE flight_key = ? AND state = 'owned' "
+                "AND expires_at > strftime('%s', 'now') "
+                "LIMIT 1",
+                (_HERMES_UPDATE_FLIGHT_KEY,),
+            ).fetchone()
+        finally:
+            con.close()
+    except Exception:
+        return False
+    return row is not None
+
+
+def _refuse_unclaimed_finish_update() -> None:
+    """Clear stderr once: stuck pending must not spawn finish-update without a claim."""
+    import sys
+
+    print(
+        "hermes: refusing --finish-update: no owned non-expired flight_claim "
+        f"for '{_HERMES_UPDATE_FLIGHT_KEY}'; leaving source-completion-pending "
+        "in place (claim a hermes-update flight, or clear the pending marker)",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def prepare_launch(project_root: Path, argv: list[str]) -> Path | None:
     """Finish a self-managed source update before importing app dependencies.
 
@@ -280,7 +340,13 @@ def prepare_launch(project_root: Path, argv: list[str]) -> Path | None:
 
 
 def _finish_source_update(root: Path, *, current: bool, pending: Path) -> None:
-    """Sync dependencies when they are stale, then run the tail the marker still owes."""
+    """Sync dependencies when they are stale, then run the tail the marker still owes.
+
+    Before spawning ``source_completion.py --finish-update`` (and thus web.mjs),
+    require an owned non-expired Session Bus ``flight_claim`` for
+    ``hermes-update``. Missing/expired claim → refuse finish, leave pending,
+    do not tip-apply. Matches Isolation HOLD quarantine semantics in product.
+    """
     import sys
     from hermes_cli._early_recovery import _marker_owner_is_live
     from pm.environments import activation_environment
@@ -293,8 +359,18 @@ def _finish_source_update(root: Path, *, current: bool, pending: Path) -> None:
             raise RuntimeError("an update is still running; wait for it to exit, then relaunch Hermes")
         print("hermes: completing source-update dependencies...", file=sys.stderr, flush=True)
         _sync_source_dependencies(root, arm=True)
+    elif not _owned_hermes_update_claim():
+        # Stuck source-completion-pending without a claim must not fan-out
+        # concurrent finish-update / web.mjs from every hermes CLI call.
+        _refuse_unclaimed_finish_update()
+        return
     else:
         print("hermes: finishing an interrupted source update...", file=sys.stderr, flush=True)
+    # Claim gate for the finish-update spawn (also covers the post-sync path
+    # that just armed pending without an owning hermes-update flight).
+    if not _owned_hermes_update_claim():
+        _refuse_unclaimed_finish_update()
+        return
     # Sync commits the dependency generation, but a source update also owes
     # the product builds and the post-build maintenance -- the tail every
     # install and finished update shares (hermes_cli/source_completion.py).
