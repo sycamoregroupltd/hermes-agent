@@ -38,6 +38,9 @@ def source_launch(tmp_path, monkeypatch, isolated_python):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("HERMES_RUNTIME_DIR", str(tmp_path / "store"))
     monkeypatch.delenv("HERMES_DISABLE_LAZY_INSTALLS", raising=False)
+    # Claim gate is covered by tests/hermes_cli/test_finish_update_claim_gate.py;
+    # integration launch tests exercise sync/finish under an owned-claim stand-in.
+    monkeypatch.setattr(venv_sync, "_owned_hermes_update_claim", lambda: True)
     monkeypatch.setattr(paths, "lockfile_path", lambda: tmp_path / "tool-lock.json")
 
     uv = shutil.which("uv")
