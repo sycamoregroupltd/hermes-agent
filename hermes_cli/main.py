@@ -15942,6 +15942,14 @@ def main():
     # in ps/top/htop.  Non-fatal — just a nicer UX.
     _set_process_title()
 
+    # Opt-in: announce this process on the session bus when bound via env.
+    try:
+        from hermes_cli.session_bus_heartbeat import maybe_start_session_bus_heartbeat
+
+        maybe_start_session_bus_heartbeat()
+    except Exception:
+        pass
+
     # Force UTF-8 stdio on Windows before anything prints.  No-op elsewhere.
     try:
         from hermes_cli.stdio import configure_windows_stdio
