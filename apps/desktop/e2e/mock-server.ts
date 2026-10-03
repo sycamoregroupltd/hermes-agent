@@ -204,17 +204,23 @@ function sidebarCrossBgCommand(releasePath?: string): string {
   // the process still exits instead of hanging the worker until the suite
   // times out.
   //
-  // Plain POSIX sh only: no `seq` (not shipped on every platform, e.g. macOS),
-  // and the sentinel test sits inside an `if` rather than as a bare
-  // `[ ... ] && break` link in an `&&` chain. This hardens the command against
-  // login-shell differences; it is not a confirmed fix for the CI failure
-  // where the background dot never appeared (run 37101409789).
+  // The wait is a `python3 -c` one-liner, not a shell `while`/`for` loop. The
+  // real cause of the stalled turn: tirith blocks nested shell loops
+  // (`analysis_incomplete`, "Nested executable body could not be resolved"),
+  // so the gateway turns the command into an approval prompt. The e2e never
+  // clicks Run, the process never starts, the turn stays "Session running",
+  // and the background dot never appears. tirith allows the python form.
+  // The sentinel path is passed as a separate quoted argv entry, not via
+  // command substitution.
   const quoted = shellQuote(releasePath)
-  return [
-    'echo "long bg output"',
-    `i=0; while [ "$i" -lt 600 ]; do if [ -e ${quoted} ]; then break; fi; i=$((i+1)); sleep 0.1; done`,
-    'echo "finished"',
-  ].join(' && ')
+  const pyWait = [
+    'import os,sys,time; p=sys.argv[1]',
+    'for _ in range(600):',
+    '    if os.path.exists(p):',
+    '        break',
+    '    time.sleep(0.1)',
+  ].join('\n')
+  return `echo "long bg output" && python3 -c '${pyWait}' ${quoted} && echo "finished"`
 }
 
 /** Single-quote a path for POSIX sh; no command substitution is involved. */
