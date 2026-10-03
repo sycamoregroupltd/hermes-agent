@@ -211,6 +211,11 @@ test.describe('sidebar states — cross-session dot transition', () => {
     await composer.type('E2E_SIDEBAR_CROSS', { delay: 20 })
     await page.keyboard.press('Enter')
 
+    // Approve the wait command on the inline Run bar so its background process starts.
+    const run = page.getByRole('button', { name: /Run Ctrl/ }).first()
+    await run.waitFor({ state: 'visible', timeout: 60_000 })
+    await run.click()
+
     // Wait for the background dot to appear.
     await expect
       .poll(

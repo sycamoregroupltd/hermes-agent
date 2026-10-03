@@ -39,6 +39,14 @@ function sessionRow(page: import('@playwright/test').Page, text: string) {
   return page.locator('[data-slot="sidebar"] button').filter({ hasText: text }).first()
 }
 
+/** E2E_SIDEBAR_CROSS raises an inline approval bar for its python3 wait command.
+ *  Until Run is clicked the process never starts, so no background dot appears. */
+async function clickRunOnApprovalBar(page: import('@playwright/test').Page) {
+  const run = page.getByRole('button', { name: /Run Ctrl/ }).first()
+  await run.waitFor({ state: 'visible', timeout: 60_000 })
+  await run.click()
+}
+
 /** Common setup: start a turn with a held bg process + subagent, wait for
  *  the turn to complete, then switch to a new session so the first session is
  *  no longer $selectedStoredSessionId (required before opening a tile). */
@@ -56,6 +64,9 @@ async function startTurnAndSwitchAway(page: import('@playwright/test').Page) {
     undefined,
     { timeout: 15_000 },
   )
+
+  // Approve the wait command so its background process starts.
+  await clickRunOnApprovalBar(page)
 
   // Wait for the background dot — confirms the turn is running.
   await expect
