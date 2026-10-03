@@ -203,12 +203,23 @@ function sidebarCrossBgCommand(releasePath?: string): string {
   // Bounded wait (60s): if a test forgets to release (or crashes mid-way),
   // the process still exits instead of hanging the worker until the suite
   // times out.
-  const quoted = JSON.stringify(releasePath)
+  //
+  // Plain POSIX sh only: no `seq` (not shipped on every platform, e.g. macOS),
+  // and the sentinel test sits inside an `if` rather than as a bare
+  // `[ ... ] && break` link in an `&&` chain. This hardens the command against
+  // login-shell differences; it is not a confirmed fix for the CI failure
+  // where the background dot never appeared (run 37101409789).
+  const quoted = shellQuote(releasePath)
   return [
     'echo "long bg output"',
-    `for _ in $(seq 1 600); do [ -e ${quoted} ] && break; sleep 0.1; done`,
+    `i=0; while [ "$i" -lt 600 ]; do if [ -e ${quoted} ]; then break; fi; i=$((i+1)); sleep 0.1; done`,
     'echo "finished"',
   ].join(' && ')
+}
+
+/** Single-quote a path for POSIX sh; no command substitution is involved. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function sidebarCrossScript(releasePath?: string): ScriptedTurn[] {

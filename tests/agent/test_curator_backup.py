@@ -517,9 +517,12 @@ def test_rollback_skips_jobs_the_user_deleted(backup_env):
     ])
     snap = cb.snapshot_skills(reason="pre-curator-run")
 
-    # User deletes one job after the snapshot
+    # User deletes one job after the snapshot, through the real delete API.
+    # (save_jobs() with a filtered list is not a delete: its merge-on-write
+    # restores ids the caller omitted unless removed_ids is passed.)
     cj = _reload_cron_jobs(home)
-    cj.save_jobs([j for j in cj.load_jobs() if j["id"] != "delete-me"])
+    assert cj.remove_job("delete-me")
+    assert "delete-me" not in {j["id"] for j in cj.load_jobs()}
 
     ok, _, _ = cb.rollback(backup_id=snap.name)
     assert ok
