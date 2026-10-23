@@ -69,9 +69,13 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
         max_in_progress_per_profile = kbd._positive_int(
             _kanban_cfg.get("max_in_progress_per_profile"), None
         )
-        # Memory-derived default when unset — same fallback the gateway applies.
+        # Host first: a profile-local copy of the cap must never raise the shared
+        # budget the gateway dispatcher enforces. Memory-derived default when
+        # neither side sets one — same fallback the gateway applies.
         max_in_progress = kbd.resolve_max_in_progress(
-            kbd._positive_int(_kanban_cfg.get("max_in_progress"), None)
+            kbd.resolve_host_max_in_progress(
+                kbd._positive_int(_kanban_cfg.get("max_in_progress"), None)
+            )
         )
         # CLI --max is the more explicit signal, so it wins over kanban.max_spawn.
         cli_max = getattr(args, "max", None)
@@ -81,6 +85,39 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
     except Exception:
         default_assignee = max_in_progress_per_profile = max_in_progress = None
         max_spawn = getattr(args, "max", None)
+    # One dispatcher per host: the gateway's embedded dispatcher ticks every
+    # active board, so a CLI tick that runs while it is alive only races it for
+    # claims (double-spent max_in_progress, doubled spawn burst). Refuse, and
+    # keep the escape hatch narrow: --force-offline takes the tick only when the
+    # probe cannot answer — it never overrides a gateway seen dispatching.
+    force_offline = bool(getattr(args, "force_offline", False))
+    state, detail = kbd.gateway_dispatch_state()
+    if state == "dispatching":
+        hint = (
+            " --force-offline does NOT override a live dispatching gateway.\n"
+            if force_offline else
+            " Stop the gateway (`hermes gateway stop`) if you need a manual tick.\n"
+        )
+        return _err(
+            f"kanban dispatch: refused — {detail}.\n"
+            "Its embedded dispatcher already ticks every board on this host; a CLI "
+            f"tick would race it for claims.\n{hint}",
+            2,
+        )
+    if state == "unknown":
+        if not force_offline:
+            return _err(
+                "kanban dispatch: refused — could not tell whether a gateway dispatches "
+                f"kanban on this host ({detail}).\n"
+                "If you know no gateway is dispatching, rerun with --force-offline to "
+                "take the tick anyway.",
+                2,
+            )
+        print(
+            f"warning: kanban dispatch --force-offline: no conclusive dispatcher probe "
+            f"({detail})",
+            file=sys.stderr,
+        )
     with kbc.connect_closing() as conn:
         res = kbd.dispatch_once(
             conn,

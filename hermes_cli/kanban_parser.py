@@ -363,11 +363,15 @@ _SPECS = [
     _cmd("dispatch", [
         _arg("--dry-run", action="store_true", help="Don't actually spawn processes; just print what would happen"),
         _arg("--max", type=int, help="Cap number of spawns this pass"),
+        _arg("--force-offline", action="store_true",
+             help="Take the tick when the host dispatcher probe is inconclusive. Never "
+                  "overrides a live gateway that dispatches kanban"),
         _arg("--failure-limit", type=int, default=kbd.DEFAULT_FAILURE_LIMIT,
              help=f"Auto-block a task after this many consecutive non-success attempts "
                   f"(spawn_failed, timed_out, or crashed; default: {kbd.DEFAULT_FAILURE_LIMIT})"),
         _json_flag(),
-    ], help="One dispatcher pass: reclaim stale, promote ready, spawn workers"),
+    ], help="One dispatcher pass: reclaim stale, promote ready, spawn workers "
+            "(refused while the gateway's embedded dispatcher is live)"),
     _cmd("daemon", [
         _arg("--interval", type=float, default=60.0, help="Seconds between dispatch ticks (default: 60)"),
         _arg("--max", type=int, help="Cap number of spawns per tick"),

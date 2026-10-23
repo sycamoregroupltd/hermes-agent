@@ -1905,6 +1905,102 @@ def configured_max_in_progress() -> Optional[int]:
     return ival if ival >= 1 else None
 
 
+def host_kanban_config() -> dict:
+    """``kanban:`` section of the *kanban host* home's ``config.yaml``.
+
+    Dispatch policy that bounds the whole HOST — ``max_in_progress`` and
+    ``dispatch_in_gateway`` — is written in the kanban root's config, not in the
+    invoking profile's. A ``hermes kanban dispatch`` run from inside a profile
+    otherwise resolved that profile's own copy of the cap, so a short-lived CLI
+    tick could push the host past the budget the gateway dispatcher enforces
+    (the gateway then sat at "ready queue non-empty but 0 spawned").
+    ``HERMES_KANBAN_HOME`` and ``get_default_hermes_root()`` already define the
+    host for boards, the dispatcher lock and worker workspaces, so the cap is
+    read from the same place instead of inventing a second notion of "host".
+
+    Fails soft to ``{}``: an unreadable or broken root config must not brick
+    dispatch, and every caller falls back to its own home's values.
+    """
+    try:
+        root = _kb.kanban_home()
+    except Exception:
+        return {}
+    try:
+        from hermes_cli.config import load_config_readonly
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        token = set_hermes_home_override(root)
+        try:
+            cfg = load_config_readonly() or {}
+        finally:
+            reset_hermes_home_override(token)
+    except Exception:
+        return {}
+    section = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
+    return section if isinstance(section, dict) else {}
+
+
+def resolve_host_max_in_progress(local_configured: Optional[int] = None) -> Optional[int]:
+    """Global concurrency cap for a CLI tick, as the HOST sees it.
+
+    The host's explicit ``kanban.max_in_progress`` binds every entry point; a
+    stricter explicit value in the invoking home still wins, so a profile can
+    tighten the shared budget but never loosen it. ``None`` when neither is set
+    — the caller then lets :func:`resolve_max_in_progress` derive the
+    memory-based default, so this never silently *disables* a cap.
+    """
+    values = [
+        value
+        for value in (
+            local_configured,
+            _positive_int(host_kanban_config().get("max_in_progress"), None),
+        )
+        if isinstance(value, int) and value >= 1
+    ]
+    return min(values) if values else None
+
+
+def gateway_dispatch_state(*, home: Optional[Path] = None) -> tuple[str, str]:
+    """``(state, detail)`` for "who dispatches kanban on this host right now".
+
+    * ``dispatching`` — a live gateway owns dispatch for the KANBAN HOST home
+      (``kanban.dispatch_in_gateway`` is on). A CLI tick would only race it for
+      claims: it double-spends ``max_in_progress`` and doubles the spawn burst.
+    * ``idle`` — a gateway is alive but does not dispatch kanban, so the CLI
+      tick is the expected owner.
+    * ``down`` — no gateway is running for that home.
+    * ``unknown`` — the liveness probe could not answer.
+
+    Probed against :func:`kanban_db.kanban_home` (the ONE home whose boards a
+    tick acts on), not the invoking profile's ``HERMES_HOME``: a profile CLI
+    still acts on the shared boards, and the shared gateway is what it races.
+    """
+    try:
+        root = Path(home) if home is not None else _kb.kanban_home()
+    except Exception as exc:
+        return ("unknown", f"kanban home unresolved: {exc}")
+    try:
+        from gateway.status import resolve_gateway_liveness
+
+        # Same ladder the dashboard/status surfaces use, scoped to the host home
+        # so a PID-file-less or cross-container gateway is not misreported;
+        # use_cache=False because a one-shot tick must see the state now.
+        liveness = resolve_gateway_liveness(profile_dir=root, use_cache=False)
+    except Exception as exc:
+        return ("unknown", f"gateway liveness probe failed: {exc}")
+    if getattr(liveness, "probe_error", False):
+        return ("unknown", "gateway liveness probe reported an error")
+    if not getattr(liveness, "running", False):
+        return ("down", f"no gateway is running for {root}")
+    pid = getattr(liveness, "pid", None)
+    if bool(host_kanban_config().get("dispatch_in_gateway", True)):
+        return ("dispatching", f"gateway pid={pid or 'unknown'} dispatches kanban for {root}")
+    return (
+        "idle",
+        f"gateway pid={pid or 'unknown'} has kanban.dispatch_in_gateway=false in {root}/config.yaml",
+    )
+
+
 def count_running_tasks(conn: sqlite3.Connection) -> int:
     """Number of tasks in ``status='running'``.
 
@@ -2149,7 +2245,25 @@ def _dispatch_lane_task(
         # worker's system prompt via KANBAN_GUIDANCE.
         claimed.skills = list(dict.fromkeys([*(claimed.skills or []), "sdlc-review"]))
     try:
+        # ``_default_spawn`` reports ``proc.pid`` or raises, so a falsy PID from the
+        # REAL spawn path means nothing on the host confirmed a worker for this
+        # claim. Left alone the card sits in ``running`` behind a claim nobody
+        # holds — invisible until the TTL expires, and forever on a host whose only
+        # dispatcher was a one-shot tick. Treat that as a failed spawn instead:
+        # release the claim, so the card returns to its source phase and eventually
+        # auto-blocks at the failure limit like any other spawn failure. An
+        # INJECTED ``spawn_fn`` keeps its documented contract (the PID is optional
+        # — see ``_call_spawn_fn`` and the hook comment below), so a harness that
+        # reports nothing still counts as spawned.
         pid = _call_spawn_fn(spawn_fn if spawn_fn is not None else _default_spawn, claimed, str(workspace), board)
+        if not pid and spawn_fn is None:
+            if _record_task_failure(
+                conn, claimed.id, "spawn returned no pid",
+                outcome="spawn_failed", failure_limit=failure_limit,
+                release_claim=True, end_run=True,
+            ):
+                result.auto_blocked.append(claimed.id)
+            return False
         if pid:
             _set_worker_pid(conn, claimed.id, int(pid), run_id=claimed.current_run_id, claim_lock=claimed.claim_lock)
         # Fires AFTER the PID (when reported) is durably persisted. Best-effort.
