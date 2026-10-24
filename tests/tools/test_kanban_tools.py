@@ -418,6 +418,151 @@ def test_complete_goal_mode_rejected_by_judge(monkeypatch, tmp_path):
         conn2.close()
 
 
+def test_complete_gate_explains_pending_handoff_to_judge(monkeypatch):
+    """The pre-completion judge cannot observe the current tool's eventual result."""
+    from types import SimpleNamespace
+    from tools import kanban_tools as kt
+
+    captured = {}
+    monkeypatch.setattr(kt, "_goal_judge_available", lambda: True)
+
+    def mock_judge_goal(goal, last_response, *, timeout=30.0, subgoals=None):
+        captured["goal"] = goal
+        captured["evidence"] = last_response
+        return "done", "acceptance evidence is complete", False, None, False
+
+    monkeypatch.setattr(kt, "judge_goal", mock_judge_goal)
+    task = SimpleNamespace(goal_mode=True, title="goal-mode-test", body="Must achieve X.")
+
+    kt._goal_gate("kanban_complete", task, "task-1", "X is verified and complete.")
+
+    assert "current kanban_complete call before it can return" in captured["evidence"]
+    assert "do not require the response to show" in captured["evidence"]
+    assert captured["evidence"].endswith("X is verified and complete.")
+
+
+# --- Goal-gate decisive behaviour (t_c074c10e / t_522661f6) ---
+# These drive the REAL ``hermes_cli.goals.judge_goal`` (prompt build, truncation, JSON parse) and
+# stub only the LLM transport. The stub models the observed production failure (run 129735):
+# a judge that sees no sign of the pre-handoff boundary insists the response "never shows
+# kanban_complete was called"; once that boundary is explained, it grades the substantive
+# criterion ("X is verified") on the worker's evidence. Real-provider acceptance is NOT proven.
+
+_OBSERVED_REJECTION = "the response never shows kanban_complete was called"
+
+
+def _install_faithful_judge(monkeypatch):
+    """Stub the judge LLM transport; return the list of user prompts it saw."""
+    from hermes_cli import goals
+    from tools import kanban_tools as kt
+
+    seen = []
+
+    def fake_llm(call_llm, system_prompt, user_prompt, timeout):
+        seen.append(user_prompt)
+        response = user_prompt.split("Agent's most recent response:\n", 1)[1]
+        if "Pre-handoff context" not in response:
+            return json.dumps({"verdict": "continue", "reason": _OBSERVED_REJECTION})
+        if "unachievable" in response:
+            return json.dumps({"verdict": "blocked", "reason": "X cannot exist"})
+        if "X is verified" in response:
+            return json.dumps({"verdict": "done", "reason": "X verified with evidence"})
+        return json.dumps({"verdict": "continue", "reason": "no evidence that X was achieved"})
+
+    monkeypatch.setattr(goals, "_call_goal_judge_llm", fake_llm)
+    monkeypatch.setattr(kt, "_goal_judge_available", lambda: True)
+    return seen
+
+
+def _goal_task_status(tid):
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kbc
+    conn = kbc.connect()
+    try:
+        return kb.get_task(conn, tid).status
+    finally:
+        conn.close()
+
+
+def test_goal_complete_with_verified_evidence_is_accepted(monkeypatch, tmp_path):
+    """MUST PASS: verified acceptance evidence completes the goal-mode task.
+    RED on the pre-candidate gate (the judge rejects with the observed
+    'never shows kanban_complete was called' text and the task stays running)."""
+    from tools import kanban_tools as kt
+    tid = _make_goal_mode_worker_env(monkeypatch, tmp_path)
+    seen = _install_faithful_judge(monkeypatch)
+
+    d = json.loads(kt._handle_complete({"summary": "X is verified: pytest 3 passed."}))
+
+    assert "error" not in d, d
+    assert _goal_task_status(tid) == "done"
+    assert len(seen) == 1
+    assert seen[0].count("X is verified: pytest 3 passed.") == 1  # worker evidence verbatim, once
+
+
+def test_goal_complete_without_evidence_is_still_rejected(monkeypatch, tmp_path):
+    """MUST FAIL: the pre-handoff preamble does not bypass the substantive criteria."""
+    from tools import kanban_tools as kt
+    tid = _make_goal_mode_worker_env(monkeypatch, tmp_path)
+    _install_faithful_judge(monkeypatch)
+
+    d = json.loads(kt._handle_complete({"summary": "I did some stuff; all requirements met."}))
+
+    assert "Goal completion rejected by judge" in d["error"]
+    assert "no evidence that X was achieved" in d["error"]
+    assert _goal_task_status(tid) == "running"
+
+
+def test_goal_complete_unachievable_verdict_still_blocks(monkeypatch, tmp_path):
+    """MUST FAIL: a BLOCKED verdict still refuses completion with the blocked guidance."""
+    from tools import kanban_tools as kt
+    tid = _make_goal_mode_worker_env(monkeypatch, tmp_path)
+    _install_faithful_judge(monkeypatch)
+
+    d = json.loads(kt._handle_complete({"summary": "X is unachievable on this host."}))
+
+    assert "judge ruled the goal unachievable" in d["error"]
+    assert "X cannot exist" in d["error"]
+    assert _goal_task_status(tid) == "running"
+
+
+def test_goal_complete_judge_transport_failure_fails_open(monkeypatch, tmp_path):
+    """Unchanged fail-open contract: an unreachable judge does not wedge the handoff."""
+    from hermes_cli import goals
+    from tools import kanban_tools as kt
+    tid = _make_goal_mode_worker_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(kt, "_goal_judge_available", lambda: True)
+
+    def broken_llm(*_a, **_k):
+        raise TimeoutError("relay timeout")
+
+    monkeypatch.setattr(goals, "_call_goal_judge_llm", broken_llm)
+    d = json.loads(kt._handle_complete({"summary": "I did some stuff."}))
+
+    assert "error" not in d, d
+    assert _goal_task_status(tid) == "done"
+
+
+def test_goal_request_review_evidence_is_unchanged(monkeypatch):
+    """kanban_request_review evidence reaches the judge verbatim (no completion preamble)."""
+    from types import SimpleNamespace
+    from tools import kanban_tools as kt
+
+    captured = {}
+    monkeypatch.setattr(kt, "_goal_judge_available", lambda: True)
+
+    def mock_judge_goal(goal, last_response, *, timeout=30.0, subgoals=None):
+        captured["evidence"] = last_response
+        return "done", "ok", False, None, False
+
+    monkeypatch.setattr(kt, "judge_goal", mock_judge_goal)
+    task = SimpleNamespace(goal_mode=True, title="goal-mode-test", body="Must achieve X.")
+
+    kt._goal_gate("kanban_request_review", task, "task-1", "  X is verified; please review.  ")
+
+    assert captured["evidence"] == "X is verified; please review."
+
+
 def test_block_happy_path(worker_env):
     from tools import kanban_tools as kt
     out = kt._handle_block({"reason": "need clarification"})
