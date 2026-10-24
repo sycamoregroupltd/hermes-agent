@@ -496,6 +496,20 @@ def _goal_gate(tool_name: str, task, tid: str, evidence: str) -> None:
         from agent.portal_tags import get_affinity_scope, reset_affinity_scope, set_affinity_scope
         affinity_token = None if get_affinity_scope() else set_affinity_scope(f"kanban:{tid}")
         try:
+            # The completion gate runs before the lifecycle write, so neither this
+            # kanban_complete call nor its eventual result can appear in the evidence
+            # sent to the judge. Make that temporal boundary explicit: evaluate the
+            # substantive task criteria, not the unobservable current handoff itself.
+            if tool_name == "kanban_complete":
+                evidence = (
+                    "Pre-handoff context: this judge is evaluating the worker's current "
+                    "kanban_complete call before it can return. The call and its eventual "
+                    "result are therefore not visible yet; do not require the response to "
+                    "show that this current kanban_complete call already happened. Evaluate "
+                    "only the task's substantive acceptance criteria against the evidence "
+                    "below.\n\nWorker-provided evidence:\n"
+                    f"{evidence.strip()}"
+                )
             verdict, reason, _, _, transport_failed = judge_goal(
                 goal=f"{task.title}\n\n{task.body or ''}".strip(), last_response=evidence.strip())
         finally:
