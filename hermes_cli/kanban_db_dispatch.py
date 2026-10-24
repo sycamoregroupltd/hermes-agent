@@ -79,6 +79,17 @@ DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS = 300  # 5 minutes
 # Within this window a GitHub PR URL in a comment blocks re-spawn.
 _RESPAWN_GUARD_PR_WINDOW = 86400  # 24 hours
 
+# Spawn-gate hold (off by default). ``kanban.spawn_gate_flag`` (or HERMES_KANBAN_SPAWN_GATE_FLAG) names a latch
+# file whose first token is ``SWAP_HOT=1`` (CLOSED) or ``SWAP_HOT=0`` (OPEN); a missing file is OPEN and anything
+# else is UNKNOWN (no hold). While CLOSED a ready card whose newest block/wait/schedule event carries the
+# structured SPAWN_GATE_PARK tag (first token of the reason, or payload {"gate": "spawn"}) is not claimed. The
+# check runs per row immediately before the claim, so a card promoted in this very tick (or by its parent's
+# completion a moment earlier) is held too: an out-of-process overlay cannot win that race. Blocker text is
+# never matched. A later claim/unblock/completion/archive supersedes the tag; ``promoted`` deliberately does not.
+SPAWN_GATE_TAG = "SPAWN_GATE_PARK"
+_SPAWN_GATE_TAGGABLE = ("blocked", "dependency_wait", "scheduled")
+_SPAWN_GATE_CLEARING = ("claimed", "unblocked", "completed", "archived")
+
 _RESPAWN_GUARD_PR_URL_RE = re.compile(
     r"https?://github\.com/[^/\s]+/[^/\s]+/pull/\d+",
     re.IGNORECASE,
@@ -1560,6 +1571,8 @@ def check_respawn_guard(
     """Return a guard reason if ``task_id`` should NOT be re-spawned, else None.
 
     Called per ready/review row before any claim attempt. Priority order:
+    ``"spawn_gate_closed"`` (opt-in, ready lane only: the spawn-gate latch is CLOSED and the card's newest
+    block/wait/schedule event carries the SPAWN_GATE_PARK tag; lifts when the latch opens),
     ``"infrastructure_cooldown"`` (latest run is a ``spawn_failed`` the host
     refused — no restart-safe scope — within the cooldown; never counted),
     ``"rate_limit_cooldown"`` (latest run ``rate_limited`` within the cooldown;
@@ -1581,6 +1594,10 @@ def check_respawn_guard(
     ).fetchone()
     if row is None:
         return None
+
+    # 0. Spawn-gate hold (opt-in; ready lane only) — see SPAWN_GATE_TAG.
+    if lane != "review" and _spawn_gate_holds(conn, task_id):
+        return "spawn_gate_closed"
 
     now = int(time.time())
 
@@ -1659,6 +1676,60 @@ def check_respawn_guard(
 
 
 _GUARD_TIME_COLS = {"task_runs": "ended_at", "task_events": "created_at", "task_comments": "created_at"}
+
+
+def _spawn_gate_flag_path() -> Optional[str]:
+    """Latch file path when the spawn-gate hold is enabled, else ``None`` (the default)."""
+    raw = os.environ.get("HERMES_KANBAN_SPAWN_GATE_FLAG")
+    if raw is None:
+        try:
+            from hermes_cli.config import load_config_readonly
+            raw = ((load_config_readonly() or {}).get("kanban") or {}).get("spawn_gate_flag")
+        except Exception:
+            return None
+    raw = str(raw or "").strip()
+    return os.path.expanduser(raw) if raw else None
+
+
+def read_spawn_gate(path: str) -> str:
+    """``CLOSED`` / ``OPEN`` / ``UNKNOWN`` from the latch file (same parse as the fleet overlay)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()
+    except FileNotFoundError:
+        return "OPEN"
+    except OSError:
+        return "UNKNOWN"
+    tok = first.split()
+    if tok and tok[0] == "SWAP_HOT=1":
+        return "CLOSED"
+    if tok and tok[0] == "SWAP_HOT=0":
+        return "OPEN"
+    return "UNKNOWN"
+
+
+def _spawn_gate_bound(conn: sqlite3.Connection, task_id: str) -> bool:
+    """True iff the newest taggable-or-clearing event is a block/wait/schedule carrying the structured tag."""
+    kinds = _SPAWN_GATE_TAGGABLE + _SPAWN_GATE_CLEARING
+    marks = ",".join("?" * len(kinds))
+    row = conn.execute(
+        f"SELECT kind, payload FROM task_events WHERE task_id = ? AND kind IN ({marks}) ORDER BY id DESC LIMIT 1",
+        (task_id, *kinds),
+    ).fetchone()
+    if row is None or row["kind"] not in _SPAWN_GATE_TAGGABLE:
+        return False
+    data = _kb._json_or(row["payload"], {})
+    if not isinstance(data, dict):
+        return False
+    if data.get("gate") == "spawn":
+        return True
+    reason = data.get("reason")
+    return isinstance(reason, str) and reason.split(None, 1)[:1] == [SPAWN_GATE_TAG]
+
+
+def _spawn_gate_holds(conn: sqlite3.Connection, task_id: str) -> bool:
+    path = _spawn_gate_flag_path()
+    return path is not None and read_spawn_gate(path) == "CLOSED" and _spawn_gate_bound(conn, task_id)
 
 
 def _rows_since(conn: sqlite3.Connection, table: str, task_id: str, since: int, where: str = "", *,
@@ -2110,7 +2181,14 @@ def _dispatch_lane_task(
         # owned by ``kanban.default_assignee``, not "unassigned but secretly routed".
         if not dry_run:
             with _kb.write_txn(conn):
-                _kb._append_event(conn, task_id, "respawn_guarded", {"reason": guard_reason})
+                # The spawn-gate hold repeats every tick while the latch stays closed: one row per hold, not per tick.
+                last = conn.execute(
+                    "SELECT kind, payload FROM task_events WHERE task_id = ? "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1", (task_id,)).fetchone() \
+                    if guard_reason == "spawn_gate_closed" else None
+                if (last is None or last["kind"] != "respawn_guarded"
+                        or _kb._json_or(last["payload"], {}) != {"reason": guard_reason}):
+                    _kb._append_event(conn, task_id, "respawn_guarded", {"reason": guard_reason})
         return False
 
     def _count_spawn(name: str) -> None:
