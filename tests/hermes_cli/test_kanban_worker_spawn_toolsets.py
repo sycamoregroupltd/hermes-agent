@@ -64,6 +64,10 @@ agent:
         pid = 4242
 
     def fake_popen(cmd, *args, **kwargs):
+        # A spawn also starts the worker's switchboard seat supervisor; the pins under test
+        # belong to the worker (see test_switchboard_seat.py).
+        if "keeper" in cmd:
+            return FakeProc()
         captured["cmd"] = list(cmd)
         captured["env"] = dict(kwargs.get("env") or {})
         captured["cwd"] = kwargs.get("cwd")
@@ -100,6 +104,8 @@ def test_default_spawn_does_not_pass_mutable_launch_overrides(monkeypatch, tmp_p
         pid = 4244
 
     def fake_popen(cmd, *args, **kwargs):
+        if "keeper" in cmd:          # the seat supervisor, not the worker argv under test
+            return FakeProc()
         captured["cmd"] = list(cmd)
         return FakeProc()
 
@@ -142,6 +148,8 @@ def test_default_spawn_resolves_env_passthrough_under_multiplex(monkeypatch, tmp
         pid = 4243
 
     def fake_popen(cmd, *args, **kwargs):
+        if "keeper" in cmd:          # the seat supervisor, not the worker env under test
+            return FakeProc()
         captured["env"] = dict(kwargs.get("env") or {})
         return FakeProc()
 

@@ -31,7 +31,10 @@ def test_worker_spawn_tags_session_source_kanban(monkeypatch, tmp_path):
         pid = 4321
 
     def _fake_popen(cmd, **kwargs):
-        captured["env"] = kwargs["env"]
+        # A spawn also starts the worker's switchboard seat supervisor; the session-source
+        # tag under test is the worker's (see test_switchboard_seat.py).
+        if "keeper" not in cmd:
+            captured["env"] = kwargs["env"]
         return _Proc()
 
     monkeypatch.setattr("subprocess.Popen", _fake_popen)

@@ -691,8 +691,11 @@ def test_default_spawn_does_not_auto_load_any_skill(kanban_home, monkeypatch):
             self.pid = 99999
 
     def fake_popen(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["env"] = kwargs.get("env", {})
+        # A spawn also starts the worker's switchboard seat supervisor; that is not the
+        # spawn under test (see test_switchboard_seat.py).
+        if "keeper" not in cmd:
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env", {})
         return FakeProc()
 
     monkeypatch.setattr("subprocess.Popen", fake_popen)

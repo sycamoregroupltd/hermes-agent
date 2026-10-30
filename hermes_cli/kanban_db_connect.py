@@ -1290,6 +1290,10 @@ def write_txn(conn: sqlite3.Connection, *, allow_nested: bool = False):
             raise
         # Post-commit torn-extend check — raise now rather than silently corrupt.
         _check_file_length_invariant(conn)
+        # Post-commit side effects queued by ``kanban_db._end_run`` (Switchboard seats).
+        # They must run with the lock released — each is a busctl subprocess — and they are
+        # best-effort by contract, so this can never turn a committed txn into an error.
+        _kb._drain_pending_seat_closes()
 
 
 # Late-bound origin namespace (see module docstring); imported LAST so this

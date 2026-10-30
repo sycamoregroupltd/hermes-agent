@@ -63,6 +63,10 @@ def test_managed_gateway_worker_is_spawned_in_restart_safe_scope(
 
     def fake_popen(cmd, **kwargs):
         nonlocal captured_cwd
+        # A spawn also starts the worker's switchboard seat supervisor; it is not the
+        # scoped spawn under test (see test_switchboard_seat.py).
+        if "keeper" in cmd:
+            return FakeProc()
         captured_cmd.extend(cmd)
         captured_env.update(kwargs.get("env") or {})
         captured_cwd = kwargs.get("cwd")
@@ -164,7 +168,14 @@ def test_oneshot_unit_dispatcher_scope_wraps_or_warns_never_dooms_silently(
     class FakeProc:
         pid = 4243
 
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: spawned.append(list(cmd)) or FakeProc())
+    def _spawn(cmd, **kwargs):
+        # The worker is the scope under test; the seat supervisor is not.
+        if "keeper" in cmd:
+            return FakeProc()
+        spawned.append(list(cmd))
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", _spawn)
     monkeypatch.setenv("INVOCATION_ID", "oneshot-dispatch-timer")
     monkeypatch.setattr(process_registry, "_is_supervised_gateway_process", lambda: False)
     monkeypatch.setattr(process_registry, "_systemd_run_user_scope_available", lambda: True)
