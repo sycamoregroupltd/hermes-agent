@@ -135,7 +135,45 @@ G7's test passes on unmutated d205bc72, as a mutant-killer should, and fails wit
 
 ## (e) CI on the new tip
 
-See the "CI status" section at the end of this file (filled in after the push).
+Fix commit `6fa09eaf` (pushed 30 Oct 21:16 GMT). Workflows **did trigger** on the push
+(`pull_request` synchronize):
+
+| Workflow | Run id | State at 21:35 GMT |
+|---|---|---|
+| CI (`.github/workflows/ci.yaml`) | 41129814961 | queued; first job "Detect affected areas" never got a runner |
+| Docker Build, Test, and Publish (`docker.yml`) | 41129814820 | queued; "Resolve release phase" never got a runner |
+| Nix flake check (`nix.yml`) | 41129814799 | queued; "Detect affected areas" never got a runner |
+
+**There is no CI result yet, and there won't be one without a human change.** No job has
+started, so these runs aren't evidence for or against the code. Local evidence is the
+suite results above.
+
+**Exact reason:** every job in the workflows carried by base `pin/bf0203a7` (and so by
+this PR's merge ref `refs/pull/109/merge`) has `runs-on: blacksmith-4vcpu-ubuntu-2404`.
+That's a Blacksmith third-party runner label from upstream; 50 workflow files under
+`.github/workflows` use Blacksmith labels. `sycamoregroupltd/hermes-agent` has no
+Blacksmith runners: the job API shows `runner_id: 0` and an empty runner group. Fork
+`main`'s workflows (`ci.yml`, `docker.yml`) use `ubuntu-latest` and contain no
+`blacksmith` label at all, which is why PR #108 (base `main`) gets CI and PR #109 (base
+`pin/bf0203a7`) doesn't. The same thing already happened on PR #105: its Docker and Nix
+runs were created 24 Oct 18:26 and cancelled 25 Oct 18:26, exactly GitHub's 24 h
+queued-job timeout. These three runs will end the same way (about 31 Oct 21:16 GMT)
+unless a runner appears.
+
+I couldn't determine why `d205bc72` had 0 runs. The fork's Actions is enabled and the new
+push did create runs. The most likely cause is that the push or PR-open event came from a
+credential whose events don't trigger workflows (e.g. a workflow `GITHUB_TOKEN`). That's
+moot now, because the new tip does trigger.
+
+**Minimal fix (for a human; I didn't edit workflow files, as instructed).** Pick one:
+1. Give the fork Blacksmith runners: install the Blacksmith GitHub App on
+   `sycamoregroupltd`. No code change; the queued runs would then start.
+2. Or, in one human-authored commit on this PR branch (or on `pin/bf0203a7`), replace
+   `runs-on: blacksmith-4vcpu-ubuntu-2404` (and the other `blacksmith-*` labels) with
+   `ubuntu-latest` in at least `ci.yaml`, `tests.yml`, `lint.yml`, `docker.yml` and
+   `nix.yml`, then push. This matches fork `main`.
+3. Or cancel the stuck runs, and Review accepts the local suite + `scripts/check` results
+   above in place of CI for this base.
 
 ## Follow-ups (written list only, not done here)
 
