@@ -46,7 +46,14 @@ async def _submit_claim(client, params, board_db):
         await asyncio.sleep(.2)
         receipt = await client.rpc('prompt.receipt', session_id=sid, admission_id=receipt['admission_id'])
     if receipt['status'] == 'unknown':
-        raise GatewayClientError('Kanban execution unknown; retained by owner')
+        # The owner retained the admission but could not settle its outcome
+        # (e.g. the turn was interrupted or the owner restarted). The work is
+        # still owned by the profile's gateway and will be reconciled by the
+        # board's dead-worker sweep / TTL reclaim; this worker subprocess must
+        # NOT book a crash against the card for a condition that is the host's,
+        # not the card's. Returning 0 (success) keeps the failure budget intact.
+        print('Kanban execution unknown; retained by owner (not a crash)', file=sys.stderr)
+        return 0
     from gateway.session_kanban import worker_result
     result = worker_result(board_db, params)
     # The attempt's reply ends the log, as a one-shot worker's did: crash diagnostics quote it.
