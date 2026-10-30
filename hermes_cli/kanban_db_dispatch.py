@@ -149,6 +149,12 @@ class DispatchResult:
     """Memory pressure that restricted this tick: ``"critical"`` (no new
     workers), ``"elevated"`` (at most one), ``None`` (no restriction).
     Reclaim/promotion bookkeeping still ran; deferred tasks stay queued."""
+    board_cap_hit: bool = False
+    """True when ``max_spawn`` (per-board concurrency cap) was saturated this
+    tick, so no new worker was spawned on this board."""
+    global_cap_hit: bool = False
+    """True when ``max_in_progress`` (host-wide concurrency cap) was saturated
+    this tick, so no new worker was spawned."""
 
 
 def describe_suppression(results: Iterable[Optional[DispatchResult]]) -> str:
@@ -163,6 +169,9 @@ def describe_suppression(results: Iterable[Optional[DispatchResult]]) -> str:
     """
     counts: dict[str, int] = {}
     pressure: Optional[str] = None
+    board_cap_ticks = 0
+    global_cap_ticks = 0
+    per_profile_cap_count = 0
     for res in results:
         if res is None:
             continue
@@ -174,7 +183,18 @@ def describe_suppression(results: Iterable[Optional[DispatchResult]]) -> str:
             counts["skipped_locked"] = counts.get("skipped_locked", 0) + 1
         if res.memory_pressure:
             pressure = res.memory_pressure
+        if getattr(res, "board_cap_hit", False):
+            board_cap_ticks += 1
+        if getattr(res, "global_cap_hit", False):
+            global_cap_ticks += 1
+        per_profile_cap_count += len(getattr(res, "skipped_per_profile_capped", []) or [])
     parts = [f"{k}={v}" for k, v in sorted(counts.items())]
+    if board_cap_ticks:
+        parts.append(f"board_cap={board_cap_ticks}")
+    if global_cap_ticks:
+        parts.append(f"global_cap={global_cap_ticks}")
+    if per_profile_cap_count:
+        parts.append(f"per_profile_cap={per_profile_cap_count}")
     if pressure:
         parts.append(f"memory_pressure={pressure}")
     return ", ".join(parts)
@@ -2260,12 +2280,14 @@ def _tick_spawn_budget(
     # Both ready and review loops consume from the same budget.
     if max_spawn is not None:
         if running_count >= max_spawn:
+            result.board_cap_hit = True
             return False, None
         spawn_budget = max_spawn - running_count
 
     if max_in_progress is not None:
         total_running = running_count + count_running_tasks_other_boards(board)
         if total_running >= max_in_progress:
+            result.global_cap_hit = True
             return False, None
         remaining = max_in_progress - total_running
         if spawn_budget is None or spawn_budget > remaining:
