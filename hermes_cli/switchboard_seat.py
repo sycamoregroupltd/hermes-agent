@@ -22,6 +22,8 @@ What the supervisor does (and nothing else):
 * closes the seat when the worker dies, when the run ends (``task_runs.ended_at``, which
   every reaper path sets), or when another process closed it first (busctl rc 4 =
   heartbeat-after-close, a T10 violation the supervisor must stop, not retry).
+* never closes a seat a LATER run of the same card holds: state is per run
+  (``<root>/<seat>/run-<id>``) and the seat's ``owner`` file names the run holding it.
 
 Nothing here may ever fail a spawn: every entry point returns a value and swallows
 ``OSError`` / timeout / malformed output. The seat is observability, not admission
@@ -39,6 +41,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 #: Env var carrying the per-card seat name into the worker process itself.
@@ -77,6 +80,8 @@ _DOORBELL_NAME = DOORBELL_NAME
 _STOP_NAME = "stop"
 _INBOX_NAME = "inbox.ndjson"
 _SUPERVISOR_PID_NAME = "supervisor.pid"
+#: Seat-level file naming the run dir that currently holds the seat (see ``owns_seat``).
+_OWNER_NAME = "owner"
 
 
 # ---------------------------------------------------------------------------
@@ -145,9 +150,21 @@ def state_root(env=None) -> str:
 
 
 def seat_state_dir(session: str, *, root=None, env=None) -> str:
-    """Per-seat state dir: ``<root>/<session>`` (doorbell, inbox spool, stop flag)."""
-    base = root or state_root(env) or "/tmp/hermes-switchboard-seats"
+    """Per-seat dir: ``<root>/<session>``; holds the ``owner`` file and one dir per run."""
+    base = root or state_root(env) or os.path.join(tempfile.gettempdir(), "hermes-switchboard-seats")
     return os.path.join(base, session)
+
+
+def run_state_dir(session: str, run_id, *, root=None, env=None) -> str:
+    """Per-run state dir: ``<root>/<session>/run-<id>`` (doorbell, inbox spool, stop flag).
+
+    The bus seat is named per card (``hermes-<profile>-<task>``), so a retry of the same
+    card reuses the seat name. Everything that can stop or close a seat is keyed by RUN
+    instead: a stop flag left by run N can never stop run N+1's supervisor, and a close
+    for run N is refused once run N+1 owns the seat (``owns_seat``).
+    """
+    token = str(int(run_id)) if run_id not in (None, "") else "none"
+    return os.path.join(seat_state_dir(session, root=root, env=env), f"run-{token}")
 
 
 # ---------------------------------------------------------------------------
@@ -287,14 +304,59 @@ def keeper_env(base_env=None) -> dict:
     return env
 
 
-def ensure_state_dir(session: str, *, root=None, env=None) -> str:
-    """Create the per-seat state dir (0700) and materialize the doorbell file."""
-    directory = seat_state_dir(session, root=root, env=env)
+def ensure_state_dir(session: str, *, run_id, root=None, env=None) -> str:
+    """Create this run's state dir (0700), materialize its doorbell, and claim the seat.
+
+    A stale stop flag is removed (a reused ``run-none`` dir must not stop the new
+    supervisor on its first tick), and the seat's ``owner`` file is pointed at this run
+    so any later close issued for an earlier run of the same card is refused.
+    """
+    directory = run_state_dir(session, run_id, root=root, env=env)
+    os.makedirs(os.path.dirname(directory), mode=0o700, exist_ok=True)
     os.makedirs(directory, mode=0o700, exist_ok=True)
     doorbell = os.path.join(directory, _DOORBELL_NAME)
     with open(doorbell, "a", encoding="utf-8"):
         pass
+    try:
+        os.unlink(stop_flag(directory))
+    except FileNotFoundError:
+        pass
+    owner = _owner_path(directory)
+    tmp = f"{owner}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(os.path.basename(directory) + "\n")
+    os.replace(tmp, owner)
     return directory
+
+
+def _owner_path(state_dir: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(state_dir)), _OWNER_NAME)
+
+
+def owns_seat(state_dir: str) -> bool:
+    """True unless the seat's ``owner`` file names a DIFFERENT run than *state_dir*.
+
+    A missing or unreadable owner file means no later run has claimed the seat, so the
+    run holding *state_dir* still may close it. A retry of the same card inside the
+    terminal-worker reap grace window (or an old supervisor that wakes up late) must not
+    close the seat the live run now holds — the bus close is by name, so this is the guard.
+    """
+    try:
+        with open(_owner_path(state_dir), "r", encoding="utf-8-sig") as fh:
+            owner = fh.read().strip()
+    except OSError:
+        return True
+    return not owner or owner == os.path.basename(os.path.abspath(state_dir))
+
+
+def release_seat(state_dir: str) -> None:
+    """Drop the seat claim if *state_dir* holds it (a spawn whose supervisor never ran)."""
+    if not owns_seat(state_dir):
+        return
+    try:
+        os.unlink(_owner_path(state_dir))
+    except OSError:
+        pass
 
 
 def start_supervisor(*, session: str, card: str, worker_pid, board_db: str, run_id,
@@ -338,7 +400,8 @@ def start_supervisor(*, session: str, card: str, worker_pid, board_db: str, run_
         return None
     pid = getattr(proc, "pid", None)
     try:
-        with open(os.path.join(state_dir, _SUPERVISOR_PID_NAME), "w", encoding="utf-8") as fh:
+        pid_file = os.path.join(state_dir, _SUPERVISOR_PID_NAME)
+        with open(pid_file, "w", encoding="utf-8") as fh:
             fh.write(f"{pid}\n")
     except OSError:
         pass
@@ -352,7 +415,8 @@ def stop_flag(state_dir: str) -> str:
 def signal_stop(state_dir: str) -> None:
     """Ask a running supervisor to close its seat and exit (best-effort touch)."""
     try:
-        with open(stop_flag(state_dir), "a", encoding="utf-8"):
+        flag = stop_flag(state_dir)
+        with open(flag, "a", encoding="utf-8"):
             pass
     except OSError:
         pass
@@ -363,11 +427,17 @@ def signal_stop(state_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 def close_run_seat(session: str, state_dir: str, *, env=None) -> bool:
-    """Stop the supervisor and close the seat. Best-effort; safe to call twice."""
+    """Stop this run's supervisor and close the seat. Best-effort; safe to call twice.
+
+    *state_dir* is the run's dir (``run_state_dir``). Its stop flag is always set; the bus
+    close is skipped when a later run of the same card already owns the seat.
+    """
     if not session:
         return False
     if state_dir:
         signal_stop(state_dir)
+        if not owns_seat(state_dir):
+            return False
     return close(session, env=env)
 
 
@@ -382,20 +452,17 @@ def _pid_alive(pid) -> bool:
         return False
     if pid <= 0:
         return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
+    import psutil
+
+    # psutil, not os.kill(pid, 0): on Windows signal 0 is CTRL_C_EVENT, not a probe.
+    if not psutil.pid_exists(pid):
         return False
     if sys.platform == "linux":
         try:
-            with open(f"/proc/{pid:d}/status", "r", encoding="utf-8") as fh:
+            with open(f"/proc/{pid:d}/status", "r", encoding="utf-8-sig") as fh:
                 for line in fh:
                     if line.startswith("State:"):
-                        # "State:\tZ (zombie)" is dead even though kill(0) succeeded.
+                        # "State:\tZ (zombie)" is dead even though the pid still exists.
                         return "Z" not in line.split(":", 1)[1]
         except OSError:
             return False
@@ -455,7 +522,7 @@ def _spool(session: str, state_dir: str, rows, seen: set) -> int:
 def _load_spooled(state_dir: str) -> set:
     seen: set = set()
     try:
-        with open(os.path.join(state_dir, _INBOX_NAME), "r", encoding="utf-8") as fh:
+        with open(os.path.join(state_dir, _INBOX_NAME), "r", encoding="utf-8-sig") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -471,7 +538,8 @@ def _load_spooled(state_dir: str) -> set:
 
 def _log(state_dir: str, message: str) -> None:
     try:
-        with open(os.path.join(state_dir, "supervisor.log"), "a", encoding="utf-8") as fh:
+        log_path = os.path.join(state_dir, "supervisor.log")
+        with open(log_path, "a", encoding="utf-8") as fh:
             stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             fh.write(f"{stamp} {message}\n")
     except OSError:
@@ -490,6 +558,31 @@ def _parse_keeper_argv(argv: list) -> dict:
             continue
         index += 1
     return opts
+
+
+def _exit_reason(state_dir: str, worker_pid, board_db: str, run_id):
+    """Why the supervisor should stop now, or None to keep holding the seat."""
+    if os.path.exists(stop_flag(state_dir)):
+        return "stop-flag"
+    if not owns_seat(state_dir):
+        return "superseded"
+    if not _pid_alive(worker_pid):
+        return "worker-exit"
+    if _run_ended(board_db, run_id):
+        return "run-ended"
+    return None
+
+
+def _final_close(session: str, state_dir: str, reason: str, closed_elsewhere: bool) -> None:
+    """Close last (heartbeats are already stopped), and only a seat this run still holds."""
+    if closed_elsewhere:
+        _log(state_dir, f"{reason}: close skipped (seat already closed)")
+    elif not owns_seat(state_dir):
+        # A later run of this card holds the seat now; closing by name would end ITS seat.
+        _log(state_dir, f"{reason}: close skipped (seat held by a later run)")
+    else:
+        closed = close(session)
+        _log(state_dir, f"{reason}: close {'ok' if closed else 'failed'}")
 
 
 def keeper_main(argv: list, *, slept=None) -> int:
@@ -514,7 +607,7 @@ def keeper_main(argv: list, *, slept=None) -> int:
     try:
         os.makedirs(state_dir, mode=0o700, exist_ok=True)
     except OSError:
-        state_dir = "/tmp"
+        state_dir = tempfile.gettempdir()
     seen = _load_spooled(state_dir)
     enrolled = False
     closed_elsewhere = False
@@ -522,14 +615,9 @@ def keeper_main(argv: list, *, slept=None) -> int:
 
     try:
         while True:
-            if os.path.exists(stop_flag(state_dir)):
-                reason = "stop-flag"
-                break
-            if not _pid_alive(worker_pid):
-                reason = "worker-exit"
-                break
-            if _run_ended(opts["--board-db"], opts["--run-id"]):
-                reason = "run-ended"
+            stop = _exit_reason(state_dir, worker_pid, opts["--board-db"], opts["--run-id"])
+            if stop:
+                reason = stop
                 break
             if not enrolled:
                 enrolled = enrol(session, card, worker_pid, doorbell)
@@ -567,12 +655,7 @@ def keeper_main(argv: list, *, slept=None) -> int:
     except Exception as exc:  # pragma: no cover - a supervisor must never die loudly
         _log(state_dir, f"supervisor error {type(exc).__name__}: {exc}")
     finally:
-        # Heartbeats are already stopped: close last, never beat a closed seat.
-        if closed_elsewhere:
-            _log(state_dir, f"{reason}: close skipped (seat already closed)")
-        else:
-            closed = close(session)
-            _log(state_dir, f"{reason}: close {'ok' if closed else 'failed'}")
+        _final_close(session, state_dir, reason, closed_elsewhere)
     return 0
 
 

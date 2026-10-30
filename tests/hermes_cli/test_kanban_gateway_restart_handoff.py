@@ -137,9 +137,16 @@ def test_standalone_dispatcher_keeps_direct_worker_spawn(
     class FakeProc:
         pid = 4243
 
+    def fake_popen(cmd, **kwargs):
+        # The worker's switchboard seat supervisor is a second spawn; it is not the direct
+        # worker spawn under test (see test_switchboard_seat.py).
+        if "keeper" not in cmd:
+            captured_cmd.extend(cmd)
+        return FakeProc()
+
     # Standalone = no systemd unit at all (CI runners inherit INVOCATION_ID).
     monkeypatch.delenv("INVOCATION_ID", raising=False)
-    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: captured_cmd.extend(cmd) or FakeProc())
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
     monkeypatch.setattr("tools.process_registry._is_supervised_gateway_process", lambda: False)
     monkeypatch.setattr(
         "tools.process_registry._systemd_run_user_scope_available",

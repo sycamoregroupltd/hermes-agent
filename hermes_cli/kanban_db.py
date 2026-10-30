@@ -1873,8 +1873,10 @@ def switchboard_seats_root() -> Path:
 # ``_end_run`` only QUEUES the seat, and ``write_txn`` drains the queue right after COMMIT
 # (``kanban_db_connect.write_txn`` -> ``_drain_pending_seat_closes``), exactly like the
 # post-commit lifecycle hooks beside it. Every step is best-effort: a seat is
-# observability, never admission control.
-_SEAT_CLOSE_PENDING: list[tuple[str, str]] = []
+# observability, never admission control. The queue is per connection (``id(conn)``):
+# a ROLLBACK or a failed COMMIT on one connection discards only ITS entries — the run
+# never ended, so its seat must stay open — and never another thread's committed ones.
+_SEAT_CLOSE_PENDING: dict[int, list[tuple[str, str]]] = {}
 _SEAT_CLOSE_LOCK = threading.Lock()
 
 
@@ -1898,33 +1900,51 @@ def _note_seat_close(conn: sqlite3.Connection, task_id: str, run_id: int) -> Non
         if not profile:
             return
         session = switchboard_seat.seat_name(profile, task_id)
-        state_dir = switchboard_seats_root() / session
-        # No state dir = no seat was ever opened for this run (an unspawned task, a
-        # pre-P1 run, or any process that is not the dispatcher). Nothing to close, and
-        # nothing to shell out for: the seat exists because a spawn created this dir.
-        if not state_dir.is_dir():
+        state_dir = switchboard_seat.run_state_dir(
+            session, run_id, root=str(switchboard_seats_root())
+        )
+        # No run dir = no seat was ever opened for this run (an unspawned task, a pre-P1
+        # run, or any process that is not the dispatcher). Nothing to close, and nothing
+        # to shell out for: the seat exists because a spawn created this dir.
+        if not os.path.isdir(state_dir):
             return
-        entry = (session, str(state_dir))
+        entry = (session, state_dir)
         if getattr(conn, "in_transaction", False):
             with _SEAT_CLOSE_LOCK:
-                _SEAT_CLOSE_PENDING.append(entry)
+                _SEAT_CLOSE_PENDING.setdefault(id(conn), []).append(entry)
         else:  # pragma: no cover - every in-tree caller holds the txn
             switchboard_seat.close_run_seat(*entry)
     except Exception as exc:  # pragma: no cover - defensive
         _log.debug("kanban seat close could not be queued: %s", exc)
 
 
-def _drain_pending_seat_closes() -> list[str]:
-    """Close seats queued by ``_end_run``; called AFTER a write txn commits.
+def _pending_seat_close_mark(conn: sqlite3.Connection) -> int:
+    """How many seat closes *conn* has queued; a savepoint rolls back to this mark."""
+    with _SEAT_CLOSE_LOCK:
+        return len(_SEAT_CLOSE_PENDING.get(id(conn), ()))
+
+
+def _discard_pending_seat_closes(conn: sqlite3.Connection, mark: int = 0) -> None:
+    """Forget closes *conn* queued after *mark*: their run-end was rolled back."""
+    with _SEAT_CLOSE_LOCK:
+        pending = _SEAT_CLOSE_PENDING.get(id(conn))
+        if pending is None:
+            return
+        del pending[mark:]
+        if not pending:
+            del _SEAT_CLOSE_PENDING[id(conn)]
+
+
+def _drain_pending_seat_closes(conn: sqlite3.Connection) -> list[str]:
+    """Close seats *conn* queued in ``_end_run``; called AFTER its write txn commits.
 
     Returns the sessions it closed (tests assert on this). Never raises: a broken bus, a
     missing busctl or a slow seat must not turn a committed transition into an error.
     """
     with _SEAT_CLOSE_LOCK:
-        if not _SEAT_CLOSE_PENDING:
-            return []
-        pending = list(_SEAT_CLOSE_PENDING)
-        _SEAT_CLOSE_PENDING.clear()
+        pending = _SEAT_CLOSE_PENDING.pop(id(conn), None)
+    if not pending:
+        return []
     closed: list[str] = []
     try:
         from hermes_cli import switchboard_seat

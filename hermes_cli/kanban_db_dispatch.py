@@ -562,7 +562,13 @@ def _reap_terminal_worker_row(conn, row, host_prefix: str, signal_fn, reaped: li
 
 
 def _close_seat_for_reaped_run(row) -> None:
-    """Close the switchboard seat of a worker this reaper just terminated. Never raises."""
+    """Close the switchboard seat of a worker this reaper just terminated. Never raises.
+
+    The row is a run that ended at least the reap grace ago, so the card may already be
+    running again under the SAME seat name. The close is therefore keyed by this row's run
+    id: it stops only this run's supervisor, and ``close_run_seat`` refuses the bus close
+    once a later run owns the seat.
+    """
     try:
         from hermes_cli import switchboard_seat
 
@@ -573,7 +579,10 @@ def _close_seat_for_reaped_run(row) -> None:
             return
         session = switchboard_seat.seat_name(profile, row["task_id"])
         switchboard_seat.close_run_seat(
-            session, str(_kb.switchboard_seats_root() / session)
+            session,
+            switchboard_seat.run_state_dir(
+                session, row["id"], root=str(_kb.switchboard_seats_root())
+            ),
         )
     except Exception as exc:  # pragma: no cover - defensive
         _kb._log.debug(
@@ -2822,7 +2831,7 @@ def _start_seat_supervisor(
         from tools.process_registry import restart_safe_gateway_child_argv
 
         state_dir = switchboard_seat.ensure_state_dir(
-            seat_session, root=str(_kb.switchboard_seats_root())
+            seat_session, run_id=task.current_run_id, root=str(_kb.switchboard_seats_root())
         )
 
         def _wrap(argv: list[str]) -> list[str]:
@@ -2853,8 +2862,12 @@ def _start_seat_supervisor(
         _kb._log.debug("kanban seat: supervisor start skipped for %s (%s)", task.id, exc)
         supervisor_pid = None
     if supervisor_pid is None and state_dir:
-        # No supervisor means no seat: drop the dir so a later run-end does not close (or
-        # shell out for) a seat nothing ever opened.
+        # No supervisor means no seat: drop the run dir so a later run-end does not close
+        # (or shell out for) a seat nothing ever opened, and give up the seat claim so an
+        # earlier run's supervisor still closes the seat it really holds.
+        from hermes_cli import switchboard_seat
+
+        switchboard_seat.release_seat(state_dir)
         shutil.rmtree(state_dir, ignore_errors=True)
     return supervisor_pid
 

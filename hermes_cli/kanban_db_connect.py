@@ -1258,6 +1258,7 @@ def write_txn(conn: sqlite3.Connection, *, allow_nested: bool = False):
                 "the outer transaction commits)."
             )
         savepoint = f"hermes_nested_{secrets.token_hex(8)}"
+        seat_mark = _kb._pending_seat_close_mark(conn)
         conn.execute(f"SAVEPOINT {savepoint}")
         try:
             yield conn
@@ -1265,6 +1266,7 @@ def write_txn(conn: sqlite3.Connection, *, allow_nested: bool = False):
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(f"ROLLBACK TO {savepoint}")
                 conn.execute(f"RELEASE {savepoint}")
+            _kb._discard_pending_seat_closes(conn, seat_mark)
             raise
         else:
             conn.execute(f"RELEASE {savepoint}")
@@ -1278,6 +1280,8 @@ def write_txn(conn: sqlite3.Connection, *, allow_nested: bool = False):
         # don't let this secondary failure shadow the real one.
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ROLLBACK")
+        # The run-ends this txn queued never happened: their seats stay open.
+        _kb._discard_pending_seat_closes(conn)
         raise
     else:
         try:
@@ -1287,13 +1291,17 @@ def write_txn(conn: sqlite3.Connection, *, allow_nested: bool = False):
             # connection isn't poisoned for the next BEGIN IMMEDIATE.
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ROLLBACK")
+            _kb._discard_pending_seat_closes(conn)
             raise
-        # Post-commit torn-extend check — raise now rather than silently corrupt.
-        _check_file_length_invariant(conn)
-        # Post-commit side effects queued by ``kanban_db._end_run`` (Switchboard seats).
-        # They must run with the lock released — each is a busctl subprocess — and they are
-        # best-effort by contract, so this can never turn a committed txn into an error.
-        _kb._drain_pending_seat_closes()
+        try:
+            # Post-commit torn-extend check — raise now rather than silently corrupt.
+            _check_file_length_invariant(conn)
+        finally:
+            # Post-commit side effects queued by ``kanban_db._end_run`` (Switchboard
+            # seats). They must run with the lock released — each is a busctl subprocess —
+            # and they are best-effort by contract, so this can never turn a committed txn
+            # into an error. The txn did commit, so they run even if the check raises.
+            _kb._drain_pending_seat_closes(conn)
 
 
 # Late-bound origin namespace (see module docstring); imported LAST so this

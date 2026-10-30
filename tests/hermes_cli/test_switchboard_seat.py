@@ -25,6 +25,7 @@ The contracts pinned here:
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -114,8 +115,10 @@ def _flag(argv: list, name: str):
     return argv[argv.index(name) + 1] if name in argv else None
 
 
-def _seat_dir(task_id: str, profile: str = "worker") -> Path:
-    return kb.switchboard_seats_root() / seat.seat_name(profile, task_id)
+def _seat_dir(task_id: str, profile: str = "worker", run_id=None) -> Path:
+    """The seat's dir, or (with *run_id*) that run's state dir inside it."""
+    session_dir = kb.switchboard_seats_root() / seat.seat_name(profile, task_id)
+    return session_dir if run_id is None else session_dir / f"run-{run_id}"
 
 
 def _claimed_task(title: str = "do the thing", assignee: str = "worker"):
@@ -177,7 +180,8 @@ def test_spawn_sets_seat_env_and_starts_supervisor(board, monkeypatch, tmp_path)
     pid = kbd._default_spawn(task, str(workspace))
 
     assert pid == 4242                     # the worker is what the caller gets back
-    worker = next(c for c in spawned if c["cmd"] and c["cmd"][0] == "hermes")
+    # The worker is ``<python> -m hermes_cli.kanban_worker_client`` (no console script).
+    worker = next(c for c in spawned if "hermes_cli.kanban_worker_client" in c["cmd"])
     supervisor = next(c for c in spawned if "keeper" in c["cmd"])
 
     # The worker carries its own per-card seat name.
@@ -194,7 +198,8 @@ def test_spawn_sets_seat_env_and_starts_supervisor(board, monkeypatch, tmp_path)
     doorbell = Path(_flag(supervisor["cmd"], "--doorbell"))
     assert doorbell.name == seat.DOORBELL_NAME
     assert doorbell.exists()               # the handle is a real file, not a string
-    assert Path(_flag(supervisor["cmd"], "--state-dir")) == _seat_dir("t_seat")
+    # State is per RUN, so nothing a previous run of this card left behind applies here.
+    assert Path(_flag(supervisor["cmd"], "--state-dir")) == _seat_dir("t_seat", run_id=7)
     # No provider secrets ride along into the supervisor.
     assert "OPENAI_API_KEY" not in supervisor["env"]
 
@@ -265,8 +270,9 @@ def test_supervisor_failure_never_fails_the_spawn(board, monkeypatch, tmp_path):
     monkeypatch.setattr(seat, "start_supervisor", boom)
 
     assert kbd._default_spawn(task, workspace) == 4242        # the worker spawned anyway
-    assert not _seat_dir(task.id).exists()                    # and no half-open seat was left
-    assert kb._SEAT_CLOSE_PENDING == []                       # nothing queued to close
+    assert not _seat_dir(task.id, run_id=7).exists()          # and no half-open seat was left
+    assert not (_seat_dir(task.id) / "owner").exists()        # nor a claim on the seat
+    assert kb._SEAT_CLOSE_PENDING == {}                       # nothing queued to close
 
 
 def test_enrolment_failure_is_swallowed_and_bounded(board, monkeypatch, tmp_path):
@@ -299,8 +305,8 @@ def test_enrolment_failure_is_swallowed_and_bounded(board, monkeypatch, tmp_path
 # ---------------------------------------------------------------------------
 
 def test_run_end_closes_seat_after_commit(board):
-    tid, _ = _claimed_task()
-    _seat_dir(tid).mkdir(parents=True)          # the dispatcher created it at spawn
+    tid, run_id = _claimed_task()
+    _seat_dir(tid, run_id=run_id).mkdir(parents=True)   # the dispatcher created it at spawn
 
     with kbc.connect() as conn:
         # A review handoff reassigns the card BEFORE ending the run; the seat belongs to
@@ -317,8 +323,8 @@ def test_run_end_closes_seat_after_commit(board):
 
 
 def test_completion_closes_seat(board):
-    tid, _ = _claimed_task()
-    _seat_dir(tid).mkdir(parents=True)
+    tid, run_id = _claimed_task()
+    _seat_dir(tid, run_id=run_id).mkdir(parents=True)
     with kbc.connect() as conn:
         assert kb.complete_task(conn, tid, summary="finished") is True
     sessions = [c["args"][2] for c in _calls(board) if c["args"][0] == "close"]
@@ -326,8 +332,8 @@ def test_completion_closes_seat(board):
 
 
 def test_archive_closes_seat(board):
-    tid, _ = _claimed_task()
-    _seat_dir(tid).mkdir(parents=True)
+    tid, run_id = _claimed_task()
+    _seat_dir(tid, run_id=run_id).mkdir(parents=True)
     with kbc.connect() as conn:
         assert kb.archive_task(conn, tid) is True
     assert [c["args"][0] for c in _calls(board)] == ["close"]
@@ -343,7 +349,7 @@ def test_run_end_without_a_seat_never_touches_the_bus(board):
 
 def test_reap_of_a_killed_worker_closes_its_seat(board):
     """The terminal-worker reaper kills a worker whose run already ended: close again."""
-    row = {"task_id": "t_reaped", "profile": "worker"}   # sqlite3.Row-shaped
+    row = {"id": 3, "task_id": "t_reaped", "profile": "worker"}   # sqlite3.Row-shaped
     assert kbd._close_seat_for_reaped_run(row) is None
     calls = _calls(board)
     assert [c["args"] for c in calls] == [
@@ -358,8 +364,8 @@ def test_kill_switch_disables_every_seat_call(board, monkeypatch):
     assert kbd._switchboard_seat_session("worker", SimpleNamespace(id="t_off"), env) is None
     assert "SWITCHBOARD_SEAT" not in env
 
-    tid, _ = _claimed_task()
-    _seat_dir(tid).mkdir(parents=True)
+    tid, run_id = _claimed_task()
+    _seat_dir(tid, run_id=run_id).mkdir(parents=True)
     with kbc.connect() as conn:
         assert kb.complete_task(conn, tid, summary="finished") is True
     assert _calls(board) == []
@@ -369,8 +375,8 @@ def test_kill_switch_disables_every_seat_call(board, monkeypatch):
 # Supervisor loop
 # ---------------------------------------------------------------------------
 
-def _keeper_state(board, tid="t_keeper", profile="worker") -> Path:
-    directory = _seat_dir(tid, profile)
+def _keeper_state(board, tid="t_keeper", profile="worker", run_id=5) -> Path:
+    directory = _seat_dir(tid, profile, run_id=run_id)
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
@@ -516,7 +522,7 @@ def test_keeper_stops_after_a_t10_heartbeat_after_close(board, monkeypatch):
 def test_keeper_closes_when_the_run_already_ended(board, monkeypatch):
     """Run-end is durable in ``task_runs.ended_at``; every reaper path sets it."""
     tid, run_id = _claimed_task()
-    state = _keeper_state(board, tid=tid)
+    state = _keeper_state(board, tid=tid, run_id=run_id)
     with kbc.connect() as conn:
         assert kb.complete_task(conn, tid, summary="finished") is True
 
@@ -569,3 +575,204 @@ def test_keeper_is_quiet_when_the_bus_is_missing(board, monkeypatch, tmp_path):
     monkeypatch.setattr(seat, "_pid_alive", lambda _pid: next(alive, False))
     assert _run_keeper(state) == 0
     assert (state / "supervisor.log").exists()
+
+
+# ---------------------------------------------------------------------------
+# A retry of the same card reuses the seat NAME, never the previous run's state
+# ---------------------------------------------------------------------------
+
+def _spawn_db_task(monkeypatch, tmp_path, tid: str, *, worker_pid: int) -> list:
+    """Spawn the claimed DB task *tid* for real; -> the supervisor argv it started.
+
+    Popen is faked only for the spawn itself: the keeper run afterwards needs the real one
+    for its (fake) busctl calls.
+    """
+    from hermes_cli import profiles
+
+    monkeypatch.setattr(profiles, "profile_exists", lambda name: True)
+    monkeypatch.setattr(kbd, "_resolve_hermes_argv", lambda: ["hermes"])
+    (tmp_path / ".hermes" / "profiles" / "worker").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".hermes" / "profiles" / "worker" / "config.yaml").write_text(
+        "toolsets:\n  - kanban\n", encoding="utf-8")
+    (tmp_path / "ws").mkdir(exist_ok=True)
+    started = []
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+    def fake_popen(cmd, *args, **kwargs):
+        cmd = list(cmd)
+        if "keeper" in cmd:
+            started.append(cmd)
+            return FakeProc(worker_pid + 1)
+        return FakeProc(worker_pid)
+
+    with kbc.connect() as conn:
+        task = kb.get_task(conn, tid)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(kbd.subprocess, "Popen", fake_popen)
+        assert kbd._default_spawn(task, str(tmp_path / "ws")) == worker_pid
+    assert len(started) == 1
+    return started[0][started[0].index("keeper") + 1:]
+
+
+def _end_and_reclaim(tid: str) -> int:
+    """End *tid*'s current run (a crash/reclaim) and claim it again; -> the new run id."""
+    with kbc.connect() as conn:
+        with kb.write_txn(conn):
+            kb._end_run(conn, tid, outcome="crashed", status="crashed")
+            conn.execute("UPDATE tasks SET status = 'ready', claim_lock = NULL WHERE id = ?",
+                         (tid,))
+        kb.claim_task(conn, tid)
+        run_id = kb.get_task(conn, tid).current_run_id
+    return run_id
+
+
+def test_retry_of_a_card_gets_a_supervisor_the_old_stop_flag_cannot_stop(
+        board, monkeypatch, tmp_path):
+    """Finding (a1): run 1's close leaves a stop flag; run 2's supervisor must still enrol."""
+    tid, first = _claimed_task()
+    _spawn_db_task(monkeypatch, tmp_path, tid, worker_pid=4242)
+    second = _end_and_reclaim(tid)                   # run 1's close set ITS stop flag
+    assert second != first
+    argv = _spawn_db_task(monkeypatch, tmp_path, tid, worker_pid=5252)
+    board.write_text("", encoding="utf-8")
+
+    alive = iter([True, False])
+    monkeypatch.setattr(seat, "_pid_alive", lambda _pid: next(alive, False))
+    assert seat.keeper_main(argv, slept=lambda _s: None) == 0
+
+    verbs = [c["args"][0] for c in _calls(board)]
+    assert verbs[0] == "enrol", verbs                # not an instant stop-flag close
+    assert _flag(_calls(board)[0]["args"], "--card").endswith(f"/{tid}#{second}")
+
+
+def test_reaper_close_of_an_old_run_spares_the_retry_holding_the_seat(
+        board, monkeypatch, tmp_path):
+    """Finding (a2): the reaper acts on a run that ended a grace period ago; by then the
+    card may be running again under the same seat name, and that seat must stay open."""
+    tid, first = _claimed_task()
+    _spawn_db_task(monkeypatch, tmp_path, tid, worker_pid=4242)
+    second = _end_and_reclaim(tid)
+    _spawn_db_task(monkeypatch, tmp_path, tid, worker_pid=5252)
+    board.write_text("", encoding="utf-8")
+
+    kbd._close_seat_for_reaped_run({"id": first, "task_id": tid, "profile": "worker"})
+
+    assert [c for c in _calls(board) if c["args"][0] == "close"] == []
+    assert not (_seat_dir(tid, run_id=second) / "stop").exists()   # live supervisor untouched
+    assert (_seat_dir(tid, run_id=first) / "stop").exists()        # the reaped run's is set
+
+
+def test_old_supervisor_waking_late_never_closes_the_retry_seat(board, monkeypatch, tmp_path):
+    """The old run's supervisor notices its end on a later tick; it must not close by name."""
+    tid, _ = _claimed_task()
+    old_argv = _spawn_db_task(monkeypatch, tmp_path, tid, worker_pid=4242)
+    _end_and_reclaim(tid)
+    _spawn_db_task(monkeypatch, tmp_path, tid, worker_pid=5252)
+    board.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(seat, "_pid_alive", lambda _pid: False)    # old worker is gone
+    assert seat.keeper_main(old_argv, slept=lambda _s: None) == 0
+    assert [c["args"][0] for c in _calls(board)] == []
+
+
+def test_reaper_close_honours_the_kill_switch(board, monkeypatch):
+    """Mutant G7: the reaper's close must be as dead as every other seat call when off."""
+    row = {"id": 3, "task_id": "t_reaped", "profile": "worker"}
+    run_dir = _seat_dir("t_reaped", run_id=3)
+    run_dir.mkdir(parents=True)
+    monkeypatch.setenv("HERMES_SWITCHBOARD_SEAT", "off")
+
+    kbd._close_seat_for_reaped_run(row)
+
+    assert _calls(board) == []
+    assert not (run_dir / "stop").exists()
+
+
+# ---------------------------------------------------------------------------
+# A rolled-back run-end never closes the seat (finding b)
+# ---------------------------------------------------------------------------
+
+def test_rolled_back_run_end_leaves_the_seat_open(board):
+    tid, run_id = _claimed_task()
+    _seat_dir(tid, run_id=run_id).mkdir(parents=True)
+    with kbc.connect() as conn:
+        with pytest.raises(RuntimeError):
+            with kb.write_txn(conn):
+                kb._end_run(conn, tid, outcome="completed")
+                raise RuntimeError("transition failed after the run-end")
+        assert kb.get_task(conn, tid).current_run_id == run_id        # the run is still live
+        with kb.write_txn(conn):                                        # any later txn
+            conn.execute("UPDATE tasks SET priority = 1 WHERE id = ?", (tid,))
+    assert _calls(board) == []
+    assert kb._SEAT_CLOSE_PENDING == {}
+
+
+def test_failed_commit_of_a_run_end_leaves_the_seat_open(board, monkeypatch):
+    tid, run_id = _claimed_task()
+    _seat_dir(tid, run_id=run_id).mkdir(parents=True)
+    real = kbc._execute_boundary_with_retry
+    fail = {"commit": True}
+
+    def flaky(conn, sql):
+        if sql == "COMMIT" and fail.pop("commit", False):
+            raise sqlite3.OperationalError("database is locked")
+        return real(conn, sql)
+
+    monkeypatch.setattr(kbc, "_execute_boundary_with_retry", flaky)
+    with kbc.connect() as conn:
+        with pytest.raises(sqlite3.OperationalError):
+            with kb.write_txn(conn):
+                kb._end_run(conn, tid, outcome="completed")
+        assert kb.get_task(conn, tid).current_run_id == run_id
+        with kb.write_txn(conn):
+            conn.execute("UPDATE tasks SET priority = 1 WHERE id = ?", (tid,))
+    assert _calls(board) == []
+    assert kb._SEAT_CLOSE_PENDING == {}
+
+
+def test_rolled_back_savepoint_drops_only_its_own_seat_close(board):
+    """A nested run-end that rolls back is forgotten; the outer txn's own close still runs."""
+    kept, kept_run = _claimed_task(title="kept")
+    undone, undone_run = _claimed_task(title="undone")
+    _seat_dir(kept, run_id=kept_run).mkdir(parents=True)
+    _seat_dir(undone, run_id=undone_run).mkdir(parents=True)
+    with kbc.connect() as conn:
+        with kb.write_txn(conn):
+            kb._end_run(conn, kept, outcome="completed")
+            with pytest.raises(RuntimeError):
+                with kb.write_txn(conn, allow_nested=True):
+                    kb._end_run(conn, undone, outcome="completed")
+                    raise RuntimeError("nested step failed")
+    sessions = [c["args"][2] for c in _calls(board) if c["args"][0] == "close"]
+    assert sessions == [seat.seat_name("worker", kept)]
+
+
+def test_superseded_keeper_stops_beating_without_a_stop_flag(board, monkeypatch):
+    """A keeper whose seat a later run claimed exits quietly even if its stop flag was lost."""
+    state = _keeper_state(board, run_id=5)
+    (state.parent / "owner").write_text("run-6\n", encoding="utf-8")
+    monkeypatch.setattr(seat, "_pid_alive", lambda _pid: True)       # old worker lingering
+    ticks = []
+
+    def _slept(_seconds):
+        ticks.append(1)
+        if len(ticks) > 40:
+            raise AssertionError("superseded keeper kept holding the seat")
+
+    assert seat.keeper_main(_keeper_argv(state), slept=_slept) == 0
+    assert ticks == []                               # it never even reached a sleep
+    assert _calls(board) == []                       # no enrol, no beat, no close by name
+
+
+def test_reused_run_dir_starts_without_the_previous_stop_flag(board):
+    """A spawn with no run id reuses ``run-none``; the last run's stop must not carry over."""
+    root = str(kb.switchboard_seats_root())
+    first = seat.ensure_state_dir("hermes-worker-t_norun", run_id=None, root=root)
+    seat.signal_stop(first)
+    again = seat.ensure_state_dir("hermes-worker-t_norun", run_id=None, root=root)
+    assert again == first
+    assert not Path(seat.stop_flag(again)).exists()
+    assert seat.owns_seat(again)
