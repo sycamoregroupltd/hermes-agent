@@ -37,6 +37,7 @@ Kill switch: ``HERMES_SWITCHBOARD_SEAT=0|off|no|false|disabled`` (checked at spa
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -546,6 +547,46 @@ def _log(state_dir: str, message: str) -> None:
         pass
 
 
+_seat_log = logging.getLogger(__name__)
+
+
+def record_seat_event(board_db, card: str, run_id, kind: str, payload: dict) -> bool:
+    """Put a seat failure on the run's task timeline, so it is visible on the board.
+
+    The supervisor's own ``supervisor.log`` lives in the seat dir and nobody reads it, so a
+    failed enrol or a dead supervisor used to be invisible. This writes one ``task_events``
+    row under the run (``kind`` e.g. ``switchboard_seat_enrol_failed``) and logs a warning.
+    Best-effort and never raises: a seat is observability, never admission control.
+    Returns True when the event was written.
+    """
+    _seat_log.warning("switchboard seat %s for %s run %s: %s", kind, card, run_id, payload)
+    if not board_db or not run_id or not card:
+        return False
+    try:
+        import sqlite3
+
+        # Self-contained on purpose: the keeper runs as a standalone file, and importing the
+        # ``hermes_cli`` package from it depends on the install (an editable checkout can
+        # shadow it). This is one ``INSERT`` with the same shape as ``kanban_db._append_event``.
+        task_id = str(card).rsplit("/", 1)[-1].split("#", 1)[0]
+        con = sqlite3.connect(str(board_db), timeout=5)
+        try:
+            with con:
+                con.execute(
+                    "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (task_id, int(run_id), kind,
+                     json.dumps(payload, ensure_ascii=False) if payload else None,
+                     int(time.time())),
+                )
+        finally:
+            con.close()
+        return True
+    except Exception as exc:  # noqa: BLE001 - observability must never raise
+        _seat_log.warning("switchboard seat event %s not recorded: %s", kind, exc)
+        return False
+
+
 def _parse_keeper_argv(argv: list) -> dict:
     opts = {k: "" for k in ("--session", "--card", "--worker-pid", "--run-id", "--board-db",
                             "--state-dir", "--doorbell", "--interval")}
@@ -610,6 +651,7 @@ def keeper_main(argv: list, *, slept=None) -> int:
         state_dir = tempfile.gettempdir()
     seen = _load_spooled(state_dir)
     enrolled = False
+    enrol_failure_reported = False
     closed_elsewhere = False
     reason = "worker-exit"
 
@@ -623,6 +665,13 @@ def keeper_main(argv: list, *, slept=None) -> int:
                 enrolled = enrol(session, card, worker_pid, doorbell)
                 _log(state_dir, f"enrol {session} -> {'ok' if enrolled else 'failed'} "
                                f"(card={card} pid={worker_pid})")
+                if not enrolled and not enrol_failure_reported:
+                    # Once per run, not per tick: the retry loop keeps trying, the board
+                    # only needs to know the seat is missing.
+                    enrol_failure_reported = True
+                    record_seat_event(opts["--board-db"], card, opts["--run-id"],
+                                      "switchboard_seat_enrol_failed",
+                                      {"session": session, "pid": worker_pid})
             if enrolled:
                 rc = heartbeat(session, card, worker_pid)
                 if rc == RC_HEARTBEAT_AFTER_CLOSE:
@@ -654,6 +703,9 @@ def keeper_main(argv: list, *, slept=None) -> int:
                     break
     except Exception as exc:  # pragma: no cover - a supervisor must never die loudly
         _log(state_dir, f"supervisor error {type(exc).__name__}: {exc}")
+        record_seat_event(opts["--board-db"], card, opts["--run-id"],
+                          "switchboard_seat_supervisor_failed",
+                          {"session": session, "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
     finally:
         _final_close(session, state_dir, reason, closed_elsewhere)
     return 0

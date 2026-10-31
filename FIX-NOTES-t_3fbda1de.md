@@ -175,6 +175,83 @@ moot now, because the new tip does trigger.
 3. Or cancel the stuck runs, and Review accepts the local suite + `scripts/check` results
    above in place of CI for this base.
 
+## Round 2 (card t_fab72502, os-reviewer execution-lens comment 1612)
+
+Tip at start of round 2: `f07818df25`. Read-only evidence: `bus.db` (message log, seat
+table), `session-bus/kanban-bridge/bridge.log`, and the upero board's `task_events`.
+
+### R1: root cause for run 1070 (t_1a6b594f): proven, and the earlier "no seat" reading was wrong
+
+* Run 1070 started 09:54:56Z and died at 10:32:59Z after 2283 s, exit 1. The worker output
+  begins `Kanban owner refused: Gateway connection fa…`. The source comment is truncated there,
+  so the exact tail of that message is not quoted here.
+* It HAD a seat for its whole life. The interim bridge enrolled it at 09:55:45Z
+  (`v2-enrol state=degraded pid=28934 card=upero/t_1a6b594f#1070`) and heartbeated it five
+  times until 10:25:48Z.
+* The earlier "NO_SEAT_ROW" for 1070 came from the seat table, which is upserted by session
+  name. Retry run 1071 overwrote the row at 10:33:54Z, so the row no longer shows 1070.
+* So run 1070 is not a seat-gap run. Its crash is a gateway-connection failure, and the seat
+  was alive until the worker died. The seat-gap runs are 1014, 1062 and 1065.
+* The three seat-gap runs are proven by timing. Each ran 65–107 s and the bridge logs show
+  no tick inside its window (`ticks inside window: []` for 1014, 1062, 1065). The next tick
+  came 3–4 min after the run ended, so the bridge never saw them. The enrol path itself wrote
+  nothing to any log, which is the gap R2 closes.
+* Residual, not fixed here: every bridge seat is `state=degraded` with `listener=None` and
+  `doorbell=None` (missing `listener-or-drain`, `doorbell-handle`). The seats are observed,
+  but nothing drains mail to a worker. The spawn-time keeper in this PR is the supervised
+  listener; the degraded state is the interim bridge's honest report.
+
+### R2: enrol and supervisor failures are board-visible
+
+* `switchboard_seat.record_seat_event(board_db, card, run_id, kind, payload)` writes one
+  `task_events` row under the run (a single `INSERT` with the same shape as
+  `kanban_db._append_event`) and logs a warning. It is best-effort and never raises. It
+  returns False when there is no board, no run, or the write fails. It is deliberately
+  self-contained (raw sqlite, no `hermes_cli` import): the keeper is a standalone file, and
+  an editable install can shadow `hermes_cli`, so an import would silently lose the event.
+  The first draft imported `hermes_cli`; the standalone probe showed the import failing,
+  which is why it was replaced.
+* Keeper (`keeper_main`): an enrol failure is recorded as `switchboard_seat_enrol_failed`
+  once per run (not once per retry tick). A keeper exception is recorded as
+  `switchboard_seat_supervisor_failed`, with the error type and message.
+* Dispatcher (`_start_seat_supervisor`): a supervisor start that raises, or returns no pid,
+  is recorded as `switchboard_seat_supervisor_failed` on the run. This was
+  `_kb._log.debug`, and is now `warning` plus the event.
+* Tests added to `tests/hermes_cli/test_switchboard_seat.py` (4):
+  `test_keeper_enrol_failure_is_recorded_once_per_run`,
+  `test_keeper_supervisor_crash_is_recorded_on_the_run`,
+  `test_record_seat_event_never_raises_without_a_board`,
+  `test_spawn_supervisor_failure_is_recorded_on_the_run`.
+* Results (`env -i`, scrubbed, `/usr/bin/python3 -m pytest`):
+  `test_switchboard_seat.py` + `test_kanban_dispatch_tick_hook.py` = **36 passed**. Nine
+  adjacent kanban files plus those two = **178 passed, 1 skipped, 0 failed**.
+* Environment note: in an unscrubbed shell, 4 tests in `test_kanban_boards.py`,
+  `test_kanban_core_functionality.py` and `test_kanban_db.py` fail with `cannot create
+  restart-safe systemd scope`. They fail the same way on a pristine `git archive` of HEAD,
+  so they are environmental, not caused by this change. They pass under `env -i`.
+
+### R3: mechanism contract
+
+| Element | Declaration |
+|---|---|
+| Store | Bus: `bus.db` `seat` table (`session`, `card`, `pid`, `state`, `listener`, `doorbell`, `enrolled_at`, `heartbeat_at`, `closed_at`). Session = `hermes-<profile>-<task>`, which must match `kanban_bus_bridge`. Local: `switchboard-seats/<session>/run-<id>/` (`doorbell`, `stop`, `inbox.ndjson`, `supervisor.log`) plus `owner`. Board: `task_events` rows `switchboard_seat_enrol_failed` and `switchboard_seat_supervisor_failed`, keyed by `run_id`. |
+| Liveness | The keeper beats every `heartbeat_seconds()`. A seat is alive while `heartbeat_at` advances. The keeper ends when the worker pid dies, and then closes the seat. A heartbeat after close is refused (T10) and stops the keeper. |
+| Executed copy | The keeper runs `python <abspath of hermes_cli/switchboard_seat.py> keeper ...` (`supervisor_argv` uses `os.path.abspath(__file__)`). That is the same file the dispatcher imported, so the executed copy is the deployed hermes-agent checkout at the release that lands this PR. Nothing runs from the live tree edit. |
+| Consumer | Session Bus readers (`busctl` scan/inbox, the switchboard dashboard). The interim `kanban_bus_bridge` is the fallback during rollout and must not mint a second seat for the same session. The board reads the `switchboard_seat_*` events on a run. |
+| Kill switch | `seat_enabled()` guards every seat call, including the reaper close. `test_kill_switch_disables_every_seat_call` covers it. |
+| Rollback | Revert the merge commit. No schema change and no data migration (`task_events.kind` is free text). Before revert, the bridge still seats on its ~3-min tick. |
+| Verification matrix | (1) unit: the 36 tests above. (2) live: `post_deploy_seat_check.py <deploy_epoch> 10 120` must print `RESULT 10/10 seated` (this script is in fleet-engineer scratch, not in the repo, and must be moved into the repo or its output recorded). (3) visibility: a run with a failed seat shows a `switchboard_seat_*` event under its run in `task_events`. |
+
+### R4: card record
+
+* Canonical PR for this fix: **#109**, head `switchboard-seat-rebase-bf0203a7` (round-2
+  commit on top of `f07818df25`), base `pin/bf0203a7`.
+* PR **#111** is superseded. It is a 19,887-file DIRTY main-based PR. Its spawn-time commits
+  `128a3c60` and `db188062` are not the fix vehicle. fleet-engineer did not close it;
+  os-reviewer decides on closure.
+* Still pending, and these are landing gates rather than rework: merge through the Merge
+  lane, CI (no Blacksmith runner on this fork), and the post-deploy 10/10 bus proof.
+
 ## Follow-ups (written list only, not done here)
 
 * P3 mutant survivors **G2, G3, G6, G9** from Review FINAL: need killing tests.

@@ -400,6 +400,10 @@ def _run_keeper(state_dir: Path, **overrides) -> int:
     return seat.keeper_main(_keeper_argv(state_dir, **overrides), slept=lambda _s: None)
 
 
+def _run_keeper_argv(argv: list) -> int:
+    return seat.keeper_main(argv, slept=lambda _s: None)
+
+
 def test_keeper_enrols_heartbeats_and_closes_on_worker_death(board, monkeypatch):
     state = _keeper_state(board)
     alive = iter([True, True, True, False])
@@ -776,3 +780,116 @@ def test_reused_run_dir_starts_without_the_previous_stop_flag(board):
     assert again == first
     assert not Path(seat.stop_flag(again)).exists()
     assert seat.owns_seat(again)
+
+
+# ---------------------------------------------------------------------------
+# R2: a seat failure is board-visible (task event on the run + warning), not debug-only
+# ---------------------------------------------------------------------------
+
+def _seat_events(run_id: int, kind: str) -> list:
+    """Task events of *kind* recorded under one run (the board is the source of truth)."""
+    with kbc.connect_closing() as conn:
+        rows = conn.execute(
+            "SELECT payload FROM task_events WHERE run_id = ? AND kind = ? ORDER BY id",
+            (run_id, kind),
+        ).fetchall()
+    return [json.loads(r[0]) if r[0] else {} for r in rows]
+
+
+def test_keeper_enrol_failure_is_recorded_once_per_run(board, monkeypatch):
+    """A run whose enrol keeps failing leaves ONE board event, not one per retry tick."""
+    tid, run_id = _claimed_task()
+    state = _seat_dir(tid, "worker", run_id=run_id)
+    state.mkdir(parents=True, exist_ok=True)
+    attempts: list = []
+
+    def enrol_fails(*args, **_kwargs):
+        attempts.append(args)
+        return False
+
+    monkeypatch.setattr(seat, "enrol", enrol_fails)
+    alive = iter([True, True, True, False])
+    monkeypatch.setattr(seat, "_pid_alive", lambda _pid: next(alive, False))
+
+    argv = _keeper_argv(state, session=seat.seat_name("worker", tid),
+                        card=f"jarvis-os/{tid}#{run_id}", run_id=str(run_id),
+                        board_db=kb.kanban_db_path())
+    assert _run_keeper_argv(argv) == 0
+
+    assert len(attempts) >= 2                                   # it really did retry
+    events = _seat_events(run_id, "switchboard_seat_enrol_failed")
+    assert len(events) == 1
+    assert events[0]["session"] == seat.seat_name("worker", tid)
+
+
+def test_keeper_supervisor_crash_is_recorded_on_the_run(board, monkeypatch):
+    tid, run_id = _claimed_task()
+    state = _seat_dir(tid, "worker", run_id=run_id)
+    state.mkdir(parents=True, exist_ok=True)
+
+    def enrol_raises(*_args, **_kwargs):
+        raise RuntimeError("bus exploded")
+
+    monkeypatch.setattr(seat, "enrol", enrol_raises)
+    alive = iter([True, True, False])          # worker alive long enough to reach enrol
+    monkeypatch.setattr(seat, "_pid_alive", lambda _pid: next(alive, False))
+    argv = _keeper_argv(state, session=seat.seat_name("worker", tid),
+                        card=f"jarvis-os/{tid}#{run_id}", run_id=str(run_id),
+                        board_db=kb.kanban_db_path())
+    assert _run_keeper_argv(argv) == 0                          # a supervisor never dies loudly
+
+    events = _seat_events(run_id, "switchboard_seat_supervisor_failed")
+    assert len(events) == 1
+    assert "RuntimeError" in events[0]["error"] and "bus exploded" in events[0]["error"]
+
+
+def test_record_seat_event_never_raises_without_a_board(board):
+    """No board or run means nothing to attach to: report False, never raise."""
+    assert seat.record_seat_event(None, "t_x#1", 1, "switchboard_seat_enrol_failed", {}) is False
+    assert seat.record_seat_event(kb.kanban_db_path(), "t_x#1", None, "switchboard_seat_enrol_failed", {}) is False
+    assert seat.record_seat_event("/nonexistent/dir/kanban.db", "t_x#1", 1, "k", {}) is False
+
+
+def test_spawn_supervisor_failure_is_recorded_on_the_run(board, monkeypatch, tmp_path):
+    """The spawn path's silent drop is now a board event on the run that has no seat."""
+    task, workspace = _spawn_scaffold(monkeypatch, tmp_path)
+
+    def boom(**_kwargs):
+        raise RuntimeError("supervisor exploded")
+
+    monkeypatch.setattr(seat, "start_supervisor", boom)
+    assert kbd._default_spawn(task, workspace) == 4242          # the spawn still succeeds
+
+    events = _seat_events(task.current_run_id, "switchboard_seat_supervisor_failed")
+    assert len(events) == 1
+    assert "supervisor exploded" in events[0]["error"]
+
+
+def test_standalone_keeper_file_records_the_seat_failure_on_the_board(board, monkeypatch):
+    """The keeper runs as ``python <switchboard_seat.py> keeper`` (not an import).
+
+    Regression for the executed copy: the file must put the checkout root on sys.path
+    itself, or ``from hermes_cli import kanban_db`` fails and the board event is lost.
+    """
+    import subprocess
+    import sys as _sys
+
+    tid, run_id = _claimed_task()
+    state = _seat_dir(tid, "worker", run_id=run_id)
+    state.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("FAKE_BUSCTL_RC_ENROL", "1")          # every enrol fails
+    worker = subprocess.Popen([_sys.executable, "-c", "import time; time.sleep(3)"])
+    try:
+        argv = _keeper_argv(state, session=seat.seat_name("worker", tid),
+                            card=f"upero/{tid}#{run_id}", run_id=str(run_id),
+                            worker_pid=str(worker.pid), board_db=kb.kanban_db_path())
+        child_env = {k: v for k, v in __import__("os").environ.items() if k != "PYTHONPATH"}
+        proc = subprocess.run([_sys.executable, seat.__file__, "keeper", *argv],
+                              capture_output=True, timeout=60, env=child_env, cwd=str(state))
+    finally:
+        worker.kill()
+        worker.wait()
+
+    assert proc.returncode == 0, proc.stderr.decode()[-400:]
+    events = _seat_events(run_id, "switchboard_seat_enrol_failed")
+    assert len(events) == 1

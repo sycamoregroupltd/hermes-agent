@@ -2826,6 +2826,7 @@ def _start_seat_supervisor(
         return None
     state_dir = None
     supervisor_pid = None
+    supervisor_failure = None
     try:
         from hermes_cli import switchboard_seat
         from tools.process_registry import restart_safe_gateway_child_argv
@@ -2858,9 +2859,21 @@ def _start_seat_supervisor(
         )
     except Exception as exc:  # pragma: no cover - defensive
         # A seat is observability, never admission control: a broken supervisor costs the
-        # run its seat and nothing else.
-        _kb._log.debug("kanban seat: supervisor start skipped for %s (%s)", task.id, exc)
+        # run its seat and nothing else. It must not be silent, though: the failure goes on
+        # the run's task timeline so the board shows the run has no seat.
+        supervisor_failure = f"{type(exc).__name__}: {str(exc)[:200]}"
+        _kb._log.warning("kanban seat: supervisor start failed for %s (%s)", task.id, exc)
         supervisor_pid = None
+    if supervisor_pid is None and state_dir and supervisor_failure is None:
+        supervisor_failure = "supervisor did not start"
+    if supervisor_pid is None and supervisor_failure is not None:
+        from hermes_cli import switchboard_seat
+
+        switchboard_seat.record_seat_event(
+            env.get("HERMES_KANBAN_DB") or str(_kb.kanban_db_path(board=board)),
+            task.id, task.current_run_id, "switchboard_seat_supervisor_failed",
+            {"session": seat_session, "error": supervisor_failure},
+        )
     if supervisor_pid is None and state_dir:
         # No supervisor means no seat: drop the run dir so a later run-end does not close
         # (or shell out for) a seat nothing ever opened, and give up the seat claim so an
