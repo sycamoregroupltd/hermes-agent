@@ -2759,7 +2759,7 @@ def _restart_safe_worker_argv(task: Task, command: list[str]) -> list[str]:
 def _enrol_session_bus_seat(task, pid: int, board: Optional[str] = None) -> None:
     """Enrol a freshly-spawned worker on the Session Bus (best-effort)."""
     import subprocess as _sp
-    busctl = "/home/frank/.hermes/session-bus/busctl.py"
+    busctl = str(Path.home() / ".hermes" / "session-bus" / "busctl.py")
     if not os.path.exists(busctl):
         return
     profile = getattr(task, "assignee", None) or ""
