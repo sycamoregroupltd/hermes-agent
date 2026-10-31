@@ -1843,11 +1843,51 @@ def _insert_comment(
     )
 
 
+def _transition_identity() -> dict:
+    """Identity fields stamped on every transition payload (additive, backward-compat).
+
+    HERMES_PROFILE comes from the env pin (or the dispatcher's bound profile when
+    running under a home override), session_id from HERMES_SESSION_ID, and pid from
+    os.getpid().  Existing keys in the caller's payload are never overwritten so
+    events that already carry a more specific value (e.g. owner_admitted's
+    session_id) keep it.
+    """
+    identity: dict = {}
+    # HERMES_PROFILE
+    try:
+        from hermes_cli.profiles import current_profile_name
+        profile = current_profile_name(None)
+    except Exception:
+        profile = None
+    if not profile:
+        profile = (os.environ.get("HERMES_PROFILE") or os.environ.get("HERMES_PROFILE_NAME") or "").strip() or None
+    if profile:
+        identity["HERMES_PROFILE"] = profile
+    # session_id
+    session_id = (os.environ.get("HERMES_SESSION_ID") or "").strip()
+    if session_id:
+        identity["session_id"] = session_id
+    # pid
+    identity["pid"] = os.getpid()
+    return identity
+
+
 def _append_event(
     conn: sqlite3.Connection, task_id: str, kind: str, payload: Optional[dict] = None, *,
     run_id: Optional[int] = None,
 ) -> None:
-    """Insert an event row inside the caller's txn; ``run_id`` groups it by attempt (NULL = task-scoped)."""
+    """Insert an event row inside the caller's txn; run_id groups it by attempt (NULL = task-scoped).
+
+    Every transition payload is stamped with HERMES_PROFILE, session_id and pid
+    (additive -- missing keys in older rows are treated as null by consumers).
+    Caller-supplied values are preserved.
+    """
+    if payload is None:
+        payload = {}
+    # Stamp identity fields without clobbering caller values.
+    identity = _transition_identity()
+    for key, value in identity.items():
+        payload.setdefault(key, value)
     conn.execute(
         "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
         "VALUES (?, ?, ?, ?, ?)", (task_id, run_id, kind, _json_or_null(payload), int(time.time())),

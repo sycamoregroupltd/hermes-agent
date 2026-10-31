@@ -208,6 +208,73 @@ def test_schedule_task_parks_time_delay_without_dispatching(kanban_home):
 
 
 
+def test_transition_payload_stamps_identity_fields(kanban_home, monkeypatch):
+    """Every transition payload must carry HERMES_PROFILE, session_id, and pid."""
+    import json
+    import os
+
+    monkeypatch.setenv("HERMES_PROFILE", "test-profile")
+    monkeypatch.setenv("HERMES_SESSION_ID", "test-session-123")
+    monkeypatch.setenv("HERMES_HOME", str(kanban_home))
+
+    with kbc.connect() as conn:
+        t = kb.create_task(conn, title="x", assignee="a")
+        kb.claim_task(conn, t, claimer="host:worker")
+        kb.block_task(conn, t, reason="test block")
+        kb.complete_task(conn, t, summary="done")
+
+        rows = conn.execute(
+            "SELECT kind, payload FROM task_events WHERE task_id = ?", (t,)
+        ).fetchall()
+        assert len(rows) >= 3
+        for row in rows:
+            payload = json.loads(row["payload"])
+            assert "HERMES_PROFILE" in payload, f"missing HERMES_PROFILE in {row['kind']}"
+            assert payload["HERMES_PROFILE"] == "test-profile", f"wrong profile in {row['kind']}"
+            assert "session_id" in payload, f"missing session_id in {row['kind']}"
+            assert payload["session_id"] == "test-session-123", f"wrong session in {row['kind']}"
+            assert "pid" in payload, f"missing pid in {row['kind']}"
+            assert isinstance(payload["pid"], int), f"pid not int in {row['kind']}"
+
+
+def test_transition_payload_none_does_not_crash(kanban_home, monkeypatch):
+    """_append_event with None payload still gets identity fields."""
+    import json
+
+    monkeypatch.setenv("HERMES_PROFILE", "none-profile")
+    monkeypatch.setenv("HERMES_SESSION_ID", "none-session")
+
+    with kbc.connect() as conn:
+        t = kb.create_task(conn, title="x", assignee="a")
+        kb._append_event(conn, t, "test_kind", None)
+        row = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'test_kind'",
+            (t,),
+        ).fetchone()
+        payload = json.loads(row["payload"])
+        assert payload["HERMES_PROFILE"] == "none-profile"
+        assert payload["session_id"] == "none-session"
+        assert isinstance(payload["pid"], int)
+
+
+def test_transition_payload_preserves_caller_values(kanban_home, monkeypatch):
+    """Caller-supplied HERMES_PROFILE/session_id/pid are not overwritten."""
+    import json
+
+    monkeypatch.setenv("HERMES_PROFILE", "env-profile")
+    monkeypatch.setenv("HERMES_SESSION_ID", "env-session")
+
+    with kbc.connect() as conn:
+        t = kb.create_task(conn, title="x", assignee="a")
+        kb._append_event(conn, t, "worker_bound", {"pid": 99999, "session_id": "caller-session", "HERMES_PROFILE": "caller-profile"})
+        row = conn.execute(
+            "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'worker_bound'",
+            (t,),
+        ).fetchone()
+        payload = json.loads(row["payload"])
+        assert payload["HERMES_PROFILE"] == "caller-profile"
+        assert payload["session_id"] == "caller-session"
+        assert payload["pid"] == 99999
 def test_stale_claim_reclaim_event_records_diagnostic_payload(
     kanban_home, monkeypatch,
 ):
