@@ -288,6 +288,10 @@ class TestWorkerSpawnEnv:
             pid = 12345
 
         def fake_popen(cmd, *args, **kwargs):
+            # A spawn also starts the worker's switchboard seat supervisor; the env vars
+            # under test belong to the worker (see test_switchboard_seat.py).
+            if "keeper" in cmd:
+                return FakeProc()
             captured["cmd"] = cmd
             captured["env"] = kwargs.get("env", {})
             return FakeProc()

@@ -1133,9 +1133,13 @@ class TestSharedBoardPaths:
 
         class _FakePopen:
             def __init__(self, cmd, **kwargs):
+                self.pid = 4242
+                # A spawn also starts the worker's switchboard seat supervisor; that is
+                # not the spawn under test (see test_switchboard_seat.py).
+                if "keeper" in cmd:
+                    return
                 captured["cmd"] = cmd
                 captured["env"] = kwargs.get("env", {})
-                self.pid = 4242
 
         monkeypatch.setattr("subprocess.Popen", _FakePopen)
 
@@ -1649,9 +1653,13 @@ def test_default_spawn_pins_repo_root_on_module_worker_pythonpath(tmp_path, monk
 
     class _FakePopen:
         def __init__(self, cmd, **kwargs):
+            self.pid = 4242
+            # A spawn also starts the worker's switchboard seat supervisor; that is not
+            # the spawn under test (see test_switchboard_seat.py).
+            if "keeper" in cmd:
+                return
             captured["cmd"] = cmd
             captured["env"] = kwargs.get("env", {})
-            self.pid = 4242
 
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import os
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -510,7 +511,7 @@ def reap_terminal_workers(conn: sqlite3.Connection, *, signal_fn=None) -> list[s
     One row's failure (signal, /proc probe) is logged and skips only that row.
     Returns the task ids whose worker was terminated."""
     rows = conn.execute(
-        "SELECT id, task_id, worker_pid, worker_started_at, claim_lock FROM task_runs "
+        "SELECT id, task_id, profile, worker_pid, worker_started_at, claim_lock FROM task_runs "
         "WHERE ended_at IS NOT NULL AND ended_at <= ? "
         "AND worker_pid IS NOT NULL AND worker_started_at IS NOT NULL",
         (int(time.time()) - TERMINAL_WORKER_REAP_GRACE_SECONDS,),
@@ -554,6 +555,39 @@ def _reap_terminal_worker_row(conn, row, host_prefix: str, signal_fn, reaped: li
             )
     if alive:
         reaped.append(row["task_id"])
+        # Belt-and-braces for the kill path: the run ended, so ``_end_run`` already queued
+        # the seat close, but a SIGKILLed worker's supervisor only notices on its next tick.
+        # Closing here is idempotent (busctl's close is a plain UPDATE) and cheap.
+        _close_seat_for_reaped_run(row)
+
+
+def _close_seat_for_reaped_run(row) -> None:
+    """Close the switchboard seat of a worker this reaper just terminated. Never raises.
+
+    The row is a run that ended at least the reap grace ago, so the card may already be
+    running again under the SAME seat name. The close is therefore keyed by this row's run
+    id: it stops only this run's supervisor, and ``close_run_seat`` refuses the bus close
+    once a later run owns the seat.
+    """
+    try:
+        from hermes_cli import switchboard_seat
+
+        if not switchboard_seat.seat_enabled():
+            return
+        profile = _kb._row_get(row, "profile")
+        if not profile:
+            return
+        session = switchboard_seat.seat_name(profile, row["task_id"])
+        switchboard_seat.close_run_seat(
+            session,
+            switchboard_seat.run_state_dir(
+                session, row["id"], root=str(_kb.switchboard_seats_root())
+            ),
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        _kb._log.debug(
+            "kanban seat: reaped-run close skipped for task %s (%s)", row["task_id"], exc
+        )
 
 
 def _worker_survived_termination(termination: dict) -> bool:
@@ -2752,6 +2786,105 @@ def _restart_safe_worker_argv(task: Task, command: list[str]) -> list[str]:
     ).argv
 
 
+def _switchboard_seat_session(profile_arg: str, task: Task, env: dict) -> Optional[str]:
+    """Name this spawn's switchboard seat and hand it to the worker via ``SWITCHBOARD_SEAT``.
+
+    Frank's standing rule (2026-10-23) is that every agent holds a seat for exactly as long
+    as it runs. The name is ``hermes-<profile>-<task>`` — the same name the interim
+    ``kanban_bus_bridge`` uses, so one run never mints two seats. Returns None when the
+    switchboard is disabled or naming failed; a seat is observability and must never be
+    able to fail a spawn.
+    """
+    try:
+        from hermes_cli import switchboard_seat
+
+        if not switchboard_seat.seat_enabled():
+            return None
+        session = switchboard_seat.seat_name(profile_arg, task.id)
+        env[switchboard_seat.SEAT_ENV_VAR] = session
+        return session
+    except Exception as exc:  # pragma: no cover - defensive
+        _kb._log.debug("kanban seat: seat naming skipped for %s (%s)", task.id, exc)
+        return None
+
+
+def _start_seat_supervisor(
+    task: Task, profile_arg: str, board: Optional[str], env: dict,
+    seat_session: Optional[str], pid: Optional[int],
+) -> Optional[int]:
+    """Start the per-run switchboard supervisor. Never raises, never blocks the spawn.
+
+    The supervisor — not the model and not the dispatcher's own tick — is what holds the
+    seat: it enrols with ``--listener supervised`` and a doorbell, heartbeats while the
+    worker pid lives, drains directed mail into the seat's state dir, and closes the seat
+    when the worker dies or its run ends. It is placed in a restart-safe scope like the
+    worker itself (a gateway restart mid-run must not take every live seat stale), but
+    with the degrade-instead-of-raise scope policy: a worker must never fail to spawn
+    because its seat could not be scoped.
+    """
+    if not seat_session or not pid:
+        return None
+    state_dir = None
+    supervisor_pid = None
+    supervisor_failure = None
+    try:
+        from hermes_cli import switchboard_seat
+        from tools.process_registry import restart_safe_gateway_child_argv
+
+        state_dir = switchboard_seat.ensure_state_dir(
+            seat_session, run_id=task.current_run_id, root=str(_kb.switchboard_seats_root())
+        )
+
+        def _wrap(argv: list[str]) -> list[str]:
+            return restart_safe_gateway_child_argv(
+                argv,
+                unit_suffix=f"kanban-{task.id}-seat-{task.current_run_id or 'run'}",
+                require_restart_safe_scope=False,
+                outlives_parent=True,
+            ).argv
+
+        supervisor_pid = switchboard_seat.start_supervisor(
+            session=seat_session,
+            card=switchboard_seat.card_ref(
+                env.get("HERMES_KANBAN_BOARD"), task.id, task.current_run_id
+            ),
+            worker_pid=pid,
+            board_db=env.get("HERMES_KANBAN_DB") or str(_kb.kanban_db_path(board=board)),
+            run_id=task.current_run_id,
+            state_dir=state_dir,
+            doorbell=os.path.join(state_dir, switchboard_seat.DOORBELL_NAME),
+            interval=switchboard_seat.heartbeat_seconds(),
+            env=env,
+            wrap=_wrap,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        # A seat is observability, never admission control: a broken supervisor costs the
+        # run its seat and nothing else. It must not be silent, though: the failure goes on
+        # the run's task timeline so the board shows the run has no seat.
+        supervisor_failure = f"{type(exc).__name__}: {str(exc)[:200]}"
+        _kb._log.warning("kanban seat: supervisor start failed for %s (%s)", task.id, exc)
+        supervisor_pid = None
+    if supervisor_pid is None and state_dir and supervisor_failure is None:
+        supervisor_failure = "supervisor did not start"
+    if supervisor_pid is None and supervisor_failure is not None:
+        from hermes_cli import switchboard_seat
+
+        switchboard_seat.record_seat_event(
+            env.get("HERMES_KANBAN_DB") or str(_kb.kanban_db_path(board=board)),
+            task.id, task.current_run_id, "switchboard_seat_supervisor_failed",
+            {"session": seat_session, "error": supervisor_failure},
+        )
+    if supervisor_pid is None and state_dir:
+        # No supervisor means no seat: drop the run dir so a later run-end does not close
+        # (or shell out for) a seat nothing ever opened, and give up the seat claim so an
+        # earlier run's supervisor still closes the seat it really holds.
+        from hermes_cli import switchboard_seat
+
+        switchboard_seat.release_seat(state_dir)
+        shutil.rmtree(state_dir, ignore_errors=True)
+    return supervisor_pid
+
+
 def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -> Optional[int]:
     """Fire-and-forget ``hermes -p <profile> chat -q ...`` subprocess.
 
@@ -2860,6 +2993,10 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
     # older hermes builds on PATH that predate the flag's precedence.
     env.pop("HERMES_TUI", None)
 
+    # The worker carries its seat name itself, so anything it runs in-process reports under
+    # the same per-card seat the supervisor is about to hold.
+    seat_session = _switchboard_seat_session(profile_arg, task, env)
+
     cmd = _worker_argv(task, profile_arg, env.get("HERMES_HOME"))
     # The worker is `-m hermes_cli.kanban_worker_client`: Hermes itself, with no console-script
     # bootstrap. The routed-profile scrub above strips Hermes-owned PYTHONPATH entries (user
@@ -2894,6 +3031,9 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
         )
     # Intentionally NOT closing log_f: the child keeps writing after return;
     # the OS-level FD stays open in the child until it exits.
+    # Seat supervision starts AFTER the fork (it needs the pid) and is inert on failure:
+    # a missing bus, a broken busctl or a refused scope must never cost the fleet a worker.
+    _start_seat_supervisor(task, profile_arg, board, env, seat_session, proc.pid)
     if _kb._IS_WINDOWS:
         _live_worker_procs[proc.pid] = proc
     return proc.pid

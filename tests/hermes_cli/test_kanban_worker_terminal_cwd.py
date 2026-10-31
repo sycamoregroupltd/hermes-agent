@@ -48,6 +48,10 @@ def _capture_spawn_env(kb, monkeypatch, workspace: str) -> dict:
         pid = 4242
 
     def fake_popen(cmd, *args, **kwargs):
+        # A spawn also starts the worker's switchboard seat supervisor; the pinned cwd
+        # under test is the worker's (see test_switchboard_seat.py).
+        if "keeper" in cmd:
+            return FakeProc()
         captured["cmd"] = list(cmd)
         captured["env"] = dict(kwargs.get("env") or {})
         captured["cwd"] = kwargs.get("cwd")

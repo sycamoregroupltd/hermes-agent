@@ -148,10 +148,19 @@ def test_spawn_resolves_claimed_task_policy(
     assert task is not None
     captured = {}
 
-    def fake_popen(cmd, **kwargs):
-        captured.update(cmd=list(cmd), env=kwargs["env"])
-        kwargs["stdout"].close()
-        return SimpleNamespace(pid=4245)
+    class FakeProc:
+        pid = 4245
+
+    def fake_popen(cmd, *args, **kwargs):
+        # A spawn also starts the worker's switchboard seat supervisor; it is not
+        # the scoped spawn under test (see test_switchboard_seat.py).
+        if "keeper" in cmd:
+            return FakeProc()
+        captured["cmd"] = list(cmd)
+        captured["env"] = kwargs.get("env", {})
+        if "stdout" in kwargs and hasattr(kwargs["stdout"], "close"):
+            kwargs["stdout"].close()
+        return FakeProc()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     kbd._default_spawn(task, str(workspace))

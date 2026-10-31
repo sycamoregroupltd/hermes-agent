@@ -57,6 +57,10 @@ def test_worker_for_served_profile_gets_its_own_env_and_toolset_pin(served, monk
     spawned = {}
 
     def fake_popen(argv, **kwargs):
+        # A spawn also starts the worker's switchboard seat supervisor; the pin under test
+        # belongs to the worker (see test_switchboard_seat.py).
+        if "keeper" in argv:
+            return SimpleNamespace(pid=4243)
         spawned["argv"], spawned["env"] = argv, kwargs["env"]
         return SimpleNamespace(pid=4242)
 
