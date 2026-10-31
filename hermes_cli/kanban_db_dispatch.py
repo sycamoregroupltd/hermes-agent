@@ -2152,6 +2152,10 @@ def _dispatch_lane_task(
         pid = _call_spawn_fn(spawn_fn if spawn_fn is not None else _default_spawn, claimed, str(workspace), board)
         if pid:
             _set_worker_pid(conn, claimed.id, int(pid), run_id=claimed.current_run_id, claim_lock=claimed.claim_lock)
+            # Seat the worker on the Session Bus at spawn time so it never runs
+            # unseated while waiting for the interim kanban_bus_bridge poll.
+            # Best-effort: a failure here must not block the dispatch.
+            _enrol_session_bus_seat(claimed, int(pid), board)
         # Fires AFTER the PID (when reported) is durably persisted. Best-effort.
         _kb._fire_worker_spawned_hook(conn, claimed, str(workspace), pid, board=board)
         # consecutive_failures is deliberately NOT reset here: resetting on
@@ -2750,6 +2754,30 @@ def _restart_safe_worker_argv(task: Task, command: list[str]) -> list[str]:
         require_restart_safe_scope=True,
         outlives_parent=True,
     ).argv
+
+
+def _enrol_session_bus_seat(task, pid: int, board: Optional[str] = None) -> None:
+    """Enrol a freshly-spawned worker on the Session Bus (best-effort)."""
+    import subprocess as _sp
+    busctl = "/home/frank/.hermes/session-bus/busctl.py"
+    if not os.path.exists(busctl):
+        return
+    profile = getattr(task, "assignee", None) or ""
+    card = getattr(task, "id", None) or ""
+    if not profile or not card:
+        return
+    seat = "hermes-{}-{}".format(profile, card)
+    card_ref = "{}/{}".format(board or "default", card)
+    cmd = [
+        "python3", busctl, "enrol",
+        "--session", seat,
+        "--pid", str(int(pid)),
+        "--card", card_ref,
+    ]
+    try:
+        _sp.run(cmd, timeout=10, capture_output=True, check=False)
+    except Exception:
+        pass
 
 
 def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -> Optional[int]:
