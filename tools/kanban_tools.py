@@ -1266,8 +1266,14 @@ def _handle_unblock(args: dict, **kw) -> str:
     _check(tid, "task_id is required")
     tid = str(tid)
     _enforce_worker_task_ownership(tid)
+    reason = str(args.get("reason") or "").strip() or None
     with _board(args.get("board")) as (kb, conn):
-        _check(kb.unblock_task(conn, tid), f"could not unblock {tid} (not blocked or unknown)")
+        # Actor comes from the bound profile, never from tool args (#19713): a
+        # crash-gated card is released only when that profile is its owner.
+        _check(
+            kb.unblock_task(conn, tid, actor=_persisted_identity(), source="tool", reason=reason),
+            f"could not unblock {tid} (not blocked or unknown)",
+        )
         return _ok(task_id=tid, **_fields(kb.get_task(conn, tid), ("status",)))
 
 

@@ -1488,6 +1488,9 @@ def _record_task_failure(
             payload["sticky"] = True
         if event_payload_extra:
             payload.update(event_payload_extra)
+        # Crash owner gate: name who must release the card and how many gateway
+        # subscriptions the (wake-kind) ``gave_up`` will reach.
+        payload.update(_kb.crash_gate_trip_payload(conn, task_id))
         _kb._append_event(conn, task_id, "gave_up", payload, run_id=run_id)
         return True
 

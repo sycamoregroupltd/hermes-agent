@@ -536,10 +536,13 @@ KANBAN_UNBLOCK_SCHEMA = _schema(
         "Unblock a Kanban task. It moves to ready when all parents are done, "
         "or todo while any parent remains open. Orchestrator-only — only "
         "profiles with the kanban toolset can unblock routed work; "
-        "dispatcher-spawned task workers never see this tool."
+        "dispatcher-spawned task workers never see this tool. A card the "
+        "crash breaker auto-blocked can only be unblocked by its creator, "
+        "with a reason."
     ),
     {
         "task_id": _prop("string", "Blocked task id to move to ready or parent-gated todo."),
+        "reason": _prop("string", "Why it is safe to retry now (required to release a crash auto-block)."),
     },
     ["task_id"],
 )

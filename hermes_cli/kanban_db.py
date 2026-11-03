@@ -1981,10 +1981,11 @@ def _has_sticky_block(conn: sqlite3.Connection, task_id: str) -> bool:
     protocol-violation budget or a systemic same-error wave. Those trip on a
     policy independent of ``consecutive_failures``, so ``recompute_ready``'s
     counter check cannot see them — without this the trip is promoted back to
-    ``ready`` in the same tick and the card respawns forever. A plain
-    (unified-budget) ``gave_up`` carries no marker and is judged by the counter,
-    so raising ``failure_limit`` or ``assign_task`` to a fresh profile still
-    releases it; a task with no such event at all (direct DB edit) auto-recovers.
+    ``ready`` in the same tick and the card respawns forever. Since the crash
+    owner gate, a plain (unified-budget) ``gave_up`` is held too: it waits for
+    its owner (:func:`open_crash_gate`) rather than auto-recovering when the
+    counter drops (``assign_task`` reset, raised ``failure_limit``); a task with
+    no such event at all (direct DB edit) still auto-recovers.
     """
     row = conn.execute(
         "SELECT kind FROM task_events "
@@ -1993,13 +1994,9 @@ def _has_sticky_block(conn: sqlite3.Connection, task_id: str) -> bool:
     ).fetchone()
     if row and row["kind"] == "blocked":
         return True
-    trip = conn.execute(
-        "SELECT payload FROM task_events "
-        "WHERE task_id = ? AND kind = 'gave_up' AND id > COALESCE("
-        "  (SELECT MAX(id) FROM task_events WHERE task_id = ? AND kind = 'unblocked'), 0) "
-        "ORDER BY id DESC LIMIT 1", (task_id, task_id),
-    ).fetchone()
-    return bool(trip) and bool(_json_dict(trip["payload"]).get("sticky"))
+    # Any unreleased ``gave_up`` is held for the card's owner (crash owner gate):
+    # resetting the counter (reassign, raised limit) no longer auto-releases it.
+    return open_crash_gate(conn, task_id) is not None
 
 
 def _latest_event(
@@ -3512,18 +3509,31 @@ def promote_task(
             f"`hermes kanban unlink <parent_id> {task_id}`)"
         )
 
-    if dry_run:
-        return True, None
-
+    refused: Optional[CrashGateRefused] = None
     with write_txn(conn):
-        upd = conn.execute(
-            "UPDATE tasks SET status = 'ready' "
-            "WHERE id = ? AND status IN ('todo', 'blocked')", (task_id,),
+        if dry_run:
+            d = crash_gate_decision(conn, task_id, actor=actor, source="cli", reason=reason)
+            if d is not None and d["released_by"] is None:
+                return False, str(CrashGateRefused(task_id, d["owner"], d["actor"], d["why"]))
+            return True, None
+        # Same owner gate as ``unblock_task``: promote must not be the bypass.
+        gate = _check_crash_gate(
+            conn, task_id, actor=actor, source="cli", reason=reason, kind="promote",
         )
-        if upd.rowcount != 1:
-            return False, f"task {task_id} status changed during promotion"
-        _append_event(conn, task_id, "promoted_manual", {"actor": actor, "reason": reason})
-
+        if gate and "refused" in gate:
+            refused = gate["refused"]
+        else:
+            upd = conn.execute(
+                "UPDATE tasks SET status = 'ready' "
+                "WHERE id = ? AND status IN ('todo', 'blocked')", (task_id,),
+            )
+            if upd.rowcount != 1:
+                return False, f"task {task_id} status changed during promotion"
+            _append_event(
+                conn, task_id, "promoted_manual", {"actor": actor, "reason": reason, **(gate or {})},
+            )
+    if refused is not None:
+        return False, str(refused)
     return True, None
 
 
@@ -3557,48 +3567,231 @@ def _landing_status_after_parents(conn: sqlite3.Connection, task_id: str) -> str
     return "ready" if _parents_satisfied(conn, task_id) else "todo"
 
 
-def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
+# --- Crash owner gate (kanban-crash-owner-gate.md) ---
+#
+# A ``gave_up`` trip (the dispatcher's crash/timeout/spawn breaker) opens a gate
+# that only the card's OWNER can release. Without it any actor -- a PM autopilot,
+# a reclaim sweep, another agent -- could ``unblock`` the card, the streak reset,
+# and the card crash-looped through gave_up -> unblock cycles indefinitely.
+
+# Creators that name no accountable principal: legacy NULL rows, the generic
+# worker fallback of ``_persisted_identity`` and internal system creators.
+_OWNERLESS_CREATORS = frozenset({"", "worker", "kanban-service-gate"})
+# Surfaces a human operator drives; the only ones that may release an ownerless
+# (legacy) gate, and the dashboard additionally acts as an explicit override.
+_OPERATOR_SOURCES = frozenset({"cli", "dashboard"})
+# Event kinds that can close a crash gate (only written when the gate allowed it).
+_GATE_RELEASE_KINDS = ("unblocked", "promoted_manual")
+
+
+class CrashGateRefused(ValueError):
+    """A non-owner tried to release a card the crash breaker handed to its owner."""
+
+    def __init__(self, task_id: str, owner: Optional[str], actor: Optional[str], why: str):
+        self.task_id, self.owner, self.actor = task_id, owner, actor
+        who = owner or "an operator (dashboard, or the CLI with --reason)"
+        super().__init__(
+            f"{task_id} was auto-blocked by the crash breaker and is held for its owner "
+            f"({who}); {actor or 'unidentified caller'} may not release it: {why}"
+        )
+
+
+def _canonical_actor(actor: Optional[str]) -> Optional[str]:
+    value = (actor or "").strip()
+    return _canonical_assignee(value) if value else None
+
+
+def crash_gate_owner(conn: sqlite3.Connection, task_id: str) -> tuple[Optional[str], str]:
+    """``(owner, owner_source)`` for a card: the profile accountable for it.
+
+    Owner is the card's creator (``tasks.created_by``) -- the principal that asked
+    for the work, not the assignee whose worker is crashing. A creator that is
+    itself a task id resolves one hop to that task's assignee (a worker that filed
+    the card under its own task id). Generic/legacy creators yield ``(None,
+    "none")``; such cards are released only from an operator surface."""
+    row = conn.execute("SELECT created_by FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    creator = (_row_get(row, "created_by") or "").strip()
+    if creator.lower() in _OWNERLESS_CREATORS:
+        return None, "none"
+    if creator.startswith("t_"):
+        parent = conn.execute("SELECT assignee FROM tasks WHERE id = ?", (creator,)).fetchone()
+        if parent is not None:
+            owner = _canonical_actor(_row_get(parent, "assignee"))
+            return (owner, "creator_task") if owner else (None, "none")
+    return _canonical_actor(creator), "created_by"
+
+
+def open_crash_gate(conn: sqlite3.Connection, task_id: str) -> Optional[dict]:
+    """The ``gave_up`` payload holding the card for its owner, else ``None``.
+
+    Open iff the newest of ``gave_up``/``unblocked``/``promoted_manual`` is a
+    ``gave_up``: every gated release goes through :func:`_check_crash_gate`, so a
+    later release event means the gate was legitimately closed. Pre-existing
+    blocked cards whose last word is ``gave_up`` are gated with no migration."""
+    row = conn.execute(
+        "SELECT kind, payload FROM task_events WHERE task_id = ? AND kind IN "
+        "('gave_up', " + ", ".join(f"'{k}'" for k in _GATE_RELEASE_KINDS) + ") "
+        "ORDER BY id DESC LIMIT 1", (task_id,),
+    ).fetchone()
+    if row is None or row["kind"] != "gave_up":
+        return None
+    return _json_dict(row["payload"])
+
+
+def crash_gate_trip_payload(conn: sqlite3.Connection, task_id: str) -> dict:
+    """Extra ``gave_up`` payload naming who must act and how they will hear of it.
+
+    ``owner_notify_subs`` counts the card's gateway subscriptions at trip time
+    (creator-origin inheritance subscribes the filer's chat); ``gave_up`` is a
+    wake kind, so each one is woken. 0 means nobody will be pinged and the gate
+    must be found from the board (``hermes kanban list --status blocked``)."""
+    owner, owner_source = crash_gate_owner(conn, task_id)
+    subs = conn.execute(
+        "SELECT COUNT(*) AS n FROM kanban_notify_subs WHERE task_id = ?", (task_id,),
+    ).fetchone()
+    return {
+        "owner_gate": True,
+        "owner": owner,
+        "owner_source": owner_source,
+        "owner_notify_subs": int(_row_get(subs, "n") or 0),
+    }
+
+
+def crash_gate_decision(
+    conn: sqlite3.Connection, task_id: str, *, actor: Optional[str], source: Optional[str],
+    reason: Optional[str],
+) -> Optional[dict]:
+    """Read-only verdict for releasing ``task_id``: ``None`` when no gate is open,
+    else ``{"gate", "owner", "owner_source", "actor", "reason", "released_by", "why"}``
+    where ``released_by`` is ``"owner"``/``"operator"`` (allowed) or ``None`` (refused).
+
+    Policy: the owner (see :func:`crash_gate_owner`) releases with a reason; the
+    dashboard is an operator override (as for its ``done``/``review`` verbs); an
+    ownerless legacy card is released from an operator surface with a reason;
+    everyone else -- agent tool calls, autopilots, other profiles -- is refused."""
+    gate = open_crash_gate(conn, task_id)
+    if gate is None:
+        return None
+    owner, owner_source = crash_gate_owner(conn, task_id)
+    who = _canonical_actor(actor)
+    reason = (reason or "").strip() or None
+    released_by = why = None
+    if source == "dashboard":
+        released_by = "operator"
+    elif owner is None:
+        if source in _OPERATOR_SOURCES and reason:
+            released_by = "operator"
+        else:
+            why = "the card has no recorded owner; release it from the CLI with --reason or the dashboard"
+    elif who != owner:
+        why = f"only the owner {owner!r} may release it"
+    elif not reason:
+        why = "the owner must give a reason (what changed since the crashes)"
+    else:
+        released_by = "owner"
+    return {"gate": gate, "owner": owner, "owner_source": owner_source, "actor": who,
+            "reason": reason, "released_by": released_by, "why": why}
+
+
+def _check_crash_gate(
+    conn: sqlite3.Connection, task_id: str, *, actor: Optional[str], source: Optional[str],
+    reason: Optional[str], kind: str,
+) -> Optional[dict]:
+    """Inside the caller's txn: ``None`` when no gate is open, a release record
+    (already applied to the streak) when allowed; otherwise logs
+    ``unblock_refused`` and returns ``{"refused": CrashGateRefused}`` for the
+    caller to raise AFTER the txn commits that audit row."""
+    d = crash_gate_decision(conn, task_id, actor=actor, source=source, reason=reason)
+    if d is None:
+        return None
+    owner, owner_source, released_by = d["owner"], d["owner_source"], d["released_by"]
+    if released_by is None:
+        _append_event(conn, task_id, "unblock_refused", {
+            "actor": d["actor"], "source": source, "reason": d["reason"], "via": kind,
+            "owner": owner, "owner_source": owner_source, "why": d["why"],
+        })
+        return {"refused": CrashGateRefused(task_id, owner, d["actor"], d["why"])}
+    gate = d["gate"]
+    limit = gate.get("effective_limit")
+    # A systemic-wave trip records limit 1, but the next attempt is judged by the
+    # dispatcher's own limit; never grant less than one real retry below it.
+    limit = max(int(limit) if isinstance(limit, int) else 0, DEFAULT_FAILURE_LIMIT)
+    before = int(_row_get(conn.execute(
+        "SELECT consecutive_failures FROM tasks WHERE id = ?", (task_id,)).fetchone(),
+        "consecutive_failures") or 0)
+    # ONE more attempt, not a fresh budget: the next crash re-trips the breaker and
+    # comes straight back to the owner instead of spending another full streak.
+    after = max(0, limit - 1)
+    conn.execute("UPDATE tasks SET consecutive_failures = ? WHERE id = ?", (after, task_id))
+    return {"crash_gate": {
+        "released_by": released_by, "owner": owner, "owner_source": owner_source,
+        "failures_before": before, "failures_after": after,
+    }}
+
+
+def unblock_task(
+    conn: sqlite3.Connection, task_id: str, *, actor: Optional[str] = None,
+    source: Optional[str] = None, reason: Optional[str] = None,
+) -> bool:
     """``blocked``/``scheduled`` -> its resumable phase (parent re-gated; ``review``
-    when that is where it left off), closing any leaked run first."""
+    when that is where it left off), closing any leaked run first.
+
+    Every ``unblocked`` event records ``actor``/``source``/``reason``. A card held
+    by the crash owner gate (:func:`open_crash_gate`) is released only by its owner
+    with a reason, or from an operator surface; anyone else gets
+    :class:`CrashGateRefused` (and an ``unblock_refused`` audit event).
+    ``consecutive_failures`` is NOT reset here: only ``complete_task`` (success)
+    clears the crash streak, and a gate release grants exactly one retry."""
     now = int(time.time())
+    refused: Optional[CrashGateRefused] = None
     with write_txn(conn):
-        resume_status = (
-            _resume_status_from_events(conn, task_id)
-            if _task_status(conn, task_id) == "blocked"
-            else "ready"
-        )
-        _reclaim_dangling_run(
-            conn, task_id, statuses=("blocked", "scheduled"), now=now,
-            note="invariant recovery on unblock",
-        )
-        # Re-gate on parent completion before restoring the source phase.
-        landing_status = _landing_status_after_parents(conn, task_id)
-        new_status = (
-            "review"
-            if landing_status == "ready" and resume_status == "review"
-            else landing_status
-        )
-        # ``block_kind``/``block_recurrences`` deliberately survive the unblock:
-        # resetting them is the amnesia that let cron-unblock <-> re-block loop
-        # unbounded; only complete_task clears them. ``consecutive_failures``
-        # (the dispatcher's spawn/crash counter) IS reset — a deliberate unblock
-        # is a fresh start for the retry budget.
-        cur = conn.execute(
-            "UPDATE tasks SET status = ?, current_run_id = NULL, "
-            "consecutive_failures = 0, last_failure_error = NULL "
-            "WHERE id = ? AND status IN ('blocked', 'scheduled')", (new_status, task_id),
-        )
-        if cur.rowcount != 1:
+        if _task_status(conn, task_id) not in ("blocked", "scheduled"):
             return False
-        _append_event(
-            conn, task_id, "unblocked",
-            (
-                {"status": new_status, "resume_status": resume_status}
-                if new_status != "ready" or resume_status != "ready"
-                else None
-            ),
+        gate = _check_crash_gate(
+            conn, task_id, actor=actor, source=source, reason=reason, kind="unblock",
         )
-        return True
+        if gate and "refused" in gate:
+            refused = gate["refused"]
+        else:
+            resume_status = (
+                _resume_status_from_events(conn, task_id)
+                if _task_status(conn, task_id) == "blocked"
+                else "ready"
+            )
+            _reclaim_dangling_run(
+                conn, task_id, statuses=("blocked", "scheduled"), now=now,
+                note="invariant recovery on unblock",
+            )
+            # Re-gate on parent completion before restoring the source phase.
+            landing_status = _landing_status_after_parents(conn, task_id)
+            new_status = (
+                "review"
+                if landing_status == "ready" and resume_status == "review"
+                else landing_status
+            )
+            # ``block_kind``/``block_recurrences`` deliberately survive the unblock:
+            # resetting them is the amnesia that let cron-unblock <-> re-block loop
+            # unbounded; only complete_task clears them. ``consecutive_failures``
+            # survives for the same reason (crash-loop through gave_up -> unblock):
+            # it is cleared on success, or set to limit-1 by a gate release above.
+            cur = conn.execute(
+                "UPDATE tasks SET status = ?, current_run_id = NULL, last_failure_error = NULL "
+                "WHERE id = ? AND status IN ('blocked', 'scheduled')", (new_status, task_id),
+            )
+            if cur.rowcount != 1:
+                return False
+            payload: dict[str, Any] = {
+                "actor": _canonical_actor(actor), "source": source,
+                "reason": (reason or "").strip() or None,
+            }
+            if new_status != "ready" or resume_status != "ready":
+                payload.update(status=new_status, resume_status=resume_status)
+            if gate:
+                payload.update(gate)
+            _append_event(conn, task_id, "unblocked", payload)
+    if refused is not None:
+        raise refused
+    return True
 
 
 def reopen_review_task(conn: sqlite3.Connection, task_id: str) -> bool:

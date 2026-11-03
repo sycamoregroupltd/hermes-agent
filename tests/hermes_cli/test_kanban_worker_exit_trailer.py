@@ -97,18 +97,22 @@ def test_violation_budget_trip_holds_until_operator_unblock(kanban_home):
         assert task.status == "blocked"
         assert task.consecutive_failures < 10
 
-        kb.unblock_task(conn, tid)
+        # Ownerless card (no created_by): the crash owner gate needs an operator
+        # surface with a reason.
+        kb.unblock_task(conn, tid, actor="operator", source="cli", reason="fixed the worker")
         assert kb.get_task(conn, tid).status == "ready"
         kb.recompute_ready(conn, failure_limit=10)
         assert kb.get_task(conn, tid).status == "ready"
 
 
-def test_plain_budget_trip_still_auto_recovers(kanban_home):
-    """A unified-budget trip carries no ``sticky`` marker, so the two recovery paths on main
-    survive: raising the dispatcher ``failure_limit`` past the counter promotes the card, and
-    ``assign_task`` to a fresh profile (counter reset by design) promotes it too."""
+def test_plain_budget_trip_waits_for_its_owner(kanban_home):
+    """Crash owner gate (docs/design/kanban-crash-owner-gate.md): a unified-budget trip
+    no longer auto-recovers when the counter drops below the limit -- neither raising the
+    dispatcher ``failure_limit`` nor ``assign_task`` to a fresh profile (counter reset by
+    design) releases it. Only the owner's unblock does, and it grants one retry."""
     with kbc.connect() as conn:
-        tids = [kb.create_task(conn, title=t, assignee="a") for t in ("raise-limit", "reassign")]
+        tids = [kb.create_task(conn, title=t, assignee="a", created_by="owner")
+                for t in ("raise-limit", "reassign")]
         for tid in tids:
             for i in range(2):
                 kbd._record_task_failure(
@@ -117,19 +121,16 @@ def test_plain_budget_trip_still_auto_recovers(kanban_home):
                 )
             assert kb.get_task(conn, tid).status == "blocked"
         assert kb.recompute_ready(conn, failure_limit=2) == 0
+        assert kb.recompute_ready(conn, failure_limit=5) == 0
 
-        assert kb.recompute_ready(conn, failure_limit=5) == 2
-        assert kb.get_task(conn, tids[0]).status == "ready"
-
-        for i in range(2):
-            kbd._record_task_failure(
-                conn, tids[1], error=f"again{i}", outcome="crashed", failure_limit=2,
-                release_claim=False, end_run=False,
-            )
-        assert kb.get_task(conn, tids[1]).status == "blocked"
         kb.assign_task(conn, tids[1], "other-profile")
-        assert kb.recompute_ready(conn, failure_limit=2) == 1
-        assert kb.get_task(conn, tids[1]).status == "ready"
+        assert kb.get_task(conn, tids[1]).consecutive_failures == 0
+        assert kb.recompute_ready(conn, failure_limit=2) == 0
+        assert {kb.get_task(conn, t).status for t in tids} == {"blocked"}
+
+        for tid in tids:
+            assert kb.unblock_task(conn, tid, actor="owner", source="cli", reason="fixed")
+            assert kb.get_task(conn, tid).status == "ready"
 
 
 def test_exit_single_query_writes_trailer_only_for_kanban_workers(monkeypatch, capsys):

@@ -1024,12 +1024,27 @@ def _cmd_unblock(args: argparse.Namespace) -> int:
     if rc:
         return rc
     reason = _stripped_or_none(getattr(args, "reason", None))
-    author = _profile_author() if reason else None
+    author = _profile_author()
     suffix = f": {reason}" if reason else ""
+    refusals: dict[str, str] = {}
+
+    def unblock(tid: str) -> bool:
+        try:
+            return kb.unblock_task(conn, tid, actor=author, source="cli", reason=reason)
+        except kb.CrashGateRefused as exc:
+            refusals[tid] = str(exc)
+            return False
+
     with kbc.connect_closing() as conn:
-        op = _commented(conn, reason, author, "UNBLOCK", lambda tid: kb.unblock_task(conn, tid))
+        # Comment only after the transition: a refused crash-gate release must
+        # not leave an "UNBLOCK: ..." note claiming it happened.
+        def op(tid: str) -> bool:
+            ok = unblock(tid)
+            if ok and reason:
+                kb.add_comment(conn, tid, author, f"UNBLOCK: {reason}")
+            return ok
         return _bulk_apply(ids, op, lambda tid: f"Unblocked {tid}{suffix}",
-                           lambda tid: f"cannot unblock {tid} (not blocked/scheduled?)")
+                           lambda tid: refusals.get(tid) or f"cannot unblock {tid} (not blocked/scheduled?)")
 
 
 def _cmd_request_review(args: argparse.Namespace) -> int:

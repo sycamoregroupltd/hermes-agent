@@ -476,7 +476,8 @@ def test_review_retry_still_trips_the_failure_breaker(conn) -> None:
     gave_up = _event(kb.list_events(conn, task_id), "gave_up")
     assert gave_up.payload is not None
     assert gave_up.payload["retry_status"] == "review"
-    assert kb.unblock_task(conn, task_id)
+    # Crash owner gate: the breaker trip is released from an operator surface.
+    assert kb.unblock_task(conn, task_id, actor="operator", source="cli", reason="reviewer fixed")
     unblocked = kb.get_task(conn, task_id)
     assert unblocked is not None
     assert unblocked.status == "review"

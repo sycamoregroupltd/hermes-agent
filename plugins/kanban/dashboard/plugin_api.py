@@ -581,8 +581,20 @@ def _drag_to(conn, task_id: str, s: str) -> bool:
     leaving ``review`` goes through ``reopen_review_task`` (stale-run recovery, parent re-gate,
     ``review_reopened`` event) instead of a raw write; ``triage`` needs no current-state query."""
     current = kanban_db.get_task(conn, task_id) if s != "triage" else None
-    if s == "ready" and current and current.status in ("blocked", "scheduled"):
-        return kanban_db.unblock_task(conn, task_id)
+    if s in ("ready", "todo") and current and current.status in ("blocked", "scheduled"):
+        # ``todo`` too: a raw status write would leave the card's exit from a crash
+        # auto-block unaudited and its owner gate unreleased (crash owner gate).
+        from hermes_cli.profiles import current_profile_name
+        if not kanban_db.unblock_task(
+            conn, task_id, actor=current_profile_name("dashboard") or "dashboard",
+            source="dashboard", reason=f"dashboard drag to {s}",
+        ):
+            return False
+        # Honour the drop column: unblock lands ready/review when parents are done.
+        landed = kanban_db.get_task(conn, task_id)
+        if s == "ready" or (landed and landed.status == "todo"):
+            return True
+        return _set_status_direct(conn, task_id, "todo")
     if current is not None and current.status == "review":
         return kanban_db.reopen_review_task(conn, task_id)
     return _set_status_direct(conn, task_id, s)
