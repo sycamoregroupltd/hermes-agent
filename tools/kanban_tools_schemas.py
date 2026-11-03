@@ -407,8 +407,9 @@ KANBAN_CREATE_SCHEMA = _schema(
         "assignee": _prop("string", (
                 "Profile name that should execute this task "
                 "(e.g. 'researcher-a', 'reviewer', 'writer'). "
-                "Required — tasks without an assignee are never "
-                "dispatched."
+                "If omitted, a triage task stays unassigned; any "
+                "other task goes to the board's registered owner "
+                "(the create fails if the board has none)."
         )),
         "body": _prop("string", (
                 "Opening post: full spec, acceptance criteria, "
@@ -527,7 +528,7 @@ KANBAN_CREATE_SCHEMA = _schema(
                 "to a different one. Requires 'model'."
         )),
     },
-    ["title", "assignee"],
+    ["title"],
 )
 
 KANBAN_UNBLOCK_SCHEMA = _schema(

@@ -1182,6 +1182,9 @@ def create_task(
     in the active profile's projects.db — see ``_resolve_project_link``.
     ``workspace_kind=None`` (omitted) inherits a project-scoped board's project;
     an explicit ``"scratch"`` or ``project_id=""`` is a request for no project.
+    ``assignee=None`` with ``triage=False`` resolves to the target board's owner
+    from ``boards-manifest.json`` (fail-closed; see ``kanban_board_owner``);
+    with ``triage=True`` the task stays unassigned.
     """
     from hermes_cli.kanban_db_graph import initial_task_state, inherit_creator_origin
     from hermes_cli.kanban_pr_acceptance import validate_contract
@@ -1231,6 +1234,15 @@ def create_task(
         ).fetchone()
         if row:
             return row["id"]
+
+    # Board-owner default (kanban_board_owner): no assignee + not triage ->
+    # the target board's manifest owner, else fail closed. Resolved here --
+    # after the idempotency replay (a replay inserts nothing) and before the
+    # write txn (file I/O stays outside the lock; a failure inserts no row).
+    if assignee is None and not triage:
+        from hermes_cli.kanban_board_owner import resolve_create_assignee
+        assignee = _canonical_assignee(
+            resolve_create_assignee(None, triage=bool(triage), board=board))
 
     now = int(time.time())
 

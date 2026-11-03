@@ -164,7 +164,7 @@ _SPECS = [
              help="Read the opening post from a file ('-' = stdin), so bodies with embedded "
                   "newlines or flag-like lines survive shell quoting. "
                   "Mutually exclusive with --body."),
-        _arg("--assignee", help="Profile name to assign"),
+        _arg("--assignee", help="Profile name to assign (default: the board owner from boards-manifest.json; --triage cards stay unassigned)"),
         _arg("--parent", action="append", default=[], help="Parent task id (repeatable)"),
         _arg("--workspace",
              help="scratch | worktree | worktree:<path> | dir:<path> (default: scratch; "
