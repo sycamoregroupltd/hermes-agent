@@ -1759,8 +1759,8 @@ def test_block_then_unblock(kanban_home):
         assert kb.get_task(conn, t).status == "ready"
 
 
-def test_unblock_resets_failure_counters(kanban_home):
-    """unblock_task must reset consecutive_failures and last_failure_error."""
+def test_repaired_unblock_resets_failure_counters(kanban_home):
+    """Only an attributed explicit repair resets the crash evidence."""
     with kb.connect() as conn:
         t = kb.create_task(conn, title="x", assignee="a")
         kb.claim_task(conn, t)
@@ -1772,7 +1772,7 @@ def test_unblock_resets_failure_counters(kanban_home):
             (t,),
         )
         conn.commit()
-        assert kb.unblock_task(conn, t)
+        assert kb.unblock_task(conn, t, actor="owner", reason="fixed test error", cause_fixed=True)
         task = kb.get_task(conn, t)
         assert task.status == "ready"
         assert task.consecutive_failures == 0
@@ -1818,11 +1818,11 @@ def test_recompute_ready_skips_tasks_at_failure_limit(kanban_home):
         assert promoted == 0
         assert kb.get_task(conn, child).status == "blocked"
 
-        # Explicit unblock should still work and reset the counter.
+        # A plain unblock allows a retry, not a fresh failure budget.
         assert kb.unblock_task(conn, child)
         task = kb.get_task(conn, child)
         assert task.status == "ready"
-        assert task.consecutive_failures == 0
+        assert task.consecutive_failures == 2
 
 
 def test_recompute_ready_recovers_below_limit(kanban_home):
