@@ -655,6 +655,10 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
         default=None,
         help="Optional reason/note — recorded as a comment before unblocking. Quote multi-word reasons.",
     )
+    p_unblock.add_argument(
+        "--cause-fixed", action="store_true",
+        help="Owner asserts the crash cause is fixed; requires --reason and resets the crash streak.",
+    )
     p_unblock.add_argument("task_ids", nargs="+")
 
     p_promote = sub.add_parser(
@@ -2360,13 +2364,17 @@ def _cmd_unblock(args: argparse.Namespace) -> int:
     reason = getattr(args, "reason", None)
     if reason is not None:
         reason = reason.strip() or None
-    author = _profile_author() if reason else None
+    cause_fixed = bool(getattr(args, "cause_fixed", False))
+    if cause_fixed and not reason:
+        print("--cause-fixed requires a nonblank --reason describing the repair", file=sys.stderr)
+        return 1
+    author = _profile_author()
     failed: list[str] = []
     with kb.connect_closing() as conn:
         for tid in ids:
             if reason:
                 kb.add_comment(conn, tid, author, f"UNBLOCK: {reason}")
-            if not kb.unblock_task(conn, tid):
+            if not kb.unblock_task(conn, tid, actor=author, reason=reason, cause_fixed=cause_fixed):
                 failed.append(tid)
                 # Report the ACTUAL status instead of guessing — a card in
                 # `triage` (loop-breaker parking) is not `blocked`/`scheduled`

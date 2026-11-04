@@ -6638,7 +6638,11 @@ def block_task(
     kind: Optional[str] = None,
     expected_run_id: Optional[int] = None,
 ) -> bool:
-    """Transition ``running``/``ready`` → ``blocked`` (or route elsewhere).
+    """Transition active work to ``blocked`` (or route elsewhere).
+
+    Owners may also contain ``todo``/``scheduled``/``triage`` with a nonblank
+    reason and no worker run assertion. This parking path preserves both
+    breaker counters and never routes back to triage or dependency-wait.
 
     ``kind`` (one of :data:`VALID_BLOCK_KINDS`, or ``None`` for a legacy
     un-typed block) drives routing instead of every block landing in one
@@ -6685,6 +6689,13 @@ def block_task(
             and cur_row["block_recurrences"] is not None
             else 0
         )
+
+        owner_park = cur_row["status"] in ("todo", "scheduled", "triage")
+        if owner_park and (
+            not reason or not reason.strip()
+            or expected_run_id is not None or kind == "dependency"
+        ):
+            return False
 
         # Dependency blocks never enter the human ``blocked`` bucket — they
         # wait in ``todo`` and let ``recompute_ready`` gate on parents. Routing
@@ -6739,9 +6750,10 @@ def block_task(
         # means: blocked → unblocked → about-to-re-block for the same cause.
         # An un-typed (None) block compares as "same" to a prior un-typed block.
         same_cause = prev_kind == kind
-        recurrences = prev_recurrences + 1 if same_cause else 1
+        # Containment is not another failed execution or unblock-loop cycle.
+        recurrences = prev_recurrences if owner_park else (prev_recurrences + 1 if same_cause else 1)
 
-        if recurrences >= BLOCK_RECURRENCE_LIMIT:
+        if not owner_park and recurrences >= BLOCK_RECURRENCE_LIMIT:
             # Loop detected — stop letting the unblocker spin this task. Route
             # to triage for a human-in-the-loop decision instead of blocked.
             cur = conn.execute(
@@ -6793,7 +6805,7 @@ def block_task(
                            block_kind    = ?,
                            block_recurrences = ?
                      WHERE id = ?
-                       AND status IN ('running', 'ready', 'completed_pending_review')
+                       AND status IN ('running', 'ready', 'completed_pending_review', 'todo', 'scheduled', 'triage')
                     """,
                     (kind, recurrences, task_id),
                 )
@@ -6945,7 +6957,10 @@ def promote_task(
     return True, None
 
 
-def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
+def unblock_task(
+    conn: sqlite3.Connection, task_id: str, *, actor: Optional[str] = None,
+    reason: Optional[str] = None, cause_fixed: bool = False,
+) -> bool:
     """Transition ``blocked``/``scheduled`` -> ready or todo.
 
     Defensively closes any stale ``current_run_id`` pointer before flipping
@@ -6955,6 +6970,10 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
     runs invariant (``current_run_id IS NULL`` ⇔ run row in terminal
     state) holds for the rest of this function's lifetime.
     """
+    actor = actor.strip() if actor else None
+    reason = reason.strip() if reason else None
+    if cause_fixed and (not actor or not reason):
+        raise ValueError("cause_fixed requires a nonblank actor and repair reason")
     now = int(time.time())
     with write_txn(conn):
         stale = conn.execute(
@@ -6992,13 +7011,11 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
         # unbounded (Dale's report). The counter survives the unblock so that a
         # subsequent same-cause ``block_task`` can detect the loop and route to
         # triage at ``BLOCK_RECURRENCE_LIMIT``. It is reset to 0 only on a
-        # successful completion (see ``complete_task``). ``consecutive_failures``
-        # (the *dispatcher* spawn/crash/timeout counter — a different signal) is
-        # still reset here, which is correct: a deliberate unblock is a fresh
-        # start for the dispatcher's retry budget.
+        # successful completion (see ``complete_task``). Crash evidence also
+        # survives unless the caller explicitly records that the cause is fixed.
+        repair_sql = ", consecutive_failures = 0, last_failure_error = NULL" if cause_fixed else ""
         cur = conn.execute(
-            "UPDATE tasks SET status = ?, current_run_id = NULL, "
-            "consecutive_failures = 0, last_failure_error = NULL "
+            "UPDATE tasks SET status = ?, current_run_id = NULL" + repair_sql + " "
             "WHERE id = ? AND status IN ('blocked', 'scheduled')",
             (new_status, task_id),
         )
@@ -7006,7 +7023,7 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
             return False
         _append_event(
             conn, task_id, "unblocked",
-            {"status": new_status} if new_status != "ready" else None,
+            {"status": new_status, "actor": actor, "reason": reason, "cause_fixed": cause_fixed},
         )
         return True
 
