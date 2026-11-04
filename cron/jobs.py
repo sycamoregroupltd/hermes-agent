@@ -967,12 +967,29 @@ def get_ticker_last_error() -> Optional[str]:
 # Job CRUD Operations
 # =============================================================================
 
+class _LoadedJobs(list):
+    """A list-compatible read snapshot carrying its per-call merge base.
+
+    Keep the base on the returned object, not in a process/thread cache: several
+    outstanding reads (including different profiles) must remain independent.
+    Converting to a plain list opts into the existing explicit-payload semantics.
+    """
+
+    def __init__(self, records, jobs_file):
+        super().__init__(records)
+        self.store_path = jobs_file.resolve()
+        self.base_by_id = {
+            record['id']: copy.deepcopy(record)
+            for record in records if isinstance(record, dict) and record.get('id')
+        }
+
+
 def load_jobs() -> List[Dict[str, Any]]:
-    """Load all jobs from storage."""
+    """Load jobs with a merge base for subsequent save_jobs(snapshot) calls."""
     jobs_file = _current_cron_store().jobs_file
     ensure_dirs()
     if not jobs_file.exists():
-        return []
+        return _LoadedJobs([], jobs_file)
 
     _strict_retry = False  # track whether we used the strict=False fallback
 
@@ -1005,14 +1022,14 @@ def load_jobs() -> List[Dict[str, Any]]:
             # Hit control-character corruption — rewrite with proper escaping.
             save_jobs(jobs)
             logger.warning("Auto-repaired jobs.json (had invalid control characters)")
-        return jobs
+        return _LoadedJobs(jobs, jobs_file) if isinstance(jobs, list) else jobs
     if isinstance(data, list):
         # Bare array — likely saved/edited outside save_jobs(). Wrap it back
         # into the expected {"jobs": [...]} structure.
         if data:
             save_jobs(data)
             logger.warning("Auto-repaired jobs.json (bare list wrapped as dict)")
-        return data
+        return _LoadedJobs(data, jobs_file)
 
     raise RuntimeError(
         f"Cron database corrupted: expected {{'jobs': [...]}}, got {type(data).__name__}"
@@ -1033,9 +1050,9 @@ _MARK_JOB_RUN_SKIPS_JOURNAL_NAME = "mark_job_run_skips.jsonl"
 
 # Completion metadata fields that must NEVER regress on a shared job. When a
 # job exists in both the incoming list and the on-disk store, these fields come
-# from whichever side has the newer ``last_run_at``; everything else follows
-# the incoming (caller) intent. Prevents a stale snapshot writer (second CLI,
-# long-held load, checkout restore) from erasing a fresher completion's write.
+# from whichever side has the newer ``last_run_at``. Other fields follow
+# explicit incoming intent; read-backed snapshots first merge that intent
+# against their own baseline so unchanged stale config cannot undo CLI edits.
 _COMPLETION_FIELDS = (
     "last_run_at",
     "last_status",
@@ -1136,6 +1153,11 @@ def _merge_jobs_for_write(
     """
     removed_ids = removed_ids or set()
     loaded_ids = loaded_ids or set()
+    base_by_id = {}
+    if isinstance(incoming, _LoadedJobs):
+        if incoming.store_path != _current_cron_store().jobs_file.resolve():
+            raise ValueError('Cannot save a snapshot from a different cron store')
+        base_by_id = incoming.base_by_id
 
     incoming_by_id = {j.get("id"): j for j in incoming if j.get("id")}
     on_disk = _read_on_disk_job_list()
@@ -1179,7 +1201,20 @@ def _merge_jobs_for_write(
 
     for oid, on_disk_job in on_disk_by_id.items():
         if oid in incoming_by_id:
-            merged[oid] = _pick_completion_fields(oid, incoming_by_id[oid], on_disk_job)
+            incoming_job = incoming_by_id[oid]
+            base = base_by_id.get(oid)
+            if base is not None:
+                # Only differences from THIS read are caller intent. An old,
+                # unchanged failure_deliver (or any other field) is not an
+                # instruction to undo a concurrent CLI edit of the same ID.
+                merged_job = dict(on_disk_job)
+                for field in base.keys() | incoming_job.keys():
+                    if field not in incoming_job:
+                        merged_job.pop(field, None)
+                    elif field not in base or incoming_job[field] != base[field]:
+                        merged_job[field] = incoming_job[field]
+                incoming_job = merged_job
+            merged[oid] = _pick_completion_fields(oid, incoming_job, on_disk_job)
             continue
         if oid in removed_ids:
             continue
